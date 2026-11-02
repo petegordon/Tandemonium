@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -161,7 +161,7 @@ class Game {
     const _learned = getLearnedAuto();
     const _q = resolveQualityTier({
       param: _qualityParam, pref: getQualityPref(), learned: _learned && _learned.tier,
-      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
+      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isLowPower), tv: isTV,
     });
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
@@ -191,7 +191,7 @@ class Game {
     // show the perf readout. The URL wins over the saved settings.
     this._displayTest = resolveDisplayTest(new URLSearchParams(window.location.search), getDisplayTest());
     this._linesOverride = this._displayTest.lines;
-    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isMobile && !this._lowQuality;
+    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isLowPower && !this._lowQuality;
     // #456 · keeping the last frame's buffer costs a full-screen copy per frame
     // on TV / phone GPUs. Only clip recording wants it, so Low drops it when
     // clips are off. A context flag: it holds until the page reloads.
@@ -200,8 +200,8 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: this._preserveBuffer });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
-    this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
-    if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = !isLowPower && !this._lowQuality;
+    if (!isLowPower && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (this._showRiders) {
       // Filmic tone mapping so PBR colors (the riders' brass/silk/coat, and the
       // world) read rich instead of the flat raw output. AgX keeps the Victorian
@@ -976,7 +976,7 @@ class Game {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     analytics.initSession({
-      device_type: isMobile ? 'mobile' : 'desktop',
+      device_type: isMobile ? 'mobile' : isTV ? 'tv' : 'desktop',
       input_method: null,
       referrer: document.referrer || null,
       is_stoker: !!roomParam,
@@ -6147,7 +6147,7 @@ class Game {
     setCurrentTier(tier);
     this.renderer.setPixelRatio(this._pixelRatio());
     this._staticFrame = 0;   // setPixelRatio cleared the canvas: draw the next frame
-    const shadows = !isMobile && !this._lowQuality;
+    const shadows = !isLowPower && !this._lowQuality;
     if (this.renderer.shadowMap.enabled !== shadows) {
       this.renderer.shadowMap.enabled = shadows;
       if (shadows) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;   // as at a High boot
@@ -6854,7 +6854,7 @@ class Game {
       // a normal ride; they don't teach Auto anything about normal rides.
       // On a desktop Auto stops at Medium: Low hides the riders, so it stays
       // a manual choice there (phones and TVs already ride without riders).
-      const autoFloor = autoFloorTier(isMobile);
+      const autoFloor = autoFloorTier(isLowPower);
       const canDown = tierRank(this._quality) > tierRank(autoFloor);
       const autoUp = this._rideAutoUp ? null : autoStepUpTarget({ tier: this._quality, slow: this._autoSlowTier });
       const autoWatch = this._autoWatcher && this._qualityAuto && (canDown || autoUp) &&

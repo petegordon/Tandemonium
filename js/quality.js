@@ -126,15 +126,17 @@ export function autoStepUpTarget({ tier, slow = null }) {
 /**
  * The tier to run at. URL ?quality= wins, then the Options choice, then
  * Auto: what slow rides taught it, else hardware detection.
- * @param {{ param?: string|null, pref?: string, learned?: QualityTier|null, hwTier?: string|null, floor?: QualityTier }} o
+ * @param {{ param?: string|null, pref?: string, learned?: QualityTier|null, hwTier?: string|null, floor?: QualityTier, tv?: boolean }} o
  * @returns {{ tier: QualityTier, auto: boolean }}
  */
-export function resolveQualityTier({ param = null, pref = 'auto', learned = null, hwTier = null, floor = 'low' }) {
+export function resolveQualityTier({ param = null, pref = 'auto', learned = null, hwTier = null, floor = 'low', tv = false }) {
   if (isTier(param)) return { tier: param, auto: false };
   if (isTier(pref)) return { tier: pref, auto: false };
   // A learned tier below what Auto may pick here (one saved before the
   // desktop floor existed) comes back up to the floor.
   if (learned) return { tier: tierRank(learned) < tierRank(floor) ? floor : learned, auto: true };
+  // A TV's own browser runs on a set-top chip: Low is the tier built for it.
+  if (tv) return { tier: 'low', auto: true };
   return { tier: hwTier === 'low' ? 'medium' : 'high', auto: true };
 }
 
