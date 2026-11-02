@@ -28,6 +28,8 @@ contextBridge.exposeInMainWorld('electronApp', {
   // #172: the lobby's QUIT pill (desktop only). main.js calls app.quit(), so
   // the will-quit hooks run as on a window close.
   quit: () => ipcRenderer.send('app:quit'),
+  // Perf readout: { label, width, height, scale, hz, internal, count } of the window's display.
+  display: () => ipcRenderer.invoke('app:display'),
 });
 
 // #400 B4c: main decides the edition (--demo, TANDEMONIUM_DEMO=1, or the demo

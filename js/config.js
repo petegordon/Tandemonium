@@ -7,11 +7,15 @@ import { normalizeColourway, DEFAULT_COLOURWAY } from './goose-colourways.js';
 import { getCurrentTier } from './quality.js';
 
 const _isElectron = navigator.userAgent.includes('Electron');
-export const isMobile = !_isElectron && (
+/** A TV's built-in browser, as marked by the inline script at the top of index.html. Remote or pad, no touch. */
+export const isTV = !_isElectron && !!globalThis.__tandemoniumTV;
+export const isMobile = !_isElectron && !isTV && (
     /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
     || (navigator.maxTouchPoints > 1));
 export const isAndroid = /Android/i.test(navigator.userAgent);
 export const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+/** Phone- or TV-class GPU: smaller effect pools, no shadows, Auto may go down to Low. */
+export const isLowPower = isMobile || isTV;
 
 // Riders model: the goose tandem — a rigged tandem built to fit the geese (its Pedal /
 // WheelSpin clips drive the cranks and wheels) with the dressed goose captain and stoker
@@ -111,7 +115,7 @@ export function getShowRiders() {
   } catch (e) {}
   // Default: on for desktop, off on phones — and off at the Low quality
   // tier, where the riders' textures are most of the graphics memory.
-  return !isMobile && getCurrentTier() !== 'low';
+  return !isLowPower && getCurrentTier() !== 'low';
 }
 
 /**

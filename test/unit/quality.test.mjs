@@ -25,6 +25,12 @@ test('resolve: URL param wins, then the Options choice, then Auto', () => {
   assert.deepEqual(resolveQualityTier({ pref: 'auto', hwTier: null }), { tier: 'high', auto: true });
 });
 
+test('resolve: Auto starts a TV browser at Low; a choice or a learned tier still wins', () => {
+  assert.deepEqual(resolveQualityTier({ pref: 'auto', hwTier: 'high', tv: true }), { tier: 'low', auto: true });
+  assert.deepEqual(resolveQualityTier({ pref: 'medium', tv: true }), { tier: 'medium', auto: false });
+  assert.deepEqual(resolveQualityTier({ pref: 'auto', learned: 'medium', floor: 'low', tv: true }), { tier: 'medium', auto: true });
+});
+
 test('resolve: Auto starts a low-end GPU at Medium (the old Low), and a learned tier beats detection', () => {
   assert.deepEqual(resolveQualityTier({ pref: 'auto', hwTier: 'low' }), { tier: 'medium', auto: true });
   assert.deepEqual(resolveQualityTier({ pref: 'auto', hwTier: 'high', learned: 'low' }), { tier: 'low', auto: true });
