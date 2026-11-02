@@ -16,9 +16,9 @@
 // frame, and nothing at all in the loop when the wind is not blowing.
 
 import * as THREE from 'three';
-import { isMobile } from './config.js';
+import { isLowPower } from './config.js';
 
-const POOL = isMobile ? 130 : 280;
+const POOL = isLowPower ? 130 : 280;
 
 // Where streaks are born, relative to the bike, in metres.
 const SPAWN_LATERAL = 11;   // how far upwind they start

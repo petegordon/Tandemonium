@@ -3,6 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<script>
+  // A TV's built-in browser (Google TV, webOS, Tizen, Fire TV…) is a big screen
+  // with a remote, not a phone: no touch, and it often reports only 960×540.
+  // Mark it, and lay the page out 1920 wide so the TV layout (≥1024px) shows;
+  // the browser scales that down to the panel. ?tv=1 / ?tv=0 forces it either way.
+  (function () {
+    var q = /[?&]tv=([01])/.exec(location.search);
+    var ua = navigator.userAgent;
+    var tv = q ? q[1] === '1'
+      : !/Electron/.test(ua) && (/Android ?TV|Google ?TV|SmartTV|SMART-TV|Tizen|Web0S|webOS|NetCast|HbbTV|BRAVIA|AFT[A-Z]|CrKey|Roku/i.test(ua)
+        || (/Android/i.test(ua) && !(navigator.maxTouchPoints > 0)));
+    window.__tandemoniumTV = tv;
+    if (tv && Math.max(screen.width, window.innerWidth) < 1024) {
+      document.querySelector('meta[name=viewport]').setAttribute('content', 'width=1920, viewport-fit=cover');
+    }
+  })();
+</script>
 <title>Tandemonium</title>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- @usersfirst/ui design tokens (vendored from the controller lab: npm run sync-ui). Loaded before the page CSS so every var(--uf-*) below resolves. -->
