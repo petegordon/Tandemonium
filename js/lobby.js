@@ -3200,6 +3200,13 @@ export class Lobby {
       const text = id ? `${id.shortName} · ${mode}` : 'Controls';
       if (label.textContent !== text) label.textContent = text;
     }
+    // #540: the Achievements pill reads "earned / total" (Pete: the count, not the word).
+    const count = document.getElementById('bar-achievements-count');
+    if (count && this._achievements) {
+      if (!this._achTotal) this._achTotal = this._achievements.getAllDefinitions().length;
+      const text = `${this._achievements.getEarnedIds().length} of ${this._achTotal}`;
+      if (count.textContent !== text) count.textContent = text;
+    }
     const Glyph = customElements.get('uf-controller-glyph');
     const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
     if (Glyph && key !== this._glyphKey) {

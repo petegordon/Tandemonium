@@ -76,10 +76,15 @@ await new Promise((r) => setTimeout(r, 400));
 // ── AD-01 · the bar's Achievements pill, its own sheet ──
 await h.shot(page, '0-tv-lobby');
 const bar = await page.evaluate(() => {
-  const ids = Array.from(document.querySelectorAll('#lobby-bar uf-button')).filter((b) => getComputedStyle(b).display !== 'none').map((b) => b.id);
-  return { ids, label: document.getElementById('bar-achievements')?.textContent.trim() };
+  const pills = Array.from(document.querySelectorAll('#lobby-bar uf-button')).filter((b) => getComputedStyle(b).display !== 'none');
+  const tops = new Set(pills.map((b) => Math.round(b.getBoundingClientRect().top)));
+  const lb = document.getElementById('bar-leaderboard');
+  const bare = (id) => document.getElementById(id).textContent.trim() === '';
+  return { ids: pills.map((b) => b.id), label: document.getElementById('bar-achievements')?.textContent.trim(), title: document.getElementById('bar-achievements')?.title, rows: tops.size,
+    iconOnly: bare('bar-leaderboard') && lb.title === 'Leaderboard' && bare('bar-settings') && bare('bar-music') };
 });
-check(bar.ids.indexOf('bar-achievements') === bar.ids.indexOf('bar-leaderboard') + 1 && bar.label === 'Achievements', 'AD-01 the bar has an Achievements pill right after Leaderboard', bar);
+check(bar.ids.indexOf('bar-achievements') === bar.ids.indexOf('bar-leaderboard') + 1 && bar.label === '1 of 100' && bar.title === 'Achievements', 'AD-01 the bar\'s Achievements pill (★ earned / total) sits right after Leaderboard', bar);
+check(bar.rows === 1 && bar.iconOnly, 'AD-01 Leaderboard, Music and Settings are icon-only pills and the bar stays on one row at 1920', bar);
 await page.evaluate(() => document.getElementById('bar-leaderboard').click());
 await until(() => document.getElementById('leaderboard-modal').open === true);
 const lbYou = await page.evaluate(async () => {
