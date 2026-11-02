@@ -6366,12 +6366,21 @@ class Game {
     if (this.lobby && this.lobby._scrollHelpTo) this.lobby._scrollHelpTo(null);
   }
 
-  /** body.pad-menus: a pad drives the menus, so buttons show their pad glyph (css/shell.css). */
+  /**
+   * body.pad-menus: a pad drives the menus, so buttons show their pad glyph (css/shell.css).
+   * body.remote-menus: only the phone remote does; it has no shoulder buttons, so the
+   * bike chooser keeps its ‹ › arrows instead of L1 / R1.
+   */
   _syncPadMenus() {
     const on = !!(this.input && this.input.gamepadConnected);
     if (on !== this._padMenusOn) {
       this._padMenusOn = on;
       document.body.classList.toggle('pad-menus', on);
+    }
+    const remoteOnly = on && !!this.input._remoteMenu && this.input._slot?.state !== 'claimed' && !this.input._steamInputActive;
+    if (remoteOnly !== this._remoteMenusOn) {
+      this._remoteMenusOn = remoteOnly;
+      document.body.classList.toggle('remote-menus', remoteOnly);
     }
   }
 

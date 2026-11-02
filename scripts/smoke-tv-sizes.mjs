@@ -6,6 +6,9 @@
 //   TV-02  Steering feel (#542): the Stable / Responsive labels and the slider
 //          thumb are readable / reachable, on the tutorial finish screen and
 //          in the Controls sheet.
+//   TV-04  a TV's own browser (Android TV, 960×540, no touch): TV lobby laid out
+//          1920 wide, Phone as controller (no WebHID Pair), Low tier, a
+//          "Press any button" boot veil, and the perf readout names the device.
 import { startHarness } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8994, outDir: 'tandemonium-tv-sizes' });
@@ -116,7 +119,7 @@ const tv = await tvPage.evaluate(() => {
   return { tv: window.__tandemoniumTV, width: window.innerWidth, bar: shown('lobby-bar'), phone: shown('btn-mode-phone'), pair: shown('btn-mode-connect-hid'), tier: window._game._quality };
 });
 check(tv.tv === true && tv.width >= 1024 && tv.bar, 'TV-04 TV browser: laid out 1920 wide with the TV system bar', tv);
-check(tv.phone && tv.pair, 'TV-04 TV browser: Phone as controller and Pair are offered', tv);
+check(tv.phone && !tv.pair, 'TV-04 TV browser: Phone as controller is offered; Pair (WebHID) is not', tv);
 check(tv.tier === 'low', 'TV-04 TV browser: Auto starts at Low', tv);
 await tvPage.waitForFunction(() => /display /.test(document.getElementById('perf-readout')?.textContent || ''), { timeout: 15000, polling: 100 });
 const perfLine = await tvPage.evaluate(() => document.getElementById('perf-readout').textContent.split('\n').find((l) => l.startsWith('display ')));

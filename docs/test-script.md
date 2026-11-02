@@ -323,8 +323,9 @@ Two devices on different networks for the M rows.
 | TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
 | TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
 | TV-03 | TV (1080p) first page: dimmed geese-from-behind art fills the stage, the right panel fades into it, the bike chooser sits low with its top level with RIDE TOGETHER, and its arrows read L1 / R1 (LB / RB …) at TV size with a pad (#553) | A | `smoke:tv-sizes` |
-| TV-04 | A TV's built-in browser (Android TV / webOS / Tizen / Fire TV, no touch, 960×540) gets the TV lobby laid out 1920 wide, Phone as controller and Pair, Auto at Low; on a first visit the boot veil says Press any button to start and a remote key lifts it; the perf readout's display line names the device; a phone is still a phone | A | `smoke:tv-sizes` |
-| TV-04h | Same on a real TV browser: TV lobby, Phone as controller pairs, Low tier, perf readout shows the TV model | M | — |
+| TV-04 | A TV's built-in browser (Android TV / webOS / Tizen / Fire TV, no touch, 960×540) gets the TV lobby laid out 1920 wide, Phone as controller (Pair hidden: no WebHID on a TV), Auto at Low; on a first visit the boot veil says Press any button to start and a remote key lifts it; the perf readout's display line names the device; a phone is still a phone | A | `smoke:tv-sizes` |
+| TV-04h | Same on a real TV browser: TV lobby, Phone as controller pairs, no Pair link, Low tier, perf readout shows the TV model | M | — |
+| LY-18 | Bike chooser by D-pad (TV layout): ← from RIDE TOGETHER / SOLO RIDE lands on ›, OK changes the bike, → returns; with only a phone remote the chooser shows ‹ › instead of L1 / R1 | A | `smoke:tv-nav` |
 
 ## 12. Data and backend
 

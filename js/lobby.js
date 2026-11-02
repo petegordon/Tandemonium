@@ -40,7 +40,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
@@ -2995,6 +2995,20 @@ export class Lobby {
     const p = this._barPills;
     this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
     this._modeColumns[2].push(p.controls, p.music, p.settings, p.quit);   // #517: Quit on the far right
+    // The bike chooser's ‹ › join the D-pad focus too: a phone remote or a TV
+    // remote has no L1 / R1, so ← from RIDE TOGETHER lands on › and OK changes
+    // the bike. Hidden off the first page, where the focus skips them.
+    this._modeColumns[0].push(...['bike-prev', 'bike-next'].map((id) => $(id)).filter(Boolean));
+    // Explicit links (the nearest-by-geometry pick from RIDE TOGETHER is "Pair it").
+    // Only in the TV layout: on a phone-width screen the chooser sits above the buttons.
+    const linkChooser = () => {
+      const tv = this._tvQuery.matches;
+      for (const id of ['btn-together', 'btn-solo']) { const el = $(id); if (el) { if (tv) el.dataset.navLeft = 'bike-next'; else delete el.dataset.navLeft; } }
+      const next = $('bike-next');
+      if (next) { if (tv) next.dataset.navRight = 'btn-together'; else delete next.dataset.navRight; }
+    };
+    linkChooser();
+    this._tvQuery.addEventListener?.('change', linkChooser);
 
     // Popups that lived inside the (now hidden) toggle columns move to <body>
     // on desktop and anchor above their pill; back in place on a phone.
@@ -5876,6 +5890,9 @@ export class Lobby {
     // Desktop builds grant every HID device in main (setDevicePermissionHandler)
     // and pool them at boot — the button is a browser-only fallback.
     if (navigator.userAgent.includes('Electron')) { btn.style.display = 'none'; return; }
+    // No WebHID to pair with: a TV's browser (Google TV has none) or any browser
+    // without navigator.hid. A dead-end link is worse than none.
+    if (isTV || !navigator.hid) { btn.style.display = 'none'; return; }
     btn.addEventListener('click', async () => {
       const hintEl = document.getElementById(hintId);
       const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };

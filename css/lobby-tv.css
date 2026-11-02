@@ -367,6 +367,9 @@ body:has(#help-modal[open], #leaderboard-modal[open]) #lobby .gamepad-focus { ou
    (L1/R1 on a DualSense, LB/RB on Xbox) while a controller drives the menus;
    mouse and touch keep the arrows. */
 body.pad-menus #bike-carousel .bike-nav-arrow { display: none; }
+/* The phone remote has no L1 / R1: keep the arrows, which take the D-pad focus. */
+body.pad-menus.remote-menus #bike-carousel .bike-nav-arrow { display: inline; }
+body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { display: none !important; }
 #bike-carousel .bike-carousel-nav uf-controller-glyph { pointer-events: none; }
 @media (min-width: 1024px) {
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 3.4) !important; }
