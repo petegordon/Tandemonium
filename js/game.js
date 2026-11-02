@@ -100,6 +100,7 @@ import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
+import { installPhonePoolUI } from './remote/phone-pool-ui.js'; // more phones for co-op / versus (#562)
 
 // #421 · game states where a phone remote shows its pedals (else its menu pad).
 const PHONE_RIDE_STATES = new Set(['countdown', 'calibrating', 'playing', 'finishCinematic', 'versusCinematic']);
@@ -319,6 +320,14 @@ class Game {
       },
     });
     this._phonePadState = null;
+    // #562 · more phones: "Join with phone" on the co-op and versus screens.
+    // Each joined phone is a controller with its own InputManager; a seat that
+    // takes it rides with it. Its Pause pauses, like Player 1's phone.
+    this.phonePool = installPhonePoolUI({
+      makeInput: () => new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false, remoteOnly: true }),
+      p1Input: this.input,
+      onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
+    });
 
     // Controller overlay — live 3D tiles of each rider's pad (C, or the quick
     // menu's CONTROLLERS entry). Reads the same slots the InputManagers do; the
@@ -857,6 +866,7 @@ class Game {
       input: this.input,
       controllerManager: this.controllerManager,
     });
+    this.lobby.phonePool = this.phonePool.pool;   // #562
 
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
@@ -2623,6 +2633,7 @@ class Game {
   _playCrash(intensity = 1) {
     this.audioEngine.crash(intensity);
     this.phonePad?.cue('crash');
+    this.phonePool?.pool.cue('crash');
   }
 
   /**
@@ -2632,14 +2643,22 @@ class Game {
    */
   _syncPhonePad() {
     const pp = this.phonePad;
-    if (!pp || pp.status === 'idle') return;
+    const pool = this.phonePool?.pool;
+    const p1On = !!pp && pp.status !== 'idle';
+    if (!p1On && !(pool && pool.entries.size)) return;
     const riding = PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._pause && !this._inputChoiceOpen;   // #529: the pause menu too
-    pp.setMode(riding ? 'ride' : 'menu');
+    if (p1On) pp.setMode(riding ? 'ride' : 'menu');
+    if (pool && pool.mode !== (riding ? 'ride' : 'menu')) pool.setMode(riding ? 'ride' : 'menu');   // #562
     if (this.state !== this._phonePadState) {
       const cue = PHONE_STATE_CUES[this.state];
-      if (cue) pp.cue(cue);
+      if (cue) { if (p1On) pp.cue(cue); pool?.cue(cue); }
       this._phonePadState = this.state;
     }
+  }
+
+  /** A phone QR panel (Player 1's or the join panel, #562) is on top. */
+  _phonePanelOpen() {
+    return !!((this.phonePad && this.phonePad.panelOpen) || (this.phonePool && this.phonePool.panelOpen));
   }
 
   _onTimerExpired() {
@@ -6259,7 +6278,7 @@ class Game {
     const bIdx = this.input._gpSwapAB ? 0 : 1;
     const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
     // The phone QR panel is on top and takes B / Start itself.
-    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; this._gpPrevView = view; return; }
+    if (this._phonePanelOpen()) { this._gpPrevStart = start; this._gpPrevB = b; this._gpPrevView = view; return; }
 
     if (start && !this._gpPrevStart) {
       if (this._optionsOpen) this._closeOptions();
@@ -6294,7 +6313,7 @@ class Game {
   _canPause({ phonePanel = false } = {}) {
     if (this.state !== 'playing' || this._drop || this._inputChoiceOpen) return false;
     if (this.mode === 'versus' && this._versusPaused) return false;
-    if (!phonePanel && this.phonePad && this.phonePad.panelOpen) return false;
+    if (!phonePanel && this._phonePanelOpen()) return false;
     if (this.recorder && this.recorder._previewPollId) return false;
     return true;
   }
@@ -6489,7 +6508,7 @@ class Game {
   _pollOverlayGamepad() {
     // The phone QR panel is on top; when it closes, a button still held
     // from closing it is not a fresh press here.
-    if (this.phonePad && this.phonePad.panelOpen) { this._overlayAfterPanel = true; return; }
+    if (this._phonePanelOpen()) { this._overlayAfterPanel = true; return; }
     if (this._overlayAfterPanel) { this._overlayAfterPanel = false; this._overlayFocus.reprime(); }
     // #517: the right stick scrolls whatever is open (Settings, a long result screen).
     const gp = this.input.gamepadConnected ? this.input.getGamepadState() : null;

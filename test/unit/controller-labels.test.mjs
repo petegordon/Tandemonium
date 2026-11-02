@@ -72,6 +72,8 @@ test('item 2: the first pad to join takes an empty (keyboard placeholder) P1 sea
   const kbP1 = [{ n: 1, type: 'keyboard', slotId: 'P1' }];
   assert.deepEqual(versusJoinSeat(kbP1, { p1SlotEmpty: true, kind: 'gamepad' }), { takeP1: true, n: 1 });
   assert.deepEqual(versusJoinSeat(kbP1, { p1SlotEmpty: true, kind: 'hid' }), { takeP1: true, n: 1 });
+  // #562: phones bring their own input and never take Player 1's slot.
+  assert.deepEqual(versusJoinSeat(kbP1, { p1SlotEmpty: true, kind: 'phone' }), { takeP1: false, n: lowestFreePlayerNumber(kbP1) });
   // Steam Input pads bind by handle, not slot: they join as the next player.
   assert.deepEqual(versusJoinSeat(kbP1, { p1SlotEmpty: true, kind: 'steam' }), { takeP1: false, n: 2 });
   // A pad already holds P1: the joiner is the next free number.

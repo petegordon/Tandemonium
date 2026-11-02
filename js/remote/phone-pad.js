@@ -328,7 +328,11 @@ function connect() {
       state.dirty = true; tick();
     }
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; forgetHost(); setStatus('Waiting for the game…'); }
-    else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
+    else if (m.type === 'seat' && m.label) {
+      $('seat-label').textContent = m.label;
+      // #562: an extra seat is told where the game is ("watch the TV").
+      if (m.note) setStatus(m.note, true);
+    }
     else if (m.type === 'hello') state.hostVersion = peerVersion(m);
     // The layout never changes on 'mode'; it only sets how often we send.
     // (A much older game also sent 'mode', without hello: ignored.)

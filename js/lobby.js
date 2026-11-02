@@ -347,14 +347,16 @@ export class Lobby {
       document.getElementById('btn-versus-join-kb'),
       document.getElementById('btn-versus-controllers'),
       document.getElementById('btn-versus-connect-hid'),
+      document.getElementById('btn-versus-join-phone'),   // #562
       document.getElementById('btn-versus-continue'),
       document.getElementById('btn-back-versus'),
     ];
     this._stepItems.set(this.versusStep, versusItems);
     this._stepCenterItems.set(this.versusStep, versusItems);
     const hostItems = [
+      document.getElementById('btn-host-join-phone'),   // #562
       document.getElementById('btn-back-role-host'),
-    ];
+    ].filter(Boolean);
     // Online / Local CHOOSE LEVEL: enabled once there are two players
     // (_refreshHostNext rebuilds this list when one becomes usable).
     this._stepItems.set(this.hostStep, hostItems);
@@ -994,7 +996,7 @@ export class Lobby {
     // On a phone, the phone IS the controller: no WebHID pairing (phones have
     // no WebHID) and no "phone as controller" (that's a remote for a big screen).
     if (isMobile) {
-      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone']) {
+      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone', 'btn-host-join-phone', 'btn-versus-join-phone']) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       }
@@ -3034,7 +3036,7 @@ export class Lobby {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
+      if (document.querySelector('.phone-qr-panel.open')) return;   // the phone panel closes itself
       if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
       if (this.helpModal && this.helpModal.open) { this._closeHelp(); e.preventDefault(); return; }
       if (this._leaderboardSheet && this._leaderboardSheet.open) { this._closeLeaderboard(); e.preventDefault(); return; }
@@ -4747,7 +4749,11 @@ export class Lobby {
     this._renderHostSeats(cands);
     const status = document.getElementById('host-status');
     if (status && local) { status.textContent = 'Online room closed: riding on this screen'; status.className = 'conn-status'; }
-    const items = [online && onBtn, local && locBtn, back].filter(Boolean);
+    // #562: "Join with phone" while the stoker seat is open.
+    const phoneBtn = !online && !local && !isMobile ? document.getElementById('btn-host-join-phone') : null;
+    const pb = document.getElementById('btn-host-join-phone');
+    if (pb && !isMobile) pb.style.display = phoneBtn ? '' : 'none';
+    const items = [online && onBtn, local && locBtn, phoneBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5033,7 +5039,7 @@ export class Lobby {
         if (seatOpen && any && !prev.any) {
           this._versusPrevButtons.set(key, { any });
           this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
-          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
+          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
           // Desktop/TV: still on this step with Player 2 seated; keep watching.
           if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
           return;
@@ -5640,6 +5646,7 @@ export class Lobby {
   _leaveLocalP2(reason) {
     const im = this._localP2InputManager;
     const slot = im && im._slot;
+    this._releasePhone(im);   // #562: a phone goes back to the join list
     if (slot && slot.id !== 'P1' && this.controllerManager) {
       this.controllerManager.releaseSlotToPool(slot.id);
     }
@@ -5740,7 +5747,12 @@ export class Lobby {
       try { this.net.destroy(); } catch (e) {}
       this.net = null;
     }
-    if (sourceType === 'gamepad') {
+    if (sourceType === 'gamepad' && opts.phone) {
+      // #562 · a phone: its own InputManager is Player 2's. It is "connected"
+      // while the phone is, so the drop pause treats it like a pad.
+      this._localP2InputManager = opts.phone.attach('Player 2');
+      this._localP2Type = 'gamepad';
+    } else if (sourceType === 'gamepad') {
       // Seat the pad now, in the slot the detection found it in (a manager
       // claim may already have put it in P2..P4), else P2. Seating explicitly
       // — rather than waiting for the slot to claim on first input — means a
@@ -5983,6 +5995,7 @@ export class Lobby {
     if (!p || p.slotId === 'P1' || p.input === this.input) return;
     this._versusPlayers = this._versusPlayers.filter(x => x !== p);
     if (p.input) p.input.steamInputHandle = null;
+    this._releasePhone(p.input);   // #562
     if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
     this._versusPrevButtons.delete('member:' + p.n);
     this._versusLastCardsKey = null;
@@ -6057,7 +6070,7 @@ export class Lobby {
       sto._wired = true;
       sto.addEventListener('click', () => {
         const c = (this._detectLocalJoinCandidates() || [])[0];
-        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
       });
     }
   }
@@ -6076,7 +6089,7 @@ export class Lobby {
       b.className = 'lobby-btn-p2-gp';
       b.setAttribute('data-key', c.key);
       b.innerHTML = `<span class="btn-local-join-main">JOIN AS PLAYER 2</span><span class="btn-local-join-padname">${esc(c.name)}</span><span class="btn-local-join-hint">CONNECTED · press any button on it, or click</span>`;
-      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name }));
+      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry }));
       wrap.appendChild(b);
     }
     const detectedEl = document.getElementById('local-join-detected');
@@ -6091,6 +6104,7 @@ export class Lobby {
     for (const p of this._versusPlayers) {
       // Unbind Steam handles so the InputManager defaults revert.
       if (p.input) p.input.steamInputHandle = null;
+      this._releasePhone(p.input);   // #562
       if (p.slotId === 'P1' || p.type !== 'gamepad' || !p.slotId) continue;
       // Return HID entries to the pool cleanly so re-entering the screen
       // (or co-op) can claim them again.
@@ -6273,6 +6287,12 @@ export class Lobby {
   _detectJoinCandidates(pads, owned) {
     const out = [];
     const mgr = this.controllerManager;
+    // #562 · joined phones that aren't seated: controllers like any other.
+    // The entry carries a standard-mapping synthetic, so the screens poll it
+    // exactly as they poll a pad.
+    for (const entry of this.phonePool ? this.phonePool.presentableEntries() : []) {
+      out.push({ kind: 'phone', key: 'phone:' + entry.n, entry, name: entry.identity.name, pollGp: entry.synthetic });
+    }
     // Steam Input active → snapshot handles are the truth.
     if (this.input && this.input._steamInputActive) {
       const ownedHandles = owned.handles;
@@ -6436,7 +6456,12 @@ export class Lobby {
     let slotId = null;
     let gpIndex = null;
 
-    if (c.kind === 'steam') {
+    if (c.kind === 'phone') {
+      // #562 · a phone brings its own InputManager; no slot. It never takes
+      // over a keyboard Player 1 (that seat is bound to slot P1).
+      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
+      input = c.entry.attach();
+    } else if (c.kind === 'steam') {
       if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
       input = new InputManager({
         enableKeyboard: false,
@@ -6519,6 +6544,7 @@ export class Lobby {
       input,
     });
     this._versusPlayers.sort((a, b) => a.n - b.n);
+    if (c.kind === 'phone') c.entry.host.setLabel('Player ' + n);
     console.log(`[versus] ${c.name} joined as player ${n} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
     analytics.trackEvent('versus_player_joined', {
       source: c.kind,
@@ -6647,8 +6673,17 @@ export class Lobby {
    * versus detection knows about it: a manager slot, a Gamepad-API pad, a
    * WebHID device, a Steam Input handle, or the keyboard.
    */
+  /** #562 · a seat gave its phone back: it is a free controller again. */
+  _releasePhone(input) {
+    const e = this.phonePool && input && input.remoteOnly ? this.phonePool.entryForInput(input) : null;
+    if (e) e.release();
+  }
+
   _versusIdentity(x) {
     if (x.type === 'keyboard') return KEYBOARD_IDENTITY;
+    // #562 · a phone (a candidate, or a seat riding with one): generic prompts.
+    const phone = x.kind === 'phone' ? x.entry : (x.input && x.input.remoteOnly && this.phonePool ? this.phonePool.entryForInput(x.input) : null);
+    if (phone) return identityOf(null, phone.identity.name);
     if (x.type === 'bot') return identityOf(null, 'Bot');
     if (x.kind === 'gamepad' && x.gp) return identifyGamepadId(x.gp.id);
     if (x.kind === 'hid' && x.device) return hidDeviceIdentity(x.device) || identifyHidDevice(x.device);
@@ -7144,7 +7179,7 @@ export class Lobby {
 
     // ...or while the phone QR panel is on top (it takes B / Start itself);
     // the next frame here re-primes, so the closing press isn't reused.
-    if (document.getElementById('phone-pad-panel')?.classList.contains('open')) return;
+    if (document.querySelector('.phone-qr-panel.open')) return;
 
     // Don't process lobby navigation while options overlay is open
     const optOverlay = document.getElementById('options-overlay');

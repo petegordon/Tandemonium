@@ -207,7 +207,9 @@ real-hardware rows stay manual.
 | MC-12h | MC-12 on a real Puck with two controllers | M | — |
 | MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` |
 | MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (decided 2026-10-25) | A | `smoke:local-coop` |
-| MC-15 | Phone remote as local Player 2 next to a pad as P1: not built yet (P4 phase, #455) | M | `smoke:phone-coop` prints NOT BUILT |
+| MC-15 | The first page's phone remote next to a pad as P1 drives the P1 seat (a phone as Player 2 joins from the co-op screen instead: MC-16) | A | `smoke:phone-coop` |
+| MC-16 | Co-op with a phone as Player 2 (#562): "Use your phone as a controller" on the host step (the online room QR hides meanwhile; the phone says "watch the TV"), the QR moves on after each join, OK seats the phone, it pedals and steers Player 2 only, and a drop pauses and shows its code | A | `smoke:phone-multi`, `test/unit/phone-entry` |
+| MC-17 | Versus with two phones (#562): both join from the versus screen, OK takes a seat (own player numbers), D-pad switches team, BACK leaves and OK rejoins, each pedals its own seat in the race | A | `smoke:phone-multi` |
 | MC-15b | A phone next to a pad: both drive P1's seat (what the game does today) | A | `smoke:phone-coop` |
 
 ### Versus (split screen)
