@@ -21,7 +21,7 @@ export const SMOKES = [
   'ping', 'economy', 'achievements', 'quality', 'layout', 'geese', 'physics',
   'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'props', 'host-room', 'disconnect',
   'local-coop', 'versus', 'webhid', 'flows', 'steam-input', 'input', 'solo-extras',
-  'options', 'lobby-layout', 'tv-nav', 'online', 'phone-pad', 'phone-coop',
+  'options', 'lobby-layout', 'tv-nav', 'online', 'phone-pad', 'phone-coop', 'phone-multi',
   'controller-overlay', 'fit', 'clip-share', 'tv-sizes',
 ];
 

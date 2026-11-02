@@ -5576,6 +5576,7 @@ ON</button>
                click. Same path as the host step's CONNECT A CONTROLLER; the
                device is pooled and the join monitor seats it on its first A. -->
           <uf-button variant="ghost" size="sm" id="btn-versus-connect-hid" title="Approve another controller for this page (WebHID) — browser only; the desktop app sees every controller by itself">Don&rsquo;t see your controller? Pair it</uf-button>
+          <uf-button variant="ghost" size="sm" id="btn-versus-join-phone" title="Steer from your phone — the game stays on this screen">&#128241; Use your phone as a controller</uf-button>
           <p class="versus-join-hint" id="btn-versus-connect-hid-hint" style="display:none;"></p>
           <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-versus">&larr; Back</uf-button>
@@ -5611,6 +5612,7 @@ ON</button>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+            <uf-button variant="ghost" size="sm" id="btn-host-join-phone" title="Steer from your phone — the game stays on this screen">&#128241; Use your phone as a controller</uf-button>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>
           <!-- Local multiplayer: join section shown when P2 input is available.

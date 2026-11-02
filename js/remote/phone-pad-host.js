@@ -70,10 +70,17 @@ export class PhonePadHost {
    * @param {() => void} [opts.onReturn]  ...and came back
    * @param {(link: string) => void} [opts.onLink]  the QR's link changed (new code or new secret): redraw it
    * @param {() => void} [opts.onTakeover]  another phone took this seat over with the QR
+   * @param {string} [opts.label]  what the phone shows as its seat (default "Player <seat>")
+   * @param {string} [opts.note]   a line the phone shows when it is seated: where to look (#562)
+   * @param {(f: import('./pad-protocol.js').PadFrame, nav: number) => void} [opts.onFrame]
+   *   #562: every applied frame, with the menu buttons held (latch removed)
    */
-  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn, onLink, onTakeover }) {
+  constructor({ input, seat = 1, relay, siteBase, onStatus, onRecenter, onPause, onDrop, onReturn, onLink, onTakeover, label, note, onFrame }) {
     this.input = input;
     this.seat = seat;
+    this.label = label || null;
+    this.note = note || null;
+    this.onFrame = onFrame || null;
     this.relay = relay || resolveRelay();
     this.siteBase = siteBase || resolveSiteBase();
     this.onStatus = onStatus || null;
@@ -421,6 +428,7 @@ export class PhonePadHost {
     }
     if ((pressed & NAV.pause) && this.mode === 'ride' && this.onPause) this.onPause();
     this._last = f;
+    if (this.onFrame) this.onFrame(f, nav);
   }
 
   _checkStale() {
@@ -469,7 +477,16 @@ export class PhonePadHost {
 
   /** Tell the phone its seat. */
   _greet() {
-    this.sendToPad({ type: 'seat', seat: this.seat, label: 'Player ' + this.seat });
+    const msg = { type: 'seat', seat: this.seat, label: this.label || ('Player ' + this.seat) };
+    if (this.note) /** @type {any} */ (msg).note = this.note;
+    this.sendToPad(msg);
+  }
+
+  /** #562 · change what the phone shows as its seat (e.g. once it sits down). @param {string} label */
+  setLabel(label) {
+    if (label === this.label) return;
+    this.label = label;
+    if (this._phoneHere) this._greet();
   }
 
   /** The phone left, or went silent (asleep, out of range). */

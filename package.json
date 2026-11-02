@@ -68,6 +68,7 @@
     "smoke:tv-sizes": "node scripts/smoke-tv-sizes.mjs",
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
+    "smoke:phone-multi": "node scripts/smoke-phone-multi.mjs",
     "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
     "smoke:clip-share": "node scripts/smoke-clip-share.mjs",
     "smoke:fit": "node scripts/smoke-fit.mjs",

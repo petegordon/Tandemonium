@@ -305,6 +305,10 @@ export class InputManager {
    * @param {boolean} [options.enableKeyboard=true]
    * @param {boolean} [options.enableTouch=true]
    * @param {boolean} [options.enableMotion=true]
+   * @param {boolean} [options.remoteOnly=false]  #562 · a phone controller's
+   *   seat: driven only by its phone (feedRemoteTilt / setRemotePedals /
+   *   setRemoteNav). It never reads Steam Input, and it is "connected" while
+   *   its phone is (remotePresent), so seat drop checks treat it like a pad.
    */
   constructor(options = {}) {
     const {
@@ -312,7 +316,11 @@ export class InputManager {
       enableKeyboard = true,
       enableTouch = true,
       enableMotion = true,
+      remoteOnly = false,
     } = options;
+    this.remoteOnly = !!remoteOnly;
+    /** #562 · the phone driving a remoteOnly seat is here. */
+    this.remotePresent = false;
     this._slot = slot;
     this._slotUnsubscribe = null;
     this.keyboardActive = enableKeyboard;
@@ -464,6 +472,7 @@ export class InputManager {
   // Read-only getters that delegate to the attached slot. ControllerManager
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
+    if (this.remoteOnly) return this.remotePresent;
     if (this._slot?.state === 'claimed') return true;
     // A phone remote showing its menu pad (#421) is a gamepad to the menus.
     if (this._remoteMenu) return true;
@@ -1285,6 +1294,7 @@ export class InputManager {
    * same data within a frame. Applies the DualSense Input Source preference.
    */
   _refreshSteamInputSnapshot() {
+    if (this.remoteOnly) { this._steamInputSnapshot = []; this._steamInputPrevActive = this._steamInputActive = false; return; }
     const raw = (typeof window !== 'undefined' && window.steam && window.steam.input)
       ? window.steam.input.getLatest()
       : null;
