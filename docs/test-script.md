@@ -171,9 +171,8 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-10h | IN-10 on a real Puck + controller | M | — |
 | IN-11 | GameSir Super Nova: IMU layout, gyro live (WebHID can't tell it from a DS4 v2, so it's named "Sony DualShock 4 v2") | A | `smoke:webhid` |
 | IN-11h | IN-11 on a real Super Nova | M | — |
-| IN-12 | Steam Input holds the pad: seat connects, Confirm and pedals work, gyro lean from Steam motion, Steer fallback, Options names the source | A | `smoke:steam-input`, `test/unit/steam-steer-curve` |
-| IN-12h | IN-12 in the real Steam client: lean feels right | M | — |
-| IN-13 | Options → DS source Auto / WebHID / Steam is saved and applies on next launch | A | `smoke:steam-input` |
+| IN-12 | (retired with the Steam snapshot stack, #581: a Steam-captured pad is Steam's virtual XInput pad — IN-19) | — | — |
+| IN-13 | (retired: the DualSense Input Source option is gone — the DualSense stays on WebHID) | — | — |
 | IN-14 | Options → gyro Euler / Gravity changes lean feel | M | `test/unit/tuning-save-gyro` |
 | IN-15 | Recenter from the quick menu mid-ride (tilt steering): the held tilt becomes the new centre; the ride carries on | A | `smoke:input` |
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
@@ -181,7 +180,7 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
 | IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
 | IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
-| IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `smoke:steam-input`, `test/unit/motion-gain` |
+| IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `test/unit/motion-gain` |
 | IN-20h | IN-20 by hand: Chill feels as calm on a Steam Controller / DualSense as on a phone; Daredevil turns sharply on both | M | — |
 
 ## 5. Multi-controller (local co-op and versus)
