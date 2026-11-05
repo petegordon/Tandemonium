@@ -180,8 +180,14 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host[active] .lobby-hint, #lobby-host[active] #local-join-section { display: none !important; }
   #lobby-host[active] .host-tv { display: block; }
   #lobby-host[active] #host-online-head { grid-row: 1; }
-  #lobby-host[active] #room-code-display { grid-row: 2; font: 800 calc(var(--uf-size-2xl) * 1.3)/1 var(--uf-font-mono) !important; letter-spacing: .12em !important; color: var(--uf-color-accent); }
-  #lobby-host[active] #room-qr-tv { grid-row: 3; display: inline-grid; }
+  /* #563 · "Scan to join" (one QR, the phone chooses) on top; the room code
+     only once the online room is open (a phone chose Play, or the code button). */
+  #lobby-host[active] #host-join-qr { grid-row: 2; display: inline-grid; }
+  #lobby-host.host-join-off #host-join-qr { visibility: hidden; }
+  #lobby-host[active] #btn-host-room-code { grid-row: 3; }
+  #lobby-host[active]:not(.host-room-open) #room-code-display,
+  #lobby-host[active]:not(.host-room-open) #btn-host-online-next { display: none !important; }
+  #lobby-host[active] #room-code-display { grid-row: 3; font: 800 calc(var(--uf-size-2xl) * 1.3)/1 var(--uf-font-mono) !important; letter-spacing: .12em !important; color: var(--uf-color-accent); }
   #lobby-host[active] #host-status { grid-row: 4; font-size: var(--uf-size-md) !important; color: var(--uf-color-fg); }
   #lobby-host[active] #host-status:not(:empty)::before { content: '● '; color: var(--uf-color-accent-2); }
   #lobby-host[active] #host-local { grid-column: 2; grid-row: 1 / span 4; display: grid; gap: var(--uf-space-3); width: 100%; min-width: 0; }
@@ -192,7 +198,7 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host[active] #btn-host-online-next, #lobby-host[active] #btn-host-local-next { min-width: 14em; font-size: var(--uf-size-lg); justify-self: start; }
   /* Whichever side has the stoker dims the other (2026-10-23). */
   #lobby-host.host-local-on #host-online-head, #lobby-host.host-local-on #room-code-display,
-  #lobby-host.host-local-on #room-qr-tv, #lobby-host.host-local-on #host-status,
+  #lobby-host.host-local-on #host-status,
   #lobby-host.host-local-on #btn-host-online-next,
   #lobby-host.host-online-on #host-local > h3, #lobby-host.host-online-on #host-local > p,
   #lobby-host.host-online-on #host-roster, #lobby-host.host-online-on #btn-host-local-next { opacity: .4; }
