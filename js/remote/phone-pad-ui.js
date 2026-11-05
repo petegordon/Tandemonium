@@ -58,6 +58,7 @@ export function installPhonePadUI(input, hooks = {}) {
 
   const panel = document.createElement('div');
   panel.id = 'phone-pad-panel';
+  panel.className = 'phone-qr-panel';   // #562: lobby checks for any phone QR panel
   panel.innerHTML = `
     <div class="ppp-card" role="dialog" aria-label="Phone as controller">
       <h2 id="ppp-title">&#128241; PHONE AS CONTROLLER</h2>

@@ -129,7 +129,7 @@ async function failByTimeout(page) {
 }
 
 // ── 1. Practice: fail checkpoint 2 again and again ─────────────────────────
-console.log("practice Today's Road:");
+console.log("practice Daily Ride:");
 const page = await open();
 await rideDaily(page, 'practice');
 const start = await page.evaluate(() => {

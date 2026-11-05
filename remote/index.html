@@ -33,6 +33,18 @@
     border: none;
   }
   .seat { color: var(--uf-color-accent-2, #ffd23f); font-weight: bold; }
+  /* #563 · Control the TV (the default, bigger) / Play on this phone */
+  .choice {
+    font: inherit; font-size: 18px; font-weight: bold; letter-spacing: 1px; width: min(100%, 420px);
+    padding: 14px 20px; border-radius: 14px; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+    color: var(--uf-color-fg, #fff); background: var(--uf-color-surface-2, rgba(255,255,255,.1));
+    border: 2px solid var(--uf-color-line-soft, rgba(255,255,255,.16));
+  }
+  .choice small { font-size: 13px; font-weight: normal; letter-spacing: 0; color: var(--uf-color-fg-muted, #8a93a6); }
+  .choice.big { font-size: 22px; padding: 20px 24px;
+    color: var(--uf-color-fg-on-accent, #06140c); background: var(--uf-color-accent, #44ff66); border-color: var(--uf-color-accent, #44ff66); }
+  .choice.big small { color: inherit; opacity: .75; }
+  .choice[hidden] { display: none; }
 
   /* One fixed layout, riding or in menus (the game decides what a press
      means): a gamepad-style top (a plus-shaped D-pad on the left with the
@@ -138,6 +150,20 @@
     <p>Your phone is the controller for <span class="seat" id="seat-label">Player 1</span>.</p>
     <p>Hold it sideways like handlebars. <strong>Tilt</strong> to steer, tap <strong>LEFT</strong> and <strong>RIGHT</strong> to pedal.</p>
     <button id="btn-connect" type="button">CONNECT</button>
+  </section>
+
+  <!-- #563 · the co-op host step's QR: the phone chooses how to join. -->
+  <section class="screen center" id="screen-choose">
+    <h1>TANDEMONIUM</h1>
+    <p>How do you want to play?</p>
+    <button class="choice big" id="btn-control" type="button">&#127918; CONTROL THE TV<small>The game stays on the TV. Your phone steers and pedals.</small></button>
+    <button class="choice" id="btn-play" type="button">&#128241; PLAY ON THIS PHONE<small>The game runs on this phone, as the online partner.</small></button>
+  </section>
+
+  <section class="screen center" id="screen-play">
+    <h1>PLAY ON THIS PHONE</h1>
+    <p id="play-status">Asking the TV to open a room&hellip;</p>
+    <button class="choice big" id="btn-play-control" type="button" hidden>&#127918; CONTROL THE TV INSTEAD</button>
   </section>
 
   <section class="screen center" id="screen-bad-link">

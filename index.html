@@ -1586,7 +1586,7 @@
     margin-top: 1px;
     padding-left: 0;
   }
-  /* C-2 · Today's Road: a distinct edge so it reads as its own thing, and a
+  /* C-2 · Daily Ride: a distinct edge so it reads as its own thing, and a
      quiet second line explaining the rule. */
   .level-card[data-level-id="daily"] {
     border-color: rgba(255, 210, 63, 0.55);
@@ -5218,12 +5218,12 @@ ON</button>
 <div id="ranked-badge">RANKED RUN</div>
 <div id="help-badge" data-tier="0"></div>
 
-<!-- D-2 · Practice or a ranked run, on Today's Road only. Shown by the lobby
+<!-- D-2 · Practice or a ranked run, on the Daily Ride only. Shown by the lobby
      before START RIDE takes effect. The demo build never shows this: it is
      practice-only there (see game._isDemo). -->
 <div id="daily-mode-overlay">
   <div id="daily-mode-box">
-    <h2 id="daily-mode-title">Today&rsquo;s Road</h2>
+    <h2 id="daily-mode-title">Daily Ride</h2>
     <p id="daily-mode-sub"></p>
     <uf-button variant="accent" id="btn-daily-ranked">RANKED RUN
       <span class="daily-mode-hint" id="daily-ranked-hint">One per day. Crashes are fine; ending early is not.</span>
@@ -5483,6 +5483,8 @@ ON</button>
 (function() {
   var ua = navigator.userAgent;
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
+  // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
+  if (isDesktop) document.documentElement.classList.add('desktop-app');
   // A TV browser (marked at the top of <head>) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
@@ -5629,7 +5631,7 @@ ON</button>
         <uf-step id="lobby-mode" class="lobby-step">
           <div class="lobby-mode-buttons">
             <uf-button variant="accent" id="btn-together" sub="Couch co-op, online or versus">RIDE TOGETHER</uf-button>
-            <uf-button id="btn-solo" sub="Levels, Today’s Road and Slingshot">SOLO RIDE</uf-button>
+            <uf-button id="btn-solo" sub="Levels, Daily Ride and Slingshot">SOLO RIDE</uf-button>
             <!-- E-6 · Tourist ("ride the distance between you") is a card in
                  the SOLO level list (#400), shown only with a Maps key. -->
             <!-- WebHID grant for a pad the Gamepad API can't see (Steam Controller;
@@ -5728,6 +5730,7 @@ ON</button>
                click. Same path as the host step's CONNECT A CONTROLLER; the
                device is pooled and the join monitor seats it on its first A. -->
           <uf-button variant="ghost" size="sm" id="btn-versus-connect-hid" title="Approve another controller for this page (WebHID) — browser only; the desktop app sees every controller by itself">Don&rsquo;t see your controller? Pair it</uf-button>
+          <uf-button variant="ghost" size="sm" id="btn-versus-join-phone" title="Steer from your phone — the game stays on this screen">&#128241; Use your phone as a controller</uf-button>
           <p class="versus-join-hint" id="btn-versus-connect-hid-hint" style="display:none;"></p>
           <uf-button variant="accent" id="btn-versus-continue" disabled>CHOOSE LEVEL</uf-button>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-versus">&larr; Back</uf-button>
@@ -5749,18 +5752,24 @@ ON</button>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
           <uf-button variant="accent" id="btn-host-online-next" disabled>CHOOSE LEVEL</uf-button>
-          <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
+          <!-- Desktop/TV (#428 round 5; #563 one "Scan to join" QR, room code on demand)
                on the left, Local multiplayer on the right — a kit <uf-team> with the
                captain seated and the stoker seat waiting for any controller, then every
                connected controller in a <uf-controller-roster> strip. Filled by
                lobby._renderHostSeats; css/lobby-tv.css lays the step out. -->
-          <div id="host-online-head" class="host-tv"><h3>Online multiplayer</h3><p>Your partner enters this code, or scans the QR code, on their own device.</p></div>
-          <uf-qr id="room-qr-tv" class="host-tv" caption="" size="400"></uf-qr>
+          <!-- #563 · one QR, the phone chooses: "Control the TV" (a phone seat,
+               the game stays here) or "Play on this phone" (the online partner:
+               the RIDE TOGETHER room opens only then). Filled by
+               lobby._syncHostJoinQr. The room code button opens the room for
+               typing its code on another device. -->
+          <div id="host-online-head" class="host-tv"><h3>Scan to join</h3><p>Scan with a phone, then choose: steer from it while the game stays on this screen, or play on the phone itself.</p></div>
+          <uf-qr id="host-join-qr" class="host-tv" caption="" size="400"></uf-qr>
+          <uf-button variant="ghost" size="sm" id="btn-host-room-code" title="Open the online room and show its code, to type on another device">Join from another device with a code</uf-button>
           <div id="host-local" class="host-tv">
             <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
             <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
               <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
-              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
+              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller, or scan the code with a phone"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
@@ -5801,11 +5810,19 @@ ON</button>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Stoker Join Room (#lobby-join)
-             Code input (keyboard) + gamepad spinner alternative.
+             Rejoin cards for recent rooms (#547), then code input (keyboard) +
+             gamepad spinner alternative.
              Toggle columns hidden on this step.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-join" class="lobby-step">
+          <!-- #547: rooms from the last 5 minutes, front or back seat; a pick rejoins
+               in the seat you had. Filled by lobby._renderRejoinCards(); hidden when empty. -->
+          <div id="join-rejoin" class="join-rejoin" hidden>
+            <h3 class="join-rejoin-head">Rejoin a recent ride</h3>
+            <div id="join-rejoin-cards" class="join-rejoin-cards"></div>
+            <p class="join-rejoin-or">or enter a room code</p>
+          </div>
           <p class="lobby-prompt">Enter room code:</p>
           <div class="room-code-join-wrap">
             <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
@@ -6067,15 +6084,7 @@ ON</button>
       </div>
       <div class="help-toggle-row">
         <span class="help-icon help-icon-all" style="font-size:10px;font-weight:700">ALL</span>
-        <span><span class="help-toggle-name">All</span> <span class="help-toggle-desc">— Enable or disable all permissions at once</span></span>
-      </div>
-      <div class="help-toggle-row">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="11" height="10" rx="1.5"/><path d="M13 8.5l5-2.5v8l-5-2.5"/></svg>
-        <span><span class="help-toggle-name">Video</span> <span class="help-toggle-desc">— Share your camera for the ride</span></span>
-      </div>
-      <div class="help-toggle-row">
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2" width="5" height="10" rx="2.5"/><path d="M5 9a5 5 0 0 0 10 0"/><line x1="10" y1="14" x2="10" y2="18"/><line x1="7" y1="18" x2="13" y2="18"/></svg>
-        <span><span class="help-toggle-name">Audio</span> <span class="help-toggle-desc">— Share your microphone for voice chat</span></span>
+        <span><span class="help-toggle-name">All</span> <span class="help-toggle-desc">— Turn motion steering and music on or off together</span></span>
       </div>
       <div class="help-toggle-row">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="5" r="3"/><line x1="10" y1="8" x2="10" y2="14"/><line x1="5" y1="14" x2="15" y2="14"/><rect x="4" y="14" width="12" height="4" rx="1.5"/></svg>
@@ -6083,9 +6092,9 @@ ON</button>
       </div>
       <div class="help-toggle-row">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="14" height="9" rx="2"/><circle cx="7" cy="10.5" r="1.5" fill="currentColor" stroke="none"/><line x1="11" y1="9" x2="13" y2="9"/><line x1="12" y1="8" x2="12" y2="10"/><path d="M4 4c-1 0.5-1 1.5 0 2" opacity="0.6"/><path d="M16 4c1 0.5 1 1.5 0 2" opacity="0.6"/></svg>
-        <span><span class="help-toggle-name">Controller Gyro</span> <span class="help-toggle-desc">— Lean controller to steer. Press L3 to recalibrate</span></span>
+        <span><span class="help-toggle-name">Controller Gyro</span> <span class="help-toggle-desc">— Lean controller to steer. Click a stick (L3 or R3) to recalibrate</span></span>
       </div>
-      <div class="help-toggle-row">
+      <div class="help-toggle-row help-web-only">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="8" height="16" rx="2"/><circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/><path d="M3 6c-1 1.5-1 3.5 0 5" opacity="0.6"/><path d="M17 6c1 1.5 1 3.5 0 5" opacity="0.6"/></svg>
         <span><span class="help-toggle-name">Phone Motion</span> <span class="help-toggle-desc">— Tilt your phone to steer. Tap screen to recalibrate</span></span>
       </div>
@@ -6112,9 +6121,13 @@ ON</button>
       </div>
       <div class="help-toggle-row">
         <span class="help-emoji" style="font-size:24px;line-height:1;">&#x1F3AE;</span>
-        <span><span class="help-toggle-name">Controller Gyro</span> <span class="help-toggle-desc">&mdash; Lean to steer. Pedal with L1/R1 or L2/R2. Both together to brake. L3 to recalibrate</span></span>
+        <span><span class="help-toggle-name">Controller Gyro</span> <span class="help-toggle-desc">&mdash; Lean to steer. Pedal with L1/R1 or L2/R2. Both together to brake. Click a stick (L3 or R3) to recalibrate</span></span>
       </div>
       <div class="help-toggle-row">
+        <span class="help-emoji" style="font-size:24px;line-height:1;">&#x1F4F2;</span>
+        <span><span class="help-toggle-name">Use your phone as a controller</span> <span class="help-toggle-desc">&mdash; Choose &#128241; Phone as controller and scan the code: tilt to steer, tap the pedals to ride</span></span>
+      </div>
+      <div class="help-toggle-row help-web-only">
         <span class="help-emoji" style="font-size:24px;line-height:1;">&#x1F4F1;</span>
         <span><span class="help-toggle-name">Phone Motion</span> <span class="help-toggle-desc">&mdash; Tilt to steer. Tap the left and right pedals to ride. Both together to brake. Tap center to recalibrate</span></span>
       </div>
@@ -6152,28 +6165,6 @@ ON</button>
       </p>
     </div>
 
-    <div class="help-section">
-      <div class="help-section-title">Achievements</div>
-      <ul class="help-achievement-list">
-        <li><span class="ach-icon">👟</span><strong>First 500m</strong> <span class="ach-desc">— Ride 500 meters</span></li>
-        <li><span class="ach-icon">🏅</span><strong>1K Club</strong> <span class="ach-desc">— Ride 1,000 meters</span></li>
-        <li><span class="ach-icon">🏆</span><strong>5K Champion</strong> <span class="ach-desc">— Ride 5,000 meters</span></li>
-        <li><span class="ach-icon">⚡</span><strong>Speed Demon</strong> <span class="ach-desc">— Hit 50 km/h</span></li>
-        <li><span class="ach-icon">🤝</span><strong>Perfect Sync</strong> <span class="ach-desc">— 10 seconds of coordinated pedaling</span></li>
-        <li><span class="ach-icon">🌟</span><strong>Collector</strong> <span class="ach-desc">— Grab 10 collectibles in a run</span></li>
-        <li><span class="ach-icon">👑</span><strong>Hoarder</strong> <span class="ach-desc">— Grab every collectible in a level</span></li>
-        <li><span class="ach-icon">🏠</span><strong>Home Sweet Home</strong> <span class="ach-desc">— Finish Grandma's House</span></li>
-        <li><span class="ach-icon">🚲</span><strong>Grandma's Classic</strong> <span class="ach-desc">— Finish Grandma's on the default bike</span></li>
-        <li><span class="ach-icon">🍊</span><strong>Marmalade Delivery</strong> <span class="ach-desc">— Finish Grandma's on the orange bike</span></li>
-        <li><span class="ach-icon">🫐</span><strong>Berry Special Visit</strong> <span class="ach-desc">— Finish Grandma's on the magenta bike</span></li>
-        <li><span class="ach-icon">🍒</span><strong>Cherry on Top</strong> <span class="ach-desc">— Finish Grandma's on the red bike</span></li>
-        <li><span class="ach-icon">🌊</span><strong>Ocean to Grandma's</strong> <span class="ach-desc">— Finish Grandma's on the blue bike</span></li>
-        <li><span class="ach-icon">🌿</span><strong>Jungle Express</strong> <span class="ach-desc">— Finish Grandma's on the green bike</span></li>
-        <li><span class="ach-icon">🍌</span><strong>Banana Delivery</strong> <span class="ach-desc">— Finish Grandma's on the yellow bike</span></li>
-        <li><span class="ach-icon">💮</span><strong>Flawless</strong> <span class="ach-desc">— Finish Grandma's House with no crashes or restarts</span></li>
-        <li><span class="ach-icon">🤜</span><strong>Team Player</strong> <span class="ach-desc">— Stay safe 80% of a multiplayer ride</span></li>
-      </ul>
-    </div>
   </div>
 </uf-sheet>
 <script>

@@ -41,6 +41,11 @@ export class TeamRig {
     // ~7MB model made the second team's bike appear seconds late.
     this.bike = new BikeModel(scene, null, bikeCloneSource);
     this.bike.roadPath = world.roadPath;
+    // #581: a solo team rides with one goose — the stoker's saddle stays empty
+    // unless a second player sits there. (Which goose rides which seat, and
+    // in what, is to become each player's own pick.) The clone's geese are
+    // already seated, and a team outfit swap re-applies this once it lands.
+    this.bike.setSoloRider(!this.isDuo);
 
     // Aspect is owned by the game's versus resize handler (half-width viewport).
     // Layer 1 (team A) / layer 2 (team B) show that team's own deformable

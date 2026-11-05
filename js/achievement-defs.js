@@ -40,7 +40,7 @@ export const SECTIONS = [
   { id: 'collect',  title: 'Collecting' },
   { id: 'sling',    title: 'Slingshot' },
   { id: 'coins',    title: 'Tandem Tokens' },
-  { id: 'daily',    title: "Today's Road" },
+  { id: 'daily',    title: 'Daily Ride' },
   { id: 'together', title: 'Riding together' },
   { id: 'versus',   title: 'Versus' },
   { id: 'chaos',    title: 'Chaos' },
@@ -145,8 +145,8 @@ export const ACHIEVEMENTS = [
   { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'bronze' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 1 },
   { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'silver' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 2 },
   { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'gold' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 3 },
-  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish Today's Road inside its gold time, on any day (practice counts); each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
-  { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: "Win gold on both timed roads: Grandma's and Today's Road",
+  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish the Daily Ride inside its gold time, on any day (practice counts); each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
+  { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: "Win gold on both timed roads: Grandma's and the Daily Ride",
     condition: (s, L) => MEDAL_LEVELS.every(id => (L.golds || []).includes(id)),
     progress: L => [MEDAL_LEVELS.filter(id => (L.golds || []).includes(id)).length, MEDAL_LEVELS.length], demo: false, full: 'scope' },
   { id: 'adventurer',     section: 'medals', name: 'Adventurer',         icon: '🧭', desc: 'Finish any level on Adventurous',     condition: s => fin(s) && s.difficulty === 'adventurous' },
@@ -156,7 +156,7 @@ export const ACHIEVEMENTS = [
   { id: 'steady_hands',   section: 'clean', name: 'Steady Hands',        icon: '🧘', desc: 'Ride 60 s without the bike shaking from leaning too far', condition: s => n(s.steadyBest) >= 60 },
   { id: 'centerline',     section: 'clean', name: 'On the Line',         icon: '🎯', desc: "Stay on the road's centre strip for 30 s straight",       condition: s => n(s.stripBest) >= 30 },
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
-  { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish Today's Road without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
+  { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
   { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: "Turn down ASSIST when it's offered, then finish",       condition: s => fin(s) && s.assistDeclined === true },
 
@@ -170,7 +170,7 @@ export const ACHIEVEMENTS = [
   { id: 'collector',      section: 'collect', name: 'Collector',         icon: '🌟', desc: 'Collect 10 items in one ride', condition: s => s.collectibles >= 10 },
   { id: 'hoarder',        section: 'collect', name: 'Hoarder',           icon: '👑', desc: 'Collect every item in one ride', condition: s => s.collectibles > 0 && s.collectibles >= s.totalCollectibles },
   { id: 'presents_100',   section: 'collect', name: 'Special Delivery',  icon: '🎁', desc: 'Collect 100 presents in total',       ...count('pickups', 100) },
-  { id: 'daily_haul',     section: 'collect', name: 'Daily Haul',        icon: '🧺', desc: "Collect every present on Today's Road", condition: s => s.finishedLevel === 'daily' && s.totalCollectibles > 0 && s.collectibles >= s.totalCollectibles },
+  { id: 'daily_haul',     section: 'collect', name: 'Daily Haul',        icon: '🧺', desc: "Collect every present on the Daily Ride", condition: s => s.finishedLevel === 'daily' && s.totalCollectibles > 0 && s.collectibles >= s.totalCollectibles },
 
   // ── 8. Slingshot ─────────────────────────────────────────
   { id: 'sling_first',    section: 'sling', name: 'Fire!',               icon: '🪃', desc: 'Launch from the slingshot',            ...count('slingLaunches', 1) },
@@ -186,8 +186,8 @@ export const ACHIEVEMENTS = [
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7", ...count('medalKeys', 1) },
-  { id: 'todays_launch',  section: 'sling', name: "Today's Launch",      icon: '🌅', desc: "Fly Today's Launch (the daily Slingshot course)", ...countList('launchDays', 1), demo: false, full: 'todaysLaunch' },
-  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly Today's Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'todaysLaunch' },
+  { id: 'daily_launch',   section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1), demo: false, full: 'dailyLaunch' },
+  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'dailyLaunch' },
 
   // ── 9. Tandem Tokens ───────────────────────────────────────
   { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Collect your first Tandem Token',          ...count('coinsEarned', 1) },
@@ -201,16 +201,16 @@ export const ACHIEVEMENTS = [
   { id: 'rebuilt',        section: 'coins', name: 'Rebuilt',             icon: '♻️', desc: 'Rebuild the bike (prestige) for the first time', ...count('rebuilds', 1), demo: false, full: 'scope' },
   { id: 'ship_of_theseus', section: 'coins', name: 'Ship of Theseus',    icon: '⛵', desc: 'Rebuild the bike 5 times',            ...count('rebuilds', 5), demo: false, full: 'scope' },
 
-  // ── 10. Today's Road ─────────────────────────────────────
-  { id: 'daily_first',    section: 'daily', name: "Today's Road",        icon: '📅', desc: "Do your first ranked Today's Road", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
-  { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Ride Today's Road on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
+  // ── 10. Daily Ride ───────────────────────────────────────
+  { id: 'daily_first',    section: 'daily', name: 'Daily Ride',          icon: '📅', desc: "Do your first ranked Daily Ride", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
+  { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Take the Daily Ride on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
     progress: streakProgress(3), unit: 'days', demo: false, full: 'weeklyRoad' },
-  { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Ride Today's Road 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
+  { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Take the Daily Ride 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
     progress: streakProgress(7), unit: 'days', demo: false, full: 'weeklyRoad' },
-  { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Ride Today's Road 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
+  { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Take the Daily Ride 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
     progress: streakProgress(30), unit: 'days', demo: false, full: 'scope' },
-  { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Today's Road result",         ...count('shares', 1) },
-  { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 practice rides on Today's Road", ...count('dailyPractice', 10) },
+  { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Daily Ride result",         ...count('shares', 1) },
+  { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 Daily Ride practice runs", ...count('dailyPractice', 10) },
 
   // ── 11. Riding together ──────────────────────────────────
   // A-2: Perfect Sync is reachable by cooperation — each paired beat adds +0.10
@@ -263,6 +263,48 @@ export const DEMO_UNEARNABLE = ACHIEVEMENTS.filter(a => !a.demo).map(a => a.id);
 
 export function getDefinition(id) {
   return ACHIEVEMENTS.find(a => a.id === id) || null;
+}
+
+/**
+ * #575 · achievement ids renamed after players had started earning them
+ * (old → new). The earned list in localStorage carries the old id until
+ * migrateEarned runs (js/achievements.js, on load); the Steam API name is the
+ * id in upper case, and scripts/sync-steam-achievements.js renames that row
+ * in place so the stat bit — and every player's unlock — carries over.
+ */
+export const RENAMED_IDS = Object.freeze({ todays_launch: 'daily_launch' });
+
+/**
+ * One-time migration of the earned list ([{ id, name, icon, earnedAt }]).
+ * An entry under an old id moves to its new id, taking the new name and
+ * icon; when both ids are present (earned on two devices) the earlier unlock
+ * wins. Anything else passes through untouched. Returns { list, changed }:
+ * changed is true only when the stored list should be rewritten.
+ */
+export function migrateEarned(list) {
+  if (!Array.isArray(list)) return { list: [], changed: false };
+  let changed = false;
+  const out = [];
+  const at = new Map();   // id → index in out
+  for (const a of list) {
+    const to = a && typeof a.id === 'string' ? RENAMED_IDS[a.id] : undefined;
+    let rec = a;
+    if (to) {
+      const def = getDefinition(to);
+      rec = { ...a, id: to, name: def ? def.name : a.name, icon: def ? def.icon : a.icon };
+      changed = true;
+    }
+    const id = rec && rec.id;
+    if (id !== undefined && at.has(id)) {
+      const i = at.get(id);
+      if (Number(rec.earnedAt) < Number(out[i].earnedAt)) out[i] = rec;
+      changed = true;
+      continue;
+    }
+    if (id !== undefined) at.set(id, out.length);
+    out.push(rec);
+  }
+  return { list: out, changed };
 }
 
 // ============================================================
@@ -335,7 +377,7 @@ export function opensMedalGate(levelId, medal) {
 /**
  * m21 · retroactive credit. A player whose stats predate v2 already has saves
  * that prove some of the 100: personal bests and medals (tandemonium_records),
- * Slingshot progress (tandemonium_slingshot), Today's Road days
+ * Slingshot progress (tandemonium_slingshot), Daily Ride days
  * (tandemonium_daily) and the wallet. Fold them in as LOWER BOUNDS: every
  * counter only ever goes up, every list only gains, nothing is lost.
  *   saves: { records, sling, daily, wallet } — each the parsed save or null
@@ -385,7 +427,7 @@ export function seedStats(prev, saves = {}) {
   }
   up('rides', recordCount + n(sling && sling.runs));
 
-  // Today's Road: the days ridden, practice finishes, partners, the day streak.
+  // Daily Ride: the days ridden, practice finishes, partners, the day streak.
   const daily = obj(saves.daily);
   if (daily) {
     const finished = Object.keys(daily)
@@ -501,7 +543,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
         noteDay(L, today);
       }
       const metres = Math.max(0, n(d.metres));
-      if (d.mode !== 'slingshot' && d.mode !== 'todaysLaunch') {
+      if (d.mode !== 'slingshot' && d.mode !== 'dailyLaunch') {
         L.cumulativeDistance += metres;
         L.rideCoins += Math.max(0, Math.floor(n(d.earned)));
         L.bestRideCoins = Math.max(L.bestRideCoins, L.rideCoins);
@@ -540,7 +582,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
     case 'stageCleared': L.slingStage = Math.max(L.slingStage, Math.floor(n(d.stage))); break;
     case 'bigAir': L.bigAirs += 1; break;
     case 'pot': L.jackpots += 1; break;   // #546: the pot of gold (the stat keeps its jackpot name)
-    case 'todaysLaunch': L.launchDays = addUnique(L.launchDays, d.key); break;
+    case 'dailyLaunch': L.launchDays = addUnique(L.launchDays, d.key); break;
     // ── versus (one device, both teams)
     case 'versus':
       L.versusRaces += 1;

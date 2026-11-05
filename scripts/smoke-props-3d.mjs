@@ -148,11 +148,11 @@ console.log("Grandma's (Daredevil)");
   await page.close();
 }
 
-console.log("Today's Road");
+console.log("Daily Ride");
 {
   const page = await ride('daily', 'chill');
   const s = await props(page);
-  check(s.house && s.house.name === 'grandma-house' && s.stack, "Today's Road ends at the same 3D house, with a pile", { house: s.house && s.house.name, stack: s.stack });
+  check(s.house && s.house.name === 'grandma-house' && s.stack, "The Daily Ride ends at the same 3D house, with a pile", { house: s.house && s.house.name, stack: s.stack });
   check(!s.giftVideo && !s.pylonVideo && !s.houseVideo, 'no prop videos here either');
   await page.close();
 }

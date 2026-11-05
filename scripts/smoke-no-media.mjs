@@ -241,6 +241,9 @@ async function runPass(media) {
     const b = document.getElementById('btn-captain'); return b && b.offsetParent !== null;
   }, { timeout: 15000 }).catch(() => {});
   await page.evaluate(() => document.getElementById('btn-captain').click());
+  // #563: on a desktop / TV the room opens when wanted (a phone's Play, or this button).
+  await page.waitForFunction(() => document.getElementById('lobby-flow')?.current === 'lobby-host', { timeout: 15000 }).catch(() => {});
+  await page.evaluate(() => document.getElementById('btn-host-room-code')?.click());
   let roomUp = true;
   await page.waitForFunction(() => /waiting for partner/i.test(document.getElementById('host-status')?.textContent || ''),
     { timeout: 20000 }).catch(() => { roomUp = false; });

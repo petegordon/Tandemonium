@@ -5,9 +5,9 @@
 //   PR-06  with a pad as P1, B and Start on the pad close the QR panel (a pad
 //          has no Escape key); "Stop using phone" lets the phone go: the game
 //          stops reading it and the phone page is told the game has left.
-//   MC-15  a phone next to a pad: today the phone drives the same seat as the
-//          pad (P1). A phone as local Player 2 is not built yet (phone remote
-//          design P4, #455), so that half is printed as NOT BUILT, not failed.
+//   MC-15  a phone next to a pad: the first page's phone drives the same seat as
+//          the pad (P1). A phone as Player 2 joins from the co-op screen
+//          instead (#562): smoke:phone-multi, MC-16 / MC-17.
 //
 // Real pad relay under `wrangler dev` (port 8793), the game on the shared
 // harness (port 8984) with a fake Xbox pad plugged in at boot, the phone page
@@ -114,7 +114,6 @@ try {
   const p1Left = await whilePhoneHolds(() => window._game.input.isPressed('ArrowLeft'), (v) => v === true);
   check(p1Left === true, 'MC-15: the phone pedals the P1 seat it shares with the pad (today\'s design)', p1Left);
   const p2 = await game.evaluate(() => ({ p2Input: !!window._game.lobby._localP2InputManager, phoneOnP1: window.__phonePad.input === window._game.input }));
-  console.log(`  NOT BUILT MC-15: the phone as local Player 2 next to a pad as P1 (phone design P4, #455)  ${JSON.stringify(p2)}`);
   check(p2.phoneOnP1, 'MC-15: the phone host is bound to P1\'s input', p2);
 
   // ── PR-06: "Stop using phone" lets the phone go ──
