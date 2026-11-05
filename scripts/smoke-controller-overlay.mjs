@@ -29,21 +29,10 @@ const h = await startHarness({ port: PORT });
 const P2 = { profile: 'dualsense', name: 'Sony DualSense · WebHID' };
 const SCENARIOS = {
   solo:   { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense' }] },
-  // Steam owns the DualSense exclusively: no slot at all, identity + buttons +
-  // gyro come from the seat's InputManager. Must be a DualSense tile, not a
-  // keyboard placeholder.
-  steam:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' }] },
   local:  { tiles: [{ label: 'P1', anchor: 'br', kind: 'gamepad' }, { label: 'P2', anchor: 'bl', kind: 'gamepad', ...P2 }] },
-  // The laptop case: P1 Steam Controller over WebHID, P2 DualSense captured by
-  // Steam with an idle Puck sibling wrongly attached to its slot. P2 must be a
-  // DualSense fed by Steam; P1 a Steam Controller fed by WebHID.
   // Emulation mode: empty Steam snapshot, two identical XInput pads; the
   // XInput-slot map names the DualSense (slot 1) — never "Xbox".
   'steam-xinput': { tiles: [
-    { label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'steam-controller', name: 'Steam Controller 2026 (via Puck) · WebHID' },
-    { label: 'P2', anchor: 'bl', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' },
-  ] },
-  'steam-p2': { tiles: [
     { label: 'P1', anchor: 'br', kind: 'gamepad', profile: 'steam-controller', name: 'Steam Controller 2026 (via Puck) · WebHID' },
     { label: 'P2', anchor: 'bl', kind: 'gamepad', profile: 'dualsense', name: 'DualSense · Steam' },
   ] },

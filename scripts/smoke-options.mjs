@@ -199,7 +199,7 @@ console.log('OP-08 restart');
 {
   const page = await h.gamePage({ viewport: VIEW, storage: STORAGE });
   await openOptions(page);
-  for (const id of ['opt-medium', 'opt-fps-on', 'opt-gyro-gravity', 'opt-physics-off', 'opt-ds-steam', 'opt-solo-off', 'opt-outfit-georgian']) {
+  for (const id of ['opt-medium', 'opt-fps-on', 'opt-gyro-gravity', 'opt-physics-off', 'opt-solo-off', 'opt-outfit-georgian']) {
     await clickId(page, id);
     await sleep(150);
   }
@@ -212,7 +212,7 @@ console.log('OP-08 restart');
   await page.reload({ waitUntil: 'domcontentloaded' });
   await ready(page);
   await openOptions(page);
-  const ids = ['opt-medium', 'opt-fps-on', 'opt-gyro-gravity', 'opt-physics-off', 'opt-ds-steam', 'opt-solo-off', 'opt-outfit-georgian', 'opt-colour-1', 'opt-lines-720'];
+  const ids = ['opt-medium', 'opt-fps-on', 'opt-gyro-gravity', 'opt-physics-off', 'opt-solo-off', 'opt-outfit-georgian', 'opt-colour-1', 'opt-lines-720'];
   const a = await active(page, ids);
   const lost = ids.filter((i) => !a[i]);
   check(lost.length === 0, 'OP-08 after a restart every changed option is still lit', lost.length ? { lost } : ids.length);

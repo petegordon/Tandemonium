@@ -42,7 +42,7 @@ import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { gyroOnlySteer } from './achievement-defs.js';
-import { InputManager, readDualSenseSourcePref, readGyroRollMode, setControllerManager } from './input-manager.js';
+import { InputManager, readGyroRollMode, setControllerManager } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -286,8 +286,9 @@ class Game {
       slotIds: ['P1', 'P2', 'P3', 'P4'],
       padFilter: (gp) => !isSteamTwinPad(gp),
     });
-    // Let InputManager see the WebHID pool so it can tell when a pad in the
-    // Steam Input snapshot is already streaming over WebHID (#347).
+    // Let InputManager see the WebHID pool so it can tell when one of Steam's
+    // virtual XInput pads is the twin of a Steam Controller already streaming
+    // over WebHID (#362).
     setControllerManager(this.controllerManager);
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
@@ -5440,11 +5441,6 @@ class Game {
     }
     if (this.versusRigs) {
       for (const rig of this.versusRigs) {
-        // Unbind Steam handles so InputManagers revert to the
-        // first-controller default (what solo/co-op expect).
-        for (const m of rig.members) {
-          if (m.input) m.input.steamInputHandle = null;
-        }
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
@@ -5764,13 +5760,6 @@ class Game {
       });
     }
 
-    const dsAutoBtn   = document.getElementById('opt-ds-auto');
-    const dsSteamBtn  = document.getElementById('opt-ds-steam');
-    const dsWebhidBtn = document.getElementById('opt-ds-webhid');
-    if (dsAutoBtn)   dsAutoBtn.addEventListener('click',   () => this._setDualSenseSource('auto'));
-    if (dsSteamBtn)  dsSteamBtn.addEventListener('click',  () => this._setDualSenseSource('steam-input'));
-    if (dsWebhidBtn) dsWebhidBtn.addEventListener('click', () => this._setDualSenseSource('webhid'));
-
     const gyroEulerBtn   = document.getElementById('opt-gyro-euler');
     const gyroGravityBtn = document.getElementById('opt-gyro-gravity');
     if (gyroEulerBtn)   gyroEulerBtn.addEventListener('click',   () => this._setGyroRollMode('euler'));
@@ -5848,7 +5837,6 @@ class Game {
     });
 
     this._updateOptionsQualityUI();
-    this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsShowSoloUI();
@@ -6066,38 +6054,6 @@ class Game {
     offBtn.classList.toggle('active', !on);
   }
 
-  _updateOptionsDualSenseSourceUI() {
-    const pref = readDualSenseSourcePref();
-    const autoBtn   = document.getElementById('opt-ds-auto');
-    const steamBtn  = document.getElementById('opt-ds-steam');
-    const webhidBtn = document.getElementById('opt-ds-webhid');
-    if (!autoBtn) return;
-    autoBtn.classList.toggle('active',   pref === 'auto');
-    steamBtn.classList.toggle('active',  pref === 'steam-input');
-    webhidBtn.classList.toggle('active', pref === 'webhid');
-
-    const stateEl = document.getElementById('opt-ds-state');
-    if (!stateEl) return;
-    const steamData = (window.steam && window.steam.input) ? (window.steam.input.getLatest() || []) : [];
-    // Steam returns the SteamInputType enum as a numeric string ('13' = PS5Controller,
-    // '5' = PS4Controller). Earlier code did .includes('ps5') which never matched.
-    // Match the numeric enum AND the string forms for safety across SDK versions.
-    const PS_TYPES = new Set(['5', '12', '13', 'ps5controller', 'ps4controller', 'ps3controller']);
-    const steamHasPS5 = steamData.some(c => PS_TYPES.has(String(c.type || '').toLowerCase()));
-    const hidDual = !!(this.input && this.input._slot && this.input._slot.driver
-                       && this.input._slot.driver.entry?.protocol === 'dualsense');
-    let status;
-    if (steamHasPS5)      status = 'Steam Input active (DualSense intercepted)';
-    else if (hidDual)     status = 'WebHID active (DualSense direct)';
-    else                  status = 'No DualSense detected';
-    stateEl.textContent = `Current: ${status} — applied on next launch`;
-  }
-
-  _setDualSenseSource(source) {
-    try { localStorage.setItem('tandemonium_dualsense_source', source); } catch(e) {}
-    this._updateOptionsDualSenseSourceUI();
-  }
-
   _setGyroRollMode(mode) {
     const m = (mode === 'gravity') ? 'gravity' : 'euler';
     try { localStorage.setItem('tandemonium_gyro_roll_mode', m); } catch(e) {}
@@ -6218,9 +6174,6 @@ class Game {
       document.getElementById('opt-medium'),
       document.getElementById('opt-low'),
       document.getElementById('opt-auto'),
-      document.getElementById('opt-ds-auto'),
-      document.getElementById('opt-ds-steam'),
-      document.getElementById('opt-ds-webhid'),
       document.getElementById('opt-gyro-euler'),
       document.getElementById('opt-gyro-gravity'),
       document.getElementById('opt-riders-on'),
@@ -6254,7 +6207,6 @@ class Game {
       document.getElementById('options-browserdev-btn'),
       document.getElementById('options-close-btn'),
     ].filter(Boolean);
-    this._updateOptionsDualSenseSourceUI();
     this._updateOptionsGyroRollUI();
     this._updateOptionsShowRidersUI();
     this._updateOptionsShowSoloUI();
@@ -6439,7 +6391,7 @@ class Game {
       this._padMenusOn = on;
       document.body.classList.toggle('pad-menus', on);
     }
-    const remoteOnly = on && !!this.input._remoteMenu && this.input._slot?.state !== 'claimed' && !this.input._steamInputActive;
+    const remoteOnly = on && !!this.input._remoteMenu && this.input._slot?.state !== 'claimed';
     if (remoteOnly !== this._remoteMenusOn) {
       this._remoteMenusOn = remoteOnly;
       document.body.classList.toggle('remote-menus', remoteOnly);
@@ -7617,8 +7569,7 @@ class Game {
     // Mid-race pad drop: freeze the whole race (both teams) until the pad
     // returns — same freeze pattern as local co-op's P2 disconnect, but
     // any physical-pad member of either team can trigger it.
-    // gamepadConnected covers Gamepad API slots, HID-claimed slots, and
-    // Steam-handle-bound managers alike.
+    // gamepadConnected covers Gamepad API slots and HID-claimed slots alike.
     const dropped = rigs.flatMap((r) => r.members)
       .find((m) => m.type !== 'keyboard' && m.type !== 'bot' && !m.input.gamepadConnected);
     if (dropped) {

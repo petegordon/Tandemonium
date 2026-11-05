@@ -39,15 +39,8 @@ let _isDemo = false;
 try { _isDemo = ipcRenderer.sendSync('app:isDemo') === true; } catch (e) {}
 contextBridge.exposeInMainWorld('tandemoniumSteam', { isDemo: _isDemo });
 
-// Steam Input snapshot: pushed from main at ~60Hz via 'steam:input:tick'.
-// Renderer reads `window.steam.input.getLatest()` synchronously each frame —
-// no per-frame IPC round-trip.
-let _steamInputLatest = [];
-ipcRenderer.on('steam:input:tick', (_event, snapshot) => {
-  _steamInputLatest = snapshot || [];
-});
 // XInput slot → Steam handle/type (#362): which physical pad sits behind each
-// virtual XInput device Steam emits. Same push cadence as the snapshot.
+// virtual XInput device Steam emits. Pushed from main at ~60Hz.
 let _steamXInputMap = [];
 ipcRenderer.on('steam:input:xinput', (_event, map) => {
   _steamXInputMap = map || [];
@@ -64,7 +57,6 @@ contextBridge.exposeInMainWorld('steam', {
   storeStats: () => ipcRenderer.invoke('steam:storeStats'),
   input: {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
-    getLatest: () => _steamInputLatest,
     getXInputMap: () => _steamXInputMap,
     getFullDiag: () => ipcRenderer.invoke('steam:input:fullDiag'),
   },

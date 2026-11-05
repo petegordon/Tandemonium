@@ -1,98 +1,97 @@
-# Steam Input — Quick Reference
+# Steam Input — how Tandemonium uses it
 
-The 1-page guide to what's actually required. Skips theory; covers what bit us during the 2026-05-16 debug session.
+The whole model in one page. `steam-input-design.md` is the history (the
+hardware session that settled this); it is not the plan.
 
-## Mental model
+## The rule
 
-Steam Input has **two separate files**, often confused:
+**A controller Steam captures is just a gamepad the Gamepad API sees. Everything
+else is WebHID.**
 
-| File | What it is | Authored by |
+- **WebHID first.** Our drivers (`shared/drivers/`) open the pad over USB or
+  Bluetooth, read buttons and the raw IMU, and run our own sensor fusion: our
+  steering feel, our drift handling, our recenter (L3 / R3). This is the path
+  for the DualSense, DualShock 4, Switch Pro and GameSir — and for the Steam
+  Controller whenever Steam is not holding it.
+- **Steam's virtual pad as the fallback.** When Steam *captures* a controller
+  it takes the HID device exclusively (our driver can no longer open it) and
+  re-emits it as a virtual Xbox 360 XInput pad. The game reads that pad through
+  the ordinary Gamepad API. Its gyro, if any, is Steam's: the player's layout
+  maps gyro onto the left stick, with Steam's processing and Steam's recenter.
+  The game controls that feel only through the official layout.
+
+Launching through Steam changes nothing by itself. Capture does, and capture is
+decided by Steam's controller settings per type (PlayStation / Xbox / Switch /
+generic support, plus the per-game override). The Steam Controller is always
+captured under a Steam launch — it is the one pad with no choice.
+
+## Emulation mode, on purpose
+
+Steam runs a game in one of two modes, decided by whether an action manifest
+(the IGA, `game_actions_<appid>.vdf`) is present:
+
+| | API mode | **Emulation mode (ours)** |
 |---|---|---|
-| **IGA** (`game_actions_<appid>.vdf`) | *Schema*. Declares what actions exist (`Steer`, `Confirm`) and what action sets group them (`InGameControls`, `MenuControls`). No bindings inside. | Developer, in source repo |
-| **Binding config** (`controller_<type>.vdf`) | *Mapping*. Declares which physical input on which controller invokes which action. References action sets from the IGA. | **Authored in Steam Big Picture UI, then exported.** Don't hand-write. |
+| Action manifest shipped | yes | **no** |
+| Captured pads reach the game as | Steamworks actions only | a virtual XInput pad |
+| `getConnectedControllers()` | the captured pads | **`[]` all session** |
+| Who maps the physical inputs | our per-type binding files | the player's layout |
 
-You need **both** for Steam Input to work. The IGA alone produces `empty.vdf` fallback (Steam loads the schema but has nothing to bind to it).
+`forge.config.js` ships no `controller_config/` at all. Shipping the IGA would
+switch Steam to API mode and take the virtual pad away, which is the path that
+actually works on hardware. The old layout exports (`steam/controller_ps5.vdf`,
+`steam/controller_neptune.vdf`) and IGAs stay in `steam/` as reference only.
 
-## File locations
+What the game keeps from Steam Input (`electron/main.js`):
 
-| Location | Purpose | Required? |
-|---|---|---|
-| `steam/game_actions_<appid>.vdf` in repo | Source of truth, edited by hand | Yes |
-| `<game install>/controller_config/game_actions_<appid>.vdf` | Shipped via depot for game-runtime action lookup | Yes — Forge `postPackage` hook copies it |
-| `C:\Program Files (x86)\Steam\controller_config\game_actions_<appid>.vdf` | **Steam's root controller_config dir** — Big Picture configurator reads from here, NOT the game's install dir | **Yes for dev iteration** — create dir if missing; copy IGA here whenever you change it locally |
-| `<game install>/controller_config/<exported-name>.vdf` | Exported binding shipped via depot | Yes — once authored |
+- `steam.input.init(true)` + `runFrame()` each tick, so that
+- `getControllerForGamepadIndex(i)` / `getInputTypeForHandle` can say which
+  physical controller sits behind each virtual XInput pad (#362). The renderer
+  uses that map (`window.steam.input.getXInputMap()`) to hide the XInput twin of
+  a Steam Controller it already reads over WebHID (`isSteamTwinPad`) and to name
+  a virtual pad by its real type in the controller overlay.
+- A heartbeat in `tandemonium-diag.log`: `[SteamInput diag] heartbeat: N
+  captured pad(s)`. In emulation mode N is normally **0** even while virtual
+  pads exist. Non-zero means Steam is treating the game as an API-mode game —
+  look for a stray `game_actions_<appid>.vdf` in `<Steam>/controller_config/`.
 
-## Author-export-ship workflow (per Valve docs)
+Everything else that once read Steam Input (the per-frame snapshot, digital
+actions, `getMotionData` fusion, the DualSense Input Source option, Steam join
+candidates and handle pinning in the lobby) was deleted in #581.
 
-1. Edit IGA in `steam/game_actions_<appid>.vdf`. Match Valve's example structure:
-    - Root `"In Game Actions"`
-    - `"actions"` block with one entry per action set
-    - Each action set: `"title"` + `"Button"`/`"StickPadGyro"`/`"AnalogTrigger"` (omit categories you don't use; don't ship empty ones)
-    - `"localization"` block with at least `"english"`
-2. Copy the IGA to BOTH game-install and Steam-root controller_config dirs (script this in dev).
-3. Launch the game from Steam Library (not `npm start`, not Non-Steam Game — must be a proper Steam-library launch under the registered AppID).
-4. Open Big Picture → game's Controller Configuration → Action Sets. Each action set from the IGA should appear by its localized title.
-5. Bind physical controls to actions (Joysticks, Buttons, Gyro, Trackpads). Bind for **every** action set, not just the first.
-6. Export the configuration. Steam writes it to `C:\Program Files (x86)\Steam\steamapps\common\Steam Controller Configs\<userid>\config\<appid>\<name>.vdf`.
-7. Copy the exported file into source repo (e.g. `steam/controller_ps5.vdf`). Update Forge `postPackage` to ship it to `<install>/controller_config/`.
-8. Steamworks Partner UI → App → Steam Input → **Custom Configuration** → point at the *exported* binding (NOT the raw IGA).
-9. Publish on Steamworks. Push depot.
+## Steamworks settings (the part that is not code)
 
-Repeat steps 4-8 for each controller type you support (`controller_ps5`, `controller_xbox360`, `controller_neptune`, etc).
+1. **Official layout.** Author a layout in Big Picture against the real Steam
+   Controller with **Gyro Behavior = Gyro To Joystick Deflection** (left stick),
+   and publish it as the game's official layout. This is what gives every Steam
+   Controller player tilt steering; the July 2026 session found the official
+   layout had gyro off and only Pete's personal layout worked. Layouts apply on
+   the next launch and are per appid, not per depot branch.
+2. **Per-type Steam Input defaults** (Steamworks → Application → Steam Input):
+   PlayStation and Switch support **off** by default so those pads stay on
+   WebHID and keep our gyro. Xbox either way (no gyro); off means fewer virtual
+   twins to dedupe.
+3. Players can still override per game. A DualSense with PlayStation support
+   turned on is captured, loses our gyro, and plays as a virtual pad with
+   whatever gyro the layout gives it.
 
-## Code requirements
+## Known gap
 
-In `electron/main.js`:
-- `SteamworksSDK.init({appId})` — required, before anything Steam-Input-related
-- `steam.input.setInputActionManifestFilePath(absPath)` — **MUST come BEFORE** `input.init()`. Post-init call is a silent no-op.
-- `steam.input.init(true)` — `true` means we drive `runFrame()` each tick
-- `steam.input.runFrame()` — every frame
-- `steam.input.getActionSetHandle('InGameControls')` — cache once at startup
-- `steam.input.getAnalogActionHandle('Steer')` — cache once
-- Per tick: iterate `getConnectedControllers()`, call `activateActionSet(handle, setHandle)`, read `getAnalogActionData(handle, steerHandle)`
+On the virtual-pad fallback the game cannot tell a gyro-driven left stick from
+a thumb on a stick, so **Stick steering: Off** silently kills gyro steering for
+a captured pad. The XInput-slot map already says when a pad is a Steam twin;
+that case should count as gyro, not stick (#499).
 
-## Tandemonium current state (2026-05-16)
+## Diagnosing a Steam launch
 
-**Scope decision (firm):** Steam Input owns ONLY the `Steer` analog action — gyro→steering for gyro-capable controllers. All other inputs (buttons, sticks, dpad, triggers) stay on the existing Gamepad API path. Per `project_steam_controller_v2.md`, this minimizes the surface area handed to Steam Input and keeps cross-controller feel consistency in our own code.
-
-✅ Working: IGA structure matches Valve's example exactly; controller enumeration via `getConnectedControllers()`; PS5 controller intercepted by Steam Input; action set "Gameplay" visible in Big Picture configurator (after putting IGA at Steam-root path)
-✅ Shipping: `steam/controller_ps5.vdf` best-guess binding for DualSense, mapping Gyro+Left Stick → `InGameControls.Steer`. Forge `postPackage` hook copies to depot.
-🚧 Pending verification: dev-private CI build, install, in-game test — confirm action handles resolve and gyro drives steering.
-🚧 Steamworks Partner UI step still requires manual user action — `Custom Configuration` field must point at the new binding file path.
-
-## Steam Controller v2 — deferred until hardware ships
-
-Per `project_steam_controller_v2.md` the v2 must work by May 2026. Hand-authoring its `controller_steamcontroller2.vdf` (or whatever the controller_type identifier turns out to be) is blocked on:
-
-- Unknown `controller_type` string — Valve hasn't published this yet
-- Unknown physical input names — v2's button/stick/trackpad/gyro labels in Steam's VDF schema aren't documented
-- No hardware to test feel against
-
-When v2 hardware is in hand, the workflow is identical to PS5:
-1. Plug in v2, confirm Steam sees it
-2. Open Big Picture → Tandemonium controller config
-3. Bind Gyro → "Steer (via Joystick)" and any other physical-input pass-throughs
-4. Export config — the resulting filename reveals the canonical controller_type for v2
-5. Copy exported file to `steam/controller_<type>.vdf`, add to the `filesToShip` list in `forge.config.js`
-6. CI deploy, register on Steamworks if Steam wants a separate per-controller-type registration
-
-Until then: the v2 will fall back to Steam's default templates (matching how DualSense behaved before we authored controller_ps5.vdf — buttons work as XInput emulation, but gyro→Steer doesn't fire).
-
-## Common pitfalls
-
-| Symptom | Cause |
+| Symptom | Look at |
 |---|---|
-| Action handles stay `0` forever | Binding not authored/shipped; Steam falls back to `controller_base/empty.vdf` |
-| `setInputActionManifestFilePath` returns `false` | Called after `input.init()`, or pointed at a non-trusted path. Order matters. |
-| Action set not visible in Big Picture | IGA missing from `C:\Program Files (x86)\Steam\controller_config\`. The game-install copy is not enough. |
-| Steam logs "Loaded Config for Local Override Path: empty.vdf" | Steamworks "Custom Configuration" field is pointing at the IGA instead of an exported binding |
-| Menu navigation broken on controller | No `MenuControls` action set in IGA — bindings only exist for gameplay context |
-| `getConnectedControllers()` returns `[]` | Either Steam isn't running, or app launched outside Steam library (Non-Steam Game shortcut won't get proper bindings) |
-| Pad works in `gamepadtest` but not steamtest | Steam Input only attaches bindings to Steam-launched processes |
+| A pad is missing from the lobby | `__whyNotHid()` in DevTools: which WebHID Steam Controllers are live, so whether the twin filter fired |
+| Gyro dead on a Steam Controller | the heartbeat (0 expected); then the active layout's Gyro Behavior; then whether Stick steering is Off |
+| Gyro dead on a DualSense | Steam's PlayStation support for this game (it should be off); the Controls dialog shows the pad's source |
+| `[SteamInput diag] XInput slots:` | which virtual pad is which physical controller |
 
 ## References
 
-- Valve IGA spec: https://partner.steamgames.com/doc/features/steam_controller/iga_file
-- Valve IGA examples: https://partner.steamgames.com/doc/features/steam_controller/iga_examples
-- Valve dev workflow: https://partner.steamgames.com/doc/features/steam_controller/getting_started_for_devs
-- ISteamInput API: https://partner.steamgames.com/doc/api/ISteamInput
+- Steam Input overview: https://partner.steamgames.com/doc/features/steam_controller
+- Steamworks Steam Input settings: https://partner.steamgames.com/doc/features/steam_controller/getting_started_for_devs
