@@ -6240,6 +6240,9 @@ export class Lobby {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       const kbPlayer = this._versusPlayers.find(p => p.type === 'keyboard');
       if (!kbPlayer) return;
+      // Same rule as the pad: a keyboard Player 1 walking the bottom bar
+      // with the arrows isn't switching team (#581).
+      if (kbPlayer.input === this.input && this._versusFocusInBar()) return;
       this._versusSwitchTeam(kbPlayer, e.key === 'ArrowLeft' ? 'A' : 'B');
     };
     window.addEventListener('keydown', this._versusKeyHandler);
@@ -6312,8 +6315,13 @@ export class Lobby {
         // so a B held from before the join can't fire on the first frame.
         const bIdx = p.input._gpSwapAB ? 0 : 1;
         const b = !!(gp.buttons[bIdx] && gp.buttons[bIdx].pressed);
-        if (left && !prev.left) this._versusSwitchTeam(p, 'A');
-        if (right && !prev.right) this._versusSwitchTeam(p, 'B');
+        // Player 1's pad also drives the step's focus (#581): while the
+        // highlight sits on the bottom bar (Back / Help / Profile …), left and
+        // right walk the pills — they don't move Player 1's team.
+        if (!(p.input === this.input && this._versusFocusInBar())) {
+          if (left && !prev.left) this._versusSwitchTeam(p, 'A');
+          if (right && !prev.right) this._versusSwitchTeam(p, 'B');
+        }
         if (b && !prev.b && p.input !== this.input && p.slotId !== 'P1') { prev.b = b; this._versusPrevButtons.set(key, prev); this._versusUnseat(p); continue; }
         prev.b = b;
         prev.left = left;
@@ -6468,6 +6476,12 @@ export class Lobby {
       }
     }
     return out; // all live candidates — join-time logic enforces seats
+  }
+
+  /** Is the step's highlight on the bottom bar (the Help / Profile / Quit pills)? */
+  _versusFocusInBar() {
+    const el = this._stepFocus && this._stepFocus.focusedEl;
+    return !!(el && typeof el.closest === 'function' && el.closest('#lobby-bar'));
   }
 
   _stopVersusMonitor() {
