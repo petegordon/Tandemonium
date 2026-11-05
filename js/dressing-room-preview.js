@@ -214,6 +214,23 @@ export class DressingRoomPreview {
     return drew;
   }
 
+  /** Draw one card now at its current CSS size (no 30 fps cap): a transitioning preview never shows a stretched bitmap. */
+  resizeNow(key) {
+    const s = this._slots.get(key);
+    if (!s || !s.bike || !s.framed || !s.canvas || !s.canvas.isConnected) return false;
+    const w = s.canvas.clientWidth | 0, h = s.canvas.clientHeight | 0;
+    if (!w || !h || (s.canvas.width === w && s.canvas.height === h)) return false;
+    s.canvas.width = w; s.canvas.height = h;
+    const r = this._getRenderer();
+    if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false);
+    s.camera.aspect = w / h;
+    s.camera.updateProjectionMatrix();
+    r.render(s.scene, s.camera);
+    s.ctx.clearRect(0, 0, w, h);
+    s.ctx.drawImage(r.domElement, 0, 0);
+    return true;
+  }
+
   /** Has this card's goose been seated (tests / status)? */
   loaded(key) { const s = this._slots.get(key); return !!(s && s.riders && s.riders.riders[s.seat] && s.framed); }
   pathOf(key) { const s = this._slots.get(key); return s ? s.path : null; }
