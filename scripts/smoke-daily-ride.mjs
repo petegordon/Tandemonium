@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smoke-todays-road.mjs — C-2: two players on the same day ride the same road,
+// smoke-daily-ride.mjs — C-2: two players on the same day ride the same road,
 // the difficulty is locked, and an expired ?daily= link lands on today.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
 const ROOT=process.cwd(); const PORT=8921;
@@ -87,5 +87,5 @@ const ok = a.key === b.key && a.seed === b.seed && JSON.stringify(a.road) === JS
   && card.present && card.difficulty === 'adventurous' && card.allDisabled
   && linked.level === 'daily' && linked.key === a.key;
 console.log(ok ? "✔ same road for both players, difficulty locked, expired link recovered"
-               : '✖ Today\'s Road did not hold');
+               : '✖ Daily Ride did not hold');
 await browser.close(); server.close(); process.exit(ok?0:1);

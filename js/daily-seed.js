@@ -52,7 +52,7 @@ export function dailySeed(date = new Date()) {
 }
 
 /**
- * #400 · the demo's "This Week's Road": which week's road is current at
+ * #400 · the demo's "Weekly Ride": which week's road is current at
  * `date`, named by its Monday's day key. Built on dailyKey, so the week rolls
  * over at the same 09:00 UTC, on Monday.
  * @returns {string} 'YYYY-MM-DD' (always a Monday)

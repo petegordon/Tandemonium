@@ -187,7 +187,7 @@ npm run smoke:ride           # a real first ride: grace, coach card, movement
 npm run smoke:crash          # crash beat: resume twice, help on the third
 npm run smoke:records        # personal bests reach the level card
 npm run smoke:seed           # world reseeding is deterministic and leak-free
-npm run smoke:daily          # Today's Road is the same road for everyone
+npm run smoke:daily          # the Daily Ride is the same road for everyone
 npm run smoke:ctas           # end-screen wishlist / invite visibility rules
 npm run smoke:ranked         # one ranked run per day; the demo never asks
 npm run smoke:lookahead      # the stoker sees road the captain cannot

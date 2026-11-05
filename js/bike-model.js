@@ -29,6 +29,9 @@ import { batchSplit, hasParts } from './physics/bike-parts.js';
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
+/** #578 · how much bigger the geese lean than the input (visual only). */
+export const RIDER_LEAN_VISUAL_GAIN = 2.5;
+
 /** #441 · seconds over which a stroke's speed gain eases in (time constant). */
 const ACCEL_EASE_S = 0.1;
 
@@ -636,8 +639,12 @@ export class BikeModel {
   }
 
   setRiderLeans(captain, stoker) {
-    this._captainLeanTarget = Math.max(-1, Math.min(1, captain));
-    this._stokerLeanTarget = Math.max(-1, Math.min(1, stoker));
+    // #578: the geese's body lean read far too subtle (Pete: "at least 2x maybe
+    // 3x"). Purely visual: a rider reaches the full lean clip at 40% of a full
+    // input lean. Steering and the bike's own tilt are unchanged.
+    const g = RIDER_LEAN_VISUAL_GAIN;
+    this._captainLeanTarget = Math.max(-1, Math.min(1, (captain || 0) * g));
+    this._stokerLeanTarget = Math.max(-1, Math.min(1, (stoker || 0) * g));
   }
 
   applyPreset(presetData) {

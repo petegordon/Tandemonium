@@ -30,11 +30,11 @@ export const LEVELS = [
     description: 'Grandma called — she needs her presents!'
   },
   {
-    // C-2 · Today's Road. The seed is NOT stored here: it is resolved at
+    // C-2 · Daily Ride. The seed is NOT stored here: it is resolved at
     // selection time by js/daily-ride.js, so this object never carries a stale
     // date from whenever the page happened to load.
     id: 'daily',
-    name: "Today's Road",
+    name: 'Daily Ride',
     distance: 500,
     collectibles: 'presents',
     checkpointInterval: 125,

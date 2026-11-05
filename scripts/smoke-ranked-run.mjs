@@ -107,7 +107,7 @@ const badge = await web.evaluate(() => {
 });
 console.log('ranked badge:', JSON.stringify(badge));
 
-// 6. #398: the Today's Road card says the day's ranked run was used.
+// 6. #398: the Daily Ride card says the day's ranked run was used.
 const card = await web.evaluate(() => {
   window._game.lobby._rebuildLevelCards();
   const d = document.querySelector('.level-card[data-level-id="daily"] .level-card-desc');
@@ -156,7 +156,7 @@ const cardOk = !!card && /Ranked ✓ 2:41/.test(card) && !/not ridden yet/.test(
 const ok = badgeOk && cardOk && locksOk &&chooser.visible && !chooser.rankedDisabled
   && afterSpend.rankedDisabled && /2:41/.test(afterSpend.hint) && afterSpend.pairStillFree
   && demoChooser.isDemo && demoChooser.asks === false
-  && /Today's Road/.test(strip.text) && /2:41/.test(strip.text) && strip.text.split('\n').length === 4;
+  && /Daily Ride/.test(strip.text) && /2:41/.test(strip.text) && strip.text.split('\n').length === 4;
 console.log(ok ? '✔ ranked runs, the one-per-day rule, the demo gate and the strip all hold'
                : '✖ something is wrong');
 await browser.close(); server.close(); process.exit(ok?0:1);
