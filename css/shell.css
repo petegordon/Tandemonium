@@ -65,6 +65,9 @@ body.pad-menus .pad-only { display: inline-flex !important; }
    screens (a big tablet keeps the phone strip). */
 @media (min-width: 1024px) and (pointer: fine), (min-width: 1024px) and (pointer: none) {
   #hud-dashboard { zoom: 1.5; }
+  /* The strip sits at the left here, so the one-line RANKED / help badge goes up
+     beside it (top centre) instead of under it, clear of the bigger strip. */
+  #ranked-badge, #help-badge { top: 14px; }
 }
 @media (min-width: 1600px) and (pointer: fine), (min-width: 1600px) and (pointer: none) {
   #hud-dashboard { zoom: 2; }
