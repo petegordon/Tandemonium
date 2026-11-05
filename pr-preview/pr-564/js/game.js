@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
-import { isMobile, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -162,7 +162,7 @@ class Game {
     const _learned = getLearnedAuto();
     const _q = resolveQualityTier({
       param: _qualityParam, pref: getQualityPref(), learned: _learned && _learned.tier,
-      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isMobile),
+      hwTier: _hwCached && _hwCached.tier, floor: autoFloorTier(isLowPower), tv: isTV,
     });
     /** @type {import('./quality.js').QualityTier} */
     this._quality = _q.tier;
@@ -192,7 +192,7 @@ class Game {
     // show the perf readout. The URL wins over the saved settings.
     this._displayTest = resolveDisplayTest(new URLSearchParams(window.location.search), getDisplayTest());
     this._linesOverride = this._displayTest.lines;
-    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isMobile && !this._lowQuality;
+    const _aa = this._displayTest.aa === 'on' ? true : this._displayTest.aa === 'off' ? false : !isLowPower && !this._lowQuality;
     // #456 · keeping the last frame's buffer costs a full-screen copy per frame
     // on TV / phone GPUs. Only clip recording wants it, so Low drops it when
     // clips are off. A context flag: it holds until the page reloads.
@@ -201,8 +201,8 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: this._preserveBuffer });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
-    this.renderer.shadowMap.enabled = !isMobile && !this._lowQuality;
-    if (!isMobile && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = !isLowPower && !this._lowQuality;
+    if (!isLowPower && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (this._showRiders) {
       // Filmic tone mapping so PBR colors (the riders' brass/silk/coat, and the
       // world) read rich instead of the flat raw output. AgX keeps the Victorian
@@ -320,10 +320,14 @@ class Game {
       },
     });
     this._phonePadState = null;
-    // #562 · more phones: "Join with phone" on the co-op and versus screens.
-    // Each joined phone is a controller with its own InputManager; a seat that
-    // takes it rides with it. Its Pause pauses, like Player 1's phone.
+    // #562 · more phones: the co-op host step's "Scan to join" QR and the
+    // versus screen's "Use your phone as a controller". They are seats 2..4 of
+    // Player 1's pad room (one relay room, one QR for every phone). Each joined
+    // phone is a controller with its own InputManager; a seat that takes it
+    // rides with it. Its Pause pauses, like Player 1's phone.
     this.phonePool = installPhonePoolUI({
+      room: this.phonePad,
+      onChange: () => this.lobby?._syncHostJoinQr?.(),
       makeInput: () => new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false, remoteOnly: true }),
       p1Input: this.input,
       onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
@@ -591,6 +595,12 @@ class Game {
     this._onTap('btn-pause-restart', () => { this._closePause('restart'); document.getElementById('reset-btn').click(); });
     this._onTap('btn-pause-settings', () => this._openOptions());   // over the pause; closing it re-focuses the menu
     this._onTap('btn-pause-help', () => this._openHelpModal());
+    // #576 · the ride toggles from a pad: they flip the hidden side buttons (the
+    // single source of truth) and stay in the menu so the new ON / OFF shows.
+    this._onTap('btn-pause-safety', () => { this.safetyBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-speed', () => { this.speedBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-assist', () => { this.assistBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-clip', () => { this._closePause('clip'); this.recorder.saveClip(); });
     this._onTap('btn-pause-end', () => {
       // END RIDE = the ride's own LOBBY / ROOM button (the ranked-run confirm lives there).
       const wasPaused = !!this._pause;
@@ -867,6 +877,10 @@ class Game {
       controllerManager: this.controllerManager,
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
+    // #563 · "Play on this phone": a phone on the host step's QR asks for the
+    // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
+    this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
+    this.lobby.padRoom = this.phonePad;
 
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
@@ -986,7 +1000,7 @@ class Game {
     const params = new URLSearchParams(window.location.search);
     const roomParam = params.get('room');
     analytics.initSession({
-      device_type: isMobile ? 'mobile' : 'desktop',
+      device_type: isMobile ? 'mobile' : isTV ? 'tv' : 'desktop',
       input_method: null,
       referrer: document.referrer || null,
       is_stoker: !!roomParam,
@@ -6166,7 +6180,7 @@ class Game {
     setCurrentTier(tier);
     this.renderer.setPixelRatio(this._pixelRatio());
     this._staticFrame = 0;   // setPixelRatio cleared the canvas: draw the next frame
-    const shadows = !isMobile && !this._lowQuality;
+    const shadows = !isLowPower && !this._lowQuality;
     if (this.renderer.shadowMap.enabled !== shadows) {
       this.renderer.shadowMap.enabled = shadows;
       if (shadows) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;   // as at a High boot
@@ -6340,6 +6354,7 @@ class Game {
     if (restart) restart.hidden = !(resetBtn && sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot);
     const end = document.getElementById('btn-pause-end');
     if (end) end.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+    this._syncPauseToggles();
     this._freezeClock(true);
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
@@ -6357,6 +6372,33 @@ class Game {
     });
     this._overlayCooldownUntil = performance.now() + 250;
     try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
+  }
+
+  /**
+   * #576 · show / label the pause menu's ride toggles. Same rules as the quick
+   * menu: only the rider who owns the ride controls (not a stoker), SAFETY and
+   * SPEED are gone on a ranked run (their buttons are disabled), ASSIST only
+   * once it is offered, SAVE CLIP only while a clip is buffering.
+   */
+  _syncPauseToggles() {
+    const sideButtons = document.getElementById('side-buttons');
+    const rideControls = !!sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot && this.mode !== 'versus';
+    const set = (id, show, on) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.hidden = !show;
+      const st = el.querySelector('.pause-state');
+      if (st && on !== undefined) st.textContent = on ? 'ON' : 'OFF';
+      el.classList.toggle('pause-on', !!on);
+    };
+    const usable = (b) => !!b && !b.hasAttribute('disabled');
+    set('btn-pause-safety', rideControls && usable(this.safetyBtn), !!this.safetyMode);
+    set('btn-pause-speed', rideControls && usable(this.speedBtn), !!this.autoSpeed);
+    set('btn-pause-assist', rideControls && !!this.assistBtn && this.assistBtn.style.display !== 'none', this._assistWeight > 0);
+    const share = document.getElementById('share-btn');
+    set('btn-pause-clip', !!share && share.style.display !== 'none');
+    const box = document.getElementById('pause-toggles');
+    if (box) box.hidden = !box.querySelector('uf-button:not([hidden])');
   }
 
   /** Close the pause menu. `reason` is for analytics ('resume', 'restart', 'end', 'api'). */
@@ -6385,12 +6427,21 @@ class Game {
     if (this.lobby && this.lobby._scrollHelpTo) this.lobby._scrollHelpTo(null);
   }
 
-  /** body.pad-menus: a pad drives the menus, so buttons show their pad glyph (css/shell.css). */
+  /**
+   * body.pad-menus: a pad drives the menus, so buttons show their pad glyph (css/shell.css).
+   * body.remote-menus: only the phone remote does; it has no shoulder buttons, so the
+   * bike chooser keeps its ‹ › arrows instead of L1 / R1.
+   */
   _syncPadMenus() {
     const on = !!(this.input && this.input.gamepadConnected);
     if (on !== this._padMenusOn) {
       this._padMenusOn = on;
       document.body.classList.toggle('pad-menus', on);
+    }
+    const remoteOnly = on && !!this.input._remoteMenu && this.input._slot?.state !== 'claimed' && !this.input._steamInputActive;
+    if (remoteOnly !== this._remoteMenusOn) {
+      this._remoteMenusOn = remoteOnly;
+      document.body.classList.toggle('remote-menus', remoteOnly);
     }
   }
 
@@ -6414,7 +6465,8 @@ class Game {
     const aIdx = this.input._gpSwapAB ? 1 : 0;
     const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
     // L3 (button 10) — quick gyro recenter
-    const l3 = gp.buttons[10] && gp.buttons[10].pressed;
+    // #578: either stick click (or both together) recenters the gyro.
+    const l3 = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
 
     // E-3 · X is the talk button: tap it to call a sprint, or hold it and flick
     // the d-pad to send an emote. The d-pad's four normal jobs (safety, speed,
@@ -6463,6 +6515,27 @@ class Game {
     this._gpPrevY = y;
     this._gpPrevA = a;
     this._gpPrevL3 = l3;
+  }
+
+  /**
+   * #578 · local co-op: the stoker's own pad recenters their gyro with a stick
+   * click (L3, R3 or both), the same as the captain's. P2 had no binding, so a
+   * stoker could not recalibrate at all.
+   */
+  _pollP2Recenter() {
+    const im = this.inputP2;
+    if (this.mode !== 'local' || !im || !im.gamepadConnected) { this._gpPrevP2L3 = false; return; }
+    const gp = im.getGamepadState();
+    if (!gp || !gp.buttons) return;
+    const click = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
+    if (click && !this._gpPrevP2L3) {
+      if (im.gyroConnected) { im.recenterGyro(); im.calibrateGyro(); }
+      if (im.motionEnabled) im.startTiltCalibration();
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+      try { analytics.trackEvent('recenter', { seat: 'p2' }); } catch {}
+    }
+    this._gpPrevP2L3 = click;
   }
 
   _updateConnBadge() {
@@ -6873,7 +6946,7 @@ class Game {
       // a normal ride; they don't teach Auto anything about normal rides.
       // On a desktop Auto stops at Medium: Low hides the riders, so it stays
       // a manual choice there (phones and TVs already ride without riders).
-      const autoFloor = autoFloorTier(isMobile);
+      const autoFloor = autoFloorTier(isLowPower);
       const canDown = tierRank(this._quality) > tierRank(autoFloor);
       const autoUp = this._rideAutoUp ? null : autoStepUpTarget({ tier: this._quality, slow: this._autoSlowTier });
       const autoWatch = this._autoWatcher && this._qualityAuto && (canDown || autoUp) &&
@@ -6902,7 +6975,7 @@ class Game {
       if (this.mode !== 'versus' && this._tickDropPause()) {
         // paused — nothing else runs this frame
       } else {
-      if (this.mode !== 'versus') this._pollDpad();
+      if (this.mode !== 'versus') { this._pollDpad(); this._pollP2Recenter(); }
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
@@ -8560,7 +8633,7 @@ class Game {
         const pollL3 = () => {
           if (resolved) return;
           const gp = this.input.getGamepadState();
-          if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
+          if (gp && ((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed))) {   // #578: L3 or R3
             resolved = true;
             this._recalibrateTilt();
             resolve();

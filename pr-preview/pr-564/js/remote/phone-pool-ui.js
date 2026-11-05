@@ -3,26 +3,23 @@
 // phone-pool-ui — "Join with phone" on the co-op and versus screens (#562)
 // ============================================================
 //
-// The button opens a panel with a QR for the next phone. Each phone that
-// scans joins as a controller ("Phone 2", "Phone 3" …) and the QR moves on to
-// the next one, so a couch can pass the screen round. A joined phone then
-// takes a seat on the screen behind (OK on the phone), like any pad.
+// The button opens a panel with ONE QR that stays put: every phone that
+// scans it joins as a controller ("Phone 2", "Phone 3" …) on the next free
+// seat of the shared pad room, so several people can scan at once. A joined
+// phone then takes a seat on the screen behind (OK on the phone), like any pad.
+// The co-op host step shows the same QR inline instead (#563, lobby.js).
 // A SEATED phone that drops mid-ride brings the panel back with that phone's
 // code (it reconnects by itself when its page is reopened); the ride's own
 // disconnect pause holds everything meanwhile.
 // ============================================================
 
-import { PhonePadHost } from './phone-pad-host.js';
 import { PhonePool } from './phone-entry.js';
 import qrcode from '../../shared/ui/third_party/qrcode-generator.js';
 
 /**
- * #562 · the entry point's words, in one place (Pete is still choosing between
- * this and one QR where the phone asks "play here / control the TV").
- * The controller QR says where the game appears, and is never on screen with
- * the online room's QR (which makes a phone the game screen): the host step
- * hides that QR while this panel is open, and the button is hidden once an
- * online partner holds the seat.
+ * #562 · the versus entry point's words, in one place. The controller QR says
+ * where the game appears. (The co-op host step has no button: its "Scan to
+ * join" QR is always up while the partner seat is free, #563.)
  */
 export const PHONE_JOIN_COPY = {
   button: '\u{1F4F1} Use your phone as a controller',
@@ -49,8 +46,6 @@ export function wireJoinEntry(buttonIds, open) {
 }
 
 const CSS = `
-/* The online room QR (a phone becomes the game screen) never shows beside this one. */
-body.phone-controller-qr #room-qr-tv, body.phone-controller-qr #room-qr { visibility: hidden; }
 #phone-pool-panel .ppp-caption { font-size: var(--uf-size-md, 15px); color: var(--uf-color-fg, #fff); }
 #phone-pool-panel { position: fixed; inset: 0; z-index: 9000; display: none;
   align-items: center; justify-content: center; background: var(--uf-color-scrim, rgba(0,0,0,.6)); }
@@ -74,6 +69,7 @@ body.phone-controller-qr #room-qr-tv, body.phone-controller-qr #room-qr { visibi
  * Make the phone pool and its panel, and wire the screens' "Join with phone"
  * buttons to it.
  * @param {object} deps
+ * @param {import('./phone-pad-host.js').PhonePadHost} deps.room  the shared pad room (Player 1's phone is its seat 1)
  * @param {() => any} deps.makeInput  a remoteOnly InputManager
  * @param {any} deps.p1Input  Player 1's InputManager (its B / Start close the panel)
  * @param {(entry: import('./phone-entry.js').PhoneEntry) => void} [deps.onPause]
@@ -81,7 +77,7 @@ body.phone-controller-qr #room-qr-tv, body.phone-controller-qr #room-qr { visibi
  * @param {string[]} [buttonIds]
  * @returns {{ pool: PhonePool, open: (entry?: any) => void, close: () => void, readonly panelOpen: boolean }}
  */
-export function installPhonePoolUI({ makeInput, p1Input, onPause, onChange }, buttonIds = ['btn-host-join-phone', 'btn-versus-join-phone']) {
+export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange }, buttonIds = ['btn-versus-join-phone']) {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
@@ -107,7 +103,9 @@ export function installPhonePoolUI({ makeInput, p1Input, onPause, onChange }, bu
 
   const pool = new PhonePool({
     makeInput,
-    makeHost: (opts) => new PhonePadHost(opts),
+    makeSeat: (n, opts) => room.addSeat(n, opts),
+    joinLink: (opts) => room.joinLink(opts),
+    rotateJoin: () => room.rotateJoin(),
     onChange: (p) => { render(); onChange?.(p); },
     onDrop: (e) => { dropped = e; open(); },
     onReturn: (e) => { if (dropped === e) { dropped = null; close(); } },
@@ -133,18 +131,18 @@ export function installPhonePoolUI({ makeInput, p1Input, onPause, onChange }, bu
 
   const render = () => {
     if (!panel.classList.contains('open')) return;
-    const show = dropped || pool.pending;
     $('ppool-title').textContent = dropped ? `\u{1F4F1} ${dropped.identity.name.toUpperCase()} DISCONNECTED` : PHONE_JOIN_COPY.title;
     $('ppool-caption').textContent = PHONE_JOIN_COPY.caption;
-    drawLink(show ? show.link : null);
+    // The shared join QR (controller only, #563), or a dropped phone's own seat QR.
+    drawLink(dropped ? dropped.link : pool.joinLink());
     $('ppool-phones').innerHTML = pool.joinedEntries()
       .map((e) => `<span class="ppp-phone${e.present ? ' here' : ''}">${e.identity.name}${e.present ? ' ✓' : ''}</span>`).join('');
     let status;
     if (dropped) status = 'Open the controller page on that phone again (it reconnects by itself), or scan the code.';
     else if (!pool.pending) status = pool.joinedEntries().length ? 'Every phone seat is taken.' : '';
     else if (pool.pending.status === 'error') status = 'Can’t reach the phone relay. Retrying…';
-    else if (pool.pending.status === 'connecting' || !pool.pending.link) status = 'Opening a connection…';
-    else status = `Scan with the next phone’s camera to join as ${pool.pending.identity.name}. Then press OK on the phone to take a seat.`;
+    else if (pool.pending.status === 'connecting' || !pool.joinLink()) status = 'Opening a connection…';
+    else status = 'Scan with each phone’s camera to join (several phones can scan this code). Then press OK on the phone to take a seat.';
     $('ppool-status').textContent = status;
   };
 
@@ -164,18 +162,19 @@ export function installPhonePoolUI({ makeInput, p1Input, onPause, onChange }, bu
     }, 100);
   };
 
+  // Only the panel's own offer is withdrawn when it closes (the host step's
+  // inline QR, #563, is the lobby's to switch).
+  let offered = false;
   const open = () => {
     panel.classList.add('open');
-    document.body.classList.add('phone-controller-qr');
-    if (!dropped) pool.setOffering(true);
+    if (!dropped && !pool.offering) { offered = true; pool.setOffering(true); }
     render();
     watchPadClose();
   };
   const close = () => {
     panel.classList.remove('open');
-    document.body.classList.remove('phone-controller-qr');
     dropped = null;
-    pool.setOffering(false);
+    if (offered) { offered = false; pool.setOffering(false); }
   };
 
   wireJoinEntry(buttonIds, () => { dropped = null; open(); });

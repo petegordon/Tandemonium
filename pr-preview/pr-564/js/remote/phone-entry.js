@@ -15,14 +15,14 @@
 //   entry.hasFreshButtonPress()
 //   entry.identity             { kind: 'phone', name: 'Phone 2', glyphFamily }
 //   entry.attach() / release() a seat takes / gives back the phone
-//   entry.destroy()            the phone is let go (relay room closed)
+//   entry.destroy()            the phone is let go (its relay seat closes)
 //
-// Each phone has its own pad room (one PhonePadHost, seat 1 of its room) and
-// its own InputManager (remoteOnly), which becomes the seat's input when the
-// phone sits down. Ride-time tilt and pedals flow host → that InputManager
-// (feedRemoteTilt / setRemotePedals), exactly as the Player 1 phone does.
-// Phone 1 is the first page's "Phone as controller" (Player 1's own input);
-// the pool numbers its phones 2..4 (the relay's seat count).
+// All phones share ONE pad room (PhonePadHost): Phone N is the room's seat N
+// (2..4), with its own InputManager (remoteOnly), which becomes the seat's
+// input when the phone sits down. Ride-time tilt and pedals flow host → that
+// InputManager (feedRemoteTilt / setRemotePedals), exactly as the Player 1
+// phone does. Phone 1 is the first page's "Phone as controller" (Player 1's
+// own input, the room's seat 1).
 // ============================================================
 
 import { mergeRemoteNavPad } from '../input-manager.js';
@@ -76,7 +76,7 @@ export function resetPhoneSynthetic(gp) {
 }
 
 /**
- * @typedef {object} PhoneHostLike   the parts of PhonePadHost an entry uses
+ * @typedef {object} PhoneHostLike   the parts of a PadSeat an entry uses
  * @property {() => Promise<string|null>} open
  * @property {() => void} close
  * @property {(mode: 'menu'|'ride') => void} setMode
@@ -88,39 +88,46 @@ export function resetPhoneSynthetic(gp) {
 
 export class PhoneEntry {
   /**
-   * @param {number} n  phone number (2..4)
+   * @param {number} n  phone number = its relay seat (2..4)
    * @param {object} deps
    * @param {() => any} deps.makeInput  a remoteOnly InputManager for this phone
-   * @param {(opts: any) => PhoneHostLike} deps.makeHost  a PhonePadHost
+   * @param {(n: number, opts: any) => PhoneHostLike} deps.makeSeat  its seat in the shared pad room
    * @param {(entry: PhoneEntry) => void} [deps.onArrive]  first join
    * @param {(entry: PhoneEntry) => void} [deps.onDrop]    a joined phone went away
    * @param {(entry: PhoneEntry) => void} [deps.onReturn]  ...and came back
-   * @param {(entry: PhoneEntry) => void} [deps.onLink]    the QR link changed
+   * @param {(entry: PhoneEntry) => void} [deps.onLink]    the seat's link changed
    * @param {(entry: PhoneEntry) => void} [deps.onPause]   Pause on the phone while riding
+   * @param {(entry: PhoneEntry) => void} [deps.onHandOff] it asked to play on itself, or that failed (#563)
    */
-  constructor(n, { makeInput, makeHost, onArrive, onDrop, onReturn, onLink, onPause }) {
+  constructor(n, { makeInput, makeSeat, onArrive, onDrop, onReturn, onLink, onPause, onHandOff }) {
     this.n = n;
     this.identity = { kind: 'phone', name: `Phone ${n}`, shortName: `Phone ${n}`, glyphFamily: 'generic' };
     this.synthetic = makePhoneSynthetic(n);
     this.input = makeInput();
     /** A seat holds this phone (its input is that seat's). */
     this.attached = false;
-    /** The phone joined at least once (the pool's QR has moved on from it). */
+    /** A phone has joined this seat at least once. */
     this.everJoined = false;
     /** The phone is connected right now. */
     this.present = false;
+    /** #563: the phone chose "Play on this phone": it's leaving, not a controller. */
+    this.handedOff = false;
     this._initialPressedMask = /** @type {Set<number>|null} */ (null);
-    this.host = makeHost({
+    this.host = makeSeat(n, {
       input: this.input,
-      seat: 1,
       label: this.identity.name,
       note: PHONE_SEAT_NOTE,
-      onFrame: (/** @type {any} */ f, /** @type {number} */ nav) => applyNavToSynthetic(this.synthetic, nav, f),
+      onFrame: (/** @type {any} */ f, /** @type {number} */ nav) => { if (!this.handedOff) applyNavToSynthetic(this.synthetic, nav, f); },
       onStatus: (/** @type {string} */ s) => this._onStatus(s),
       onDrop: () => onDrop?.(this),
       onReturn: () => onReturn?.(this),
       onLink: () => onLink?.(this),
       onPause: () => onPause?.(this),
+      onHandOff: (/** @type {boolean} */ on) => {
+        this.handedOff = !!on;
+        resetPhoneSynthetic(this.synthetic);
+        onHandOff?.(this);
+      },
     });
     this._onArrive = onArrive || null;
   }
@@ -128,7 +135,7 @@ export class PhoneEntry {
   get link() { return this.host.link; }
   get status() { return this.host.status; }
 
-  /** Open this phone's pad room (its QR link). */
+  /** Open this phone's seat (offered with the room's shared join QR). */
   open() { return this.host.open(); }
 
   /** @param {string} s */
@@ -145,7 +152,7 @@ export class PhoneEntry {
 
   /** True if any button not held when the phone joined is pressed now (HidEntry's rule). */
   hasFreshButtonPress() {
-    if (!this.present) return false;
+    if (!this.present || this.handedOff) return false;
     const buttons = this.synthetic.buttons;
     if (this._initialPressedMask == null) {
       this._initialPressedMask = new Set();
@@ -178,7 +185,7 @@ export class PhoneEntry {
     this.host.setLabel(this.identity.name);
   }
 
-  /** Let the phone go for good (closes its relay room). */
+  /** Let the phone go for good (its relay seat closes). */
   destroy() {
     this.attached = false;
     this.present = false;
@@ -188,12 +195,20 @@ export class PhoneEntry {
   }
 }
 
+/**
+ * The extra phones (2..4), all on seats of ONE pad room (#562). While the
+ * pool is offering, every free phone number has an open seat registered with
+ * the room's join secret, so a single QR (joinLink) on screen stays put and
+ * each phone that scans it gets the next free seat.
+ */
 export class PhonePool {
   /**
    * @param {object} deps  as PhoneEntry, plus:
    * @param {() => any} deps.makeInput
-   * @param {(opts: any) => PhoneHostLike} deps.makeHost
-   * @param {(pool: PhonePool) => void} [deps.onChange]   entries / pending / presence changed
+   * @param {(n: number, opts: any) => PhoneHostLike} deps.makeSeat
+   * @param {(opts: {play?: boolean}) => string|null} [deps.joinLink]  the room's shared QR link
+   * @param {() => void} [deps.rotateJoin]  retire that QR (offering stopped)
+   * @param {(pool: PhonePool) => void} [deps.onChange]   entries or presence changed
    * @param {(entry: PhoneEntry) => void} [deps.onDrop]   a SEATED phone went away
    * @param {(entry: PhoneEntry) => void} [deps.onReturn]
    * @param {(entry: PhoneEntry) => void} [deps.onPause]
@@ -202,74 +217,91 @@ export class PhonePool {
     this.deps = deps;
     /** @type {Map<number, PhoneEntry>} */
     this.entries = new Map();
-    /** The entry whose QR is on offer (no phone has joined it yet). @type {PhoneEntry|null} */
-    this.pending = null;
     /** @type {'menu'|'ride'} */
     this.mode = 'menu';
+    this.offering = false;
   }
 
-  /** The lowest free phone number, or null when all are out. */
-  _freeNumber() {
-    for (let n = FIRST_POOL_PHONE; n <= LAST_POOL_PHONE; n++) if (!this.entries.has(n)) return n;
-    return null;
+  /** Free seats on offer: open, no phone has joined them yet. @returns {PhoneEntry[]} */
+  offeredEntries() {
+    return [...this.entries.values()].filter((e) => !e.everJoined);
+  }
+
+  /** The first free seat on offer, or null (all phones out, or not offering). */
+  get pending() {
+    return this.offeredEntries()[0] || null;
   }
 
   /**
-   * Offer a QR for the next phone: the pending entry, made if needed.
-   * Null when every phone number is taken.
-   * @returns {PhoneEntry|null}
+   * The shared "Scan to join" link: null until the room is ready, while not
+   * offering, and when every phone seat is taken.
+   * @param {{play?: boolean}} [opts]  the phone may also offer "Play on this phone" (#563)
+   */
+  joinLink(opts = {}) {
+    const p = this.pending;
+    if (!this.offering || !p || !p.link) return null;
+    return this.deps.joinLink ? this.deps.joinLink(opts) : p.link;
+  }
+
+  /**
+   * Open a seat for every free phone number (they all share the join QR).
+   * @returns {PhoneEntry|null} the first one on offer
    */
   offer() {
-    if (this.pending) return this.pending;
-    const n = this._freeNumber();
-    if (n == null) return null;
     const d = this.deps;
-    const entry = new PhoneEntry(n, {
-      makeInput: d.makeInput,
-      makeHost: d.makeHost,
-      onArrive: (e) => this._arrived(e),
-      onDrop: (e) => { this._changed(); if (e.attached) d.onDrop?.(e); },
-      onReturn: (e) => { this._changed(); d.onReturn?.(e); },
-      onLink: () => this._changed(),
-      onPause: (e) => { if (e.attached) d.onPause?.(e); },
-    });
-    entry.host.setMode(this.mode);
-    this.entries.set(n, entry);
-    this.pending = entry;
-    entry.open();
-    this._changed();
-    return entry;
-  }
-
-  /** The pending phone joined: the QR moves on to the next phone. @param {PhoneEntry} e */
-  _arrived(e) {
-    if (this.pending === e) this.pending = null;
-    this._changed();
-    if (this.offering) this.offer();
+    let added = false;
+    for (let n = FIRST_POOL_PHONE; n <= LAST_POOL_PHONE; n++) {
+      if (this.entries.has(n)) continue;
+      const entry = new PhoneEntry(n, {
+        makeInput: d.makeInput,
+        makeSeat: d.makeSeat,
+        onArrive: () => this._changed(),
+        onDrop: (e) => {
+          // #563: a phone that went to play on itself is done here; its seat
+          // goes back on offer.
+          if (e.handedOff) { this.remove(e); if (this.offering) this.offer(); return; }
+          this._changed();
+          if (e.attached) d.onDrop?.(e);
+        },
+        onReturn: (e) => { this._changed(); d.onReturn?.(e); },
+        onLink: () => this._changed(),
+        onPause: (e) => { if (e.attached) d.onPause?.(e); },
+        onHandOff: () => this._changed(),
+      });
+      entry.host.setMode(this.mode);
+      this.entries.set(n, entry);
+      added = true;
+      entry.open().then(() => this._changed(), () => {});
+    }
+    if (added) this._changed();
+    return this.pending;
   }
 
   /**
-   * While true (the join panel is open) a join moves the QR straight on to the
-   * next free phone. Closing the panel stops offering: the pending room closes.
+   * While on (the join QR is on screen), every free seat is offered. Turning
+   * it off closes the seats no phone has joined and retires the QR (the next
+   * offer shows a new one). Joined phones stay. Cheap to call repeatedly.
    * @param {boolean} on
-   * @returns {PhoneEntry|null} the entry now on offer
+   * @returns {PhoneEntry|null} the first entry on offer
    */
   setOffering(on) {
-    this.offering = !!on;
-    if (on) return this.offer();
-    const p = this.pending;
-    if (p) { this.pending = null; this.entries.delete(p.n); p.destroy(); this._changed(); }
+    if (on) { this.offering = true; return this.offer(); }
+    if (!this.offering && !this.offeredEntries().length) return null;
+    this.offering = false;
+    for (const e of this.offeredEntries()) { this.entries.delete(e.n); e.destroy(); }
+    this.deps.rotateJoin?.();
+    this._changed();
     return null;
   }
 
-  /** Joined phones that are here and not seated: the screens' join candidates. */
+  /** Joined phones that are here, not seated and not leaving: the screens' join candidates. */
   presentableEntries() {
-    return [...this.entries.values()].filter((e) => e.everJoined && e.present && !e.attached);
+    return [...this.entries.values()].filter((e) => e.everJoined && e.present && !e.attached && !e.handedOff);
   }
 
-  /** Every phone that has joined (here or dropped). */
+  /** Every phone that has joined (here or dropped), except one leaving to play on itself. */
   joinedEntries() {
-    return [...this.entries.values()].filter((e) => e.everJoined);
+    return [...this.entries.values()].filter((e) => e.everJoined && !e.handedOff);
   }
 
   /** The entry whose input is `input`, or null. @param {any} input */
@@ -292,8 +324,7 @@ export class PhonePool {
 
   /** Let one phone go. @param {PhoneEntry} e */
   remove(e) {
-    if (this.pending === e) this.pending = null;
-    this.entries.delete(e.n);
+    if (this.entries.get(e.n) === e) this.entries.delete(e.n);
     e.destroy();
     this._changed();
   }
