@@ -61,6 +61,7 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
+import { mergedPollGp } from './lobby/join-poll.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -6426,11 +6427,21 @@ export class Lobby {
         // window filters them; a sleeping pad's card appears the moment
         // a button press wakes it, which matches the join hint anyway.
         if (!entry.hidActiveSince || now - entry.hidActiveSince > 5000) continue;
-        // Dual-interface pads: if a visible unclaimed Gamepad API pad
-        // shares this device's productName, the gamepad candidate above
-        // already covers it.
+        // Dual-interface pads: a visible unclaimed Gamepad API pad that
+        // shares this device's productName is the SAME pad — one card. Its
+        // Gamepad entry may be frozen (a DualSense switched on after launch:
+        // Chromium listed it from its compat-mode reports, then the driver
+        // flipped it to 0x31 and only the synthetic sees presses, #581), so
+        // the card polls both sources; the join claims the pad and the
+        // manager attaches this entry to the seat (claimPadForSlot).
         const hidName = (entry.device.productName || '').trim().toLowerCase();
-        if (hidName && out.some(c => c.kind === 'gamepad' && c.gp.id.toLowerCase().includes(hidName))) continue;
+        const twin = hidName ? out.find(c => c.kind === 'gamepad' && !c.device && c.gp.id.toLowerCase().includes(hidName)) : null;
+        if (twin) {
+          twin.device = entry.device;
+          twin.name = prettyHidName(entry.device);
+          twin.pollGp = mergedPollGp(twin.gp, entry.synthetic);
+          continue;
+        }
         out.push({
           kind: 'hid',
           key: 'hid:' + this._deviceKeyId(entry.device),
@@ -6586,13 +6597,19 @@ export class Lobby {
         return;
       }
       gpIndex = c.gpIndex;
+      const gpSlot = mgr.getSlot(slotId);
       input = new InputManager({
-        slot: mgr.getSlot(slotId),
+        slot: gpSlot,
         enableKeyboard: false,
         enableMotion: false,
         enableTouch: false,
       });
-      if (this.motionActive) input.motionEnabled = true;
+      // The pad's WebHID entry rode along (claimPadForSlot attached it): it
+      // carries the gyro, so arm it as a HID join would (#581).
+      if (gpSlot && gpSlot._hidEntry) {
+        input.motionEnabled = true;
+        input.startTiltCalibration();
+      } else if (this.motionActive) input.motionEnabled = true;
     }
 
     input.suppressGamepadLean = !this.joystickActive;
