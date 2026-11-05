@@ -77,7 +77,23 @@ await new Promise(r => setTimeout(r, 300));
 await clickText('button, uf-button', /start ride/);
 await page.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 });
 
-// 3. Crash out at 140 m: the game-over screen pays the distance.
+// 2b. #512 · Tandem Tokens on the road: Grandma's has 4 runs of 5. Ride onto
+// the first token of the first run and it is collected: the HUD counts it,
+// sparkles burst, no boost.
+const tok = await page.evaluate(() => {
+  const g = window._game, tm = g.tokenManager, it = tm._items[0];
+  g.bike.resetToDistance(it.absoluteD);
+  const h = g.bike.heading; g.bike.position.x += Math.cos(h) * it.lateralOffset; g.bike.position.z -= Math.sin(h) * it.lateralOffset;
+  g.bike._applyTransform(); g.bike.boostTimer = 0;
+  return { total: tm.getTotalItems(), runs: g._tokenPlan.runs.map(r => r.kind).join(','), hud: document.getElementById('token-counter').classList.contains('visible'), value: it.value };
+});
+await page.waitForFunction(() => window._game.tokenManager.collected >= 1, { timeout: 60000, polling: 50 });
+const tok2 = await page.evaluate(() => ({ collected: window._game.tokenManager.collected, value: window._game.tokenManager.collectedValue(),
+  hud: document.getElementById('token-count').textContent, fx: !!window._game._tokenFx, boost: window._game.bike.boostTimer, rm: window._game.raceManager.tokensCount }));
+check(tok.total === 20 && tok.hud && tok2.collected === 1 && tok2.value === tok.value && tok2.hud === '1/20' && tok2.fx && tok2.rm === 1 && !(tok2.boost > 0),
+  `#512 a token is collected on contact (HUD "${tok2.hud}", worth ${tok2.value}, sparkles, no boost); runs: ${tok.runs}`);
+
+// 3. Crash out at 140 m: the game-over screen pays the distance (1 per 10 m) and what was picked up.
 // Past the second checkpoint, so RESTART resumes this same ride from it.
 await page.evaluate(() => { const g = window._game, rm = g.raceManager; rm.passedCheckpoints.add(rm.checkpoints[1]); g.bike.distanceTraveled = 140; g._showGameOver(); });
 await new Promise(r => setTimeout(r, 1500));
@@ -86,10 +102,11 @@ const go = await page.evaluate(() => ({
   text: document.getElementById('gameover-coins').textContent,
   garage: document.getElementById('btn-gameover-garage').style.display !== 'none',
   pickups: window._game.collectibleManager ? window._game.collectibleManager.collected : 0,
+  tokenValue: window._game.tokenManager ? window._game.tokenManager.collectedValue() : 0,
 }));
 const w1 = await wallet();
-check(go.shown && /Distance \(140 m\)/.test(go.text) && w1.coins === 28 + 5 * go.pickups && !go.garage,
-  `game over pays the distance: ${w1.coins} coins ("${go.text.replace(/\s+/g, ' ').slice(0, 70)}…"), no GARAGE (#446)`);
+check(go.shown && /Distance \(140 m\)/.test(go.text) && /Tokens \(1\/20\)/.test(go.text) && w1.coins === 14 + 5 * go.pickups + go.tokenValue && !go.garage,
+  `game over pays the distance and the token: ${w1.coins} tokens ("${go.text.replace(/\s+/g, ' ').slice(0, 90)}…"), no GARAGE (#446)`);
 await shot('1-gameover-coins');
 // the tally rows are readable on the dark end screen (they had no colour: black text, blank-looking lines)
 const rowLum = await page.evaluate(() => [...document.querySelectorAll('#gameover-coins uf-ledger .ul-row')].map(r => {
@@ -110,8 +127,8 @@ const vic = await page.evaluate(() => ({
 }));
 const w2 = await wallet();
 const gained = w2.coins - w1.coins;
-check(/Finished/.test(vic.text) && /Distance \(110 m\)/.test(vic.text) && gained >= 22 + 25 && !vic.garage,
-  `the finish pays the rest of the road once + finishing (+${gained}: "${vic.text.replace(/\s+/g, ' ').slice(0, 90)}…")`);
+check(/Finished/.test(vic.text) && /Distance \(110 m\)/.test(vic.text) && /Tokens \(\d+\/20\)/.test(vic.text) && gained >= 11 + 25 && !/Multiplier/.test(vic.text) && !vic.garage,
+  `the finish pays the rest of the road once + finishing, no multiplier (+${gained}: "${vic.text.replace(/\s+/g, ' ').slice(0, 110)}…")`);
 await shot('2-victory-coins');
 
 // 5. The one garage, standalone (the way Slingshot opens it); a purchase debits the shared wallet.

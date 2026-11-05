@@ -8,10 +8,12 @@
 // own": coins, upgrades, prestige rebuilds. Slingshot's own progress (stage,
 // best, Today's Launch) stays in its save (js/slingshot.js).
 //
-// Only the Coin multiplier reaches beyond the Slingshot: it (times the
-// prestige bonus) multiplies every payout in every mode. The physics upgrades
-// never touch a race — fairness in versus and ranked, and nobody has designed
-// that.
+// None of the upgrades reaches beyond the Slingshot. The Token multiplier
+// (times the prestige bonus) multiplies Slingshot pay only — #512: with a
+// store selling outfits, a maxed garage must not triple every ride's pay —
+// and the physics upgrades never touch a race: fairness in versus and ranked,
+// and nobody has designed that. Regular rides pay through js/economy.js with
+// no multiplier.
 //
 // Pure and DOM-free like slingshot.js: an injectable {get,set} store.
 
@@ -92,7 +94,7 @@ export function prestigeBonus(w) {
   return 1 + REBUILD_BONUS * Math.min(REBUILD_CAP, (w && w.rebuilds) || 0);
 }
 
-/** What every payout in every mode is multiplied by: the Coin multiplier × the prestige bonus. */
+/** What a Slingshot payout is multiplied by: the Token multiplier × the prestige bonus (#512: Slingshot only). */
 export function coinMultiplier(w) {
   return slingStats((w && w.lv) || {}).coinMult * prestigeBonus(w);
 }
@@ -104,7 +106,7 @@ export function canRebuild(w) {
 
 /**
  * "Rebuild the bike": upgrade levels back to 0, coins and Slingshot progress
- * kept, one more permanent +10% on every payout (up to REBUILD_CAP rebuilds;
+ * kept, one more permanent +10% on every Slingshot payout (up to REBUILD_CAP rebuilds;
  * past that a rebuild is allowed but adds nothing). Returns { ok, wallet }.
  */
 export function rebuild(w) {

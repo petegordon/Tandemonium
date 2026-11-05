@@ -60,6 +60,18 @@ export function dailyStatus(store, key) {
   };
 }
 
+/**
+ * #512 · has this device finished the given day's road (practice, or a ranked
+ * run that was not a DNF)? Read BEFORE recording a finish to know whether it is
+ * the day's first, which pays the daily habit bonus (js/economy.js · dailyBonus).
+ */
+export function finishedToday(store, key) {
+  const entry = readAll(store)[key];
+  if (!entry) return false;
+  if (entry.practice > 0) return true;
+  return Object.values(entry.ranked || {}).some(r => r && !r.dnf);
+}
+
 /** Count one finished practice run, keeping the day's best time. */
 export function recordPractice(store, key, timeMs) {
   const all = readAll(store);

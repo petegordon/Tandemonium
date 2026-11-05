@@ -10,7 +10,9 @@ import {
   STAGE_GATES, stageLock, todaysLaunchCourse, todaysLaunchSeed, todaysLaunchStatus, applyTodaysLaunch,
   TODAYS_LAUNCH_LENGTH, SLING_REST_D, scoreRun, upgradeGain, slingStats, predictCoast, spentOn,
 } from '../../js/slingshot.js';
-import { scoreRide, RIDE_PAY, newLedger, ledgerStep, gateProgress } from '../../js/economy.js';
+import { scoreRide, RIDE_PAY, newLedger, ledgerStep, gateProgress, dailyBonus } from '../../js/economy.js';
+import { rideTallyItems } from '../../js/economy-mode.js';
+import { TOKEN_VALUE, DOUBLE_VALUE } from '../../js/token-runs.js';
 import { dailyKey } from '../../js/daily-seed.js';
 import { getMedals } from '../../js/race-config.js';
 import { DEMO_RULES, FULL_RULES } from '../../js/edition.js';
@@ -99,63 +101,153 @@ test('garage: every buy button can say how many metres it adds', () => {
     (predictCoast(slingStats({ sling: 3 }), 1, 'dirt') - predictCoast(slingStats(lv), 1, 'dirt'))) < 1e-9);
 });
 
-// ---- Regular rides pay (D4) ---------------------------------------------
+// ---- Regular rides pay (D4, re-tabled by #512) -----------------------------
 
-test('scoreRide: distance, pickups, finish, medal, new best, times the multiplier', () => {
-  const r = scoreRide({ distance: 250, pickups: 6, finished: true, medal: 'silver', newBest: true, multiplier: 1 });
-  assert.equal(r.distPay, 50);
+test('#512 pay table: 1 per 10 m, presents 5, tokens 5 (late run 10), finish 25, medals 25/50/100, best 50, daily 50 + streak', () => {
+  assert.equal(RIDE_PAY.metresPerCoin, 10);
+  assert.equal(RIDE_PAY.perPickup, 5);
+  assert.equal(RIDE_PAY.token, 5);
+  assert.equal(RIDE_PAY.finish, 25);
+  assert.deepEqual(RIDE_PAY.medal, { bronze: 25, silver: 50, gold: 100 });
+  assert.equal(RIDE_PAY.newBest, 50);
+  assert.equal(RIDE_PAY.dailyFirst, 50);
+  assert.equal(RIDE_PAY.streakPerDay, 10);
+  assert.equal(RIDE_PAY.streakCap, 100);
+  assert.equal(TOKEN_VALUE, RIDE_PAY.token, 'the planner and the pay table agree on a token');
+  assert.equal(DOUBLE_VALUE, 2 * TOKEN_VALUE);
+});
+
+test('scoreRide: distance, tokens, presents, finish, medal, new best — and no multiplier', () => {
+  const r = scoreRide({ distance: 250, pickups: 6, tokens: 12, tokensTotal: 20, tokenValue: 65, finished: true, medal: 'silver', newBest: true });
+  assert.equal(r.distPay, 25, '250 m at 1 per 10 m');
   assert.equal(r.pickupPay, 30);
+  assert.equal(r.tokenPay, 65, 'tokens pay their pickup value (5 each, 10 on the late run)');
+  assert.deepEqual([r.tokens, r.tokensTotal], [12, 20], 'for the "n/N" line');
   assert.equal(r.finishPay, RIDE_PAY.finish);
   assert.equal(r.medalPay, 50);
   assert.equal(r.bestPay, 50);
-  assert.equal(r.total, 50 + 30 + 25 + 50 + 50);
-  const doubled = scoreRide({ distance: 250, pickups: 6, finished: true, medal: 'silver', newBest: true, multiplier: 2 });
-  assert.equal(doubled.total, 2 * r.total);
+  assert.equal(r.dailyPay + r.streakPay, 0, 'not a Daily Ride');
+  assert.equal(r.total, 25 + 30 + 65 + 25 + 50 + 50);
+  // The garage multiplier is Slingshot's now: a stray `multiplier` changes nothing.
+  const stray = scoreRide({ distance: 250, pickups: 6, tokenValue: 65, finished: true, medal: 'silver', newBest: true, multiplier: 3 });
+  assert.equal(stray.total, r.total);
+  assert.equal(stray.multiplier, undefined);
   assert.equal(scoreRide({ distance: 250, finished: true, medal: 'gold' }).medalPay, 100);
   assert.equal(scoreRide({ distance: 250, finished: true, medal: 'bronze' }).medalPay, 25);
 });
 
-test('scoreRide: a crashed or abandoned ride still pays its distance, nothing more', () => {
-  const r = scoreRide({ distance: 137, pickups: 2, finished: false, medal: 'gold', newBest: true, multiplier: 1.5 });
-  assert.equal(r.distPay, 27);
-  assert.equal(r.finishPay + r.medalPay + r.bestPay, 0, 'no finish, no finish bonuses');
-  assert.equal(r.total, Math.floor((27 + 10) * 1.5));
+test('scoreRide: a crashed or abandoned ride still pays its distance and what it picked up, nothing more', () => {
+  const r = scoreRide({ distance: 137, pickups: 2, tokenValue: 25, finished: false, medal: 'gold', newBest: true, dailyBonus: { firstToday: true, streak: 5 } });
+  assert.equal(r.distPay, 13);
+  assert.equal(r.finishPay + r.medalPay + r.bestPay + r.dailyPay + r.streakPay, 0, 'no finish, no finish bonuses, no daily bonus');
+  assert.equal(r.total, 13 + 10 + 25);
   assert.equal(scoreRide({}).total, 0);
 });
 
-test('one Grandma\'s finish buys the first Slingshot level (target: 1 ride)', () => {
-  const cheapest = Math.min(...UPGRADES.map(u => upgradeCost(u, 0)));
-  // 250 m, no medal, no presents: the worst finish.
-  assert.ok(scoreRide({ distance: 250, finished: true, multiplier: 1 }).total >= cheapest);
-  // The tutorial (225 m) does too.
-  assert.ok(scoreRide({ distance: 225, finished: true, multiplier: 1 }).total >= cheapest);
+test('#512 what the roads pay: a clean Grandma\'s ~120-200, a Daily Ride ~200-300, no medal needed', () => {
+  // Grandma's, 250 m: every token (3 runs at 5 + the double run) and 6 presents is the ceiling;
+  // a typical ride (half the tokens, 3 presents) sits in #574's 120-200.
+  const perfect = scoreRide({ distance: 250, pickups: 6, tokenValue: 3 * 25 + 50, finished: true });
+  assert.equal(perfect.total, 25 + 30 + 125 + 25);
+  const grandma = scoreRide({ distance: 250, pickups: 3, tokenValue: 60, finished: true });
+  assert.ok(grandma.total >= 120 && grandma.total <= 200, `Grandma's pays ${grandma.total}`);
+  // A Daily Ride, 500 m, first of the day with a 3-day streak: every token (7 runs + the double) and
+  // 12 presents is the ceiling; a typical ride (half the tokens, 6 presents) sits in #574's 200-300.
+  const ceiling = scoreRide({ distance: 500, pickups: 12, tokenValue: 7 * 25 + 50, finished: true, dailyBonus: { firstToday: true, streak: 3 } });
+  assert.equal(ceiling.total, 50 + 60 + 225 + 25 + 50 + 20);
+  const daily = scoreRide({ distance: 500, pickups: 6, tokenValue: 110, finished: true, dailyBonus: { firstToday: true, streak: 3 } });
+  assert.ok(daily.total >= 200 && daily.total <= 300, `a Daily Ride pays ${daily.total}`);
+  // Surviving alone pays little: collecting is where the money is.
+  assert.equal(scoreRide({ distance: 500, finished: true }).total, 50 + 25);
 });
 
-test('ledger: a game-over, a restart and the finish pay each metre once', () => {
+test('one Grandma\'s finish still buys the first Slingshot level (target: 1 ride)', () => {
+  const cheapest = Math.min(...UPGRADES.map(u => upgradeCost(u, 0)));
+  // 250 m, no medal, no presents, no tokens: the worst finish.
+  assert.ok(scoreRide({ distance: 250, finished: true }).total >= cheapest);
+  // The tutorial (150 m) with its one run of tokens does too.
+  assert.ok(scoreRide({ distance: 150, tokenValue: 25, finished: true }).total >= cheapest);
+});
+
+test('#512 daily habit: +50 for the first Daily Ride finished today, +10 a streak day beyond the first, capped at +100', () => {
+  assert.deepEqual(dailyBonus(), { first: 0, streakDays: 0, streakPay: 0 });
+  assert.deepEqual(dailyBonus({ firstToday: false, streak: 9 }), { first: 0, streakDays: 0, streakPay: 0 }, 'a second ride today pays no bonus');
+  assert.deepEqual(dailyBonus({ firstToday: true, streak: 1 }), { first: 50, streakDays: 1, streakPay: 0 }, 'day 1: the first-ride bonus alone');
+  assert.deepEqual(dailyBonus({ firstToday: true, streak: 2 }), { first: 50, streakDays: 2, streakPay: 10 });
+  assert.deepEqual(dailyBonus({ firstToday: true, streak: 11 }), { first: 50, streakDays: 11, streakPay: 100 });
+  assert.deepEqual(dailyBonus({ firstToday: true, streak: 40 }), { first: 50, streakDays: 40, streakPay: 100 }, 'capped');
+  const r = scoreRide({ distance: 500, finished: true, dailyBonus: { firstToday: true, streak: 4 } });
+  assert.equal(r.dailyPay, 50);
+  assert.equal(r.streakDays, 4);
+  assert.equal(r.streakPay, 30);
+  assert.equal(r.total, 50 + 25 + 50 + 30);
+  assert.equal(scoreRide({ distance: 500, finished: false, dailyBonus: { firstToday: true, streak: 4 } }).dailyPay, 0, 'only a finish');
+});
+
+test('#512 finishedToday: practice or a non-DNF ranked run; a DNF is not a finish', async () => {
+  const { recordPractice, recordRanked, finishedToday, STORAGE_KEY } = await import('../../js/daily-ride.js');
+  const store = memStore();
+  const k = '2026-11-04';
+  assert.equal(finishedToday(store, k), false);
+  recordRanked(store, k, 'solo', { dnf: true, distance: 120 });
+  assert.equal(finishedToday(store, k), false, 'a ranked DNF');
+  recordPractice(store, k, 90000);
+  assert.equal(finishedToday(store, k), true);
+  assert.equal(finishedToday(store, '2026-11-05'), false, 'tomorrow is a new day');
+  const s2 = memStore();
+  recordRanked(s2, k, 'pair', { timeMs: 100000, distance: 500 });
+  assert.equal(finishedToday(s2, k), true);
+  assert.ok(STORAGE_KEY);
+});
+
+test('ledger: a game-over, a restart and the finish pay each metre and each token once', () => {
   let L = newLedger('ride-1');
-  let s = ledgerStep(L, { distance: 140, pickups: 3 });
-  assert.deepEqual(s.pay, { distance: 140, paidDistance: 0, pickups: 3, finished: false });
+  let s = ledgerStep(L, { distance: 140, pickups: 3, tokenValue: 25 });
+  assert.deepEqual(s.pay, { distance: 140, paidDistance: 0, pickups: 3, tokenValue: 25, finished: false });
   L = s.ledger;
-  // RESTART from the 125 m checkpoint; pickups after it were taken back and re-collected.
-  s = ledgerStep(L, { distance: 130, pickups: 3 });
-  assert.equal(scoreRide({ ...s.pay, multiplier: 1 }).total, 0, 'nothing new, nothing paid');
+  // RESTART from the 125 m checkpoint; pickups and tokens after it were taken back and re-collected.
+  s = ledgerStep(L, { distance: 130, pickups: 3, tokenValue: 15 });
+  assert.equal(scoreRide(s.pay).total, 0, 'nothing new, nothing paid');
   L = s.ledger;
-  s = ledgerStep(L, { distance: 250, pickups: 5, finished: true });
-  assert.deepEqual(s.pay, { distance: 250, paidDistance: 140, pickups: 2, finished: true });
-  const r = scoreRide({ ...s.pay, multiplier: 1 });
-  assert.equal(r.distPay, 50 - 28);
+  s = ledgerStep(L, { distance: 250, pickups: 5, tokenValue: 100, finished: true });
+  assert.deepEqual(s.pay, { distance: 250, paidDistance: 140, pickups: 2, tokenValue: 75, finished: true });
+  const r = scoreRide(s.pay);
+  assert.equal(r.distPay, 25 - 14);
+  assert.equal(r.tokenPay, 75);
   assert.equal(r.metres, 110);
   L = s.ledger;
-  assert.equal(ledgerStep(L, { distance: 250, pickups: 5, finished: true }).pay.finished, false, 'finish pays once');
+  assert.equal(ledgerStep(L, { distance: 250, pickups: 5, tokenValue: 100, finished: true }).pay.finished, false, 'finish pays once');
+  // An old ledger without the token field still steps.
+  assert.equal(ledgerStep({ id: 'x', distance: 10, pickups: 0, finished: false }, { distance: 20, tokenValue: 5 }).pay.tokenValue, 5);
 });
 
-test('the Coin multiplier and the prestige bonus multiply every payout', () => {
+test('#512 the Token multiplier and the prestige bonus multiply Slingshot pay only', () => {
   const w = { ...emptyWallet(), lv: { magnet: 4 }, rebuilds: 2 };
   assert.equal(prestigeBonus(w), 1 + 2 * REBUILD_BONUS);
   assert.ok(Math.abs(coinMultiplier(w) - 2 * 1.2) < 1e-9);
   assert.equal(coinMultiplier(emptyWallet()), 1);
-  // Slingshot's scoreRun takes the same multiplier.
+  // Slingshot's scoreRun takes it…
   assert.equal(scoreRun({ distance: 100 }, emptySave(), coinMultiplier(w)).total, Math.floor(50 * 2.4));
+  // …a regular ride never does, whatever the wallet holds.
+  assert.equal(scoreRide({ distance: 250, finished: true, multiplier: coinMultiplier(w) }).total,
+               scoreRide({ distance: 250, finished: true }).total);
+  assert.equal(UPGRADES.find(u => u.id === 'magnet').name, 'Token multiplier');
+  assert.match(UPGRADES.find(u => u.id === 'magnet').desc, /Slingshot/);
+});
+
+test('#512 the finish tally lists every line: distance, tokens n/N, presents, finish, medal, new best, daily bonus, streak', () => {
+  const s = scoreRide({ distance: 500, pickups: 4, tokens: 30, tokensTotal: 40, tokenValue: 175, finished: true, medal: 'gold', newBest: true,
+                        dailyBonus: { firstToday: true, streak: 3 } });
+  const items = rideTallyItems(s);
+  assert.deepEqual(items.map(i => i.label), ['Distance (500 m)', 'Tokens (30/40)', 'Presents (4)', 'Finished', 'Gold medal', 'New best',
+                                              'First Daily Ride today', 'Streak (3 days)']);
+  assert.equal(items.reduce((a, i) => a + i.amount, 0), s.total, 'the lines add up to the total');
+  assert.ok(items.every(i => i.display === undefined), 'no multiplier line any more');
+  // A crash on a road with tokens still shows the tokens line, at 0 when none were taken.
+  const crash = rideTallyItems(scoreRide({ distance: 90, tokens: 0, tokensTotal: 20 }));
+  assert.deepEqual(crash.map(i => i.label), ['Distance (90 m)', 'Tokens (0/20)']);
+  // A road without tokens (Tourist) has no tokens line.
+  assert.deepEqual(rideTallyItems(scoreRide({ distance: 90 })).map(i => i.label), ['Distance (90 m)']);
 });
 
 // ---- Prestige (D11c) -------------------------------------------------------
