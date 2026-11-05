@@ -6115,7 +6115,7 @@ export class Lobby {
     if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
     this._versusPrevButtons.delete('member:' + p.n);
     this._versusLastCardsKey = null;
-    console.log(`[versus] P${p.n} left their seat (${p.name})`);
+    this._diag(`[versus] P${p.n} left their seat (${p.name})`);
     analytics.trackEvent('versus_player_left', { source: p.type, players: this._versusPlayers.length });
   }
 
@@ -6282,6 +6282,7 @@ export class Lobby {
         if (a && !prev.a) {
           // _versusJoinCandidate enforces seats itself — including the
           // keyboard-P1 takeover when the roster is otherwise full.
+          this._diag(`[versus] join press on ${c.name} (${c.kind}${c.gpIndex != null ? ', gp ' + c.gpIndex : ''}${c.device ? ', hid ' + (c.device.productName || 'device') : ''}${c.slotId ? ', slot ' + c.slotId : ''})`, 'versus-join-press');
           this._versusJoinCandidate(c);
         }
         prev.a = a;
@@ -6499,7 +6500,7 @@ export class Lobby {
     // "keyboard + 4 pads" resolves to a full 4-pad roster.
     const canConvertP1 = !!(p1 && p1.type === 'keyboard' && mgr);
     if (!seatsLeft && !canConvertP1) {
-      console.log(`[versus] join ignored (roster full): ${c.name}`);
+      this._diag(`[versus] join ignored (roster full): ${c.name}`);
       return;
     }
 
@@ -6518,7 +6519,7 @@ export class Lobby {
         this.input.motionEnabled = true;
         this.input.startTiltCalibration();
       }
-      console.log(`[versus] keyboard P1 seat taken over by ${c.name}`);
+      this._diag(`[versus] keyboard P1 seat taken over by ${c.name}`);
       analytics.trackEvent('versus_player_joined', { source: c.kind, players: this._versusPlayers.length, p1_takeover: true });
       return true;
     };
@@ -6545,7 +6546,7 @@ export class Lobby {
     if (c.kind === 'phone') {
       // #562 · a phone brings its own InputManager; no slot. It never takes
       // over a keyboard Player 1 (that seat is bound to slot P1).
-      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
+      if (!seatsLeft) { this._diag(`[versus] join ignored (roster full): ${c.name}`); return; }
       input = c.entry.attach();
     } else if (c.kind === 'hid') {
       let slot = null;
@@ -6566,7 +6567,7 @@ export class Lobby {
       }
       if (!slot) {
         if (canConvertP1 && convertP1(() => mgr.claimHidDeviceForSlot('P1', c.device))) return;
-        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        this._diag(`[versus] join ignored (no free slot): ${c.name}`);
         return;
       }
       slotId = slot.id;
@@ -6593,7 +6594,7 @@ export class Lobby {
       }
       if (!slotId) {
         if (canConvertP1 && convertP1(() => mgr.claimPadForSlot('P1', c.gp))) return;
-        console.log(`[versus] join ignored (no free slot): ${c.name}`);
+        this._diag(`[versus] join ignored (no free slot): ${c.name}`);
         return;
       }
       gpIndex = c.gpIndex;
@@ -6628,7 +6629,7 @@ export class Lobby {
     });
     this._versusPlayers.sort((a, b) => a.n - b.n);
     if (c.kind === 'phone') c.entry.host.setLabel('Player ' + n);
-    console.log(`[versus] ${c.name} joined as player ${n} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
+    this._diag(`[versus] ${c.name} joined as player ${n} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
     analytics.trackEvent('versus_player_joined', {
       source: c.kind,
       players: this._versusPlayers.length,
@@ -6707,6 +6708,9 @@ export class Lobby {
       + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
     if (key === this._versusLastCardsKey) return;
     this._versusLastCardsKey = key;
+    // tandemonium-diag.log: what the screen offers (the TV has no console).
+    this._diag('[versus] seats: ' + (this._versusPlayers.map(p => `P${p.n}=${p.name}(${p.type}${p.slotId ? ',' + p.slotId : ''})`).join(' ') || '-')
+      + ' | joinable: ' + (candidates.map(c => `${c.name}(${c.kind}${c.gpIndex != null ? ',gp' + c.gpIndex : ''}${c.device ? ',hid:' + (c.device.productName || '?') : ''}${c.slotId ? ',' + c.slotId : ''})`).join(' ') || '-'), 'versus-seats');
 
     // Offer joinable controllers to the emptier team first (mirrors the team
     // auto-assignment a join will actually make).
