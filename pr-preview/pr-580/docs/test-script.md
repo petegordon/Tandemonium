@@ -207,7 +207,13 @@ real-hardware rows stay manual.
 | MC-12h | MC-12 on a real Puck with two controllers | M | — |
 | MC-13 | Mixed families (DualSense + Switch Pro): each seat's prompts use its own glyphs | A | `smoke:local-coop` |
 | MC-14 | Menu focus: P1's pad moves focus one step per press; no double moves. P2's pad does not drive menus (decided 2026-10-25) | A | `smoke:local-coop` |
-| MC-15 | Phone remote as local Player 2 next to a pad as P1: not built yet (P4 phase, #455) | M | `smoke:phone-coop` prints NOT BUILT |
+| MC-15 | The first page's phone remote next to a pad as P1 drives the P1 seat. It is seat 1 of the same pad room the other phones join (#562) and shows no Play choice (controller only); a phone as Player 2 joins from the co-op screen instead: MC-16 | A | `smoke:phone-coop`, `smoke:phone-pad` |
+| MC-16 | Co-op with a phone as Player 2 (#562, #563): the host step shows one "Scan to join" QR (no online room QR, no room opened yet, a code button instead). Two phones scan the SAME QR, pick Control the TV (the bigger button) and get seats 2 and 3 of one pad room while the QR stays put; each says "watch the TV". OK seats a phone as Player 2; the QR then goes and the unused seat closes. It pedals and steers Player 2 only, and a drop pauses and shows its own seat's code | A | `smoke:phone-multi`, `test/unit/phone-entry` |
+| MC-17 | Versus with two phones (#562): the panel's QR is controller only (no question on the phone). Two phones scan the same QR and join; OK takes a seat (own player numbers), D-pad switches team, BACK leaves and OK rejoins, each pedals its own seat in the race | A | `smoke:phone-multi` |
+| MC-18 | Play on this phone (#563): a phone on the host step's QR picks Play; only then the TV opens the RIDE TOGETHER room (its code shows, to type elsewhere too) and the phone lands on the game's join link with that code; its phone seat goes back on offer | A | `smoke:phone-multi`, `test/unit/phone-pad` |
+| MC-18b | Play when the room can't open: the phone says so and offers Control the TV, which then makes it a controller | A | `smoke:phone-multi` |
+| MC-18h | MC-16 to MC-18 with real phones (iOS Safari + Android Chrome) on a TV: two people scan at once, one picks Play and joins as the online partner | M | — |
+| MC-19 | One pad room, several seats (#562): free join seats share one QR secret; a phone taking a seat moves that seat to its own secret at once (the next scan lands on the next seat); frames, drops and reconnects are per seat; a closed seat is locked; open-room is answered only for a join seat whose phone is here, while the game allows it | A | `test/unit/phone-pad` |
 | MC-15b | A phone next to a pad: both drive P1's seat (what the game does today) | A | `smoke:phone-coop` |
 
 ### Versus (split screen)
@@ -245,6 +251,7 @@ Two devices on different networks for the M rows.
 | OC-11 | BACK TO ROOM after a ride returns both to level select on the same room, still connected; captain picks, stoker waits | A | `smoke:online` |
 | OC-11h | Camera/mic PiP keep flowing across the return (PeerJS: needs its CDN and signalling server) | M | — |
 | OC-12 | Rejoin after closing the tab | M | — |
+| OC-12b | Rejoin from JOIN A RIDE (#547): RIDE TOGETHER goes straight to Choose your seat (no Recent Rooms pop-up); JOIN A RIDE shows one Rejoin card per room from the last 5 minutes (newest first, code · partner · seat · age), pad focus starts on the newest, and a pick rejoins in the seat you had (back seat → connecting on JOIN A RIDE, front seat → host step); no recent rooms, no row; the row and the keypad fit 1080p and 720p above the bar | A | `smoke:rejoin` |
 | OC-13 | Co-op tutorial: the stoker waits for the captain's countdown, both ride, it completes on both, both return to the room | A | `smoke:online` |
 | OC-14 | Co-op Tourist: both see the same world | A | `smoke:tourist` |
 | OC-15 | Steam build ↔ web build in the same room | M | `test/unit/room-edition` |
@@ -349,7 +356,7 @@ The mocks, all in `scripts/lib/`:
 | `fake-webhid.mjs` | `navigator.hid` replaying recorded reports (`scripts/fixtures/hid/`, copied from the controller lab) | `webhid` |
 | `fake-steam.mjs` | The Electron preload's `steam`, `electronApp`, `tandemoniumSteam` globals | `steam-input` |
 | Fake net | Two pages wired together in place of the room transport | `host-room`, `tourist`, `disconnect` |
-| Pad relay | Real `worker/pad-relay.js` under `wrangler dev` | `phone-pad` |
+| Pad relay | Real `worker/pad-relay.js` under `wrangler dev` (`phone-multi` also runs the RIDE TOGETHER relay, `worker/relay.js`) | `phone-pad`, `phone-multi` |
 
 Run everything with `npm run smoke:all`, or some with
 `node scripts/run-smokes.mjs local-coop versus`. CI runs the same runner.

@@ -6,7 +6,7 @@
 //   <uf-card icon="🏠" heading="Grandma's" description="Grandma called — she needs her presents!"
 //            footer="No ride yet · 🥇 at 0:58" selected></uf-card>
 //   <uf-card icon="🚴" heading="Tutorial" description="Master pedaling and steering!" tone="muted"></uf-card>
-//   <uf-card icon="📅" heading="Daily Ride" tone="gold" locked footer="Sign in to ride"></uf-card>
+//   <uf-card icon="📅" heading="Today's Road" tone="gold" locked footer="Sign in to ride"></uf-card>
 //
 // The host is the button (role button, Enter/Space/click, focusable), like
 // <uf-button>. A parent lays cards out in a row or grid; the card fills its
