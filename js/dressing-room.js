@@ -198,6 +198,7 @@ export class DressingRoom {
     c.el.innerHTML = `
       <div class="dr-head"><span class="dr-who">Player <b>${c.n}</b> · ${esc(c.player.label)}</span><span class="dr-badge"></span></div>
       ${previewHtml}
+      <p class="dr-stick-hint">Right stick: look around · R3: reset</p>
       <p class="dr-summary"></p>
       <div class="dr-rows-wrap"></div>
       <div class="dr-actions"></div>
@@ -228,6 +229,9 @@ export class DressingRoom {
     c.el.dataset.state = c.state;
     c.el.dataset.tone = tone;
     c.el.querySelector('.dr-badge').textContent = badge;
+    // The camera hint only where a pad drives the card and there is a 3D preview to look around.
+    const stickHint = c.el.querySelector('.dr-stick-hint');
+    if (stickHint) stickHint.hidden = !(c.type === 'gamepad' && this._preview);
     c.el.querySelector('.dr-who').innerHTML = `Player <b>${c.n}</b> · ${esc(p.label)}`;
     c.el.querySelector('.dr-summary').textContent = this._summary(look);
     c.el.querySelector('.dr-rows-wrap').innerHTML = c.state === 'editing' ? this._rows(c, look) : '';

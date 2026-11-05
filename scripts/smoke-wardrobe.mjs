@@ -128,6 +128,12 @@ await cardClick(page, 2, 'button[data-pick="led"][data-val="pink"]');
 await cardClick(page, 2, 'button[data-pick="led"][data-val="gold"]');
 await new Promise((r) => setTimeout(r, 700));
 check((await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount)) === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount));
+const hints = await page.evaluate(() => ({
+  shown: [...document.querySelectorAll('#dr-cards .dr-card')].map((el) => [el.dataset.n, !el.querySelector('.dr-stick-hint').hidden, el.querySelector('.dr-stick-hint').textContent]),
+  label: document.querySelector('#dr-buzz .dr-buzz-label')?.textContent.replace(/\s+/g, ' ').trim(),
+}));
+check(hints.shown.length === 2 && hints.shown.every(([, on, t]) => on && /Right stick: look around · R3: reset/.test(t)), 'WD-03: both pad-driven cards show the "Right stick: look around · R3: reset" hint', hints.shown);
+check(/^P1 · Buzz a controller$/i.test(hints.label || ''), 'WD-03: the strip label says Player 1 drives it', hints.label);
 const noFind = await page.evaluate(() => document.querySelectorAll('#dr-cards button[data-act="find"]').length);
 check(noFind === 0, 'WD-03: no FIND MY CONTROLLER button on the cards (the strip replaces it)', noFind);
 const scopes = await page.evaluate(() => { const r = window._game.lobby._room; const has = (n) => r.cards.get(n).focus.items.some((el) => el.dataset && el.dataset.buzz); return { p1: has(1), p2: has(2), chips: [...document.querySelectorAll('#dr-buzz-chips button')].map((b) => b.dataset.buzz) }; });
@@ -227,6 +233,9 @@ console.log('WD-06 versus join screen');
   check(await until(p, () => document.querySelectorAll('#versus-wardrobe uf-button').length === 2), 'WD-06: WARDROBE buttons for both players', await rowButtons(p, 'versus-wardrobe'));
   await fp.tap(i, 'Y');
   check(await until(p, () => window._game.lobby._room && window._game.lobby._room.states()[2] === 'editing'), 'WD-06: player 2\'s Y opens the room with their card in Edit', await room(p));
+  // The camera hint is a pad thing: a card whose player is not on a pad (here: made to look like a phone/keyboard card) hides it.
+  const hintRule = await p.evaluate(() => { const r = window._game.lobby._room; const c = r.cards.get(2); const before = !c.el.querySelector('.dr-stick-hint').hidden; c.type = 'keyboard'; r._renderCard(c); const after = !c.el.querySelector('.dr-stick-hint').hidden; c.type = 'gamepad'; r._renderCard(c); return { before, after, restored: !c.el.querySelector('.dr-stick-hint').hidden }; });
+  check(hintRule.before && !hintRule.after && hintRule.restored, 'WD-06: the hint shows for a pad-driven card and hides for a keyboard/phone one', hintRule);
   const v0 = await room(p);
   check(v0.teams.length === 2 && v0.teams.some(([t, ns]) => t === 'A' && ns.includes(1)) && v0.teams.some(([t, ns]) => t === 'B' && ns.includes(2)), 'WD-06: cards are grouped by team (P1 blue, P2 red)', v0.teams);
   await fp.tap(i, 'B');

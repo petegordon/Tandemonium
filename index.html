@@ -4219,7 +4219,7 @@
   /* Two card states: Ready = the goose-on-tandem preview fills the card (no pickers); Editing = the
      preview comes down to the small view and the pickers slide in below. The height transitions
      (dressing-room.js resizes the canvas bitmap each frame while it runs). */
-  .dr-preview { display: block; width: 100%; height: clamp(220px, calc(100dvh - 450px), 560px); border-radius: 10px;
+  .dr-preview { display: block; width: 100%; height: clamp(210px, calc(100dvh - 475px), 560px); border-radius: 10px;
     background: radial-gradient(ellipse at 50% 70%, rgba(255,255,255,.10), rgba(0,0,0,.25)); transition: height 280ms ease-out; }
   .dr-card[data-state="editing"] .dr-preview { height: 185px; }
   @media (prefers-reduced-motion: reduce) { .dr-preview { transition: none; } }
@@ -4239,6 +4239,9 @@
   .dr-hint:empty { display: none; }
   .dr-buzz { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
   .dr-buzz-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); }
+  .dr-buzz-p1 { color: var(--uf-color-captain); }   /* Player 1 drives the strip */
+  .dr-stick-hint { margin: -2px 0 0; font: var(--uf-size-xs)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); opacity: .75; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .dr-stick-hint[hidden] { display: none; }
   .dr-buzz-chips { display: flex; gap: 8px; flex-wrap: wrap; }
   .dr-chip { min-width: 0; width: auto; padding: 6px 12px; border-color: color-mix(in srgb, var(--chip) 60%, transparent); }
   .dr-chip:hover { background: color-mix(in srgb, var(--chip) 20%, transparent); }
@@ -6123,7 +6126,7 @@ ON</button>
 <uf-sheet id="dressing-room" heading="Dressing room" size="lg" dismissible="false">
   <div id="dr-cards" class="dr-cards"></div>
   <!-- Buzz a controller: one chip per seated pad (rumble + flash). Only P1's pad navigates here; any mouse clicks. -->
-  <div id="dr-buzz" class="dr-buzz"><span class="dr-buzz-label">Buzz a controller</span><div id="dr-buzz-chips" class="dr-buzz-chips"></div></div>
+  <div id="dr-buzz" class="dr-buzz"><span class="dr-buzz-label"><b class="dr-buzz-p1">P1</b> · Buzz a controller</span><div id="dr-buzz-chips" class="dr-buzz-chips"></div></div>
   <div slot="actions" class="dr-foot">
     <span id="dr-status" class="dr-status"></span>
     <uf-button variant="accent" id="dr-back" style="display:none">BACK TO SEATS</uf-button>
