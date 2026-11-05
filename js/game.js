@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -54,7 +54,8 @@ import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { isSteamTwinPad } from './input-manager.js';
-import { versusTeamLooks } from './versus/team-looks.js';
+import { playerLooks, lookToWire, lookFromWire, versusSeatLooks } from './player-look.js';   // #548
+import { applyPlayerLed } from './player-led.js';   // #548
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -288,6 +289,16 @@ class Game {
     // Let InputManager see the WebHID pool so it can tell when a pad in the
     // Steam Input snapshot is already streaming over WebHID (#347).
     setControllerManager(this.controllerManager);
+    // #548 · each player's saved controller colour (Wardrobe) is what the manager
+    // lights their pad with when it claims it.
+    for (let n = 1; n <= 4; n++) applyPlayerLed(this.controllerManager, n, playerLooks.get(n).led);
+    // The Wardrobe (lobby) changed a look: Settings' Player 1 rows follow, and an
+    // online partner gets the new look. The geese follow on the next frame (_syncRiderLooks).
+    window.addEventListener('tandemonium:look-changed', (e) => {
+      const n = e && e.detail ? e.detail.n : 0;
+      if (n === 1) this._updateOptionsGooseOutfitUI();
+      if (n === 1 && this.net && this.net.connected) this._sendProfile();
+    });
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.
@@ -1172,6 +1183,8 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this._partnerLook = null;   // #548: set when the partner's profile carries their look
+    this._partnerLookKey = '';
     this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
@@ -1480,6 +1493,9 @@ class Game {
       // D-9: and their anonymous device id, so a guest partner still builds a
       // shared history with a signed-in rider.
       if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
+      // #548 · the partner's goose look (outfit, colourway, body); an older build sends none,
+      // and their goose then mirrors mine (seatLooks).
+      if (profile.look) { this._partnerLook = lookFromWire(profile.look); this._partnerLookKey = JSON.stringify(this._partnerLook); }
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;
@@ -1644,8 +1660,11 @@ class Game {
     // controllers. Bikes stagger ±0.8m laterally so they don't overlap on
     // the start line. Team tint comes from the existing bike presets.
     const presets = this.lobby._presetData || {};
-    // Each team's geese wear their own outfit in the team's colour.
-    const looks = versusTeamLooks(getGooseOutfit());
+    // #548 · each team's geese wear their riders' own looks; a rider who never picked
+    // one gets the team's outfit + colour (js/player-look.js versusSeatLooks, #538).
+    const teamLooks = (t) => versusSeatLooks(t.id,
+      t.members.map((m) => ({ look: playerLooks.get(m.n || 0), picked: !!m.n && playerLooks.isPicked(m.n) })),
+      getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
       const rig = new TeamRig({
         id: t.id,
@@ -1656,7 +1675,7 @@ class Game {
         bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
-      rig.bike.setGooseLook(looks[rig.id]);
+      rig.bike.setGooseLook(teamLooks(t));
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
       rig.resetForRace();
@@ -4669,6 +4688,7 @@ class Game {
     // id analytics already uses; it identifies a browser, not a person.
     try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
+    profile.look = lookToWire(getP1Look());   // #548: my goose, for the partner's screen
     if (this.lobby.roomProfileFields) Object.assign(profile, this.lobby.roomProfileFields());   // PR #397 M1
     this.net.sendProfile(profile);
   }
@@ -5764,6 +5784,10 @@ class Game {
       const b = document.getElementById('opt-colour-' + i);
       if (b) b.addEventListener('click', () => this._setGooseColourway(i));
     }
+    for (const k of ['m', 'f']) {
+      const b = document.getElementById('opt-body-' + k);
+      if (b) b.addEventListener('click', () => this._setGooseBody(k));
+    }
 
     // Display testing: save, then reload (edge smoothing is fixed when the
     // renderer is made) without the URL switches so the saved choice applies.
@@ -5980,11 +6004,31 @@ class Game {
     this._updateOptionsShowSoloUI();
   }
 
-  /** Goose Outfits: saved, then the geese on the bike are swapped in place (live versus rigs keep theirs). */
+  /**
+   * #548 · the seats follow the players' looks (Wardrobe / Settings / an online partner's
+   * profile). Called every frame; only a changed look, mode or partner touches the bike.
+   * Versus rigs dress themselves in _onVersusReady.
+   */
+  _syncRiderLooks(force = false) {
+    if (!this.bike || this.mode === 'versus') return;
+    const key = `${this.mode}|${playerLooks.version}|${this._partnerLook ? this._partnerLookKey : ''}`;
+    if (!force && key === this._riderLooksKey) return;
+    this._riderLooksKey = key;
+    this.bike.setSeatLooks(getSeatLooks(this.mode, this._partnerLook), !this.versusRigs);
+  }
+
+  /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
   _setGooseOutfit(key) {
-    try { localStorage.setItem('tandemonium_goose_outfit', key); } catch (e) {}
+    playerLooks.update(1, { outfit: key });
     this._updateOptionsGooseOutfitUI();
-    if (this.bike) this.bike.setGooseRiders(getGooseRiderPaths(), !this.versusRigs);
+    this._syncRiderLooks(true);
+  }
+
+  /** Player 1's goose body (Settings): gander or goose. */
+  _setGooseBody(body) {
+    playerLooks.update(1, { body });
+    this._updateOptionsGooseOutfitUI();
+    this._syncRiderLooks(true);
   }
 
   _updateOptionsGooseOutfitUI() {
@@ -5992,6 +6036,11 @@ class Game {
     for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.classList.toggle('active', key === cur);
+    }
+    const body = playerLooks.get(1).body;
+    for (const k of ['m', 'f']) {
+      const b = document.getElementById('opt-body-' + k);
+      if (b) b.classList.toggle('active', k === body);
     }
     this._updateOptionsGooseColourUI();
   }
@@ -6003,7 +6052,7 @@ class Game {
     if (!way) return;
     setGooseColourway(outfit, way.key);
     this._updateOptionsGooseColourUI();
-    if (this.bike) this.bike.applyGooseColours();
+    this._syncRiderLooks(true);
   }
 
   _updateOptionsGooseColourUI() {
@@ -6199,6 +6248,8 @@ class Game {
       document.getElementById('opt-riders-off'),
       document.getElementById('opt-solo-on'),
       document.getElementById('opt-solo-off'),
+      document.getElementById('opt-body-m'),
+      document.getElementById('opt-body-f'),
       document.getElementById('opt-outfit-victorian'),
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
@@ -6990,6 +7041,7 @@ class Game {
     // toggle and a mode change both apply on the next frame).
     if (this._showSolo === undefined) this._showSolo = getShowSolo();
     if (this.bike && this.bike.goose) this.bike.setSoloRider(this.mode === 'solo' && this._showSolo);
+    this._syncRiderLooks();
 
     // Front-view PiP — composite a front-facing "selfie cam" of the bike
     // into the lower-right corner, on top of whatever was just rendered.

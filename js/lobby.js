@@ -74,6 +74,10 @@ import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
+import { playerLooks, BODIES, LED_COLOURS, lookColourway, withColourway, padKeyFor, vidPidFromGamepadId } from './player-look.js';   // #548
+import { applyPlayerLed, findMe } from './player-led.js';   // #548
+import { GOOSE_OUTFITS } from './goose-outfits.js';
+import { colourwaysFor } from './goose-colourways.js';
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
 const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
@@ -311,6 +315,11 @@ export class Lobby {
     });
     this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | 'rejoin' | null
     this._modalBack = null;
+    // #548 · the Wardrobe: {n, input, type, label} of the player dressing their goose, and the
+    // FocusController on THEIR pad that drives the sheet while it is open.
+    this._wardrobe = null;
+    this._wardrobeFocus = null;
+    this._gpPrevY = false;
     this._gpPrevUp = false;
     this._gpPrevUp = false;
     this._gpPrevDown = false;
@@ -2407,6 +2416,13 @@ export class Lobby {
     this._achievementsSheet.addEventListener('uf-sheet:close', () => this._onAchievementsClosed());
     this._achDetailSheet = /** @type {any} */ (document.getElementById('ach-detail'));
     this._achDetailSheet.addEventListener('uf-sheet:close', () => this._onAchievementDetailClosed());
+    // #548: the Wardrobe sheet (built per open by _renderWardrobe).
+    this._wardrobeSheet = /** @type {any} */ (document.getElementById('wardrobe-sheet'));
+    if (this._wardrobeSheet) {
+      this._wardrobeSheet.addEventListener('uf-sheet:close', () => this._onWardrobeClosed());
+      document.getElementById('wardrobe-done')?.addEventListener('click', () => this._closeWardrobe());
+      document.getElementById('wardrobe-find')?.addEventListener('click', () => this._wardrobeFindMe());
+    }
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -4870,7 +4886,7 @@ export class Lobby {
     this._renderHostSeats(cands);
     const status = document.getElementById('host-status');
     if (status && local) { status.textContent = 'Online room closed: riding on this screen'; status.className = 'conn-status'; }
-    const items = [online && onBtn, local && locBtn, back].filter(Boolean);
+    const items = [online && onBtn, local && locBtn, ...document.querySelectorAll('#host-wardrobe uf-button'), back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5144,6 +5160,7 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      this._pollSeatedP2Wardrobe();
       // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
       const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
       for (const c of candidates) {
@@ -5330,6 +5347,7 @@ export class Lobby {
   }
 
   _stopLocalJoinMonitor() {
+    if (this._wardrobe && this._wardrobe.n === 2) this._closeWardrobe();
     if (this._localJoinMonitorRAF !== null) {
       cancelAnimationFrame(this._localJoinMonitorRAF);
       this._localJoinMonitorRAF = null;
@@ -6177,6 +6195,10 @@ export class Lobby {
       rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
     }
     strip.rows = rows;
+    // #548 · WARDROBE for Player 1 and, once seated locally, Player 2 (an online partner dresses on their own screen).
+    const wardrobePlayers = [{ n: 1, input: this.input, type: this.input && this.input.gamepadConnected ? 'gamepad' : 'keyboard', slotId: 'P1' }];
+    if (p2Im) wardrobePlayers.push({ n: 2, input: p2Im, type: this._localP2Type || 'gamepad', slotId: p2Slot });
+    this._renderWardrobeButtons('host-wardrobe', wardrobePlayers, this.hostStep);
     // A mouse user can still seat someone: clicking the open seat joins the first candidate.
     const sto = document.getElementById('host-seat-stoker');
     if (sto && !sto._wired) {
@@ -6213,6 +6235,7 @@ export class Lobby {
 
   /** Leave versus setup: release joined slots (not P1's) and clear state. */
   _leaveVersus() {
+    if (this._wardrobe) this._closeWardrobe();
     this._stopVersusMonitor();
     for (const p of this._versusPlayers) {
       // Unbind Steam handles so the InputManager defaults revert.
@@ -6304,9 +6327,24 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
+        const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
+        // #548 · their Wardrobe is open: the sheet has this pad; keep the edge state current so
+        // the press that closes it can't fire "leave seat" or a team switch on the way out.
+        if (this._wardrobe && this._wardrobe.n === p.n) {
+          const bi = p.input._gpSwapAB ? 0 : 1;
+          this._versusPrevButtons.set(key, { a: !!(gp.buttons[0] && gp.buttons[0].pressed), b: !!(gp.buttons[bi] && gp.buttons[bi].pressed), left, right, y });
+          continue;
+        }
+        if (y && !prev.y && p.slotId !== 'P1' && p.input !== this.input) {
+          prev.y = y; prev.left = left; prev.right = right;
+          this._versusPrevButtons.set(key, prev);
+          this._openWardrobeFor(p.n);
+          continue;
+        }
+        prev.y = y;
         // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
         // P1's B is "back" through the step's FocusController. `b` primes true
         // so a B held from before the join can't fire on the first frame.
@@ -6696,6 +6734,7 @@ export class Lobby {
   /** Teams payload for onVersusReady: two entries, A then B. */
   _versusTeams() {
     const member = (p) => ({
+      n: p.n,   // #548: the player number keys their look (js/player-look.js)
       input: p.input,
       type: p.type,
       slotId: p.slotId,
@@ -6765,6 +6804,7 @@ export class Lobby {
       box.append(...seats);
     }
     this._renderVersusControllers(candidates);
+    this._renderWardrobeButtons('versus-wardrobe', this._versusPlayers.filter((p) => p.type !== 'bot'), this.versusStep);
   }
 
   /**
@@ -7268,6 +7308,13 @@ export class Lobby {
     const ranLast = this._stepNavRanLastFrame;
     this._stepNavRanLastFrame = false;
 
+    // #548 · a Wardrobe is open: only its owner's pad does anything (it may be P2's,
+    // so this runs before the P1 gate below). Step nav re-primes when it returns.
+    if (this._wardrobe) { this._pollWardrobe(); return; }
+    // A seated local Player 2's △ / Y opens theirs (polled here, every frame, whether or not
+    // Player 1 is on a pad: the host join monitor does not tick on after the seat fills).
+    if (this._currentStep === this.hostStep) this._pollSeatedP2Wardrobe();
+
     if (!this.input || !this.input.gamepadConnected) return;
 
     // ...or while the phone QR panel is on top (it takes B / Start itself);
@@ -7300,6 +7347,15 @@ export class Lobby {
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+
+    // #548 · △ / Y on the seat screens: Player 1 opens their Wardrobe.
+    const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
+    if (y && !this._gpPrevY && !this._activeModal && (this._currentStep === this.hostStep || this._currentStep === this.versusStep)) {
+      this._gpPrevY = y;
+      this._openWardrobeFor(1);
+      return;
+    }
+    this._gpPrevY = y;
 
     // LB/RB bumpers (buttons 4/5) — cycle bike color
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
@@ -7561,6 +7617,237 @@ export class Lobby {
     } else {
       this._stepFocus.clear();
     }
+  }
+
+  // ============================================================
+  // WARDROBE (#548) — a seated player dresses their goose from their own controller
+  // ============================================================
+  //
+  // Reached from a WARDROBE button under the seats (mouse / P1's pad) or △ / Y on a seated
+  // pad. The sheet is driven by the OWNER's pad only: a FocusController built on that player's
+  // InputManager scopes the sheet's buttons, and _pollGamepadNav hands every frame to it while it
+  // is open (P1's step nav waits). Picks save at once (js/player-look.js) — the geese follow on
+  // the next frame (game._syncRiderLooks) and the pad light changes as soon as it is picked.
+
+  /**
+   * The controller-identity key a player's look is saved under (#241): the HID
+   * serial when the host exposes one, else vendor:product + the slot.
+   * @param {{type?: string, input?: any, slotId?: string|null, n?: number}} p
+   */
+  _lookKeyFor(p) {
+    if (!p || p.type === 'keyboard') return 'keyboard';
+    const input = p.input;
+    const slot = input && input._slot;
+    const dev = slot && slot.hidDevice;
+    if (dev) return padKeyFor({ serial: dev.serialNumber || null, vendorId: dev.vendorId, productId: dev.productId, slotId: slot.id });
+    const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    const gp = input && input.gamepadIndex != null ? pads[input.gamepadIndex] : null;
+    const vp = gp ? vidPidFromGamepadId(gp.id) : null;
+    if (vp) return padKeyFor({ ...vp, slotId: (slot && slot.id) || p.slotId || null });
+    if (gp) return padKeyFor({ name: gp.id, slotId: (slot && slot.id) || p.slotId || null });   // XInput pads carry no vendor:product
+    if (input && input.steamInputHandle != null) return padKeyFor({ kind: 'steam', slotId: p.slotId || (p.n ? 'P' + p.n : null) });
+    return null;
+  }
+
+  /**
+   * One WARDROBE button per seated player under the seats (dirty-checked), and the players'
+   * pads bound to their looks. Also folds the buttons into the step's pad-focus set.
+   * @param {string} rowId @param {Array<{n: number, input?: any, type?: string, slotId?: string|null}>} players @param {HTMLElement} step
+   */
+  _renderWardrobeButtons(rowId, players, step) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    for (const p of players) playerLooks.bindPad(p.n, this._lookKeyFor(p));
+    const key = players.map((p) => p.n + ':' + (p.type || '')).join('|');
+    if (row._wardrobeKey === key) return;
+    row._wardrobeKey = key;
+    row.innerHTML = '';
+    for (const p of players) {
+      const b = document.createElement('uf-button');
+      b.setAttribute('variant', 'ghost');
+      b.setAttribute('size', 'sm');
+      b.id = `btn-wardrobe-p${p.n}`;
+      b.textContent = `P${p.n} WARDROBE`;
+      b.addEventListener('click', () => this._openWardrobeFor(p.n));
+      row.appendChild(b);
+    }
+    if (step === this.versusStep) {
+      const base = (this._stepCenterItems.get(step) || []).filter((el) => el && !(el.id || '').startsWith('btn-wardrobe-'));
+      const items = [...base, ...row.querySelectorAll('uf-button')];
+      this._stepItems.set(step, items);
+      this._stepCenterItems.set(step, items);
+      if (this._currentStep === step && this.input && this.input.gamepadConnected && !this._wardrobe) {
+        this._modeColumns[1] = items;
+        this._stepFocus.refreshSpatial(this._stepNavItems());
+      }
+    }
+  }
+
+  /** Who is player n on the current seat screen: their InputManager, source type and name. */
+  _wardrobePlayer(n) {
+    if (this._currentStep === this.versusStep) {
+      const p = this._versusPlayers.find((x) => x.n === n && x.type !== 'bot');
+      if (!p) return null;
+      let label = p.name || `Player ${n}`;
+      try { label = this._versusIdentity(p).shortName || label; } catch (e) {}
+      return { n, input: p.input, type: p.type, slotId: p.slotId || null, label };
+    }
+    if (n === 1) {
+      const id = this._p1Identity();
+      const onPad = !!(this.input && this.input.gamepadConnected);
+      return { n: 1, input: this.input, type: onPad ? 'gamepad' : 'keyboard', slotId: 'P1', label: id ? id.shortName : (onPad ? 'Controller' : 'Keyboard') };
+    }
+    if (n === 2 && this._localSeatedOnHost && this._localP2InputManager) {
+      const im = this._localP2InputManager;
+      return { n: 2, input: im, type: this._localP2Type || 'gamepad', slotId: im._slot ? im._slot.id : null, label: this._localP2Name || 'Player 2' };
+    }
+    return null;
+  }
+
+  /** Open the Wardrobe for player n; their pad drives it. */
+  _openWardrobeFor(n) {
+    if (!this._wardrobeSheet || this._wardrobe) return;
+    const p = this._wardrobePlayer(n);
+    if (!p) return;
+    playerLooks.bindPad(n, this._lookKeyFor(p));
+    this._wardrobe = p;
+    this._renderWardrobe();
+    // Scope the sheet to THIS player's controller (the scope is set on the first polled frame,
+    // once the sheet has laid out). A keyboard player uses the mouse / Esc.
+    this._wardrobeFocus = (p.type === 'gamepad' && p.input) ? new FocusController({
+      input: p.input,
+      onConfirm: (el) => el.click(),
+      onBack: () => this._closeWardrobe(),
+    }) : null;
+    this._wardrobeFocusPending = !!this._wardrobeFocus;
+    this._wardrobeSheet.show();
+    console.log(`[wardrobe] open for P${n} (${p.type}, ${p.label})`);
+  }
+
+  _closeWardrobe() {
+    if (this._wardrobeSheet && this._wardrobeSheet.open) this._wardrobeSheet.close();
+    else this._onWardrobeClosed();
+  }
+
+  /** The sheet closed (B on the owner's pad, DONE, Esc, the scrim): the owner's pad goes back to its screen. */
+  _onWardrobeClosed() {
+    if (!this._wardrobe) return;
+    const n = this._wardrobe.n;
+    this._wardrobe = null;
+    // The press that closed it (B, or A on DONE) is still down: the versus member loop must
+    // see it as already-pressed, or it would read it as "leave seat" / "join" on this frame.
+    this._versusPrevButtons.set('member:' + n, { a: true, b: true, left: true, right: true, y: true });
+    this._p2PrevY = true;
+    if (this._wardrobeFocus) { this._wardrobeFocus.clear(); this._wardrobeFocus = null; }
+    this._wardrobeFocusPending = false;
+    const hint = document.getElementById('wardrobe-hint');
+    if (hint) hint.textContent = '';
+    // Settings' Player 1 rows and an online partner follow (game.js listens).
+    window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n, closed: true } }));
+  }
+
+  /** Each frame while the Wardrobe is open: only the owner's pad moves and confirms. */
+  _pollWardrobe() {
+    const w = this._wardrobe;
+    if (!w) return;
+    const fc = this._wardrobeFocus;
+    if (!fc || !w.input || !w.input.gamepadConnected) return;
+    const items = this._wardrobeSheet.focusables();
+    if (this._wardrobeFocusPending) {
+      // First laid-out frame: start on the player's current body, so A changes nothing by accident.
+      if (!items.length) return;
+      this._wardrobeFocusPending = false;
+      fc.setSpatial(items, this._wardrobeSheet.querySelector('.wardrobe-opts[data-pick="body"] .opt-btn.active'));
+      return;
+    }
+    fc.refreshSpatial(items);
+    fc.poll();
+  }
+
+  /** Host step: a seated local Player 2's △ / Y opens their Wardrobe. */
+  _pollSeatedP2Wardrobe() {
+    const im = this._localSeatedOnHost ? this._localP2InputManager : null;
+    if (!im || this._localP2Type === 'keyboard') { this._p2PrevY = true; return; }
+    const gp = im.getGamepadState ? im.getGamepadState() : null;
+    const y = !!(gp && gp.buttons && gp.buttons[3] && gp.buttons[3].pressed);
+    if (y && !this._p2PrevY && !this._wardrobe && !this._activeModal) this._openWardrobeFor(2);
+    this._p2PrevY = y;
+  }
+
+  /** Outfits the store has not unlocked for this player (#574 fills this in; everything is free today). */
+  _lockedOutfits(/* n */) { return new Set(); }
+
+  /** Build the sheet's rows for the open Wardrobe's player. */
+  _renderWardrobe() {
+    const w = this._wardrobe;
+    const body = document.getElementById('wardrobe-body');
+    if (!w || !body) return;
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const look = playerLooks.get(w.n);
+    const locked = this._lockedOutfits(w.n);
+    const row = (label, kind, opts) => `<div class="wardrobe-group" data-group="${kind}"><div class="wardrobe-label">${label}</div><div class="wardrobe-opts" data-pick="${kind}">${opts}</div></div>`;
+    const btn = (kind, val, html, active, extra = '') => `<button class="opt-btn${active ? ' active' : ''}" data-pick="${kind}" data-val="${esc(val)}"${extra}>${html}</button>`;
+    const bodies = Object.entries(BODIES).map(([k, b]) => btn('body', k, `${esc(b.label)} <span class="wardrobe-sub">(${esc(b.hint)})</span>`, look.body === k)).join('');
+    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ' data-locked="1" title="Coming to the store"' : '')).join('');
+    const leds = LED_COLOURS.map((c) => btn('led', c.key, `<span class="led-swatch" style="background: rgb(${c.rgb.r},${c.rgb.g},${c.rgb.b})"></span>${esc(c.label)}`, look.led === c.key)).join('');
+    body.innerHTML = `<p class="wardrobe-who">Player <b>${w.n}</b> · ${esc(w.label)}</p>`
+      + row('Gander or goose', 'body', bodies)
+      + row('Outfit', 'outfit', outfits)
+      + row('Colours', 'colourway', this._wardrobeColourButtons(look))
+      + row('Controller light', 'led', leds)
+      + `<p class="options-note" id="wardrobe-hint"></p>`;
+    if (!body._wired) {
+      body._wired = true;
+      body.addEventListener('click', (e) => {
+        const b = e.target instanceof Element ? e.target.closest('button[data-pick]') : null;
+        if (b) this._wardrobePick(b.dataset.pick, b.dataset.val, b);
+      });
+    }
+    if (this._wardrobeSheet) this._wardrobeSheet.refreshFocus();
+  }
+
+  _wardrobeColourButtons(look) {
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const cur = lookColourway(look);
+    return colourwaysFor(look.outfit).map((w) => `<button class="opt-btn${w.key === cur ? ' active' : ''}" data-pick="colourway" data-val="${esc(w.key)}">${esc(w.label)}</button>`).join('');
+  }
+
+  /** A pick in the open Wardrobe: save it, light the pad, refresh the rows. */
+  _wardrobePick(kind, val, el = null) {
+    const w = this._wardrobe;
+    if (!w) return;
+    const hint = document.getElementById('wardrobe-hint');
+    let look = playerLooks.get(w.n);
+    if (kind === 'outfit') {
+      if (this._lockedOutfits(w.n).has(val)) { if (hint) hint.textContent = 'That outfit is coming to the store.'; return; }
+      look = playerLooks.update(w.n, { outfit: val });
+      const colours = document.querySelector('#wardrobe-body .wardrobe-opts[data-pick="colourway"]');
+      if (colours) colours.innerHTML = this._wardrobeColourButtons(look);
+    } else if (kind === 'body') {
+      look = playerLooks.update(w.n, { body: val });
+    } else if (kind === 'colourway') {
+      look = playerLooks.set(w.n, undefined, withColourway(look, val));
+    } else if (kind === 'led') {
+      look = playerLooks.update(w.n, { led: val });
+      applyPlayerLed(this.controllerManager, w.n, look.led);
+    } else return;
+    const group = document.querySelector(`#wardrobe-body .wardrobe-opts[data-pick="${kind}"]`);
+    if (group) for (const b of group.querySelectorAll('button[data-pick]')) b.classList.toggle('active', b.dataset.val === String(val));
+    if (hint) hint.textContent = '';
+    if (this._wardrobeSheet) this._wardrobeSheet.refreshFocus();
+    if (this._wardrobeFocus && el && kind === 'outfit') this._wardrobeFocus.refreshSpatial(this._wardrobeSheet.focusables());
+    window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n: w.n, kind, val } }));
+  }
+
+  /** FIND MY CONTROLLER: pulse + flash the owner's pad. */
+  _wardrobeFindMe() {
+    const w = this._wardrobe;
+    if (!w) return;
+    const look = playerLooks.get(w.n);
+    const r = findMe(this.controllerManager, w.n, look.led, w.type === 'gamepad' ? w.input : null);
+    const hint = document.getElementById('wardrobe-hint');
+    if (hint) hint.textContent = r.rumbled || r.lit ? `Buzzing Player ${w.n}'s controller…` : 'This controller has no rumble or light we can reach.';
+    console.log(`[wardrobe] find me P${w.n}:`, r);
   }
 
   // ============================================================

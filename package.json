@@ -57,6 +57,7 @@
     "smoke:host-room": "node scripts/smoke-host-room.mjs",
     "smoke:local-coop": "node scripts/smoke-local-coop.mjs",
     "smoke:versus": "node scripts/smoke-versus.mjs",
+    "smoke:wardrobe": "node scripts/smoke-wardrobe.mjs",
     "smoke:webhid": "node scripts/smoke-webhid.mjs",
     "smoke:flows": "node scripts/smoke-flows.mjs",
     "smoke:steam-input": "node scripts/smoke-steam-input.mjs",

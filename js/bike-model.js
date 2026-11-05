@@ -7,10 +7,21 @@ import { COBBLES_SHAKE, COBBLES_DRAG } from './disruptions.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { BIKE_MODEL_PATH, getGooseRiderPaths, getGooseOutfit, getGooseColourway, TUNE } from './config.js';
-import { colourwayParams, applyColourway } from './goose-colourways.js';
+import { BIKE_MODEL_PATH, getSeatLooks, TUNE } from './config.js';
+import { colourwayParamsForBody, applyColourway } from './goose-colourways.js';
 import { GooseRiders, disposeTree as disposeGooseTree } from './goose-riders.js';
-import { gooseOutfitPaths } from './goose-outfits.js';
+import { resolveRider, SEAT_BODY } from './goose-outfits.js';
+
+/**
+ * #548 · the rider GLB per seat for a pair of seat looks ({outfit, colourway, body} each).
+ * @param {{Captain: {outfit: string, body: 'm'|'f'}, Stoker: {outfit: string, body: 'm'|'f'}}} looks
+ */
+export function riderPathsFor(looks) {
+  return {
+    Captain: resolveRider('Captain', looks.Captain.outfit, looks.Captain.body).path,
+    Stoker: resolveRider('Stoker', looks.Stoker.outfit, looks.Stoker.body).path,
+  };
+}
 import { CrankMotion } from './crank-motion.js';
 import { fallLean } from './crash-tumble.js';
 import { shakeAt } from './crash-wobble.js';
@@ -221,6 +232,8 @@ export class BikeModel {
     this._sharedGeometry = true;
     this.goose = GooseRiders.cloneFrom(source.goose, model);
     this.riderViewScale = source.riderViewScale;
+    // _gooseRiderPaths stays unset on purpose: the clone shares the source's geese, so a
+    // versus setGooseLook always loads this bike's OWN riders before recolouring them.
     this.modelLoaded = true;
     if (this._pendingPreset) {
       this.applyPreset(this._pendingPreset);
@@ -411,7 +424,11 @@ export class BikeModel {
       // versus clone (taken once modelLoaded) carries them too.
       const goose = new GooseRiders(model, gltf.animations);
       goose.measureWheel();
-      const riderPaths = getGooseRiderPaths();
+      // Each seat's goose in its player's look (#548); a look picked while the bike was loading wins.
+      const looks = this._pendingSeatLooks || getSeatLooks();
+      this._pendingSeatLooks = null;
+      this._seatLooks = looks;
+      const riderPaths = riderPathsFor(looks);
       this._gooseRiderPaths = riderPaths;
       goose.loadRiders(loader, riderPaths).catch((err) => {
         console.warn('Goose riders failed to load; riding the bare bike:', err);
@@ -426,10 +443,10 @@ export class BikeModel {
         // the fused riders model stood 3.24 m tall on its 4.4 m bike
         this.riderViewScale = Math.max(0.5, Math.min(2, top / 3.24));
         finish();
-        // An outfit picked while these geese were loading (#472): seat it now.
-        const want = this._pendingGooseRiders || getGooseRiderPaths();
-        this._pendingGooseRiders = null;
-        if (want && (want.Captain !== riderPaths.Captain || want.Stoker !== riderPaths.Stoker)) this.setGooseRiders(want);
+        // A look picked while these geese were loading (#472): seat it now.
+        const wantLooks = this._pendingSeatLooks;
+        this._pendingSeatLooks = null;
+        if (wantLooks) this.setSeatLooks(wantLooks);
       });
     }, undefined, (err) => {
       console.error('Failed to load bike model:', this._modelPath, err);
@@ -527,8 +544,7 @@ export class BikeModel {
    * @returns {Promise|undefined} settles once the new geese are seated
    */
   setGooseRiders(paths, disposeOld = true) {
-    // Still loading the first geese: remember the choice; the load seats it.
-    if (!this.goose) { this._pendingGooseRiders = paths; return; }
+    if (!this.goose) return;   // callers go through setSeatLooks, which queues a look until the geese load
     const cur = this._gooseRiderPaths;
     if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) return;
     this._gooseRiderPaths = paths;
@@ -546,25 +562,58 @@ export class BikeModel {
     return this._gooseSwap;
   }
 
-  /** Goose Colours: the saved colourway of the current outfit pair on both geese (goose tandem only). */
+  /**
+   * Each goose in its seat's colourway (goose tandem only). The params come from the body the
+   * seated file actually has: a seat whose player picked a body that has no file yet rides the
+   * outfit's existing goose, so it takes that goose's garments' params (#548).
+   */
   applyGooseColours() {
     if (!this.goose) return;
-    const look = this._gooseLook;
-    const outfit = look ? look.outfit : getGooseOutfit();
-    const params = colourwayParams(outfit, look ? look.colourway : getGooseColourway(outfit));
-    for (const [seat, r] of Object.entries(this.goose.riders)) applyColourway(r.root, params[seat] || {});
+    const looks = this._seatLooks || getSeatLooks();
+    for (const [seat, r] of Object.entries(this.goose.riders)) {
+      const l = looks[seat];
+      if (!l) continue;
+      const body = resolveRider(seat, l.outfit, l.body).body;
+      applyColourway(r.root, colourwayParamsForBody(l.outfit, l.colourway, body) || {});
+    }
   }
 
   /**
-   * Versus: this bike's geese wear their own outfit + colourway instead of the
-   * saved ones (js/versus/team-looks.js). Geese loaded for another outfit are
-   * this bike's own; disposeOwnGeese() frees them.
-   * @param {{outfit: string, colourway: string}} look
+   * #548 · dress each seat for its player: {Captain, Stoker} of {outfit, colourway, body}.
+   * Swaps the geese when a seat's rider file changes, else just recolours. Queued until the
+   * first geese have loaded.
+   * @param {{Captain: {outfit: string, colourway: string, body: 'm'|'f'}, Stoker: {outfit: string, colourway: string, body: 'm'|'f'}}} looks
+   * @param {boolean} [disposeOld] false while live versus clones share the current geese
+   * @returns {Promise|undefined} settles once any new geese are seated
+   */
+  setSeatLooks(looks, disposeOld = true) {
+    if (!looks || !looks.Captain || !looks.Stoker) return;
+    if (!this.goose) { this._pendingSeatLooks = looks; return; }
+    this._seatLooks = looks;
+    const paths = riderPathsFor(looks);
+    const cur = this._gooseRiderPaths;
+    if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) { this.applyGooseColours(); return; }
+    return this.setGooseRiders(paths, disposeOld);
+  }
+
+  /** The looks this bike's seats wear (null before the first geese load). */
+  get seatLooks() { return this._seatLooks || null; }
+
+  /**
+   * Versus: this bike's geese wear their riders' own looks instead of the saved
+   * ones (js/versus/team-looks.js + player-look.js versusSeatLooks). Geese
+   * loaded for another outfit are this bike's own; disposeOwnGeese() frees them.
+   * @param {{Captain: {outfit: string, colourway: string, body: 'm'|'f'}, Stoker: {outfit: string, colourway: string, body: 'm'|'f'}} | {outfit: string, colourway: string}} look
+   *   a pair of seat looks, or one {outfit, colourway} for both seats in their own bodies
    */
   setGooseLook(look) {
     if (!this.goose || !look) return;
-    this._gooseLook = look;
-    const paths = gooseOutfitPaths(look.outfit);
+    const looks = look.Captain && look.Stoker ? look : {
+      Captain: { outfit: look.outfit, colourway: look.colourway, body: SEAT_BODY.Captain },
+      Stoker: { outfit: look.outfit, colourway: look.colourway, body: SEAT_BODY.Stoker },
+    };
+    this._seatLooks = looks;
+    const paths = riderPathsFor(looks);
     const cur = this._gooseRiderPaths;
     if (cur && cur.Captain === paths.Captain && cur.Stoker === paths.Stoker) { this.applyGooseColours(); return; }
     this._ownGeese = true;

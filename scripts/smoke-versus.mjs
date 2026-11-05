@@ -125,8 +125,9 @@ console.log('seats');
   // ── VS-09: each team's geese wear their own outfit and colour ──
   const looks = await page.waitForFunction(() => {
     const rigs = window._game.versusRigs;
-    if (!rigs || !rigs.every((r) => r.bike.goose && r.bike._gooseLook)) return null;
-    const out = rigs.map((r) => ({ id: r.id, look: r.bike._gooseLook, captain: r.bike._gooseRiderPaths && r.bike._gooseRiderPaths.Captain, seated: !!r.bike.goose.riders.Captain }));
+    // #548: looks are per seat now (bike.seatLooks); the captain's is the team's.
+    if (!rigs || !rigs.every((r) => r.bike.goose && r.bike.seatLooks)) return null;
+    const out = rigs.map((r) => ({ id: r.id, look: r.bike.seatLooks.Captain, captain: r.bike._gooseRiderPaths && r.bike._gooseRiderPaths.Captain, seated: !!r.bike.goose.riders.Captain }));
     // Team Red's geese are loaded for it: wait until they're the ones riding.
     const b = out[1];
     return b.seated && b.captain && b.captain.includes(b.look.outfit === 'victorian' ? 'goose_captain.glb' : b.look.outfit === 'cyclists' ? 'cyclist' : b.look.outfit) ? out : null;

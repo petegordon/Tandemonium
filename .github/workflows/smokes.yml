@@ -37,7 +37,7 @@ jobs:
           - group: modes
             smokes: slingshot slingshot-aim tourist host-room grandma props
           - group: controllers
-            smokes: disconnect local-coop versus
+            smokes: disconnect local-coop versus wardrobe
           - group: controllers-2
             smokes: webhid steam-input
           - group: input

@@ -4186,6 +4186,18 @@
     width: 100%;
   }
   .opt-btn:hover { background: rgba(255,255,255,0.15); }
+  /* #548 · Wardrobe sheet rows + the seat screens' WARDROBE buttons */
+  .wardrobe { display: grid; gap: 14px; }
+  .wardrobe .wardrobe-who { margin: 0; font: 700 var(--uf-size-md)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); }
+  .wardrobe .wardrobe-who b { color: var(--uf-color-accent); }
+  .wardrobe .wardrobe-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); margin-bottom: 6px; }
+  .wardrobe .wardrobe-opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .wardrobe .opt-btn { min-width: 0; width: auto; padding: 8px 14px; }
+  .wardrobe .opt-btn[data-locked] { opacity: .45; }
+  .wardrobe .led-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.35); }
+  .wardrobe-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
+  .wardrobe-row:empty { display: none; }
+  .wardrobe-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
   .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: var(--uf-color-accent); }
   .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
@@ -5711,7 +5723,10 @@ ON</button>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
-          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
+          <!-- #548: one WARDROBE button per seated player (lobby._renderWardrobeButtons);
+               a seated pad's △ / Y opens its own. -->
+          <div class="wardrobe-row" id="versus-wardrobe"></div>
+          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="north" size="sm"></uf-controller-glyph> wardrobe &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
           <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>
@@ -5757,6 +5772,8 @@ ON</button>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+            <!-- #548: WARDROBE per seated player; a seated pad's △ / Y opens its own. -->
+            <div class="wardrobe-row" id="host-wardrobe"></div>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
@@ -6031,6 +6048,17 @@ ON</button>
 <uf-sheet id="achievements-modal" heading="Achievements" size="lg">
   <div class="leaderboard-box">
     <div id="lb-achievements"></div>
+  </div>
+</uf-sheet>
+
+<!-- #548: the Wardrobe — a seated player dresses their goose and lights their pad, driven by
+     THEIR controller (lobby._openWardrobe scopes a FocusController to that pad). Rows are
+     built by lobby._renderWardrobe. -->
+<uf-sheet id="wardrobe-sheet" heading="Wardrobe" size="md">
+  <div id="wardrobe-body" class="wardrobe"></div>
+  <div slot="actions" class="wardrobe-actions">
+    <uf-button variant="ghost" size="sm" id="wardrobe-find">FIND MY CONTROLLER</uf-button>
+    <uf-button variant="accent" id="wardrobe-done">DONE</uf-button>
   </div>
 </uf-sheet>
 
@@ -6474,25 +6502,35 @@ ON</button>
       </div>
       <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
     </div>
+    <!-- #548: these three rows are Player 1's look (js/player-look.js). Every other player
+         dresses their own goose in the Wardrobe on the seat screens (co-op room / versus). -->
     <div class="opt-section">
-      <div class="label" id="opt-outfit-label">Goose Outfits</div>
+      <div class="label" id="opt-body-label">Player 1's Goose</div>
+      <div class="options-row" id="opt-body-row">
+        <button class="opt-btn" id="opt-body-m">Gander (he)</button>
+        <button class="opt-btn" id="opt-body-f">Goose (she)</button>
+      </div>
+      <div class="options-note">Your goose's body — other players pick theirs in the Wardrobe on the seat screen</div>
+    </div>
+    <div class="opt-section">
+      <div class="label" id="opt-outfit-label">Player 1's Outfit</div>
       <div class="options-row" id="opt-outfit-row">
         <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
         <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
         <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
         <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
       </div>
-      <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
+      <div class="options-note">What your goose wears — applies immediately</div>
     </div>
     <div class="opt-section">
-      <div class="label" id="opt-colour-label">Goose Colours</div>
+      <div class="label" id="opt-colour-label">Player 1's Colours</div>
       <div class="options-row" id="opt-colour-row">
         <button class="opt-btn" id="opt-colour-0">Original</button>
         <button class="opt-btn" id="opt-colour-1">-</button>
         <button class="opt-btn" id="opt-colour-2">-</button>
         <button class="opt-btn" id="opt-colour-3">-</button>
       </div>
-      <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
+      <div class="options-note">Colour changes for the chosen outfit (saved per outfit) — applies immediately</div>
     </div>
     <div class="opt-section">
       <div class="label" id="opt-fps-label">FPS Display</div>

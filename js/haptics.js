@@ -137,6 +137,19 @@ function _gamepadRumble(strong, weak, duration, sources = null) {
 // team events (crash, checkpoint, off-road) to that team's controllers
 // only. Omitted → module-global sources (all registered players).
 
+/**
+ * #548 · Wardrobe "Find me": three firm pulses on ONE player's pad, so a table
+ * of identical controllers tells you which one is yours. Pass that player's
+ * input as the only source; never the module-global list.
+ * @param {Array<{gamepadIndex: number|null}>} sources
+ * @param {(fn: () => void, ms: number) => any} [timer] setTimeout (tests)
+ */
+export function hapticFindMe(sources, timer = (fn, ms) => setTimeout(fn, ms)) {
+  if (!sources || !sources.length) return;
+  if (canVibrate) navigator.vibrate([180, 120, 180, 120, 180]);
+  for (let i = 0; i < 3; i++) timer(() => _gamepadRumble(1.0, 0.8, 180, sources), i * 300);
+}
+
 export function hapticCrash(sources = null) {
   if (canVibrate) navigator.vibrate([100, 30, 200]);
   _gamepadRumble(0.8, 0.4, 300, sources);
