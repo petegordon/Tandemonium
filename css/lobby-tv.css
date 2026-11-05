@@ -215,6 +215,31 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-join:has(.join-tv.on) .lobby-prompt, #lobby-join:has(.join-tv.on) #gamepad-code-spinners { display: none !important; }
 }
 
+/* ── JOIN A RIDE: Rejoin a recent ride (#547) ── */
+.join-rejoin[hidden] { display: none !important; }
+.join-rejoin { display: grid; justify-items: center; gap: var(--uf-space-3, 12px); width: 100%; margin: 0 auto var(--uf-space-3, 12px); }
+.join-rejoin-head { margin: 0; font: 800 var(--uf-size-lg, 1.2em)/1.15 var(--uf-font-ui, inherit); color: var(--uf-color-fg, #fff); }
+.join-rejoin-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--uf-space-3, 12px); width: 100%; }
+.join-rejoin-cards uf-card { flex: 0 1 15em; }
+.join-rejoin-or { margin: 0; font-size: var(--uf-size-md, 1em); color: var(--uf-color-fg-muted, #aaa); }
+@media (min-width: 1024px) {
+  .join-rejoin-head { font-size: var(--uf-size-2xl); }
+  .join-rejoin-cards uf-card { flex: 0 0 auto; min-width: 14em; }
+  .join-rejoin-cards .uf-card__title, .join-rejoin-cards .uf-card__foot { white-space: nowrap; }
+  /* the keypad's own "Join a ride" heading repeats the line above it */
+  #lobby-join:has(.join-rejoin:not([hidden])) .join-tv h3 { display: none; }
+}
+/* Short TV screens (720p): the row and the keypad share the height, so the
+   helper lines go and the cards tighten; Delete / JOIN stay above the bar. */
+@media (min-width: 1024px) and (max-height: 860px) {
+  .join-rejoin { gap: var(--uf-space-2); margin-bottom: 0; }
+  .join-rejoin-head { font-size: var(--uf-size-xl); }
+  .join-rejoin-or { display: none; }
+  .join-rejoin-cards uf-card { padding: var(--uf-space-2) var(--uf-space-4); gap: 2px; }
+  #lobby-join:has(.join-rejoin:not([hidden])) .join-tv p { display: none; }
+  #lobby-join:has(.join-rejoin:not([hidden])) .join-tv { gap: var(--uf-space-3); }
+}
+
 /* Ride Together's seat choice: a readable column, not full width. */
 @media (min-width: 1024px) {
   #lobby-role[active] { max-width: 30em; margin: 0 auto !important; font-size: var(--uf-size-md); }

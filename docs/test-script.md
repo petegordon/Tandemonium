@@ -251,6 +251,7 @@ Two devices on different networks for the M rows.
 | OC-11 | BACK TO ROOM after a ride returns both to level select on the same room, still connected; captain picks, stoker waits | A | `smoke:online` |
 | OC-11h | Camera/mic PiP keep flowing across the return (PeerJS: needs its CDN and signalling server) | M | — |
 | OC-12 | Rejoin after closing the tab | M | — |
+| OC-12b | Rejoin from JOIN A RIDE (#547): RIDE TOGETHER goes straight to Choose your seat (no Recent Rooms pop-up); JOIN A RIDE shows one Rejoin card per room from the last 5 minutes (newest first, code · partner · seat · age), pad focus starts on the newest, and a pick rejoins in the seat you had (back seat → connecting on JOIN A RIDE, front seat → host step); no recent rooms, no row; the row and the keypad fit 1080p and 720p above the bar | A | `smoke:rejoin` |
 | OC-13 | Co-op tutorial: the stoker waits for the captain's countdown, both ride, it completes on both, both return to the room | A | `smoke:online` |
 | OC-14 | Co-op Tourist: both see the same world | A | `smoke:tourist` |
 | OC-15 | Steam build ↔ web build in the same room | M | `test/unit/room-edition` |

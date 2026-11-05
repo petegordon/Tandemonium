@@ -5804,11 +5804,19 @@ ON</button>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Stoker Join Room (#lobby-join)
-             Code input (keyboard) + gamepad spinner alternative.
+             Rejoin cards for recent rooms (#547), then code input (keyboard) +
+             gamepad spinner alternative.
              Toggle columns hidden on this step.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-join" class="lobby-step">
+          <!-- #547: rooms from the last 5 minutes, front or back seat; a pick rejoins
+               in the seat you had. Filled by lobby._renderRejoinCards(); hidden when empty. -->
+          <div id="join-rejoin" class="join-rejoin" hidden>
+            <h3 class="join-rejoin-head">Rejoin a recent ride</h3>
+            <div id="join-rejoin-cards" class="join-rejoin-cards"></div>
+            <p class="join-rejoin-or">or enter a room code</p>
+          </div>
           <p class="lobby-prompt">Enter room code:</p>
           <div class="room-code-join-wrap">
             <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
