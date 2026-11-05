@@ -5,7 +5,9 @@
 // Opened from a seat screen (co-op room or versus join) by any seated pad's △/Y or a WARDROBE
 // button. One card per seated player, side by side (versus groups them by team): player label +
 // pad name, a live 3D preview of their goose (dressing-room-preview.js; a text card on the Low
-// perf tier), the look summary, a state badge and FIND MY CONTROLLER. The opener starts in Edit,
+// perf tier), the look summary and a state badge. A "Buzz a controller" strip under the cards has one
+// chip per seated pad (rumble + flash, findMe); only Player 1's pad can navigate into it, any mouse
+// can click it, and picking a new controller light buzzes that pad by itself. The opener starts in Edit,
 // everyone else Ready.
 //
 // Ownership: each card is driven ONLY by its own pad — a FocusController on that player's
@@ -19,7 +21,7 @@
 
 import { ManualInput } from '../shared/ui/inputs.js';
 import { RowFocusController as FocusController } from './row-focus.js';
-import { playerLooks, BODIES, LED_COLOURS, lookColourway, withColourway, seatLook } from './player-look.js';
+import { playerLooks, BODIES, LED_COLOURS, lookColourway, withColourway, seatLook, ledRgb } from './player-look.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { applyPlayerLed, findMe } from './player-led.js';
@@ -70,6 +72,8 @@ export class DressingRoom {
     this._cardsEl = document.getElementById('dr-cards');
     this._backBtn = document.getElementById('dr-back');
     this._statusEl = document.getElementById('dr-status');
+    this._buzzEl = document.getElementById('dr-buzz');
+    this._buzzKey = null;
     // Rebound on every open: a new room instance each time, so a listener from the last one would close a dead room.
     if (this._backBtn) this._backBtn.onclick = () => { if (this.open && !this.anyEditing()) this.close('back'); };
     this._preview = this._makePreview ? this._makePreview() : null;
@@ -110,6 +114,7 @@ export class DressingRoom {
       else { c.player = p; if (c.el.dataset.team !== (p.team || '')) this._place(c); }
     }
     for (const [n, c] of this.cards) if (!seen.has(n)) { this._dropCard(c); this.cards.delete(n); }
+    this._renderBuzz();
     this._refreshFoot();
   }
 
@@ -160,6 +165,7 @@ export class DressingRoom {
   }
 
   _dropCard(c) {
+    clearTimeout(c.buzzTimer);
     if (c.focus) c.focus.clear();
     if (c.manual === this._keyInput) this._keyInput = null;
     if (this._preview) this._preview.remove('p' + c.n);
@@ -194,7 +200,8 @@ export class DressingRoom {
       ${previewHtml}
       <p class="dr-summary"></p>
       <div class="dr-rows-wrap"></div>
-      <div class="dr-actions"></div>`;
+      <div class="dr-actions"></div>
+      <p class="options-note dr-hint"></p>`;
     const preview = c.el.querySelector('.dr-preview');
     if (preview) {
       // The transition's last frame: one exact resize + redraw so the goose never stays stretched.
@@ -227,8 +234,8 @@ export class DressingRoom {
     c.el.querySelector('.dr-actions').innerHTML = c.state === 'readonly'
       ? `<p class="dr-note">Edit on your phone</p>`
       : c.state === 'editing'
-        ? `<button class="opt-btn dr-done" data-act="done">DONE</button><button class="opt-btn" data-act="find">FIND MY CONTROLLER</button>`
-        : `<button class="opt-btn dr-edit" data-act="edit">EDIT</button><button class="opt-btn" data-act="find">FIND MY CONTROLLER</button>`;
+        ? `<button class="opt-btn dr-done" data-act="done">DONE</button>`
+        : `<button class="opt-btn dr-edit" data-act="edit">EDIT</button>`;
     const stat = c.el.querySelector('.dr-preview--static');
     if (stat) { stat.querySelector('.dr-static-body').textContent = BODIES[look.body].label; stat.querySelector('.dr-static-outfit').textContent = GOOSE_OUTFITS[look.outfit].label; }
     const canvas = c.el.querySelector('canvas.dr-preview');
@@ -253,7 +260,7 @@ export class DressingRoom {
       + row('Outfit', 'outfit', outfits)
       + row('Colours', 'colourway', this._colourButtons(look))
       + row('Controller light', 'led', leds)
-      + `<p class="options-note dr-hint"></p></div>`;
+      + `</div>`;
   }
 
   _colourButtons(look) {
@@ -263,9 +270,38 @@ export class DressingRoom {
 
   /** The card's own focusables (+ BACK TO SEATS when it shows), focus on `initial`. */
   _items(c) {
-    const own = [...c.el.querySelectorAll('button')].filter((b) => b.getBoundingClientRect().width > 0);
-    if (!this.anyEditing() && this._backBtn && this._backBtn.getBoundingClientRect().width > 0) own.push(this._backBtn);
+    const shown = (b) => b.getBoundingClientRect().width > 0;
+    const own = [...c.el.querySelectorAll('button')].filter(shown);
+    // Only Player 1's pad navigates into the Buzz strip (down past the card's last row lands on
+    // P1's chip, up returns to the card); every other pad's scope never includes it.
+    if (c.n === 1 && this._buzzEl) own.push(...[...this._buzzEl.querySelectorAll('button[data-buzz]')].filter(shown));
+    if (!this.anyEditing() && this._backBtn && shown(this._backBtn)) own.push(this._backBtn);
     return own;
+  }
+
+  /** The Buzz strip: one chip per seated non-phone player, in their light colour; rebuilt when the roster or a light changes. */
+  _renderBuzz() {
+    if (!this._buzzEl) return;
+    const chips = [...this.cards.values()].filter((c) => c.type !== 'phone').map((c) => {
+      const look = playerLooks.get(c.n);
+      const rgb = ledRgb(look.led);
+      return { n: c.n, label: c.player.label, rgb: `rgb(${rgb.r},${rgb.g},${rgb.b})`, led: look.led };
+    });
+    const key = chips.map((x) => `${x.n}:${x.led}:${x.label}`).join('|');
+    if (key === this._buzzKey) return;
+    this._buzzKey = key;
+    const box = this._buzzEl.querySelector('#dr-buzz-chips');
+    box.innerHTML = chips.map((x) => `<button class="opt-btn dr-chip" data-buzz="${x.n}" title="${esc(x.label)}" style="--chip: ${x.rgb}"><span class="led-swatch" style="background: ${x.rgb}"></span>P${x.n}</button>`).join('');
+    this._buzzEl.style.display = chips.length ? '' : 'none';
+    if (!box._wired) {
+      box._wired = true;
+      box.addEventListener('click', (e) => {
+        const b = e.target instanceof Element ? e.target.closest('button[data-buzz]') : null;
+        if (b) this.buzz(Number(b.dataset.buzz));
+      });
+    }
+    const p1 = this.cards.get(1);
+    if (p1 && p1.focus) p1.focus.refreshSpatial(this._items(p1));
   }
 
   _refocus(c, initial) {
@@ -285,7 +321,7 @@ export class DressingRoom {
   _act(c, act) {
     if (act === 'edit' && c.state === 'ready') this._setState(c, 'editing');
     else if (act === 'done' && c.state === 'editing') this._setState(c, 'ready');
-    else if (act === 'find') this._findMe(c);
+
   }
 
   _setState(c, state) {
@@ -322,7 +358,14 @@ export class DressingRoom {
       if (colours) colours.innerHTML = this._colourButtons(look);
     } else if (kind === 'body') look = playerLooks.update(c.n, { body: val });
     else if (kind === 'colourway') look = playerLooks.set(c.n, undefined, withColourway(look, val));
-    else if (kind === 'led') { look = playerLooks.update(c.n, { led: val }); applyPlayerLed(this._mgr, c.n, look.led); }
+    else if (kind === 'led') {
+      look = playerLooks.update(c.n, { led: val });
+      applyPlayerLed(this._mgr, c.n, look.led);
+      // One buzz per settled pick: a direction held across several swatches fires once.
+      clearTimeout(c.buzzTimer);
+      c.buzzTimer = setTimeout(() => { if (this.open && this.cards.get(c.n) === c) this.buzz(c.n); }, 400);
+      this._renderBuzz();
+    }
     else return;
     const group = c.el.querySelector(`.dr-opts[data-pick="${kind}"]`);
     if (group) for (const b of group.querySelectorAll('button[data-pick]')) b.classList.toggle('active', b.dataset.val === String(val));
@@ -337,12 +380,16 @@ export class DressingRoom {
     if (this._onLookChanged) this._onLookChanged(c.n, kind, val);
   }
 
-  _findMe(c) {
+  /** Buzz player n's pad (rumble + flash) and say so on their card. A chip press, or a settled light pick. */
+  buzz(n) {
+    const c = this.cards.get(n);
+    if (!c || c.type === 'phone') return;
     const look = playerLooks.get(c.n);
     const r = findMe(this._mgr, c.n, look.led, c.type === 'gamepad' ? c.player.input : null);
     const hint = c.el.querySelector('.dr-hint');
     if (hint) hint.textContent = r.rumbled || r.lit ? `Buzzing Player ${c.n}'s controller…` : 'This controller has no rumble or light we can reach.';
     c.lastFind = r;
+    c.buzzCount = (c.buzzCount || 0) + 1;
   }
 
   // ── input ──
