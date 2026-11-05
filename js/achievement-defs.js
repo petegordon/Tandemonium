@@ -186,8 +186,8 @@ export const ACHIEVEMENTS = [
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7", ...count('medalKeys', 1) },
-  { id: 'todays_launch',  section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1), demo: false, full: 'todaysLaunch' },
-  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'todaysLaunch' },
+  { id: 'daily_launch',   section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1), demo: false, full: 'dailyLaunch' },
+  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'dailyLaunch' },
 
   // ── 9. Chaos Coins ───────────────────────────────────────
   { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Earn your first Chaos Coin',          ...count('coinsEarned', 1) },
@@ -263,6 +263,48 @@ export const DEMO_UNEARNABLE = ACHIEVEMENTS.filter(a => !a.demo).map(a => a.id);
 
 export function getDefinition(id) {
   return ACHIEVEMENTS.find(a => a.id === id) || null;
+}
+
+/**
+ * #575 · achievement ids renamed after players had started earning them
+ * (old → new). The earned list in localStorage carries the old id until
+ * migrateEarned runs (js/achievements.js, on load); the Steam API name is the
+ * id in upper case, and scripts/sync-steam-achievements.js renames that row
+ * in place so the stat bit — and every player's unlock — carries over.
+ */
+export const RENAMED_IDS = Object.freeze({ todays_launch: 'daily_launch' });
+
+/**
+ * One-time migration of the earned list ([{ id, name, icon, earnedAt }]).
+ * An entry under an old id moves to its new id, taking the new name and
+ * icon; when both ids are present (earned on two devices) the earlier unlock
+ * wins. Anything else passes through untouched. Returns { list, changed }:
+ * changed is true only when the stored list should be rewritten.
+ */
+export function migrateEarned(list) {
+  if (!Array.isArray(list)) return { list: [], changed: false };
+  let changed = false;
+  const out = [];
+  const at = new Map();   // id → index in out
+  for (const a of list) {
+    const to = a && typeof a.id === 'string' ? RENAMED_IDS[a.id] : undefined;
+    let rec = a;
+    if (to) {
+      const def = getDefinition(to);
+      rec = { ...a, id: to, name: def ? def.name : a.name, icon: def ? def.icon : a.icon };
+      changed = true;
+    }
+    const id = rec && rec.id;
+    if (id !== undefined && at.has(id)) {
+      const i = at.get(id);
+      if (Number(rec.earnedAt) < Number(out[i].earnedAt)) out[i] = rec;
+      changed = true;
+      continue;
+    }
+    if (id !== undefined) at.set(id, out.length);
+    out.push(rec);
+  }
+  return { list: out, changed };
 }
 
 // ============================================================
@@ -501,7 +543,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
         noteDay(L, today);
       }
       const metres = Math.max(0, n(d.metres));
-      if (d.mode !== 'slingshot' && d.mode !== 'todaysLaunch') {
+      if (d.mode !== 'slingshot' && d.mode !== 'dailyLaunch') {
         L.cumulativeDistance += metres;
         L.rideCoins += Math.max(0, Math.floor(n(d.earned)));
         L.bestRideCoins = Math.max(L.bestRideCoins, L.rideCoins);
@@ -540,7 +582,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
     case 'stageCleared': L.slingStage = Math.max(L.slingStage, Math.floor(n(d.stage))); break;
     case 'bigAir': L.bigAirs += 1; break;
     case 'pot': L.jackpots += 1; break;   // #546: the pot of gold (the stat keeps its jackpot name)
-    case 'todaysLaunch': L.launchDays = addUnique(L.launchDays, d.key); break;
+    case 'dailyLaunch': L.launchDays = addUnique(L.launchDays, d.key); break;
     // ── versus (one device, both teams)
     case 'versus':
       L.versusRaces += 1;

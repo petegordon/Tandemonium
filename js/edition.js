@@ -16,7 +16,7 @@ export const FULL_RULES = Object.freeze({
   isDemo: false,
   /** Level ids offered in the level lists (lobby + NEXT LEVEL). null = all. */
   levels: null,
-  /** Today's Road becomes "This Week's Road": one seeded road per ISO week. */
+  /** The Daily Ride becomes the "Weekly Ride": one seeded road per ISO week. */
   weeklyRoad: false,
   /** Ranked Today's Road runs + leaderboard submission. */
   ranked: true,
@@ -135,7 +135,7 @@ export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
  * client (the build before this list existed).
  *   tourist      co-op Map Tourists (touristPlan / touristReady barrier)
  *   helpingHand  follows the captain's helping-hand tier (timer scaling)
- *   weeklyRoad   knows the demo's This Week's Road
+ *   weeklyRoad   knows the demo's Weekly Ride
  *   v2LevelSync  adopts levelSync {difficulty, roadKind, key, seed}; refuses
  *                a level its edition does not allow (levelRefused)
  */

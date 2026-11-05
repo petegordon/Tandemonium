@@ -1,4 +1,4 @@
-// #400 · the demo's "This Week's Road": one road per ISO week, keyed by its Monday.
+// #400 · the demo's "Weekly Ride" (was "This Week's Road"): one road per ISO week, keyed by its Monday.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { weeklyKey, weeklySeed, seedFromKey, dailyKey } from '../../js/daily-seed.js';

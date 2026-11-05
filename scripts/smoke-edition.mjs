@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // smoke-edition.mjs — #400: what each edition offers in the menus.
-//   demo (?demo=1): SOLO shows exactly Tutorial, Grandma's, This Week's Road
+//   demo (?demo=1): SOLO shows exactly Tutorial, Grandma's, Weekly Ride
 //     (+ the Slingshot card) — no Tourist even with a Maps key; the road rides
 //     on Chill with the week's key; NEXT LEVEL from Grandma's goes to the
 //     weekly road, and from there to the demo's end screen, never elsewhere.
@@ -142,11 +142,11 @@ const checks = {
   demoSolo: same(dl.solo, ['tutorial', 'grandma', 'daily', 'slingshot']),
   demoCoop: same(dl.coop, ['tutorial', 'grandma', 'daily']),
   demoVersus: same(dl.versus, ['grandma']),
-  demoRoadNamed: dl.roadName === "This Week's Road" && /A new road every week/.test(dl.roadDesc),
+  demoRoadNamed: dl.roadName === 'Weekly Ride' && /A new road every week/.test(dl.roadDesc),
   noModeButton: !dl.modeTouristBtn && !fl.modeTouristBtn,
   demoRoadWeekly: dw.picked.key === dw.picked.weeklyKey && dw.picked.difficulty === 'chill',
   demoNextFromGrandma: dw.fromGrandma === 'daily' && dw.afterGrandma.id === 'daily' &&
-    dw.afterGrandma.name === "This Week's Road" && dw.afterGrandma.key === dw.picked.weeklyKey &&
+    dw.afterGrandma.name === 'Weekly Ride' && dw.afterGrandma.key === dw.picked.weeklyKey &&
     dw.afterGrandma.difficulty === 'chill',
   demoEnd: dw.fromRoad === null && dw.endShown && /That's the demo/.test(dw.endText) &&
     dw.wishlistShown && dw.endHidden === true,

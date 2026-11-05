@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smoke-todays-road.mjs — C-2: two players on the same day ride the same road,
+// smoke-daily-ride.mjs — C-2: two players on the same day ride the same road,
 // the difficulty is locked, and an expired ?daily= link lands on today.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
 const ROOT=process.cwd(); const PORT=8921;

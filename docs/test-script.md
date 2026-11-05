@@ -293,7 +293,7 @@ Two devices on different networks for the M rows.
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| ED-01 | Demo shows Tutorial, Grandma's, This Week's Road, Slingshot; no Tourist | A | `smoke:edition` |
+| ED-01 | Demo shows Tutorial, Grandma's, Weekly Ride, Slingshot; no Tourist | A | `smoke:edition` |
 | ED-02 | Demo-gated items show a wishlist hint, not a dead lock | A | `smoke:edition`, `smoke:ctas` |
 | ED-03 | No ranked runs, streaks or share strip in the demo | A | `smoke:ranked` |
 | ED-04 | Wishlist and invite buttons fit at 390 px | A | `smoke:ctas` |

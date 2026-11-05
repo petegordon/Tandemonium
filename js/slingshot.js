@@ -421,29 +421,29 @@ export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
  * uses (js/daily-seed.js). No stage goal: the run ends when the bike stalls or
  * crashes, and the day's best distance is the thing to beat.
  */
-export const TODAYS_LAUNCH_SALT = 101;          // private to this mode: not in daily-seed's SALT table
-export const TODAYS_LAUNCH_LENGTH = 1150;       // past every stage goal, inside one 1200 m lap
-const TODAYS_LAUNCH_LAYOUT_STAGE = 7;           // pot of gold on, like a late stage
+export const DAILY_LAUNCH_SALT = 101;          // private to this mode: not in daily-seed's SALT table
+export const DAILY_LAUNCH_LENGTH = 1150;       // past every stage goal, inside one 1200 m lap
+const DAILY_LAUNCH_LAYOUT_STAGE = 7;           // pot of gold on, like a late stage
 
-export function todaysLaunchSeed(key) {
-  return deriveSeed(seedFromKey(key), TODAYS_LAUNCH_SALT);
+export function dailyLaunchSeed(key) {
+  return deriveSeed(seedFromKey(key), DAILY_LAUNCH_SALT);
 }
 
 /** The day's course: deterministic per key, different from day to day. */
-export function todaysLaunchCourse(key) {
-  return planCourse(TODAYS_LAUNCH_LAYOUT_STAGE, TODAYS_LAUNCH_LENGTH + SLING_REST_D, { seed: todaysLaunchSeed(key) });
+export function dailyLaunchCourse(key) {
+  return planCourse(DAILY_LAUNCH_LAYOUT_STAGE, DAILY_LAUNCH_LENGTH + SLING_REST_D, { seed: dailyLaunchSeed(key) });
 }
 
 /** The save's record for `key` (a fresh one when the stored day is another day). */
-export function todaysLaunchStatus(save, key) {
+export function dailyLaunchStatus(save, key) {
   const d = save && save.daily;
   return d && d.key === key ? { key, best: d.best || 0, runs: d.runs || 0, jackpot: !!d.jackpot }
     : { key, best: 0, runs: 0, jackpot: false };
 }
 
 /** Bank a Today's Launch run on the save. Returns a NEW save. The pot of gold pays once a day (B5). */
-export function applyTodaysLaunch(save, key, score) {
-  const cur = todaysLaunchStatus(save, key);
+export function applyDailyLaunch(save, key, score) {
+  const cur = dailyLaunchStatus(save, key);
   return { ...save, daily: { key, best: Math.max(cur.best, score.distance), runs: cur.runs + 1,
                              jackpot: cur.jackpot || !!score.potPaid } };
 }

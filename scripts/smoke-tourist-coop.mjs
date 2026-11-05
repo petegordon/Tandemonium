@@ -388,7 +388,7 @@ await new Promise(r => setTimeout(r, 300));
 const demoRoom = { cards: demoCards, roadName: demoRoadName, asked: demoAsked, cap: await roomView(cap), sto: await roomView(sto),
   weeklyKey: await cap.evaluate(async () => (await import('./js/daily-seed.js')).weeklyKey()) };
 console.log('demo stoker:', JSON.stringify(demoRoom, null, 1));
-const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.roadName === "This Week's Road" && demoRoom.asked === false &&
+const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.roadName === 'Weekly Ride' && demoRoom.asked === false &&
   demoRoom.cap.mode === 'captain' && demoRoom.sto.mode === 'stoker' &&
   demoRoom.cap.weekly && demoRoom.sto.weekly && demoRoom.cap.key === demoRoom.weeklyKey && demoRoom.sto.key === demoRoom.cap.key &&
   demoRoom.sto.seed === demoRoom.cap.seed && demoRoom.cap.diff === 'chill' && demoRoom.sto.diff === 'chill' &&

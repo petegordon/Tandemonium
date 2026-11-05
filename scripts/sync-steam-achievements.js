@@ -8,6 +8,8 @@
  *   1. deletes what Steamworks has and code lacks (opt-in, --delete)
  *   2. adds what code has and Steamworks lacks
  *   3. updates display name, description and Hidden where they differ from code
+ *      (and renames an API name in place — RENAMED_API_NAMES, #575 — so the
+ *      stat bit, and every player's unlock, carries over)
  *   4. uploads the earned + locked icons (scripts/achievement-icons.js) to every
  *      achievement that has none on Steamworks (--icons re-uploads all of them)
  * Deleting is opt-in: a deleted achievement is gone for every player who
@@ -28,6 +30,11 @@ const path = require('path');
 const { renderIcons } = require('./achievement-icons');
 
 const STEAM_ACHIEVEMENT_CAP = 100;
+
+// #575 · API names renamed in code (old → new; js/achievement-defs.js RENAMED_IDS
+// in upper case). A Steamworks row still under the old name is edited to the new
+// one rather than deleted and re-added, which would reset the unlock for everyone.
+const RENAMED_API_NAMES = { TODAYS_LAUNCH: 'DAILY_LAUNCH' };
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -131,7 +138,7 @@ function describeCondition(id, fallback) {
     full_trail: 'Grab all 5 coins in a trail',
     straight_shooter: 'Go 300 m without steering after launch',
     medal_key: "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7",
-    todays_launch: "Fly the Daily Launch, the Slingshot's daily course",
+    daily_launch: "Fly the Daily Launch, the Slingshot's daily course",
     launch_week: "Fly the Daily Launch on 7 different days",
     coin_first: 'Earn your first Chaos Coin',
     coins_1000: 'Earn 1,000 Chaos Coins in total',
@@ -515,6 +522,11 @@ async function updateAchievement(page, rowId, achievement) {
     };
     set(en[0], a.displayName);
     set(en[1], a.description);
+    if (a.fromApiName) {   // #575: rename in place
+      const api = row.querySelector('input[id$="_apiname"]');
+      if (!api) return 'no API Name input';
+      set(api, a.apiName);
+    }
     const hidden = row.querySelector('input[type="checkbox"][id$="_hidden"]');
     if (hidden && hidden.checked !== a.hidden) hidden.click();
     const save = [...row.querySelectorAll('input[type="submit"]')].find(b => b.value === 'Save');
@@ -720,8 +732,14 @@ async function main() {
   const codeSet = new Map(codeAchievements.map(a => [a.apiName, a]));
   const steamSet = new Map(steamAchievements.map(a => [a.apiName, a]));
 
-  const toAdd = codeAchievements.filter(a => !steamSet.has(a.apiName));
-  const toDelete = steamAchievements.filter(a => !codeSet.has(a.apiName));
+  // #575 · renames: Steamworks has the old name, lacks the new one, code has the new one.
+  const toRename = Object.entries(RENAMED_API_NAMES)
+    .filter(([from, to]) => steamSet.has(from) && !steamSet.has(to) && codeSet.has(to))
+    .map(([from, to]) => ({ ...codeSet.get(to), fromApiName: from }));
+  const renamedFrom = new Set(toRename.map(a => a.fromApiName));
+  const renamedTo = new Set(toRename.map(a => a.apiName));
+  const toAdd = codeAchievements.filter(a => !steamSet.has(a.apiName) && !renamedTo.has(a.apiName));
+  const toDelete = steamAchievements.filter(a => !codeSet.has(a.apiName) && !renamedFrom.has(a.apiName));
   const existing = codeAchievements.filter(a => steamSet.has(a.apiName));
   const differs = (a, s) => s.displayName !== a.displayName || s.description !== a.description || s.hidden !== a.hidden;
   const toUpdate = existing.filter(a => differs(a, steamSet.get(a.apiName)));
@@ -732,6 +750,7 @@ async function main() {
   console.log('=== Sync Plan ===');
   console.log(`  Already there:  ${existing.length}`);
   console.log(`  To add:         ${toAdd.length}`);
+  console.log(`  To rename:      ${toRename.length} (API name edited in place)`);
   console.log(`  To delete:      ${toDelete.length}${skipDelete && toDelete.length ? ' (skipped without --delete)' : ''}`);
   console.log(`  To update:      ${toUpdate.length} (name / description / hidden)`);
   console.log(`  Icons to upload: ${iconsOff ? 'off (--no-icons)' : `${iconCount} achievements`}`);
@@ -758,6 +777,12 @@ async function main() {
   }
   if (toUpdate.length) console.log('');
 
+  for (const a of toRename) {
+    const s = steamSet.get(a.fromApiName);
+    console.log(`  → ${a.fromApiName} -> ${a.apiName}: "${s.displayName}" -> "${a.displayName}"; "${s.description}" -> "${a.description}"`);
+  }
+  if (toRename.length) console.log('');
+
   if (toDelete.length > 0) {
     console.log(skipDelete
       ? 'On Steamworks but not in code — WOULD be deleted with --delete (not deleting):'
@@ -766,7 +791,7 @@ async function main() {
     console.log('');
   }
 
-  if (toAdd.length === 0 && toUpdate.length === 0 && iconCount === 0 && (skipDelete || toDelete.length === 0)) {
+  if (toAdd.length === 0 && toRename.length === 0 && toUpdate.length === 0 && iconCount === 0 && (skipDelete || toDelete.length === 0)) {
     console.log(toDelete.length ? 'Nothing to add or update (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
     await browser.close();
     return;
@@ -807,6 +832,31 @@ async function main() {
     // Reload page after deletes
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
     await waitForTable(page);
+    console.log('');
+  }
+
+  // #575 · Rename pass: edit the old row's API Name (with its new text) so the
+  // stat bit, and every player's unlock, stays. If Steamworks keeps the old
+  // name, stop before the add pass would create a second, empty row: the
+  // fallback (drop the entry from RENAMED_API_NAMES, re-run with --delete) is
+  // delete-old + add-new, which takes the unlock away from everyone who has it,
+  // so a person decides that.
+  if (toRename.length > 0) {
+    console.log('Renaming achievements...');
+    for (const a of toRename) {
+      process.stdout.write(`  Renaming ${a.fromApiName} -> ${a.apiName}...`);
+      console.log(' ' + await updateAchievement(page, steamSet.get(a.fromApiName).rowId, a));
+    }
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    await waitForTable(page);
+    const afterRename = await scrapeAchievements(page);
+    const stuck = toRename.filter(a => afterRename.some(x => x.apiName === a.fromApiName) || !afterRename.some(x => x.apiName === a.apiName));
+    if (stuck.length) {
+      console.error(`Steamworks kept the old API name for: ${stuck.map(a => a.fromApiName).join(', ')}.`);
+      console.error('Nothing else changed. Fallback: remove it from RENAMED_API_NAMES and re-run with --delete (delete old + add new; players lose that unlock).');
+      await browser.close();
+      process.exit(1);
+    }
     console.log('');
   }
 
