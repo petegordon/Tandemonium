@@ -179,31 +179,57 @@ export class DressingRoom {
     return `${BODIES[look.body].label} · ${GOOSE_OUTFITS[look.outfit].label} · ${way ? way.label : 'Original'} · ${led ? led.label : 'Blue'} light`;
   }
 
+  /**
+   * The card's skeleton, built once: the canvas stays put across state changes so the preview's
+   * height can TRANSITION between the full-height Ready view and the smaller Editing view
+   * (CSS .dr-preview); _renderCard only swaps the badge, summary, rows and actions.
+   */
+  _buildCard(c) {
+    const look = playerLooks.get(c.n);
+    const previewHtml = this._preview
+      ? `<canvas class="dr-preview" width="220" height="240"></canvas>`
+      : `<div class="dr-preview dr-preview--static"><div class="dr-static-body">${esc(BODIES[look.body].label)}</div><div class="dr-static-outfit">${esc(GOOSE_OUTFITS[look.outfit].label)}</div></div>`;
+    c.el.innerHTML = `
+      <div class="dr-head"><span class="dr-who">Player <b>${c.n}</b> · ${esc(c.player.label)}</span><span class="dr-badge"></span></div>
+      ${previewHtml}
+      <p class="dr-summary"></p>
+      <div class="dr-rows-wrap"></div>
+      <div class="dr-actions"></div>`;
+    const preview = c.el.querySelector('.dr-preview');
+    if (preview) {
+      // The transition's last frame: one exact resize + redraw so the goose never stays stretched.
+      preview.addEventListener('transitionend', () => { c.transitionUntil = 0; this._resizePreview(c); });
+    }
+  }
+
   _renderCard(c) {
+    if (!c.el.querySelector('.dr-head')) this._buildCard(c);
     const look = playerLooks.get(c.n);
     const p = c.player;
     const badge = c.state === 'editing' ? 'EDITING' : c.state === 'readonly' ? 'ON PHONE' : '✓ READY';
     const tone = p.team === 'A' ? 'team-a' : p.team === 'B' ? 'team-b' : (p.seat === 'Stoker' ? 'stoker' : 'captain');
+    if (c.el.dataset.state !== c.state) c.transitionUntil = performance.now() + 450;   // the CSS transition runs ~280 ms
     c.el.dataset.state = c.state;
     c.el.dataset.tone = tone;
-    const rows = c.state === 'editing' ? this._rows(c, look) : '';
-    const previewHtml = this._preview
-      ? `<canvas class="dr-preview" width="220" height="240"></canvas>`
-      : `<div class="dr-preview dr-preview--static"><div>${esc(BODIES[look.body].label)}</div><div>${esc(GOOSE_OUTFITS[look.outfit].label)}</div></div>`;
-    const actions = c.state === 'readonly'
+    c.el.querySelector('.dr-badge').textContent = badge;
+    c.el.querySelector('.dr-who').innerHTML = `Player <b>${c.n}</b> · ${esc(p.label)}`;
+    c.el.querySelector('.dr-summary').textContent = this._summary(look);
+    c.el.querySelector('.dr-rows-wrap').innerHTML = c.state === 'editing' ? this._rows(c, look) : '';
+    c.el.querySelector('.dr-actions').innerHTML = c.state === 'readonly'
       ? `<p class="dr-note">Edit on your phone</p>`
       : c.state === 'editing'
         ? `<button class="opt-btn dr-done" data-act="done">DONE</button><button class="opt-btn" data-act="find">FIND MY CONTROLLER</button>`
         : `<button class="opt-btn dr-edit" data-act="edit">EDIT</button><button class="opt-btn" data-act="find">FIND MY CONTROLLER</button>`;
-    c.el.innerHTML = `
-      <div class="dr-head"><span class="dr-who">Player <b>${c.n}</b> · ${esc(p.label)}</span><span class="dr-badge">${badge}</span></div>
-      ${previewHtml}
-      <p class="dr-summary">${esc(this._summary(look))}</p>
-      ${rows}
-      <div class="dr-actions">${actions}</div>`;
+    const stat = c.el.querySelector('.dr-preview--static');
+    if (stat) { stat.querySelector('.dr-static-body').textContent = BODIES[look.body].label; stat.querySelector('.dr-static-outfit').textContent = GOOSE_OUTFITS[look.outfit].label; }
     const canvas = c.el.querySelector('canvas.dr-preview');
     if (canvas && this._preview) this._preview.show('p' + c.n, /** @type {HTMLCanvasElement} */ (canvas), p.seat, seatLook(look));
     this._refocus(c, c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
+  }
+
+  /** Size the card's canvas bitmap to its CSS box and redraw it now (mid-transition frames). */
+  _resizePreview(c) {
+    if (this._preview) this._preview.resizeNow('p' + c.n);
   }
 
   _rows(c, look) {
@@ -296,6 +322,8 @@ export class DressingRoom {
     if (hint) hint.textContent = '';
     const canvas = c.el.querySelector('canvas.dr-preview');
     if (canvas && this._preview) this._preview.show('p' + c.n, /** @type {HTMLCanvasElement} */ (canvas), c.player.seat, seatLook(look));
+    const stat = c.el.querySelector('.dr-preview--static');
+    if (stat) { stat.querySelector('.dr-static-body').textContent = BODIES[look.body].label; stat.querySelector('.dr-static-outfit').textContent = GOOSE_OUTFITS[look.outfit].label; }
     if (c.focus) c.focus.refreshSpatial(this._items(c));
     if (this._onLookChanged) this._onLookChanged(c.n, kind, val);
   }
@@ -334,6 +362,8 @@ export class DressingRoom {
         c.focus.refreshSpatial(this._items(c));
         c.focus.poll();
       }
+      // While the preview's height transitions, keep the bitmap the size of its box every frame.
+      if (c.transitionUntil && this._preview) { this._resizePreview(c); if (now > c.transitionUntil) c.transitionUntil = 0; }
     }
     if (this._preview) this._preview.tick(now);
   }
