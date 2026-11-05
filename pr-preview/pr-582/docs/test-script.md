@@ -112,13 +112,13 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-09h | SAVE CLIP opens the clip preview after a recorded ride | M | — |
 | SR-09i | iPhone: SHARE in the clip preview offers FULL CLIP (20 s) and SHORT CLIP (10 s, FOR MESSAGES); the short one is cut from the same buffer on a keyframe; after the sheet closes a "Save Video, then send it from Photos" hint shows once; pad B steps back out of the choice; desktop unchanged (#408) | A | `smoke:clip-share` |
 | SR-10 | Victory buttons: NEXT LEVEL, PLAY AGAIN, END RIDE | A | `smoke:flows` |
-| SR-11 | Today's Road: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
-| SR-12 | Today's Road ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |
+| SR-11 | Daily Ride: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
+| SR-12 | Daily Ride ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |
 | SR-13 | Expired `?daily=` link lands on today | A | `smoke:daily` |
 | SR-14 | Slingshot: garage → buy upgrade → aim → launch → tally | A | `smoke:slingshot` |
 | SR-15 | Slingshot aim on phone (portrait and landscape, real touch) | A | `smoke:slingshot-aim` |
 | SR-16 | Slingshot ramps and big air feel right | M | — |
-| SR-16a | Slingshot pot of gold (#546): from stage 2 a pot of gold sits in its own lane under a half-size POT OF GOLD board; riding through it collects it ("POT OF GOLD! +N" toast), the run goes on, the board over the lane never ends it; the results pay a flat "Pot of gold" row with no ×2; once cashed on a stage (once a day on Today's Launch) the pot is gone and the board stays | A | `smoke:slingshot`, unit `slingshot`, `tutorial-board` |
+| SR-16a | Slingshot pot of gold (#546): from stage 2 a pot of gold sits in its own lane under a half-size POT OF GOLD board; riding through it collects it ("POT OF GOLD! +N" toast), the run goes on, the board over the lane never ends it; the results pay a flat "Pot of gold" row with no ×2; once cashed on a stage (once a day on the Daily Launch) the pot is gone and the board stays | A | `smoke:slingshot`, unit `slingshot`, `tutorial-board` |
 | SR-16b | The pot of gold reads as a pot of gold from the chase camera at launch speed, and steering into its lane feels like the skill | M | — |
 | SR-17 | Tourist: hidden without Maps key; two addresses plan a route; arrival result shares | A | `smoke:tourist` |
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
@@ -127,7 +127,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-21 | Options → goose outfit and colourway apply to the geese on the bike, chosen in the lobby or live mid-ride; "own colours" restores; saved for the next ride | A | `smoke:solo-extras` |
 | SR-22 | (PB ghost removed in #400) old saved ghost tracks are dropped, times kept | A | `test/unit/records` |
 | SR-23 | 10-minute ride: no fps decay, no memory climb | M | `probe-memory.mjs` (manual run) |
-| SR-24 | Grandma's and Today's Road finish: Grandma waves at the roadside on the final approach; outhouse, woodpile and a Timber pine by the house (#475) | A | `smoke:grandma`, `test/unit/grandma-finish` |
+| SR-24 | Grandma's and Daily Ride finish: Grandma waves at the roadside on the final approach; outhouse, woodpile and a Timber pine by the house (#475) | A | `smoke:grandma`, `test/unit/grandma-finish` |
 | SR-24h | SR-24 looks right: scale, placement, wave reads from the chase camera, no frame drop on Low | M | — |
 | SR-25 | 3D present, death cone and Grandma's house (no video billboards); presents still collect, cones still crash and get knocked flying; after the finish the ride's presents fly into a pile beside Grandma (#478) | A | `smoke:props`, `test/unit/props-3d`, `test/unit/present-stack` |
 | SR-25h | SR-25 looks right: presents and cones read from the chase camera, the pile lands neatly and is seen during the finish swing, no frame drop on Low / phone / Quest | M | `scripts/review-props.mjs`, `scripts/probe-props.mjs` |
@@ -251,6 +251,7 @@ Two devices on different networks for the M rows.
 | OC-11 | BACK TO ROOM after a ride returns both to level select on the same room, still connected; captain picks, stoker waits | A | `smoke:online` |
 | OC-11h | Camera/mic PiP keep flowing across the return (PeerJS: needs its CDN and signalling server) | M | — |
 | OC-12 | Rejoin after closing the tab | M | — |
+| OC-12b | Rejoin from JOIN A RIDE (#547): RIDE TOGETHER goes straight to Choose your seat (no Recent Rooms pop-up); JOIN A RIDE shows one Rejoin card per room from the last 5 minutes (newest first, code · partner · seat · age), pad focus starts on the newest, and a pick rejoins in the seat you had (back seat → connecting on JOIN A RIDE, front seat → host step); no recent rooms, no row; the row and the keypad fit 1080p and 720p above the bar | A | `smoke:rejoin` |
 | OC-13 | Co-op tutorial: the stoker waits for the captain's countdown, both ride, it completes on both, both return to the room | A | `smoke:online` |
 | OC-14 | Co-op Tourist: both see the same world | A | `smoke:tourist` |
 | OC-15 | Steam build ↔ web build in the same room | M | `test/unit/room-edition` |
@@ -299,7 +300,7 @@ Two devices on different networks for the M rows.
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| ED-01 | Demo shows Tutorial, Grandma's, This Week's Road, Slingshot; no Tourist | A | `smoke:edition` |
+| ED-01 | Demo shows Tutorial, Grandma's, Weekly Ride, Slingshot; no Tourist | A | `smoke:edition` |
 | ED-02 | Demo-gated items show a wishlist hint, not a dead lock | A | `smoke:edition`, `smoke:ctas` |
 | ED-03 | No ranked runs, streaks or share strip in the demo | A | `smoke:ranked` |
 | ED-04 | Wishlist and invite buttons fit at 390 px | A | `smoke:ctas` |
@@ -339,7 +340,7 @@ Two devices on different networks for the M rows.
 |---|---|---|---|
 | DB-01 | Dashboard SQL valid against the schema | A | `check:dashboard-sql` |
 | DB-02 | A ride's analytics events (`ride_start`, `crash_recover`, `ride_takeover`, …) reach the dashboard | M | — |
-| DB-03 | Today's Road leaderboard records a ranked run | M | — |
+| DB-03 | Daily Ride leaderboard records a ranked run | M | — |
 | DB-04 | Pad relay rate limit refuses a scripted room flood (30/min per IP; refused requests never reach a room) | A | `test/unit/pad-relay-ratelimit` |
 
 ---

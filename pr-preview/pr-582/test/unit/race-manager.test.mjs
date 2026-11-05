@@ -75,7 +75,7 @@ test('later segments have no grace', () => {
 // left out the first-segment bonus — so the rider got 30 s to ride the 125 m
 // they had just been given 38 s for, and a second crash made the ride
 // arithmetically impossible to finish.
-const dailyLevel = { id: 'daily', name: "Today's Road", distance: 500, checkpointInterval: 125 };
+const dailyLevel = { id: 'daily', name: 'Daily Ride', distance: 500, checkpointInterval: 125 };
 
 test('restarting the first segment restores the budget it started with', () => {
   const rm = new RaceManager(dailyLevel);

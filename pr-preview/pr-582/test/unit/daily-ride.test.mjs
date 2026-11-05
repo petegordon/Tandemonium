@@ -7,7 +7,7 @@ import {
 } from '../../js/daily-ride.js';
 import { dailyKey, dailySeed } from '../../js/daily-seed.js';
 
-const base = { id: 'daily', name: "Today's Road", distance: 500, checkpointInterval: 125 };
+const base = { id: 'daily', name: 'Daily Ride', distance: 500, checkpointInterval: 125 };
 
 function memStore() {
   const m = new Map();

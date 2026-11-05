@@ -7,8 +7,8 @@ import {
 } from '../../js/wallet.js';
 import {
   STORAGE_KEY as SLING_KEY, UPGRADES, upgradeCost, buyUpgrade, loadSave, writeSave, emptySave,
-  STAGE_GATES, stageLock, todaysLaunchCourse, todaysLaunchSeed, todaysLaunchStatus, applyTodaysLaunch,
-  TODAYS_LAUNCH_LENGTH, SLING_REST_D, scoreRun, upgradeGain, slingStats, predictCoast, spentOn,
+  STAGE_GATES, stageLock, dailyLaunchCourse, dailyLaunchSeed, dailyLaunchStatus, applyDailyLaunch,
+  DAILY_LAUNCH_LENGTH, SLING_REST_D, scoreRun, upgradeGain, slingStats, predictCoast, spentOn,
 } from '../../js/slingshot.js';
 import { scoreRide, RIDE_PAY, newLedger, ledgerStep, gateProgress, dailyBonus } from '../../js/economy.js';
 import { rideTallyItems } from '../../js/economy-mode.js';
@@ -357,37 +357,37 @@ test('Today\'s Launch: the same course all day, a different one tomorrow', () =>
   const a = dailyKey(new Date('2026-10-04T12:00:00Z'));
   const b = dailyKey(new Date('2026-10-05T12:00:00Z'));
   assert.notEqual(a, b);
-  assert.deepEqual(todaysLaunchCourse(a), todaysLaunchCourse(a));
-  assert.equal(todaysLaunchSeed(a), todaysLaunchSeed(a));
-  assert.notDeepEqual(todaysLaunchCourse(a), todaysLaunchCourse(b));
+  assert.deepEqual(dailyLaunchCourse(a), dailyLaunchCourse(a));
+  assert.equal(dailyLaunchSeed(a), dailyLaunchSeed(a));
+  assert.notDeepEqual(dailyLaunchCourse(a), dailyLaunchCourse(b));
   // A week of days: all different from each other.
   const keys = Array.from({ length: 7 }, (_, i) => dailyKey(new Date(Date.UTC(2026, 9, 4 + i, 12))));
-  const layouts = new Set(keys.map(k => JSON.stringify(todaysLaunchCourse(k))));
+  const layouts = new Set(keys.map(k => JSON.stringify(dailyLaunchCourse(k))));
   assert.equal(layouts.size, 7);
   // It is a real course: coins to the end, a pot of gold, ramps, all inside one lap.
-  const c = todaysLaunchCourse(a);
+  const c = dailyLaunchCourse(a);
   assert.ok(c.pot && c.ramps.length > 2 && c.coins.length > 20);
-  for (const x of c.coins) assert.ok(x.d < TODAYS_LAUNCH_LENGTH + SLING_REST_D);
-  assert.ok(TODAYS_LAUNCH_LENGTH + SLING_REST_D < 1200);
+  for (const x of c.coins) assert.ok(x.d < DAILY_LAUNCH_LENGTH + SLING_REST_D);
+  assert.ok(DAILY_LAUNCH_LENGTH + SLING_REST_D < 1200);
 });
 
 test('Today\'s Launch: the day\'s best and record bonus, reset by a new day', () => {
   let save = emptySave();
   const k = '2026-10-04';
-  let st = todaysLaunchStatus(save, k);
+  let st = dailyLaunchStatus(save, k);
   assert.deepEqual(st, { key: k, best: 0, runs: 0, jackpot: false });
   const first = scoreRun({ distance: 300 }, st, 1);
   assert.equal(first.recordPay, 0, 'no record bonus on the first run of the day');
-  save = applyTodaysLaunch(save, k, first);
-  st = todaysLaunchStatus(save, k);
+  save = applyDailyLaunch(save, k, first);
+  st = dailyLaunchStatus(save, k);
   assert.deepEqual(st, { key: k, best: 300, runs: 1, jackpot: false });
   const second = scoreRun({ distance: 400 }, st, 1);
   assert.equal(second.recordPay, 25);
-  save = applyTodaysLaunch(save, k, second);
-  save = applyTodaysLaunch(save, k, scoreRun({ distance: 100 }, todaysLaunchStatus(save, k), 1));
-  assert.equal(todaysLaunchStatus(save, k).best, 400, 'a shorter run keeps the best');
+  save = applyDailyLaunch(save, k, second);
+  save = applyDailyLaunch(save, k, scoreRun({ distance: 100 }, dailyLaunchStatus(save, k), 1));
+  assert.equal(dailyLaunchStatus(save, k).best, 400, 'a shorter run keeps the best');
   assert.equal(save.stage, 1, 'Today\'s Launch never moves the stage');
-  assert.deepEqual(todaysLaunchStatus(save, '2026-10-05'), { key: '2026-10-05', best: 0, runs: 0, jackpot: false });
+  assert.deepEqual(dailyLaunchStatus(save, '2026-10-05'), { key: '2026-10-05', best: 0, runs: 0, jackpot: false });
   const store = memStore();
   writeSave(store, save);
   assert.deepEqual(loadSave(store).daily, { key: k, best: 400, runs: 3 });

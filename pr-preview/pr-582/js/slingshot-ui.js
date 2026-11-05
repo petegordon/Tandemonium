@@ -36,7 +36,7 @@ function btn(variant, html, cls) {
  * opts: {
  *   standalone   opened from the lobby: no stage LAUNCH, BACK instead of LOBBY
  *   lock         js/slingshot.js · stageLock() for the current stage, or null
- *   todays       { best, runs } when Today's Launch is offered, else null
+ *   todays       { best, runs } when the Daily Launch is offered, else null
  *   canWishlist  show the WISHLIST button on the demo's end
  *   replay       at the demo's end: the stage LAUNCH replays (m9), else null
  *   rebuildOffered  false hides Rebuild (the demo, m9)
@@ -91,7 +91,7 @@ export function renderGarage(save, wallet, opts = {}) {
         buttons.push(again);
       }
     } else if (lock.level) {
-      const go = btn('accent', `${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`);
+      const go = btn('accent', `${lock.kind === 'daily' ? 'TAKE THE DAILY RIDE' : "RIDE GRANDMA'S"} →`);
       go.addEventListener('click', () => opts.onGoRide && opts.onGoRide(lock.level));
       top.appendChild(go);
       buttons.push(go);
@@ -103,7 +103,7 @@ export function renderGarage(save, wallet, opts = {}) {
     buttons.push(launch);
   }
   if (todays) {
-    const t = btn('primary', `📅 TODAY'S LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
+    const t = btn('primary', `📅 DAILY LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
     t.addEventListener('click', () => opts.onToday && opts.onToday());
     top.appendChild(t);
     buttons.push(t);
@@ -188,7 +188,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   const shell = $('sling-results');
   const root = $('sling-results-body') || shell;
   root.innerHTML = '';
-  const title = daily && cause === 'goal' ? "Today's Launch: all the way!" : (CAUSE[cause] || CAUSE.stall);
+  const title = daily && cause === 'goal' ? 'Daily Launch: all the way!' : (CAUSE[cause] || CAUSE.stall);
   const rSheet = /** @type {any} */ ($('sling-results-sheet'));
   if (rSheet) rSheet.heading = title; else root.appendChild(el('h2', null, title));
   root.appendChild(el('div', 'sling-big', `${fmt(score.distance)} m`));
@@ -196,7 +196,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   if (score.isRecord) badges.appendChild(el('span', 'sling-badge', daily ? "TODAY'S BEST" : 'NEW RECORD'));
   if (stageCleared) badges.appendChild(el('span', 'sling-badge', `STAGE ${save.stage - 1} CLEARED`));
   root.appendChild(badges);
-  root.appendChild(el('div', 'sling-sub', (daily ? "📅 Today's Launch · " : '') + `Top speed ${Math.round(run.topSpeed * 3.6)} km/h`));
+  root.appendChild(el('div', 'sling-sub', (daily ? '📅 Daily Launch · ' : '') + `Top speed ${Math.round(run.topSpeed * 3.6)} km/h`));
 
   const rows = el('div', 'sling-rows');
   const row = (label, v, cls = 'row') => rows.appendChild(el('div', cls, `<span>${label}</span><span>${v}</span>`));
@@ -221,7 +221,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
       if (canWishlist) mk('&#9829; WISHLIST ON STEAM', 'accent', () => onWishlist && onWishlist(), 'cta-btn');
       mk('LAUNCH AGAIN', 'primary', onAgain);   // m9: the demo replays its last stage
     } else if (lock.level) {
-      mk(`${lock.kind === 'daily' ? "RIDE TODAY'S ROAD" : "RIDE GRANDMA'S"} →`, 'accent', () => onGoRide && onGoRide(lock.level));
+      mk(`${lock.kind === 'daily' ? 'TAKE THE DAILY RIDE' : "RIDE GRANDMA'S"} →`, 'accent', () => onGoRide && onGoRide(lock.level));
     }
   } else {
     mk('LAUNCH AGAIN', 'accent', onAgain);

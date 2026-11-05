@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'bc274e5',pr:582,time:'11-04-2026 23:00'}</script><base href="/pr-preview/pr-582/">
+<head><script>window.__BUILD={sha:'175ed9e',pr:582,time:'11-04-2026 23:33'}</script><base href="/pr-preview/pr-582/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -1586,7 +1586,7 @@
     margin-top: 1px;
     padding-left: 0;
   }
-  /* C-2 · Today's Road: a distinct edge so it reads as its own thing, and a
+  /* C-2 · Daily Ride: a distinct edge so it reads as its own thing, and a
      quiet second line explaining the rule. */
   .level-card[data-level-id="daily"] {
     border-color: rgba(255, 210, 63, 0.55);
@@ -5218,12 +5218,12 @@ ON</button>
 <div id="ranked-badge">RANKED RUN</div>
 <div id="help-badge" data-tier="0"></div>
 
-<!-- D-2 · Practice or a ranked run, on Today's Road only. Shown by the lobby
+<!-- D-2 · Practice or a ranked run, on the Daily Ride only. Shown by the lobby
      before START RIDE takes effect. The demo build never shows this: it is
      practice-only there (see game._isDemo). -->
 <div id="daily-mode-overlay">
   <div id="daily-mode-box">
-    <h2 id="daily-mode-title">Today&rsquo;s Road</h2>
+    <h2 id="daily-mode-title">Daily Ride</h2>
     <p id="daily-mode-sub"></p>
     <uf-button variant="accent" id="btn-daily-ranked">RANKED RUN
       <span class="daily-mode-hint" id="daily-ranked-hint">One per day. Crashes are fine; ending early is not.</span>
@@ -5485,7 +5485,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'bc274e5',pr:582,time:'11-04-2026 23:00'}</script><base href="/pr-preview/pr-582/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'175ed9e',pr:582,time:'11-04-2026 23:33'}</script><base href="/pr-preview/pr-582/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -5631,7 +5631,7 @@ ON</button>
         <uf-step id="lobby-mode" class="lobby-step">
           <div class="lobby-mode-buttons">
             <uf-button variant="accent" id="btn-together" sub="Couch co-op, online or versus">RIDE TOGETHER</uf-button>
-            <uf-button id="btn-solo" sub="Levels, Today’s Road and Slingshot">SOLO RIDE</uf-button>
+            <uf-button id="btn-solo" sub="Levels, Daily Ride and Slingshot">SOLO RIDE</uf-button>
             <!-- E-6 · Tourist ("ride the distance between you") is a card in
                  the SOLO level list (#400), shown only with a Maps key. -->
             <!-- WebHID grant for a pad the Gamepad API can't see (Steam Controller;
@@ -5810,11 +5810,19 @@ ON</button>
 
         <!-- ════════════════════════════════════════════════════
              SCREEN: Stoker Join Room (#lobby-join)
-             Code input (keyboard) + gamepad spinner alternative.
+             Rejoin cards for recent rooms (#547), then code input (keyboard) +
+             gamepad spinner alternative.
              Toggle columns hidden on this step.
              Back: #lobby-role
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-join" class="lobby-step">
+          <!-- #547: rooms from the last 5 minutes, front or back seat; a pick rejoins
+               in the seat you had. Filled by lobby._renderRejoinCards(); hidden when empty. -->
+          <div id="join-rejoin" class="join-rejoin" hidden>
+            <h3 class="join-rejoin-head">Rejoin a recent ride</h3>
+            <div id="join-rejoin-cards" class="join-rejoin-cards"></div>
+            <p class="join-rejoin-or">or enter a room code</p>
+          </div>
           <p class="lobby-prompt">Enter room code:</p>
           <div class="room-code-join-wrap">
             <span class="room-code-prefix-vert"><span>T</span><span>N</span><span>D</span><span>M</span></span>
@@ -5977,7 +5985,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.bc274e5 | 11-04-2026 23:00 (PR #582)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.175ed9e | 11-04-2026 23:33 (PR #582)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
