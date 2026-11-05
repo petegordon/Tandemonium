@@ -133,6 +133,15 @@ await new Promise((r) => setTimeout(r, 250));
 const after = await focusedAch();
 const stillOpen = await page.evaluate(() => document.getElementById('achievements-modal').open);
 check(closed && stillOpen && after === before, 'AD-04 B closes the card; the focus is back on the same badge, the sheet still open', { before, after, stillOpen });
+// #576: the grid was still blurred after the card closed.
+await new Promise((r) => setTimeout(r, 600));
+const blur = await page.evaluate(() => {
+  const s = document.getElementById('achievements-modal');
+  const els = [s, s.querySelector('.uf-sheet__card'), s.querySelector('.uf-sheet__body')].filter(Boolean);
+  return els.map((el) => ({ cls: el.className, filter: getComputedStyle(el).filter, backdrop: getComputedStyle(el).backdropFilter, anims: el.getAnimations().length }));
+});
+check(blur.every((b) => b.filter === 'none' && b.anims === 0), 'AD-04 the grid is sharp again once the card closes (no blur left on it)', blur);
+await h.shot(page, '2b-tv-after-close');
 
 // ── AD-05 · unlocked date, progress bar, hidden ──
 const open = async (id) => {

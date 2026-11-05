@@ -582,6 +582,12 @@ class Game {
     this._onTap('btn-pause-restart', () => { this._closePause('restart'); document.getElementById('reset-btn').click(); });
     this._onTap('btn-pause-settings', () => this._openOptions());   // over the pause; closing it re-focuses the menu
     this._onTap('btn-pause-help', () => this._openHelpModal());
+    // #576 · the ride toggles from a pad: they flip the hidden side buttons (the
+    // single source of truth) and stay in the menu so the new ON / OFF shows.
+    this._onTap('btn-pause-safety', () => { this.safetyBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-speed', () => { this.speedBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-assist', () => { this.assistBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-clip', () => { this._closePause('clip'); this.recorder.saveClip(); });
     this._onTap('btn-pause-end', () => {
       // END RIDE = the ride's own LOBBY / ROOM button (the ranked-run confirm lives there).
       const wasPaused = !!this._pause;
@@ -6321,6 +6327,7 @@ class Game {
     if (restart) restart.hidden = !(resetBtn && sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot);
     const end = document.getElementById('btn-pause-end');
     if (end) end.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+    this._syncPauseToggles();
     this._freezeClock(true);
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
@@ -6338,6 +6345,33 @@ class Game {
     });
     this._overlayCooldownUntil = performance.now() + 250;
     try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
+  }
+
+  /**
+   * #576 · show / label the pause menu's ride toggles. Same rules as the quick
+   * menu: only the rider who owns the ride controls (not a stoker), SAFETY and
+   * SPEED are gone on a ranked run (their buttons are disabled), ASSIST only
+   * once it is offered, SAVE CLIP only while a clip is buffering.
+   */
+  _syncPauseToggles() {
+    const sideButtons = document.getElementById('side-buttons');
+    const rideControls = !!sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot && this.mode !== 'versus';
+    const set = (id, show, on) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.hidden = !show;
+      const st = el.querySelector('.pause-state');
+      if (st && on !== undefined) st.textContent = on ? 'ON' : 'OFF';
+      el.classList.toggle('pause-on', !!on);
+    };
+    const usable = (b) => !!b && !b.hasAttribute('disabled');
+    set('btn-pause-safety', rideControls && usable(this.safetyBtn), !!this.safetyMode);
+    set('btn-pause-speed', rideControls && usable(this.speedBtn), !!this.autoSpeed);
+    set('btn-pause-assist', rideControls && !!this.assistBtn && this.assistBtn.style.display !== 'none', this._assistWeight > 0);
+    const share = document.getElementById('share-btn');
+    set('btn-pause-clip', !!share && share.style.display !== 'none');
+    const box = document.getElementById('pause-toggles');
+    if (box) box.hidden = !box.querySelector('uf-button:not([hidden])');
   }
 
   /** Close the pause menu. `reason` is for analytics ('resume', 'restart', 'end', 'api'). */

@@ -75,6 +75,9 @@ import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
 
+/** #576 · the difficulty a leaderboard row was ridden on. */
+const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
+
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
 function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
@@ -400,7 +403,6 @@ export class Lobby {
     this._previewOriginalMats = null;
 
     // Leaderboard state
-    this._lbVideo = null;
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
@@ -589,6 +591,7 @@ export class Lobby {
           this.motionActive = true;
           if (this.input) this.input.motionEnabled = true;
           this._setToggleActive('motion', true);
+          this._joystickOffForGyro();
         }
       } else if (reason === 'hid-bound' && !this._motionPermitted) {
         this._motionPermitted = true;
@@ -596,6 +599,7 @@ export class Lobby {
         if (this.input) this.input.motionEnabled = true;
         this._showMotionToggle();
         this._setToggleActive('motion', true);
+        this._joystickOffForGyro();
       }
     });
   }
@@ -2624,6 +2628,7 @@ export class Lobby {
           if (this.input) this.input.suppressGamepadLean = true;
         }
       } catch {}
+      if (this.input && this.input.gyroConnected) this._joystickOffForGyro();
       this._setToggleActive('joystick', this.joystickActive);
     }
 
@@ -2845,6 +2850,22 @@ export class Lobby {
         }
       }, 500);
     }
+  }
+
+  /**
+   * #576 · a pad with a gyro steers by gyro: the stick starts OFF. Only a
+   * default: a rider who has set the Joystick toggle themselves keeps their
+   * choice (tandemonium_joystick in localStorage).
+   */
+  _joystickOffForGyro() {
+    let saved = null;
+    try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
+    if (saved !== null || !this.joystickActive) return;
+    // Never leave a rider with nothing to steer by: only once the gyro is live.
+    if (!this.input || !this.input.motionEnabled) return;
+    this.joystickActive = false;
+    if (this.input) this.input.suppressGamepadLean = true;
+    this._setToggleActive('joystick', false);
   }
 
   _toggleJoystick() {
@@ -3353,7 +3374,6 @@ export class Lobby {
 
   /** The sheet closed (B, Esc, the scrim, its Close, or _closeLeaderboard). */
   _onLeaderboardClosed() {
-    this._stopLeaderboardVideo();
     this._lbClearFocus();
   }
 
@@ -3402,6 +3422,7 @@ export class Lobby {
   _onAchievementsClosed() {
     document.querySelectorAll('#achievements-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
     if (this._achievementDetailOpen()) this._achDetailSheet.close();
+    this._clearAchievementDim();
   }
 
   _lbResetFocus() {
@@ -3452,7 +3473,7 @@ export class Lobby {
     const tabs = [
       { id: 'solo', label: 'Solo' },
       { id: 'together', label: 'Together' },
-      { id: 'you', label: 'You' },
+      { id: 'you', label: 'My Rides' },   // #576: was "You", which read like a third board next to Solo
       { id: 'partners', label: 'Partners' }
     ];
     tabs.forEach(tab => {
@@ -3474,12 +3495,8 @@ export class Lobby {
   _buildSubTabs() {
     const container = document.getElementById('lb-sub-tabs');
     container.innerHTML = '';
-    if (this._lbMainTab === 'partners') {
-      this._stopLeaderboardVideo();
-      document.getElementById('leaderboard-video').style.display = 'none';
-      return;
-    }
-    document.getElementById('leaderboard-video').style.display = '';
+    // #576: no Grandma's-house clip over the board any more (it popped in and out between filters).
+    if (this._lbMainTab === 'partners') return;
     LEVELS.forEach(level => {
       const btn = document.createElement('button');
       btn.className = 'lb-tab' + (level.id === this._lbSubLevel ? ' active' : '');
@@ -3489,7 +3506,6 @@ export class Lobby {
         container.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
         this._lbSubLevel = level.id;
-        this._startLeaderboardVideo(level.id);
         this._renderLeaderboardContent();
       });
       container.appendChild(btn);
@@ -3512,9 +3528,6 @@ export class Lobby {
 
     this._leaderboardSheet.show();
     if (this._leaderboardSheet.body) this._leaderboardSheet.body.scrollTop = 0;
-    if (this._lbMainTab !== 'partners') {
-      this._startLeaderboardVideo(this._lbSubLevel);
-    }
     this._renderLeaderboardContent();
     this._lbResetFocus();
   }
@@ -3545,7 +3558,7 @@ export class Lobby {
         }
 
         await this._cacheAvatarUrls(entries.map(e => e.avatar_url));
-        list.innerHTML = this._renderEntries(entries, level, myId);
+        list.innerHTML = this._renderEntries(entries, level, myId, { mine: true });
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
       }
@@ -3578,8 +3591,18 @@ export class Lobby {
 
       try {
         const mode = this._lbMainTab === 'solo' ? 'solo' : 'together';
-        const data = await this.auth.getLeaderboard(levelId, null, null, { mode });
-        const entries = data.entries || [];
+        // #576: a board is each rider's best, not every ride (with one regular
+        // rider, Solo was the same list as their own rides). Rows come fastest
+        // first, so the first row per rider is their best.
+        const data = await this.auth.getLeaderboard(levelId, null, 200, { mode });
+        const seen = new Set();
+        const entries = (data.entries || []).filter((e) => {
+          if (e.user_id == null) return true;
+          const k = String(e.user_id);
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        }).slice(0, 20);
         const myId = this.auth.user ? this.auth.user.serverId : null;
 
         if (entries.length === 0) {
@@ -3595,11 +3618,13 @@ export class Lobby {
     }
   }
 
-  _renderEntries(entries, level, myId) {
+  /** `mine`: the My Rides list — every row is you, so no You tag and no rank (#576). */
+  _renderEntries(entries, level, myId, { mine = false } = {}) {
     const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
-      const isYou = myId && e.user_id === myId;
+      const isYou = !mine && myId && e.user_id === myId;
+      const diffHtml = DIFF_LABEL[e.difficulty] ? '<span class="lb-diff">' + DIFF_LABEL[e.difficulty] + '</span>' : '';
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
 
@@ -3629,10 +3654,11 @@ export class Lobby {
         : '';
 
       return '<div class="lb-entry' + youClass + '">' +
-        '<span class="lb-rank">' + (i + 1) + '</span>' +
+        (mine ? '' : '<span class="lb-rank">' + (i + 1) + '</span>') +
         avatar +
         '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
         modeHtml +
+        diffHtml +
         collectHtml +
         '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
         dateHtml +
@@ -3739,8 +3765,7 @@ export class Lobby {
 
   /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
   _onAchievementDetailClosed() {
-    const body = this._achievementsSheet.body;
-    if (body) { body.getAnimations().forEach(a => a.cancel()); body.style.filter = ''; }
+    this._clearAchievementDim();
     const lift = document.getElementById('ach-lift');
     if (lift) lift.remove();
     document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
@@ -3750,6 +3775,15 @@ export class Lobby {
     const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
     this._achResetFocus(tile);
     if (tile) tile.focus({ preventScroll: true });
+  }
+
+  /** #576: undim the grid (the card closed, or the grid has the pad with no card and no lift on the way). */
+  _clearAchievementDim() {
+    const body = this._achievementsSheet && this._achievementsSheet.body;
+    if (!body) return;
+    body.getAnimations().forEach(a => a.cancel());
+    body.style.filter = '';
+    body.classList.remove('ach-dim');
   }
 
   _achievementSectionTitle(sectionId) {
@@ -3844,9 +3878,10 @@ export class Lobby {
       { transform: 'translate(0, 0) scale(1)', opacity: 1 },
       { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + S + ')', opacity: 0.35 },
     ], { duration: 420, easing: 'cubic-bezier(0.65, 0, 0.35, 1)', fill: 'forwards' });
-    if (body) body.animate([{ filter: 'blur(0) brightness(1)' }, { filter: 'blur(6px) brightness(0.5)' }], { duration: 420, fill: 'forwards' });
+    if (body) body.classList.add('ach-dim');
+    this._achLifting = true;
     let fired = false;
-    const finish = () => { if (fired) return; fired = true; c.remove(); tile.classList.remove('lifting'); done(); };
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
     anim.finished.then(finish, finish);
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
@@ -3901,128 +3936,6 @@ export class Lobby {
     const d = new Date(isoStr);
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return months[d.getMonth()] + ' ' + d.getDate();
-  }
-
-  _startLeaderboardVideo(levelId) {
-    this._stopLeaderboardVideo();
-
-    const videoConfigs = {
-      grandma: {
-        src: 'assets/grandma_house_chromakey.mp4',
-        maskSrc: 'assets/grandma_house_chromakey_mask.png',
-        trimStart: 0.00, trimEnd: 5.50,
-        threshold: -0.02, smoothness: 0.110
-      }
-    };
-    const cfg = videoConfigs[levelId];
-    const canvas = document.getElementById('leaderboard-video');
-    if (!cfg) {
-      canvas.style.display = 'none';
-      return;
-    }
-
-    canvas.style.display = '';
-
-    const video = document.createElement('video');
-    video.src = cfg.src;
-    video.loop = false;
-    video.muted = true;
-    video.playsInline = true;
-    video.play().catch(() => {});
-    video.addEventListener('timeupdate', () => {
-      if (video.currentTime > cfg.trimEnd) {
-        video.currentTime = cfg.trimStart;
-        video.play().catch(() => {});
-      }
-    });
-
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(canvas.width, canvas.height);
-    renderer.setClearColor(0x000000, 0);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    camera.position.z = 2;
-
-    const videoTexture = new THREE.VideoTexture(video);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-
-    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-    fallbackMask.needsUpdate = true;
-    const maskUniform = { value: fallbackMask };
-    if (cfg.maskSrc) {
-      new THREE.TextureLoader().load(
-        cfg.maskSrc,
-        (tex) => { maskUniform.value = tex; },
-        undefined,
-        () => {}
-      );
-    }
-
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        map: { value: videoTexture },
-        maskTex: maskUniform,
-        threshold: { value: cfg.threshold },
-        smoothness: { value: cfg.smoothness }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        uniform sampler2D map;
-        uniform sampler2D maskTex;
-        uniform float threshold;
-        uniform float smoothness;
-        varying vec2 vUv;
-        void main() {
-          float mask = texture2D(maskTex, vUv).r;
-          if (mask > 0.5) discard;
-          vec4 texColor = texture2D(map, vUv);
-          float greenDom = texColor.g - max(texColor.r, texColor.b);
-          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
-          if (alpha < 0.01) discard;
-          vec3 col = texColor.rgb;
-          float spillMax = 0.5 * (col.r + col.b) + 0.05;
-          col.g = min(col.g, spillMax);
-          gl_FragColor = vec4(col, alpha);
-        }`,
-      transparent: true,
-      depthWrite: false
-    });
-
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(plane);
-
-    let animId = 0;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    this._lbVideo = { video, renderer, videoTexture, mat, scene, animId };
-  }
-
-  _stopLeaderboardVideo() {
-    if (!this._lbVideo) return;
-    const v = this._lbVideo;
-    cancelAnimationFrame(v.animId);
-    v.video.pause();
-    v.video.src = '';
-    v.videoTexture.dispose();
-    if (v.scene) {
-      v.scene.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-      });
-    }
-    v.mat.dispose();
-    v.renderer.dispose();
-    this._lbVideo = null;
   }
 
   _checkPermissionStates() {
@@ -7353,6 +7266,8 @@ export class Lobby {
     if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
       this._lastBarSync = nowSync;
       this._syncSystemBar();
+      // #576: a gyro that shows up late (Steam Input, a later HID grant) still turns the stick default off.
+      if (this.joystickActive && this.input && this.input.gyroConnected) this._joystickOffForGyro();
     }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
@@ -7438,6 +7353,22 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
+    // #576 · Today's Road chooser (RANKED RUN / PRACTICE / Back) over the levels
+    // step: the pad moves between its buttons and A picks; B is Back. It had no
+    // branch here, so the pad kept driving the step underneath it.
+    const dailyOverlay = document.getElementById('daily-mode-overlay');
+    if (dailyOverlay && dailyOverlay.classList.contains('visible')) {
+      if (this._activeModal !== 'daily') {
+        this._activeModal = 'daily';
+        this._modalBack = () => dailyOverlay.classList.remove('visible');
+        const items = ['btn-daily-ranked', 'btn-daily-practice', 'btn-daily-cancel']
+          .map((id) => document.getElementById(id))
+          .filter((el) => el && !el.disabled && !el.hasAttribute('disabled'));
+        this._modalFocus.setSpatial(items, items[0]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
     // #540: an achievement's detail card over the leaderboard — only its Close
     // to focus; B closes it and the grid gets the pad back (uf-sheet:close).
     if (this._achievementDetailOpen()) {
@@ -7454,6 +7385,8 @@ export class Lobby {
     // set; the right stick scrolls, d-pad past the last row scrolls (onEdge).
     if (this._achievementsSheet && this._achievementsSheet.open) {
       scrollWithStick(this._achievementsSheet.body, gp.axes[3]);
+      // #576: no card open and no badge lifting, so nothing should dim the grid.
+      if (!this._achLifting && this._achievementsSheet.body.classList.contains('ach-dim')) this._clearAchievementDim();
       if (this._activeModal !== 'achievements') this._achResetFocus();
       else this._modalFocus.refreshSpatial(this._achFocusables());
       this._modalFocus.poll();
