@@ -5144,6 +5144,30 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      // #578 · a seated local Player 2 presses B on their own pad to get up.
+      // Primed true on the seat's first frame so the press that joined (if it
+      // was B) doesn't unseat them straight away.
+      if (this._localSeatedOnHost && this._localP2Type === 'gamepad' && this._localP2InputManager) {
+        const im = this._localP2InputManager;
+        if (typeof im.pollGamepad === 'function') im.pollGamepad();
+        const p2gp = im.getGamepadState ? im.getGamepadState() : null;
+        const bIdx = im._gpSwapAB ? 0 : 1;
+        const bDown = !!(p2gp && p2gp.buttons && p2gp.buttons[bIdx] && p2gp.buttons[bIdx].pressed);
+        const prevB = this._localP2PrevB === undefined ? true : this._localP2PrevB;
+        this._localP2PrevB = bDown;
+        if (bDown && !prevB) {
+          this._localP2PrevB = undefined;
+          this._leaveLocalP2('stood up (B)');
+          // The B is still down: no pad joins again until it lets go.
+          this._localP2APrev = true;
+          for (const k of this._versusPrevButtons.keys()) if (k.startsWith('local:')) this._versusPrevButtons.set(k, { any: true });
+          this._refreshHostNext();
+          this._localJoinMonitorRAF = requestAnimationFrame(tick);
+          return;
+        }
+      } else {
+        this._localP2PrevB = undefined;
+      }
       // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
       const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
       for (const c of candidates) {
@@ -5319,6 +5343,9 @@ export class Lobby {
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
               { slotId: state.slotId, steamHandle: state.steamHandle });
+            // #578: desktop/TV stays on this step with Player 2 seated; keep
+            // watching (their B stands them up). This path used to stop the loop.
+            if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
             return;
           }
           if (!aPressed) this._localP2APrev = false;

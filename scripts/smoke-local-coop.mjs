@@ -13,6 +13,8 @@
 //   MC-05  in a local ride each pad drives only its own seat (pedal + lean)
 //   MC-13  DualSense P1 + Switch Pro P2: each seat shows its own glyph family
 //   MC-14  menu focus: one press moves focus one step; a held press doesn't repeat
+//   MC-15  #578: a seated Player 2 presses B on their own pad to get up; A seats them again
+//   MC-16  #578: in a local ride the stoker's stick click (R3) recenters P2's gyro, not P1's
 import { startHarness, sleep, clickId, waitState, where } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
@@ -100,6 +102,15 @@ console.log('MC-02 two pads');
   await sleep(500);
   s = await seats(page);
   check(s.p2Seated && s.p2.index === i && s.p1.index === 0 && s.step === 'lobby-host', 'MC-02: a second press is still one Player 2 (no reseat, no step change)', { step: s.step, p2: s.p2 });
+  // MC-15 · B on Player 2's pad gets them up; the captain stays, the step stays.
+  await pads.tap(i, 'B');
+  await sleep(900);
+  s = await seats(page);
+  check(!s.p2Seated && !s.localNext && s.p1.state === 'claimed' && s.p1.index === 0 && s.step === 'lobby-host', "MC-15: B on Player 2's pad stands them up; P1 seated, still on the host step", { step: s.step, p2Seated: s.p2Seated, p1: s.p1, localNext: s.localNext });
+  await pads.tap(i, 'A');
+  await sleep(900);
+  s = await seats(page);
+  check(s.p2Seated && s.localNext && s.step === 'lobby-host', 'MC-15: A on the same pad sits them back down', { p2Seated: s.p2Seated, localNext: s.localNext });
   await page.close();
 }
 
@@ -185,6 +196,16 @@ console.log('MC-13 / MC-05 DualSense + Switch Pro');
   r = await read();
   await pads.stick(0, 'LX', 0);
   check(r.p1Lean > 0.3 && Math.abs(r.p2Lean) < 0.01, 'MC-05: P1\'s stick leans the captain only', { p1Lean: r.p1Lean, p2Lean: r.p2Lean });
+  // MC-16 · the stoker's stick click recenters P2 (a fake pad has no gyro, so spy on the calls).
+  await page.evaluate(() => {
+    const g = window._game; window.__rc = { p1: 0, p2: 0 };
+    const spy = (im, k) => { im.recenterGyro = () => { window.__rc[k]++; }; im.calibrateGyro = () => {}; Object.defineProperty(im, 'gyroConnected', { get: () => true, configurable: true }); };
+    spy(g.input, 'p1'); spy(g.inputP2, 'p2');
+  });
+  await pads.press(i, 'RS', 700);
+  await sleep(600);
+  const rc = await page.evaluate(() => window.__rc);
+  check(rc.p2 >= 1 && rc.p1 === 0, "MC-16: the stoker's stick click recenters P2's gyro only", rc);
   await page.close();
 }
 

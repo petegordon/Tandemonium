@@ -6438,7 +6438,8 @@ class Game {
     const aIdx = this.input._gpSwapAB ? 1 : 0;
     const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
     // L3 (button 10) — quick gyro recenter
-    const l3 = gp.buttons[10] && gp.buttons[10].pressed;
+    // #578: either stick click (or both together) recenters the gyro.
+    const l3 = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
 
     // E-3 · X is the talk button: tap it to call a sprint, or hold it and flick
     // the d-pad to send an emote. The d-pad's four normal jobs (safety, speed,
@@ -6487,6 +6488,27 @@ class Game {
     this._gpPrevY = y;
     this._gpPrevA = a;
     this._gpPrevL3 = l3;
+  }
+
+  /**
+   * #578 · local co-op: the stoker's own pad recenters their gyro with a stick
+   * click (L3, R3 or both), the same as the captain's. P2 had no binding, so a
+   * stoker could not recalibrate at all.
+   */
+  _pollP2Recenter() {
+    const im = this.inputP2;
+    if (this.mode !== 'local' || !im || !im.gamepadConnected) { this._gpPrevP2L3 = false; return; }
+    const gp = im.getGamepadState();
+    if (!gp || !gp.buttons) return;
+    const click = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
+    if (click && !this._gpPrevP2L3) {
+      if (im.gyroConnected) { im.recenterGyro(); im.calibrateGyro(); }
+      if (im.motionEnabled) im.startTiltCalibration();
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+      try { analytics.trackEvent('recenter', { seat: 'p2' }); } catch {}
+    }
+    this._gpPrevP2L3 = click;
   }
 
   _updateConnBadge() {
@@ -6926,7 +6948,7 @@ class Game {
       if (this.mode !== 'versus' && this._tickDropPause()) {
         // paused — nothing else runs this frame
       } else {
-      if (this.mode !== 'versus') this._pollDpad();
+      if (this.mode !== 'versus') { this._pollDpad(); this._pollP2Recenter(); }
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
@@ -8584,7 +8606,7 @@ class Game {
         const pollL3 = () => {
           if (resolved) return;
           const gp = this.input.getGamepadState();
-          if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
+          if (gp && ((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed))) {   // #578: L3 or R3
             resolved = true;
             this._recalibrateTilt();
             resolve();

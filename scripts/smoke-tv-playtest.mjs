@@ -14,6 +14,9 @@
 //   TP-06  L1 / R1 tabs sit above the bike preview (their glow isn't covered).
 //   TP-07  A pad with a live gyro starts with the stick OFF, unless the rider
 //          set the Joystick toggle themselves.
+//   TP-08  #578 Help: no Video / Audio / achievement list; L3 or R3; ALL and ? badges
+//          sized like the others; Steam shows only "use your phone as a controller".
+//   TP-09  #578 the geese lean 2.5× the input (visual only), capped at a full lean.
 import { startHarness } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
@@ -32,6 +35,44 @@ const until = async (fn, arg, timeout = 15000) => {
 };
 await until(() => window._game && window._game.input && window._game.input.gamepadConnected);
 await sleep(800);
+
+// ── TP-08 · Help (#578) ──
+await page.evaluate(() => window._game.lobby._openHelp());
+await until(() => document.getElementById('help-modal').open === true, null, 5000);
+await sleep(400);
+const help = await page.evaluate(() => {
+  const m = document.getElementById('help-modal');
+  const names = Array.from(m.querySelectorAll('.help-toggle-name')).map((e) => e.textContent.trim());
+  const box = (el) => { const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
+  const svg = m.querySelector('.help-toggle-row svg'), all = m.querySelector('.help-icon-all'), q = Array.from(m.querySelectorAll('span.help-icon')).find((e) => e.textContent.trim() === '?');
+  const fs = (el) => parseFloat(getComputedStyle(el).fontSize);
+  const phoneRow = Array.from(m.querySelectorAll('.help-toggle-row')).find((r) => /Use your phone as a controller/.test(r.textContent));
+  const webRows = Array.from(m.querySelectorAll('.help-web-only'));
+  const webShown = webRows.filter((r) => r.getBoundingClientRect().height > 0).length;
+  document.documentElement.classList.add('desktop-app');
+  const webShownDesktop = webRows.filter((r) => r.getBoundingClientRect().height > 0).length;
+  const phoneShownDesktop = !!phoneRow && phoneRow.getBoundingClientRect().height > 0;
+  document.documentElement.classList.remove('desktop-app');
+  return { names, achList: !!m.querySelector('.help-achievement-list'), recal: /L3 or R3/.test(m.textContent) && !/Press L3 to recalibrate/.test(m.textContent),
+    svg: box(svg), all: box(all), q: box(q), allPx: fs(all), qPx: fs(q), webRows: webRows.length, webShown, webShownDesktop, phoneShownDesktop };
+});
+check(!help.names.includes('Video') && !help.names.includes('Audio') && !help.achList, 'TP-08 Help has no Video / Audio rows and no achievement list', { names: help.names, achList: help.achList });
+check(help.recal, 'TP-08 Help says a stick click (L3 or R3) recalibrates');
+check(help.all.w === help.svg.w && help.q.w === help.svg.w && help.allPx >= 16 && help.qPx >= 20, 'TP-08 the ALL and ? badges match the icon badges and read at TV size', { svg: help.svg, all: help.all, q: help.q, allPx: help.allPx, qPx: help.qPx });
+check(help.webRows >= 2 && help.webShown === help.webRows && help.webShownDesktop === 0 && help.phoneShownDesktop, 'TP-08 the Steam app shows "Use your phone as a controller" and hides the play-on-your-phone rows', help);
+await h.shot(page, '0-help');
+await pads.press(0, 'B', 160);
+await until(() => document.getElementById('help-modal').open === false, null, 3000);
+await sleep(300);
+
+// ── TP-09 · the geese's lean reads bigger (#578, visual only) ──
+const lean = await page.evaluate(() => {
+  const b = window._game.bike; b.setRiderLeans(0.2, -0.2);
+  const out = { cap: b._captainLeanTarget, sto: b._stokerLeanTarget };
+  b.setRiderLeans(0.9, 0); out.capan = b._captainLeanTarget; b.setRiderLeans(0, 0);
+  return out;
+});
+check(Math.abs(lean.cap - 0.5) < 1e-9 && Math.abs(lean.sto + 0.5) < 1e-9 && lean.capan === 1, 'TP-09 a 0.2 input leans the geese 0.5 (2.5×), capped at a full lean', lean);
 
 // ── TP-07 · the stick default with a gyro (pure lobby logic; no real HID here) ──
 const joy = await page.evaluate(() => {
