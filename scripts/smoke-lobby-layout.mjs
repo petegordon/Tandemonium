@@ -194,8 +194,8 @@ for (const size of SIZES) {
 
   // ── BL-10 ──
   for (const st of STEPS) {
-    // A host step visit saves a recent room; with one saved, TOGETHER asks
-    // "rejoin?" instead of opening the role step (by design). Start each step clean.
+    // A host step visit saves a recent room, which JOIN A RIDE then shows as a
+    // Rejoin card (#547) and changes the join step's layout. Start each step clean.
     await page.evaluate(() => { try { localStorage.removeItem('tandemonium-rooms'); localStorage.removeItem('tandemonium-room'); } catch {} const l = window._game.lobby; l._showStep(l.modeStep); });
     await page.waitForFunction(() => document.getElementById('lobby-flow').current === 'lobby-mode', { timeout: 10000 }).catch(() => {});
     await sleep(500);   // let the step change settle before the next click

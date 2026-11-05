@@ -29,13 +29,29 @@
 //     retires the QR's secret. We keep the new key first and the one we
 //     joined with as a fallback (in case the game never got our ack), and a
 //     dial that fails tries the other one.
+//
+// #562 · a shared "Scan to join" link lists several seats (?seats=2,3,4).
+// Its secret opens only the FREE ones (the game moves a seat to its own
+// secret once a phone takes it), so a dial that never opens tries the next
+// seat. The seat that opens is ours from then on (a reload reconnects there).
+//
+// #563 · a link with ?play=1 asks first: "Control the TV" (the controller,
+// as above) or "Play on this phone": we still join a seat, then ask the game
+// {type:'open-room'}; it replies {type:'room', code, url} and we go to the
+// game's join link, or {type:'room', error} and we offer Control the TV.
 // ============================================================
 
 import { orientationToRawTilt, gravityToRawTilt } from '../tilt-math.js';
 import {
   parsePadLink, padSocketUrl, encodeFrame, NAV, DEFAULT_PAD_RELAY, relayOverrideAllowed,
   PAD_PROTOCOL, peerVersion, shouldSendFrame, MENU_TILT_STEP, padKeysOnBoot, padKeysAfterRekey,
+  playJoinUrl,
 } from './pad-protocol.js';
+
+/** #563 · how long "Play on this phone" waits for the TV's room. */
+const PLAY_WAIT_MS = 20000;
+/** #562 · the next seat of a shared link is tried this soon after a refusal. */
+const NEXT_SEAT_MS = 150;
 
 const SEND_MS = 33;          // ~30 Hz
 const PING_MS = 5000;
@@ -70,7 +86,23 @@ const state = {
   keyIdx: 0,
   storeKey: '',
   framesSent: 0,         // (smoke-test aid)
+  // #562 · a shared link: the seats to try, which one we're on, its secret
+  seatList: /** @type {number[]} */ ([]),
+  sharedSeats: /** @type {number[]} */ ([]),
+  seatIdx: 0,
+  joinSecret: /** @type {string|null} */ (null),
+  everOpened: false,
+  started: false,
+  ticking: 0,
+  // #563 · "Play on this phone"
+  playing: false,
+  askedRoom: false,
+  playTimer: 0,
+  playUrl: /** @type {string|null} */ (null),   // (smoke-test aid)
 };
+
+/** sessionStorage key for this tab's secrets on one seat. */
+const storeKeyFor = (code, seat) => 'tandemonium_pad_' + code + '_' + seat;
 
 function saveKeys() {
   try {
@@ -84,24 +116,90 @@ function saveKeys() {
 function boot() {
   const parsed = parsePadLink(location.href);
   if (!parsed) return showScreen('bad-link');
-  state.storeKey = 'tandemonium_pad_' + parsed.code + '_' + parsed.seat;
-  let stored = null, prev = null;
-  try { stored = sessionStorage.getItem(state.storeKey); prev = sessionStorage.getItem(state.storeKey + '_prev'); } catch { /* private mode */ }
+  const shared = parsed.seats.length > 1;
+  state.seatList = parsed.seats;
+  state.seatIdx = 0;
+  // #562: a shared link starts on the seat this tab already holds a key for, if any.
+  const read = (k) => { try { return sessionStorage.getItem(k); } catch { return null; } };
+  if (shared) {
+    const i = parsed.seats.findIndex((s) => read(storeKeyFor(parsed.code, s)));
+    if (i > 0) state.seatIdx = i;
+    state.joinSecret = parsed.secret;
+    state.sharedSeats = [...parsed.seats];
+  }
+  parsed.seat = parsed.seats[state.seatIdx];
+  state.storeKey = storeKeyFor(parsed.code, parsed.seat);
+  const stored = read(state.storeKey), prev = read(state.storeKey + '_prev');
   state.keys = padKeysOnBoot(parsed.secret, stored, prev);
   if (parsed.secret) history.replaceState(null, '', location.pathname + location.search);
   if (!state.keys.length) return showScreen('bad-link');
-  saveKeys();
+  if (!shared) saveKeys();   // a shared link's seat is only ours once it opens
   state.link = parsed;
   if (parsed.relay && relayOverrideAllowed(location.hostname)) state.relay = parsed.relay;
-  $('seat-label').textContent = 'Player ' + parsed.seat;
-  showScreen('connect');
+  $('seat-label').textContent = shared ? 'the game on the TV' : 'Player ' + parsed.seat;
   $('btn-connect').addEventListener('click', onConnectTap);
+  $('btn-control').addEventListener('click', onConnectTap);
+  $('btn-play').addEventListener('click', onPlayTap);
+  $('btn-play-control').addEventListener('click', onConnectTap);
+  showScreen(parsed.play ? 'choose' : 'connect');
+}
+
+// ── #563 · Play on this phone: join a seat, ask the TV for its room, go there ──
+function onPlayTap() {
+  if (state.started || state.playing) return;
+  state.playing = true;
+  state.askedRoom = false;
+  $('btn-play-control').hidden = true;
+  $('play-status').textContent = 'Asking the TV to open a room…';
+  showScreen('play');
+  clearTimeout(state.playTimer);
+  state.playTimer = setTimeout(() => playFailed('The TV didn’t answer.'), PLAY_WAIT_MS);
+  if (!state.ws) connect();
+  else askForRoom();
+  startTicking();   // a heartbeat, so the game doesn't take us for gone
+}
+
+/** Ask the game for its online room (once per Play tap, when it is there). */
+function askForRoom() {
+  const ws = state.ws;
+  if (!state.playing || state.askedRoom || !ws || ws.readyState !== 1 || !state.hostHere) return;
+  state.askedRoom = true;
+  try { ws.send(JSON.stringify({ type: 'open-room' })); } catch { /* closed */ }
+}
+
+/** The game's answer to open-room. @param {any} m */
+function onRoomReply(m) {
+  if (!state.playing) return;
+  const url = m && !m.error ? playJoinUrl(location.href, m.code, m.url) : null;
+  if (!url) return playFailed(m && m.error === 'not-now' ? 'The TV can’t open a room right now.' : 'The TV couldn’t open a room.');
+  clearTimeout(state.playTimer);
+  state.playUrl = url;
+  state.closedForGood = true;   // we're leaving: no redial
+  $('play-status').textContent = 'Joining room ' + m.code + '…';
+  try { state.ws?.close(1000, 'play'); } catch { /* closed */ }
+  location.assign(url);
+}
+
+/** @param {string} why */
+function playFailed(why) {
+  if (!state.playing) return;
+  clearTimeout(state.playTimer);
+  state.playing = false;
+  state.askedRoom = false;
+  $('play-status').textContent = why + ' You can still use this phone as the controller.';
+  $('btn-play-control').hidden = false;
+}
+
+function startTicking() {
+  if (!state.ticking) state.ticking = setInterval(tick, SEND_MS);
 }
 
 // ── Connect tap: motion permission MUST be requested before any await ──
 function onConnectTap() {
   if (state.started) return;   // a double tap would start everything twice
   state.started = true;
+  state.playing = false;
+  clearTimeout(state.playTimer);
   const DME = /** @type {any} */ (globalThis.DeviceMotionEvent);
   const DOE = /** @type {any} */ (globalThis.DeviceOrientationEvent);
   /** @type {Promise<any>} */
@@ -118,8 +216,8 @@ function onConnectTap() {
     requestWakeLock();
     try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch { /* iOS */ }
     showScreen('ride');
-    connect();
-    setInterval(tick, SEND_MS);
+    if (!state.ws) connect();   // after a Play that failed we're already on a seat
+    startTicking();
   });
 }
 
@@ -306,6 +404,21 @@ function connect() {
     state.failed = 0;
     // This secret works: the others are stale.
     if (state.keys.length > 1 || state.keyIdx) { state.keys = [secret]; state.keyIdx = 0; saveKeys(); }
+    // #562: a shared link's seat that opened is ours: stick to it (and a
+    // reload comes back to it, not to the shared list).
+    if (!state.everOpened && state.seatList.length > 1) {
+      state.seatList = [seat];
+      state.seatIdx = 0;
+      saveKeys();
+      try {
+        const u = new URL(location.href);
+        u.searchParams.set('seat', String(seat));
+        u.searchParams.delete('seats');
+        u.searchParams.delete('play');
+        history.replaceState(null, '', u.pathname + u.search);
+      } catch { /* no history */ }
+    }
+    state.everOpened = true;
     state.lastRecv = performance.now();
     pinger = setInterval(() => {
       if (ws.readyState !== 1) return;
@@ -326,9 +439,15 @@ function connect() {
       // #454: an older game ignores this, and never answers.
       try { ws.send(JSON.stringify({ type: 'hello', v: PAD_PROTOCOL })); } catch { /* closed */ }
       state.dirty = true; tick();
+      askForRoom();   // #563: only while "Play on this phone" waits
     }
+    else if (m.type === 'room') onRoomReply(m);   // #563
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; forgetHost(); setStatus('Waiting for the game…'); }
-    else if (m.type === 'seat' && m.label) $('seat-label').textContent = m.label;
+    else if (m.type === 'seat' && m.label) {
+      $('seat-label').textContent = m.label;
+      // #562: an extra seat is told where the game is ("watch the TV").
+      if (m.note) setStatus(m.note, true);
+    }
     else if (m.type === 'hello') state.hostVersion = peerVersion(m);
     // The layout never changes on 'mode'; it only sets how often we send.
     // (A much older game also sent 'mode', without hello: ignored.)
@@ -355,6 +474,29 @@ function connect() {
     state.hostHere = false;
     forgetHost();
     if (state.closedForGood) return;   // 'bye': keep its message, don't redial
+    // #562: on a shared link, a seat that never opened (taken: its secret
+    // moved on) or that another phone just took from under us (before the
+    // game gave us a key) means: try the next seat, soon.
+    const shared = state.seatList.length > 1 && !!state.joinSecret;
+    const bumped = ev.code === 1000 && ev.reason === 'replaced' && opened && state.sharedSeats.length > 1
+      && !!state.joinSecret && state.keys[0] === state.joinSecret;
+    if (!opened && shared && state.keyIdx + 1 >= state.keys.length) {
+      const wrapped = nextSeat();
+      if (wrapped) state.failed = (state.failed || 0) + 1;
+      if (wrapped) setStatus('No free seat on the TV right now. Retrying…');
+      const delay = wrapped ? Math.min(8000, 500 * 2 ** state.retry++) : NEXT_SEAT_MS;
+      state.retryTimer = setTimeout(connect, delay);
+      return;
+    }
+    if (bumped) {
+      // Two phones scanned at the same moment and the other one won this seat.
+      state.everOpened = false;
+      state.seatList = [...state.sharedSeats];
+      state.seatIdx = Math.max(0, state.seatList.indexOf(state.link ? state.link.seat : 0));
+      nextSeat();
+      state.retryTimer = setTimeout(connect, NEXT_SEAT_MS);
+      return;
+    }
     if (!opened) {
       state.failed = (state.failed || 0) + 1;
       // Refused, maybe: the next dial tries our other secret (if we have one).
@@ -376,6 +518,20 @@ function connect() {
     const delay = Math.min(8000, 500 * 2 ** state.retry++);
     state.retryTimer = setTimeout(connect, delay);
   };
+}
+
+/**
+ * #562 · move a shared link on to its next seat (with the shared secret).
+ * @returns {boolean} true when it wrapped round: every seat was tried
+ */
+function nextSeat() {
+  const link = /** @type {NonNullable<typeof state.link>} */ (state.link);
+  state.seatIdx = (state.seatIdx + 1) % state.seatList.length;
+  link.seat = state.seatList[state.seatIdx];
+  state.storeKey = storeKeyFor(link.code, link.seat);
+  state.keys = [/** @type {string} */ (state.joinSecret)];
+  state.keyIdx = 0;
+  return state.seatIdx === 0;
 }
 
 /** Until the game says hello again, assume an older one (full rate, no rekey). */

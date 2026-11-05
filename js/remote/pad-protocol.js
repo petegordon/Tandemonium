@@ -181,24 +181,39 @@ export function seatOfRole(role) {
 }
 
 /**
+ * #562 · the seats extra phones join on: Player 1's phone keeps seat 1, the
+ * others share ONE QR for seats 2..4 (see buildPadLink's `seats`).
+ */
+export const JOIN_SEATS = Object.freeze([2, 3, 4]);
+
+/**
  * The link a phone opens. `base` is the game's folder URL (ending in "/").
  * `relay` is only set for local testing (a non-default relay URL).
+ *
+ * #562 · `seats`: a shared "Scan to join" link. Its secret opens every FREE
+ * seat in the list (the game moves a seat to a secret of its own the moment a
+ * phone takes it), so the phone tries the seats in order until one opens.
+ * #563 · `play`: the phone may offer "Play on this phone" besides
+ * "Control the TV" (the co-op host step).
  * @param {string} base @param {string} code @param {number} seat @param {string} secret
- * @param {{relay?: string|null}} [opts]
+ * @param {{relay?: string|null, seats?: readonly number[]|null, play?: boolean}} [opts]
  */
-export function buildPadLink(base, code, seat, secret, { relay = null } = {}) {
+export function buildPadLink(base, code, seat, secret, { relay = null, seats = null, play = false } = {}) {
   const url = new URL('remote/', base);
   url.searchParams.set('pad', code);
   url.searchParams.set('seat', String(seat));
+  if (seats && seats.length > 1) url.searchParams.set('seats', seats.join(','));
+  if (play) url.searchParams.set('play', '1');
   if (relay) url.searchParams.set('relay', relay);
   url.hash = 'k=' + secret;
   return url.toString();
 }
 
 /**
- * Read a pad link on the phone.
+ * Read a pad link on the phone. `seats` lists the seats to try, `seat` first
+ * (just `[seat]` for a one-seat link); `play` is #563's choice.
  * @param {string} href
- * @returns {{code: string, seat: number, secret: string|null, relay: string|null}|null}
+ * @returns {{code: string, seat: number, secret: string|null, relay: string|null, seats: number[], play: boolean}|null}
  */
 export function parsePadLink(href) {
   const url = new URL(href);
@@ -206,7 +221,34 @@ export function parsePadLink(href) {
   const seat = Number(url.searchParams.get('seat') || '1');
   if (!isValidPadCode(code) || !(seat >= 1 && seat <= MAX_SEATS)) return null;
   const m = /(?:^#|&)k=([0-9a-f]{32})/.exec(url.hash);
-  return { code, seat, secret: m ? m[1] : null, relay: url.searchParams.get('relay') };
+  const listed = (url.searchParams.get('seats') || '').split(',').filter(Boolean).map(Number)
+    .filter((n) => Number.isInteger(n) && n >= 1 && n <= MAX_SEATS);
+  // `seat` first, then the rest in order after it (wrapping round).
+  const seats = [...new Set([seat, ...listed.filter((n) => n > seat), ...listed.filter((n) => n < seat)])];
+  return { code, seat, secret: m ? m[1] : null, relay: url.searchParams.get('relay'), seats, play: url.searchParams.get('play') === '1' };
+}
+
+/**
+ * #563 · where "Play on this phone" goes: the join link the TV sent, if it is
+ * on the phone page's own site and names this room; otherwise the game folder
+ * (one up from remote/) with ?room=CODE. Null for a malformed code.
+ * @param {string} pageHref  the phone page's address
+ * @param {unknown} code @param {unknown} [url]
+ * @returns {string|null}
+ */
+export function playJoinUrl(pageHref, code, url) {
+  if (typeof code !== 'string' || !/^[A-Z0-9-]{4,16}$/.test(code)) return null;
+  const page = new URL(pageHref);
+  if (typeof url === 'string') {
+    try {
+      const u = new URL(url);
+      if (u.origin === page.origin && u.searchParams.get('room') === code) return u.toString();
+    } catch { /* not a URL */ }
+  }
+  const u = new URL('../', page);
+  u.search = '?room=' + encodeURIComponent(code);
+  u.hash = '';
+  return u.toString();
 }
 
 const isSecret = (s) => typeof s === 'string' && /^[0-9a-f]{32}$/.test(s);
