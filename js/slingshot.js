@@ -200,12 +200,12 @@ export function stageBonus(stage) {
  * launched: going back to a regular ride is how you progress here. Keyed by
  * the stage that is LOCKED. Edit freely — each row is one of:
  *   { level, medal }  a medal of at least `medal` on `level` (any mode/difficulty)
- *   { daily: true }   any finished Today's Road
+ *   { daily: true }   any finished Daily Ride
  * First guesses (Pete, 2026-10-04), pending playtest.
  */
 export const STAGE_GATES = {
   4: { level: 'grandma', medal: 'bronze', label: "Win a 🥉 bronze on Grandma's" },
-  6: { daily: true, level: 'daily', label: "Finish a Today's Road" },
+  6: { daily: true, level: 'daily', label: 'Finish a Daily Ride' },
   7: { level: 'grandma', medal: 'gold', label: "Win a 🥇 gold on Grandma's" },
 };
 
@@ -414,7 +414,7 @@ export function scoreRun(run, save, coinMult = slingStats(save.lv).coinMult) {
            multiplier, total, isRecord, potPaid, stage: Math.max(1, Math.floor(save.stage || 1)) };
 }
 
-// ---- Today's Launch (#400 D11b) ----------------------------
+// ---- Daily Launch (#400 D11b) ------------------------------
 
 /**
  * One seeded course a day, the same for everyone, on the day key Today's Road

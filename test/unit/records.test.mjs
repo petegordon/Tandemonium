@@ -6,7 +6,7 @@ import {
   medalFor, nextMedal, MAX_KEYS, capMedal, HELPED_ICON, betterMedal, levelRecordId
 } from '../../js/records.js';
 
-test("Today's Road: the game and the lobby card agree on the record key", () => {
+test("Daily Ride: the game and the lobby card agree on the record key", () => {
   const base = { id: 'daily', isDaily: true };                       // what the card holds
   const resolved = { ...base, key: '2026-10-22' };                  // what the ride holds
   assert.equal(levelRecordId(resolved), 'daily:2026-10-22');

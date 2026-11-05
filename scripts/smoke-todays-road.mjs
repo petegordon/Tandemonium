@@ -87,5 +87,5 @@ const ok = a.key === b.key && a.seed === b.seed && JSON.stringify(a.road) === JS
   && card.present && card.difficulty === 'adventurous' && card.allDisabled
   && linked.level === 'daily' && linked.key === a.key;
 console.log(ok ? "✔ same road for both players, difficulty locked, expired link recovered"
-               : '✖ Today\'s Road did not hold');
+               : '✖ Daily Ride did not hold');
 await browser.close(); server.close(); process.exit(ok?0:1);

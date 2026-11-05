@@ -180,7 +180,7 @@ test('stats: rides, distinct days, distance, Tourist, Payday', () => {
   assert.equal(L.cumulativeDistance, 1650);   // the launch is not riding
 });
 
-test("stats: Today's Road day streak and medal keys", () => {
+test("stats: Daily Ride day streak and medal keys", () => {
   let L = emptyStats();
   for (const day of ['2026-10-01', '2026-10-02', '2026-10-02', '2026-10-03']) {
     L = applyEvent(L, 'finish', { finishedLevel: 'daily' }, day);
@@ -551,7 +551,7 @@ test('medal achievements say which time they mean and point the card at it', () 
     assert.match(a.desc, /each difficulty has its own/, `${a.id}: says the time is per difficulty`);
   }
   const allGold = ACHIEVEMENTS.find(a => a.id === 'all_gold');
-  assert.match(allGold.desc, /Grandma's and Today's Road/, 'Gilded Goose names both timed roads');
+  assert.match(allGold.desc, /Grandma's and the Daily Ride/, 'Gilded Goose names both timed roads');
   const key = ACHIEVEMENTS.find(a => a.id === 'medal_key');
   assert.match(key.desc, /bronze on Grandma's for stage 4, gold for stage 7/, 'Medal Key names the gates');
 });

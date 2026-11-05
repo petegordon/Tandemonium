@@ -67,7 +67,7 @@ From partner.steamgames.com/doc/store/assets/standard and /libraryassets:
 | Page background | 1438x810 | `pagebg_1438x810.png` | 0.54 MB | no text, blurred + darkened | ambient |
 | Community icon | 184x184 | `community_icon_184x184.png` | 0.08 MB | n/a | from the pedal icon |
 | Client icon | 32x32 .ico | `client_icon.ico` (+`client_icon_32x32.png`) | 10 KB | n/a | 16/32/48 entries |
-| Screenshots | 1920x1080, at least 5 | `screenshot1..7_1920x1080.png` | 1.1-2.4 MB | gameplay only | upload in this order: 1 the finish at Grandma's (finish cinematic: presents fly to the pile, Grandma at her door), 2 chase cam, the Cyclists leaning through scattering geese, 3 the crash (rag-doll geese, handlebars off), 4 Versus 2 v 2 split screen, 5 local co-op on Today's Road (Georgian pair), 6 the TV lobby (geese backdrop + bike chooser), 7 the start at Your Home (Fancy pair) |
+| Screenshots | 1920x1080, at least 5 | `screenshot1..7_1920x1080.png` | 1.1-2.4 MB | gameplay only | upload in this order: 1 the finish at Grandma's (finish cinematic: presents fly to the pile, Grandma at her door), 2 chase cam, the Cyclists leaning through scattering geese, 3 the crash (rag-doll geese, handlebars off), 4 Versus 2 v 2 split screen, 5 local co-op on the Daily Ride (Georgian pair), 6 the TV lobby (geese backdrop + bike chooser), 7 the start at Your Home (Fancy pair) |
 
 ## Still needs a human
 

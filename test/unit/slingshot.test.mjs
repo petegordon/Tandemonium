@@ -166,7 +166,7 @@ test('B5: an old save that cashed the jackpot keeps the pot cashed', () => {
   assert.equal(potCashed({ ...todaysLaunchStatus(s, '2026-10-05'), stage: 3 }), true);
 });
 
-test("B5: Today's Launch pays the pot of gold at most once a day", () => {
+test("B5: the Daily Launch pays the pot of gold at most once a day", () => {
   const key = '2026-10-05';
   let save = emptySave();
   const run = { distance: 300, coins: 5, pot: true };

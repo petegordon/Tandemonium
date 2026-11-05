@@ -52,13 +52,13 @@ test('one seed per week: the Monday road', () => {
 });
 
 test('the weekly road is the daily level renamed, on Chill', () => {
-  const base = { id: 'daily', name: "Today's Road", isDaily: true, fixedDifficulty: 'adventurous', distance: 500 };
+  const base = { id: 'daily', name: 'Daily Ride', isDaily: true, fixedDifficulty: 'adventurous', distance: 500 };
   const shown = asWeeklyRoad(base);
   assert.equal(shown.name, WEEKLY_NAME);
   assert.equal(shown.fixedDifficulty, WEEKLY_DIFFICULTY);
   assert.equal(WEEKLY_DIFFICULTY, 'chill');
   assert.equal(shown.isDaily, true);
-  assert.equal(base.name, "Today's Road");          // the base is untouched
+  assert.equal(base.name, 'Daily Ride');              // the base is untouched
 
   const lvl = resolveWeeklyLevel(base, { key: '2026-09-28', seed: 42 });
   assert.equal(lvl.key, '2026-09-28');

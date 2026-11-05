@@ -186,7 +186,7 @@ class SlingshotMode {
     this._overlayCooldownUntil = performance.now() + 400;
   }
 
-  /** A stage launch, or `daily`: Today's Launch, the day's seeded course with no goal. */
+  /** A stage launch, or `daily`: the Daily Launch, the day's seeded course with no goal. */
   _startSlingRun({ daily = false } = {}) {
     if (!this._wallet || !this._slingSave) this._loadGarage();
     const save = this._slingSave;
@@ -220,7 +220,7 @@ class SlingshotMode {
     const finishD = (daily ? sling.TODAYS_LAUNCH_LENGTH : sling.stageGoal(stage)) + sling.SLING_REST_D;
     this.lobby.selectedLevel = {
       id: 'slingshot',
-      name: daily ? "Today's Launch" : `Slingshot · Stage ${stage}`,
+      name: daily ? 'Daily Launch' : `Slingshot · Stage ${stage}`,
       distance: finishD,
       checkpointInterval: finishD,   // the only "checkpoint" is the finish: no gates
       collectibles: 'coins',

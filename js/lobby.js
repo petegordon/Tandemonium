@@ -4106,7 +4106,7 @@ export class Lobby {
       if (startBtn) startBtn.disabled = false;
     }
     if (expired) {
-      showInfoToast('📅', 'That road has expired', 'Here’s today’s road instead.');
+      showInfoToast('📅', 'That road has expired', 'Here’s today’s Daily Ride instead.');
     }
     analytics.trackEvent('daily_link', { key: param, expired });
   }

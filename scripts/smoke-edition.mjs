@@ -5,7 +5,7 @@
 //     on Chill with the week's key; NEXT LEVEL from Grandma's goes to the
 //     weekly road, and from there to the demo's end screen, never elsewhere.
 //   full game (?key=dummy): the Tourist card is under SOLO and RIDE TOGETHER
-//     (captain), not VERSUS; the road is Today's Road.
+//     (captain), not VERSUS; the road is the Daily Ride.
 //   PR #397 B4: the demo survives an invite (?demo=1&room=X keeps demo after
 //     the URL tidy; invite/QR links carry demo=1), Options hides "Ride real
 //     terrain" and ?demo=1&mode=tourist boots the ordinary game.
@@ -152,7 +152,7 @@ const checks = {
     dw.wishlistShown && dw.endHidden === true,
   fullTouristSolo: fl.solo.includes('tourist') && fl.solo.includes('slingshot'),
   fullTouristCoop: fl.coop.includes('tourist') && !fl.versus.includes('tourist'),
-  fullRoadDaily: fl.roadName === "Today's Road" && fw.picked.key === fw.picked.today &&
+  fullRoadDaily: fl.roadName === 'Daily Ride' && fw.picked.key === fw.picked.today &&
     fw.picked.difficulty === 'adventurous',
   fullNextNotLocked: !!fw.next && !fw.nextLocked && fw.fromRoad === null,
   // PR #397 B4a/B4b
