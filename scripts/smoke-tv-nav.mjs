@@ -169,7 +169,8 @@ await press('RIGHT');
 const rightOf = await page.evaluate(() => window._game._overlayFocus.focused?.id);
 await press('DOWN');
 const below = await page.evaluate(() => window._game._overlayFocus.focused?.id);
-check(rightOf === 'opt-medium' && /^opt-gyro-/.test(below || ''), 'LY-09 → moves along the row, ↓ to the next row in the same column (#523)', { rightOf, below });
+// Left column: Graphics Quality, then Show Riders (Gyro Steering sits beside Quality since #588 removed the DualSense section).
+check(rightOf === 'opt-medium' && /^opt-riders-/.test(below || ''), 'LY-09 → moves along the row, ↓ to the next row in the same column (#523)', { rightOf, below });
 let allShown = true, allInView = true, moved = 0, last = first;
 for (let i = 0; i < 10; i++) {
   await press('DOWN');

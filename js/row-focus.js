@@ -3,6 +3,12 @@
 // RowFocusController (#517) — the kit's FocusController with two TV fixes.
 // ============================================================
 //
+// 0. Left / right stay in the ROW. The kit scores every item in the pressed
+//    direction, so from a full-width centre button (JOIN WITH KEYBOARD,
+//    CHOOSE LEVEL on the versus step) the only thing "to the left" is a
+//    bottom-bar pill, and the highlight dropped into the bar — while the
+//    same stick push was Player 1's team switch (#581). Nothing beside you
+//    in the row = no move; only down reaches the bar.
 // 1. Up / down go to the NEAREST ROW first. The kit picks the neighbour with
 //    the best centre-to-centre score, so on the level step a card on the far
 //    left jumped past the difficulty row to the Help pill right under it, and
@@ -47,6 +53,30 @@ export function nearestRowIndex(from, dir, boxes) {
   return row[0].i;
 }
 
+/**
+ * The item to move to from `from` going `dir` ('left' | 'right') WITHIN its
+ * row, or -1. A candidate is in the row when it overlaps `from` vertically
+ * (its centre lies within `from`'s span, or vice versa). Nearest by the gap
+ * along the move, then by vertical offset. Pure geometry, exported for the test.
+ * @param {Box} from @param {'left'|'right'} dir @param {Box[]} boxes
+ * @returns {number} index into `boxes`, or -1
+ */
+export function sameRowIndex(from, dir, boxes) {
+  const cy = (from.top + from.bottom) / 2;
+  let best = -1, bestGap = Infinity, bestOff = Infinity;
+  boxes.forEach((b, i) => {
+    const by = (b.top + b.bottom) / 2;
+    const inRow = (by >= from.top && by <= from.bottom) || (cy >= b.top && cy <= b.bottom);
+    if (!inRow) return;
+    const gap = dir === 'right' ? b.left - from.right : from.left - b.right;
+    const centreGap = dir === 'right' ? (b.left + b.right) / 2 - (from.left + from.right) / 2 : (from.left + from.right) / 2 - (b.left + b.right) / 2;
+    if (centreGap < 1) return;   // must lie in the pressed direction
+    const off = Math.abs(by - cy);
+    if (gap < bestGap || (gap === bestGap && off < bestOff)) { best = i; bestGap = gap; bestOff = off; }
+  });
+  return best;
+}
+
 export class RowFocusController extends FocusController {
   /**
    * The kit's options, plus `onEdge(dir)`: up / down with nothing further that
@@ -65,8 +95,11 @@ export class RowFocusController extends FocusController {
    * @returns {HTMLElement | null}
    */
   _spatialNeighbor(el, dir) {
-    if (dir === 'left' || dir === 'right') return super._spatialNeighbor(el, dir);
     const others = this.items.filter((o) => o !== el && this._visible(o));
+    if (dir === 'left' || dir === 'right') {
+      const j = sameRowIndex(el.getBoundingClientRect(), dir, others.map((o) => o.getBoundingClientRect()));
+      return j < 0 ? null : others[j];
+    }
     const i = nearestRowIndex(el.getBoundingClientRect(), dir, others.map((o) => o.getBoundingClientRect()));
     if (i < 0 && this._onEdge) this._onEdge(dir);
     return i < 0 ? null : others[i];
