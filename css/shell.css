@@ -13,9 +13,15 @@ uf-sheet .shell-line b, uf-sheet .shell-line strong { color: var(--uf-color-fg);
 uf-sheet .shell-line uf-controller-glyph { margin: 0 .1em; }
 
 /* A vertical menu of full-width buttons (the pause menu). */
-uf-sheet .shell-menu { display: grid; gap: var(--uf-space-3); width: 100%; }
+/* #576: the sheet body scrolls (overflow: auto), which clipped the focus ring on
+   the buttons' sides and under the last one; the padding keeps it inside. */
+uf-sheet .shell-menu { display: grid; gap: var(--uf-space-3); width: 100%; box-sizing: border-box; padding: 8px; }
 uf-sheet .shell-menu > uf-button { width: 100%; }
-uf-sheet .shell-menu > uf-button[hidden] { display: none; }
+uf-sheet .shell-menu > uf-button[hidden], uf-sheet .shell-menu[hidden] { display: none; }
+/* #576: the ride toggles under the pause menu, two to a row; ON reads in the accent. */
+#pause-toggles { grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); padding-top: var(--uf-space-3); }
+#pause-toggles .pause-state { margin-left: .35em; opacity: .7; }
+#pause-toggles .pause-on .pause-state { color: var(--uf-color-accent); opacity: 1; }
 
 /* Pad glyphs inside buttons and hints show only while a pad drives the menus
    (js/game.js + js/lobby.js toggle body.pad-menus); touch and mouse players
@@ -51,4 +57,21 @@ body.pad-menus .pad-only { display: inline-flex !important; }
   #help-modal #help-modal-inner { column-count: 2; column-gap: var(--uf-space-6); }
   #help-modal #help-modal-inner > h3, #help-modal #help-modal-inner > p { column-span: all; }
   #help-modal .help-section { break-inside: avoid; }
+}
+
+/* #576 · the ride's top strip (speed, distance, time, sync) at TV / Steam size.
+   It was drawn at phone pixel sizes (speed 20px), unreadable from the couch.
+   zoom scales the whole strip together, bars and chips included. Not on touch
+   screens (a big tablet keeps the phone strip). */
+@media (min-width: 1024px) and (pointer: fine), (min-width: 1024px) and (pointer: none) {
+  #hud-dashboard { zoom: 1.5; }
+  /* The strip sits at the left here, so the one-line RANKED / help badge goes up
+     beside it (top centre) instead of under it, clear of the bigger strip. */
+  #ranked-badge, #help-badge { top: 14px; }
+}
+@media (min-width: 1600px) and (pointer: fine), (min-width: 1600px) and (pointer: none) {
+  #hud-dashboard { zoom: 2; }
+}
+@media (min-width: 2400px) and (pointer: fine), (min-width: 2400px) and (pointer: none) {
+  #hud-dashboard { zoom: 2.8; }
 }

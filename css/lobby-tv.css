@@ -375,6 +375,9 @@ body.pad-menus #bike-carousel .bike-nav-arrow { display: none; }
 body.pad-menus.remote-menus #bike-carousel .bike-nav-arrow { display: inline; }
 body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { display: none !important; }
 #bike-carousel .bike-carousel-nav uf-controller-glyph { pointer-events: none; }
+/* #576: the preview (position: relative, later in the DOM) painted over the
+   L1 / R1 glow and focus ring on the side that meets it; lift the tabs over it. */
+#bike-carousel .bike-carousel-nav { position: relative; z-index: 2; }
 @media (min-width: 1024px) {
   #lobby #bike-carousel .bike-carousel-nav { width: calc(var(--uf-size-md) * 3.4) !important; }
   #bike-carousel .bike-carousel-nav uf-controller-glyph .ufg { --_s: calc(var(--uf-size-2xl) * 1.5); }
