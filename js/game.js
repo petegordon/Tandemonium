@@ -320,10 +320,14 @@ class Game {
       },
     });
     this._phonePadState = null;
-    // #562 · more phones: "Join with phone" on the co-op and versus screens.
-    // Each joined phone is a controller with its own InputManager; a seat that
-    // takes it rides with it. Its Pause pauses, like Player 1's phone.
+    // #562 · more phones: the co-op host step's "Scan to join" QR and the
+    // versus screen's "Use your phone as a controller". They are seats 2..4 of
+    // Player 1's pad room (one relay room, one QR for every phone). Each joined
+    // phone is a controller with its own InputManager; a seat that takes it
+    // rides with it. Its Pause pauses, like Player 1's phone.
     this.phonePool = installPhonePoolUI({
+      room: this.phonePad,
+      onChange: () => this.lobby?._syncHostJoinQr?.(),
       makeInput: () => new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false, remoteOnly: true }),
       p1Input: this.input,
       onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
@@ -867,6 +871,10 @@ class Game {
       controllerManager: this.controllerManager,
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
+    // #563 · "Play on this phone": a phone on the host step's QR asks for the
+    // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
+    this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
+    this.lobby.padRoom = this.phonePad;
 
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');

@@ -68,7 +68,7 @@ import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole b
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
-import { renderRoomQR } from './lobby/room-qr.js';
+import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
@@ -354,7 +354,7 @@ export class Lobby {
     this._stepItems.set(this.versusStep, versusItems);
     this._stepCenterItems.set(this.versusStep, versusItems);
     const hostItems = [
-      document.getElementById('btn-host-join-phone'),   // #562
+      document.getElementById('btn-host-room-code'),   // #563
       document.getElementById('btn-back-role-host'),
     ].filter(Boolean);
     // Online / Local CHOOSE LEVEL: enabled once there are two players
@@ -768,6 +768,8 @@ export class Lobby {
     } else if (prevStep === this.hostStep) {
       this._stopLocalJoinMonitor();
     }
+    // #563: the host step's "Scan to join" QR is up only while it shows.
+    if (step === this.hostStep || prevStep === this.hostStep) this._syncHostJoinQr();
 
     // Versus join monitor: run only while the team-setup screen is visible.
     // (Level select keeps the joined players but stops the polling loop.)
@@ -996,7 +998,7 @@ export class Lobby {
     // On a phone, the phone IS the controller: no WebHID pairing (phones have
     // no WebHID) and no "phone as controller" (that's a remote for a big screen).
     if (isMobile) {
-      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone', 'btn-host-join-phone', 'btn-versus-join-phone']) {
+      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone', 'btn-host-room-code', 'host-join-qr', 'btn-versus-join-phone']) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       }
@@ -1085,7 +1087,7 @@ export class Lobby {
       if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
-      { const tv = /** @type {any} */ (document.getElementById('room-qr-tv')); if (tv) tv.value = ''; }
+      this._hostRoomCode = null;   // #563
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
@@ -1105,8 +1107,26 @@ export class Lobby {
 
     // CAPTAIN (START A RIDE) — open to all players
     document.getElementById('btn-captain').addEventListener('click', async () => {
+      // #563 · on a desktop / TV the host step leads with one "Scan to join"
+      // QR, and the online room opens only when it is wanted: a phone picks
+      // "Play on this phone", or the code button (to type it elsewhere). A
+      // phone captain needs the code for its partner at once, as before.
+      if (!isMobile) {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._hostRoomCode = null;
+        document.getElementById('room-code-display').textContent = '----';
+        document.getElementById('room-qr').innerHTML = '';
+        const hostStatus = document.getElementById('host-status');
+        if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
+        this._showStep(this.hostStep);
+        return;
+      }
       this._showStep(this.hostStep);
       this._createRoom();
+    });
+    // #563 · open the online room to type its code on another device.
+    document.getElementById('btn-host-room-code')?.addEventListener('click', () => {
+      if (!this.net && this._currentStep === this.hostStep) this._createRoom();
     });
 
     // STOKER (JOIN A RIDE)
@@ -4019,6 +4039,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
+    this._hostRoomCode = null;   // #563: set once the relay has us in the room
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
@@ -4044,6 +4065,8 @@ export class Lobby {
     this.net.onRoomJoined = () => {
       if (!this._netSession.isCurrent(netEpoch)) return;
       codeEl.textContent = code;
+      this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
+      this._syncHostJoinQr();
       this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
 
@@ -4749,15 +4772,69 @@ export class Lobby {
     this._renderHostSeats(cands);
     const status = document.getElementById('host-status');
     if (status && local) { status.textContent = 'Online room closed: riding on this screen'; status.className = 'conn-status'; }
-    // #562: "Join with phone" while the stoker seat is open.
-    const phoneBtn = !online && !local && !isMobile ? document.getElementById('btn-host-join-phone') : null;
-    const pb = document.getElementById('btn-host-join-phone');
-    if (pb && !isMobile) pb.style.display = phoneBtn ? '' : 'none';
-    const items = [online && onBtn, local && locBtn, phoneBtn, back].filter(Boolean);
+    // #563: the "Scan to join" QR while the stoker seat is open, and the room
+    // code button until the online room is open.
+    this._syncHostJoinQr();
+    const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
+    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
     if (this._currentStep === step) this._applyStepSpatialFocus(step);
+  }
+
+  /**
+   * #563 · the host step's one "Scan to join" QR (desktop / TV). Each phone
+   * that scans it chooses: Control the TV (a phone seat on the shared pad
+   * room, #562) or Play on this phone (the online partner: the RIDE TOGETHER
+   * room opens only then, openRoomForPhone). Up while the partner seat is
+   * free; the seats it offers close when it goes. Cheap to call often.
+   */
+  _syncHostJoinQr() {
+    if (isMobile) return;
+    const step = this.hostStep;
+    if (!step) return;
+    const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
+    const local = !online && !!(this._localSeatedOnHost && this._localP2InputManager);
+    const on = this._currentStep === step && !online && !local;
+    const pool = this.phonePool;
+    if (this.padRoom) this.padRoom.allowPlay = on;
+    // Only the offer this step made is withdrawn (versus has its own panel).
+    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true); }
+    else if (pool && !on && this._hostOffering) { this._hostOffering = false; pool.setOffering(false); }
+    const qr = /** @type {any} */ (document.getElementById('host-join-qr'));
+    if (qr) {
+      const link = on && pool ? (pool.joinLink({ play: true }) || '') : '';
+      if (qr.value !== link) qr.value = link;
+      const caption = !on ? ''
+        : !link ? (pool && pool.joinedEntries().length >= 3 ? 'Every phone seat is taken' : 'Opening…')
+        : this._hostRoomCode ? 'Scan with your phone, or type this code on another device:' : 'Scan with your phone';
+      if (qr.caption !== caption) qr.caption = caption;
+    }
+    step.classList.toggle('host-join-off', !on);
+    step.classList.toggle('host-room-open', !!this._hostRoomCode);
+    const codeBtn = document.getElementById('btn-host-room-code');
+    if (codeBtn) codeBtn.style.display = on && !this._hostRoomCode ? '' : 'none';
+  }
+
+  /**
+   * #563 · a phone on the host step's QR chose "Play on this phone": open the
+   * RIDE TOGETHER room now (or reuse the one already open) and hand back its
+   * code and join link. Null when that isn't on offer any more (another
+   * screen, the partner seat taken) or the room didn't open in time.
+   * @returns {Promise<{code: string, url: string}|null>}
+   */
+  async openRoomForPhone() {
+    const allowed = () => !isMobile && this._currentStep === this.hostStep
+      && !(this.net && this.net.connected) && !this._localSeatedOnHost;
+    if (!allowed()) return null;
+    if (!this._hostRoomCode && !this.net) this._createRoom();
+    for (const t0 = Date.now(); !this._hostRoomCode && Date.now() - t0 < 15000;) {
+      await new Promise((r) => setTimeout(r, 150));
+      if (!allowed() || !this.net) return null;
+    }
+    const code = this._hostRoomCode;
+    return code ? { code, url: joinUrl(code) } : null;
   }
 
   _handleRoomMessage(profile) {

@@ -5598,21 +5598,26 @@ ON</button>
           <p class="lobby-hint">Long-press URL or QR code to copy link</p>
           <div id="host-status" class="conn-status"></div>
           <uf-button variant="accent" id="btn-host-online-next" disabled>CHOOSE LEVEL</uf-button>
-          <!-- Desktop/TV (#428 round 5): Online multiplayer (code + couch-sized <uf-qr>)
+          <!-- Desktop/TV (#428 round 5; #563 one "Scan to join" QR, room code on demand)
                on the left, Local multiplayer on the right — a kit <uf-team> with the
                captain seated and the stoker seat waiting for any controller, then every
                connected controller in a <uf-controller-roster> strip. Filled by
                lobby._renderHostSeats; css/lobby-tv.css lays the step out. -->
-          <div id="host-online-head" class="host-tv"><h3>Online multiplayer</h3><p>Your partner enters this code, or scans the QR code, on their own device.</p></div>
-          <uf-qr id="room-qr-tv" class="host-tv" caption="" size="400"></uf-qr>
+          <!-- #563 · one QR, the phone chooses: "Control the TV" (a phone seat,
+               the game stays here) or "Play on this phone" (the online partner:
+               the RIDE TOGETHER room opens only then). Filled by
+               lobby._syncHostJoinQr. The room code button opens the room for
+               typing its code on another device. -->
+          <div id="host-online-head" class="host-tv"><h3>Scan to join</h3><p>Scan with a phone, then choose: steer from it while the game stays on this screen, or play on the phone itself.</p></div>
+          <uf-qr id="host-join-qr" class="host-tv" caption="" size="400"></uf-qr>
+          <uf-button variant="ghost" size="sm" id="btn-host-room-code" title="Open the online room and show its code, to type on another device">Join from another device with a code</uf-button>
           <div id="host-local" class="host-tv">
             <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
             <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
               <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
-              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller"></uf-seat>
+              <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller, or scan the code with a phone"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
-            <uf-button variant="ghost" size="sm" id="btn-host-join-phone" title="Steer from your phone — the game stays on this screen">&#128241; Use your phone as a controller</uf-button>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
