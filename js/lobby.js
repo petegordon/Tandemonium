@@ -62,6 +62,7 @@ import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
+import { withoutWebHidTwins } from './lobby/join-candidates.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -6078,10 +6079,10 @@ export class Lobby {
   _versusP1Descriptor() {
     const inp = this.input;
     if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
-    if (inp._steamInputActive) {
-      const entry = inp._selectedSteamEntry();
-      return { type: 'gamepad', name: this._prettySteamType(entry?.type) };
-    }
+    // Named from Steam only when P1 rides through Steam Input; a P1 on a
+    // WebHID pad is named by that pad even while Steam lists other controllers.
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam) return { type: 'gamepad', name: this._prettySteamType(p1Steam.type) };
     if (inp.gamepadConnected) {
       const slot = inp._slot;
       if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };
@@ -6164,13 +6165,13 @@ export class Lobby {
       }).catch(() => {});
     }
 
-    // P1 auto-joins Team A. If Steam Input is active, pin P1 to the first
-    // captured controller so a joiner can't bind the same handle.
+    // P1 auto-joins Team A. If P1 rides through Steam Input, pin it to that
+    // captured controller so a joiner can't bind the same handle. A P1 on a
+    // live WebHID pad is NOT pinned: the first snapshot entry is then some
+    // other player's controller (a DualSense under Steam, #581).
     const p1 = this._versusP1Descriptor();
-    if (this.input && this.input._steamInputActive) {
-      const entry = this.input._selectedSteamEntry();
-      if (entry) this.input.steamInputHandle = entry.handle;
-    }
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam && this.input) this.input.steamInputHandle = p1Steam.handle;
     this._versusPlayers.push({
       n: 1,
       type: p1.type,
@@ -6228,7 +6229,8 @@ export class Lobby {
       if (this.input.gamepadIndex !== null) owned.indices.add(this.input.gamepadIndex);
       if (this.input._slot?.hidDevice) owned.devices.add(this.input._slot.hidDevice);
       if (this.input.steamInputHandle != null) owned.handles.add(this.input.steamInputHandle);
-      if (this.input._steamInputActive) { const e = this.input._selectedSteamEntry(); if (e) owned.handles.add(e.handle); }
+      // Steam entry [0] is P1's only while P1 rides through Steam (#581).
+      const e = this._p1SteamEntry(); if (e) owned.handles.add(e.handle);
     }
     return this._detectJoinCandidates(pads, owned);
   }
@@ -6484,11 +6486,11 @@ export class Lobby {
       if (slot) owned.slotIds.add(slot.id);
       if (p.input.gamepadIndex !== null) owned.indices.add(p.input.gamepadIndex);
     }
-    // P1 unpinned (legacy default = first entry) still owns Steam entry [0].
-    if (this.input && this.input._steamInputActive) {
-      const p1Entry = this.input._selectedSteamEntry();
-      if (p1Entry && p1 && p1.type === 'gamepad') owned.handles.add(p1Entry.handle);
-    }
+    // P1 unpinned (legacy default = first entry) still owns Steam entry [0] —
+    // but only while P1 actually rides through Steam. A P1 on a WebHID Steam
+    // Controller doesn't own the DualSense Steam happens to list first (#581).
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam && p1 && p1.type === 'gamepad') owned.handles.add(p1Steam.handle);
     return this._detectJoinCandidates(pads, owned);
   }
 
@@ -6510,36 +6512,26 @@ export class Lobby {
     for (const entry of this.phonePool ? this.phonePool.presentableEntries() : []) {
       out.push({ kind: 'phone', key: 'phone:' + entry.n, entry, name: entry.identity.name, pollGp: entry.synthetic });
     }
-    // Steam Input active → snapshot handles are the truth.
-    if (this.input && this.input._steamInputActive) {
-      const ownedHandles = owned.handles;
-      for (const c of this.input._steamInputSnapshot) {
-        if (ownedHandles.has(c.handle)) continue;
-        out.push({
-          kind: 'steam',
-          key: 'steam:' + c.handle,
-          handle: c.handle,
-          name: this._prettySteamType(c.type),
-          pollGp: this._steamEntryToPollGp(c),
-        });
-      }
-      return out; // all live candidates — join-time logic enforces seats
-    }
+    const steamActive = !!(this.input && this.input._steamInputActive);
     const ownedDevices = owned.devices;
     const ownedIndices = owned.indices;
     const ownedSlotIds = owned.slotIds;
-    // Gamepad API pads.
-    for (const gp of pads) {
-      if (!gp || ownedIndices.has(gp.index)) continue;
-      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-      out.push({
-        kind: 'gamepad',
-        key: 'gp:' + gp.index,
-        gpIndex: gp.index,
-        gp,
-        name: this._prettyGamepadName(gp.id),
-        pollGp: gp,
-      });
+    // Gamepad API pads. Under Steam every captured pad also reaches Chromium
+    // as a virtual XInput device (#362) — the snapshot entry below is its
+    // card, so the twins are skipped while Steam Input is active.
+    if (!steamActive) {
+      for (const gp of pads) {
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
+        out.push({
+          kind: 'gamepad',
+          key: 'gp:' + gp.index,
+          gpIndex: gp.index,
+          gp,
+          name: this._prettyGamepadName(gp.id),
+          pollGp: gp,
+        });
+      }
     }
 
     if (mgr) {
@@ -6582,6 +6574,26 @@ export class Lobby {
           slotId: s.id,
           name: prettyHidName(s.hidDevice, s.controllerLabel),
           pollGp: s.synthetic,
+        });
+      }
+    }
+    // Steam Input snapshot handles — minus the pads already streaming on
+    // WebHID (seated, or joinable above). WebHID wins (#581): under a Steam
+    // launch the same DualSense is in the snapshot AND the pool, and the
+    // Steam entry's join press is the IGA `Confirm` action, which the shipped
+    // DualSense binding (an XInput template) never fires. Offering that entry
+    // used to hide the WebHID card whose ✕ actually lands.
+    if (steamActive) {
+      const ownedHandles = owned.handles;
+      const hidDevices = [...ownedDevices, ...out.filter((c) => c.kind === 'hid').map((c) => c.device)];
+      for (const c of withoutWebHidTwins(this.input._steamInputSnapshot, hidDevices)) {
+        if (ownedHandles.has(c.handle)) continue;
+        out.push({
+          kind: 'steam',
+          key: 'steam:' + c.handle,
+          handle: c.handle,
+          name: this._prettySteamType(c.type),
+          pollGp: this._steamEntryToPollGp(c),
         });
       }
     }
