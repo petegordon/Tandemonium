@@ -39,7 +39,7 @@
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
+import { InputManager, isSteamTwinPad } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
@@ -60,9 +60,7 @@ import * as analytics from './analytics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
-import { steamTypeIdentity } from './controller-overlay-hud.js';
-import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { withoutWebHidTwins } from './lobby/join-candidates.js';
+import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -1292,11 +1290,10 @@ export class Lobby {
       btnJoinGp.addEventListener('click', () => {
         const state = this._detectLocalP2State();
         if (!state.hasGamepad) return;
-        // P2 may be a Gamepad API pad, a WebHID device, a seat the manager
-        // already claimed, or a Steam-captured controller.
-        if (state.gpIndex === null && !state.hidDevice && !state.slotId && !state.steamHandle) return;
-        this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
-          { slotId: state.slotId, steamHandle: state.steamHandle });
+        // P2 may be a Gamepad API pad, a WebHID device, or a seat the manager
+        // already claimed.
+        if (state.gpIndex === null && !state.hidDevice && !state.slotId) return;
+        this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null, { slotId: state.slotId });
       });
     }
     // "CONNECT A CONTROLLER": the missing pairing path. A pad that Chromium's
@@ -3216,14 +3213,6 @@ export class Lobby {
     // Controller was "direct USB-C"); core's label-first lookup is the fallback.
     const hidId = claimed ? (slot.driver && slot.driver.entry ? identityOf(slot.driver.entry) : hidDeviceIdentity(slot.hidDevice)) : null;
     if (hidId) return hidId;
-    // Steam Input owns the pad (desktop build under Steam): there may be no
-    // slot at all, or only Steam's virtual XInput twin. Steam's controller type
-    // says what's in hand, so the prompts match it (#458 item 13).
-    const inp = this.input;
-    if (inp && inp._steamInputActive && typeof inp._selectedSteamEntry === 'function') {
-      const e = inp._selectedSteamEntry();
-      if (e) return steamTypeGlyphIdentity(e.type);
-    }
     return claimed ? slotIdentityHidFirst(slot, (s) => mgr.slotIdentity(s)) : null;
   }
 
@@ -5251,7 +5240,7 @@ export class Lobby {
         if (seatOpen && any && !prev.any) {
           this._versusPrevButtons.set(key, { any });
           this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
-          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
+          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry });
           // Desktop/TV: still on this step with Player 2 seated; keep watching.
           if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
           return;
@@ -5274,7 +5263,7 @@ export class Lobby {
       // buttons do work.
       const p2OnWebHid = !!(state.hidLive && state.hidLive.streaming);
       const canPairHid = !!navigator.hid && !p2OnWebHid && !navigator.userAgent.includes('Electron');   // browser-only fallback
-      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.steamHandle || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}|${!!state.gpSilent}`;
+      const stateKey = `${state.hasGamepad}|${state.hasKeyboard}|${state.gpIndex}|${!!state.hidDevice}|${state.slotId || ''}|${state.gpName}|${state.p1GpName}|${!!state.hintVisible}|${canPairHid}|${!!state.gpSilent}`;
       if (stateKey !== this._localLastJoinState) {
         this._localLastJoinState = stateKey;
         // Show/hide the entire join section based on whether any P2 path exists
@@ -5305,7 +5294,7 @@ export class Lobby {
         const live = state.hidLive;
         this._diag('[local] P2 candidate: ' + (state.hasGamepad
           ? `${state.gpName} via ${state.via || 'gamepad-api'} gpIndex=${state.gpIndex}` +
-            ` slot=${state.slotId || '-'} steam=${state.steamHandle || '-'}` +
+            ` slot=${state.slotId || '-'}` +
             (live ? ` streaming=${live.streaming} everPressed=${live.everPressed} lastReport=${live.msSinceReport ?? 'never'}ms` : ' (no hid entry)')
           : `none (keyboard=${state.hasKeyboard}, p1=${state.p1GpName || '-'})`) +
           ` | silent=${!!state.gpSilent} pairButton=${canPairHid ? 'shown' : 'hidden'}`, 'candidate');
@@ -5351,11 +5340,6 @@ export class Lobby {
         if (!gp && state.slotId && this.controllerManager) {
           const seat = this.controllerManager.getSlot(state.slotId);
           gp = (seat && (seat.effectiveGamepad(pads) || seat.synthetic)) || null;
-        }
-        // Found in the Steam snapshot: read its bound actions.
-        if (!gp && state.steamHandle && this.input) {
-          const c = (this.input._steamInputSnapshot || []).find((e) => e.handle === state.steamHandle);
-          gp = c ? this._steamEntryToPollGp(c) : null;
         }
         // Found over WebHID: read THAT device's own synthetic, populated from
         // its parsed reports even before any slot claims it. Match by identity
@@ -5410,10 +5394,10 @@ export class Lobby {
             this._diag(`[local] P2 poll: pressed=[${pressed.join(',')}] mapping=${gp.mapping || '(non-standard)'} → joining`, 'poll');
           }
           if (aPressed && !this._localP2APrev) {
-            console.log('P2 action button pressed — joining as gamepad', state.gpIndex, state.slotId || '', state.steamHandle || '');
+            console.log('P2 action button pressed — joining as gamepad', state.gpIndex, state.slotId || '');
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
-              { slotId: state.slotId, steamHandle: state.steamHandle });
+              { slotId: state.slotId });
             // #578: desktop/TV stays on this step with Player 2 seated; keep
             // watching (their B stands them up). This path used to stop the loop.
             if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
@@ -5603,23 +5587,7 @@ export class Lobby {
         };
       }
     }
-    // 3. A controller Steam Input has captured that P1 is not using — the
-    //    only trace of a pad Steam owns exclusively when it emits no XInput
-    //    device this session. The join pins P2 to this handle.
-    const steamCand = this._localP2SteamCandidate();
-    if (steamCand) {
-      return {
-        available: true,
-        hasGamepad: true,
-        hasKeyboard: keyboardAvailable,
-        gpIndex: null,
-        steamHandle: steamCand.handle,
-        gpName: this._prettySteamType(steamCand.type),
-        gpRawId: '',
-        p1GpName,
-      };
-    }
-    // 4. WebHID fallback: approved HID devices the pool hasn't picked up
+    // 3. WebHID fallback: approved HID devices the pool hasn't picked up
     //    (BT DualSense + Steam on Windows). Uses a cached device list refreshed
     //    every 2 seconds to avoid async calls in the per-frame monitor loop.
     if (this._cachedHIDDevices) {
@@ -5715,13 +5683,6 @@ export class Lobby {
    * @param {'gamepad'|'keyboard'} sourceType
    * @param {number|null} gamepadSlot — gamepad index when sourceType is 'gamepad'
    * @param {HIDDevice|null} [hidDevice] — WebHID device when Gamepad API is blind
-   */
-  /**
-   * The Steam Input snapshot entry a local-co-op P2 should be pinned to: a
-   * captured controller P1 is NOT using. Excludes P1's own entry (when P1
-   * steers from Steam) and, when P1 rides a Steam Controller, the whole Steam
-   * family (its Steam-side twin can lead the snapshot while WebHID holds it).
-   * null when Steam has nothing spare.
    */
   /**
    * Tell the Electron WebHID picker which devices we ALREADY hold (pooled or
@@ -5875,21 +5836,11 @@ export class Lobby {
     this._localLastJoinState = null;
   }
 
-  /** The Steam Input entry Player 1 is steering from, or null. */
-  _p1SteamEntry() {
-    const p1 = this.input;
-    if (!p1 || !p1._steamInputActive) return null;
-    if (typeof p1._slotFusionIsLive === 'function' && p1._slotFusionIsLive()) return null;
-    return typeof p1._selectedSteamEntry === 'function' ? p1._selectedSteamEntry() : null;
-  }
-
-  /** Is Player 1 riding a Steam-family pad (Steam Controller / Deck)? */
+  /** Is Player 1 riding a Steam Controller (the Puck's fan-out family)? */
   _p1IsSteamPad() {
     const p1 = this.input;
     const proto = (p1 && p1._slot && p1._slot.driver && p1._slot.driver.entry && p1._slot.driver.entry.protocol) || '';
-    if (proto === 'steam-controller') return true;
-    const steam = this._p1SteamEntry();
-    return !!(steam && isSteamFamilyType(steam.type));
+    return proto === 'steam-controller';
   }
 
   /**
@@ -5918,27 +5869,15 @@ export class Lobby {
     return fanout && this._p1IsSteamPad();
   }
 
-  _localP2SteamCandidate() {
-    const p1 = this.input;
-    if (!p1 || !p1._steamInputActive) return null;
-    const snap = p1._steamInputSnapshot || [];
-    const p1Steam = this._p1SteamEntry();
-    const p1IsSteamPad = this._p1IsSteamPad();
-    return snap.find((c) =>
-      !(p1Steam && c.handle === p1Steam.handle) &&
-      !(p1IsSteamPad && isSteamFamilyType(c.type))) || null;
-  }
-
   /**
    * @param {'gamepad'|'keyboard'} sourceType
    * @param {number|null} gamepadSlot  Gamepad API index of the joining pad, if any
    * @param {HIDDevice|null} [hidDevice]  its WebHID device, if that is how we found it
-   * @param {{slotId?: string, steamHandle?: string}} [opts]  the manager seat that
-   *   already holds it, and/or the Steam Input handle to pin P2 to
+   * @param {{slotId?: string}} [opts]  the manager seat that already holds it
    */
   _onLocalJoinClick(sourceType, gamepadSlot, hidDevice = null, opts = {}) {
     this._diag(`[local] JOIN fired: type=${sourceType} gpIndex=${gamepadSlot} ` +
-      `hid=${hidDevice ? (hidDevice.productName || 'device') : '-'} slot=${opts.slotId || '-'} steam=${opts.steamHandle || '-'}`, 'join-fired');
+      `hid=${hidDevice ? (hidDevice.productName || 'device') : '-'} slot=${opts.slotId || '-'}`, 'join-fired');
     // Guard: if the monitor hasn't seen a P2 path, bail.
     if (sourceType !== 'gamepad' && sourceType !== 'keyboard') return;
     // The stoker seat is taken: by the online partner, or by a local Player 2.
@@ -6004,19 +5943,6 @@ export class Lobby {
         this._localP2InputManager.motionEnabled = true;
       }
 
-      // Steam Input: pin P2 to a captured controller P1 is NOT using. An
-      // unbound InputManager reads the FIRST snapshot entry, which is P1's
-      // pad whenever Steam captured both (and, when P1 rides a Steam
-      // Controller over WebHID, its Steam-side twin can still lead the
-      // list) — so P2's gyro and buttons came from the wrong controller.
-      // Same handle-binding the versus join screen does for every seat.
-      const pick = opts.steamHandle
-        ? { handle: opts.steamHandle, type: '?' }
-        : this._localP2SteamCandidate();
-      if (pick) {
-        this._localP2InputManager.steamInputHandle = pick.handle;
-        console.log(`[local] P2 pinned to Steam Input handle ${pick.handle} (type ${pick.type}); seat ${slot ? slot.id : 'none'}`);
-      }
     } else {
       // Keyboard P2: no slot needed.
       this._localP2InputManager = new InputManager({
@@ -6055,34 +5981,11 @@ export class Lobby {
    * Describe P1's current physical source. gamepadIndex is USELESS for
    * this — HID pseudo-pad claims (BT DualSense in 0x31 mode, the normal
    * state in Electron) leave it null. gamepadConnected covers Gamepad API,
-   * HID-slot, and Steam Input bindings.
+   * and HID-slot bindings.
    */
-  /** Human label for a Steam Input controller type enum string. */
-  _prettySteamType(type) {
-    const t = String(type || '').replace(/^k_ESteamInputType_/i, '');
-    const map = {
-      PS5Controller: 'DUALSENSE',
-      PS4Controller: 'DUALSHOCK 4',
-      XBoxOneController: 'XBOX',
-      XBox360Controller: 'XBOX 360',
-      SwitchProController: 'SWITCH PRO',
-      SteamController: 'STEAM CONTROLLER',
-      SteamDeckController: 'STEAM DECK',
-    };
-    if (map[t]) return map[t];
-    // main.js stringifies the enum ('13' = DualSense): name it from the type table.
-    const st = steamTypeIdentity(t);
-    if (st.profile) return st.name.toUpperCase();
-    return t ? t.toUpperCase().slice(0, 20) : 'CONTROLLER';
-  }
-
   _versusP1Descriptor() {
     const inp = this.input;
     if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
-    // Named from Steam only when P1 rides through Steam Input; a P1 on a
-    // WebHID pad is named by that pad even while Steam lists other controllers.
-    const p1Steam = this._p1SteamEntry();
-    if (p1Steam) return { type: 'gamepad', name: this._prettySteamType(p1Steam.type) };
     if (inp.gamepadConnected) {
       const slot = inp._slot;
       if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };
@@ -6165,13 +6068,8 @@ export class Lobby {
       }).catch(() => {});
     }
 
-    // P1 auto-joins Team A. If P1 rides through Steam Input, pin it to that
-    // captured controller so a joiner can't bind the same handle. A P1 on a
-    // live WebHID pad is NOT pinned: the first snapshot entry is then some
-    // other player's controller (a DualSense under Steam, #581).
+    // P1 auto-joins Team A.
     const p1 = this._versusP1Descriptor();
-    const p1Steam = this._p1SteamEntry();
-    if (p1Steam && this.input) this.input.steamInputHandle = p1Steam.handle;
     this._versusPlayers.push({
       n: 1,
       type: p1.type,
@@ -6212,7 +6110,6 @@ export class Lobby {
   _versusUnseat(p) {
     if (!p || p.slotId === 'P1' || p.input === this.input) return;
     this._versusPlayers = this._versusPlayers.filter(x => x !== p);
-    if (p.input) p.input.steamInputHandle = null;
     this._releasePhone(p.input);   // #562
     if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
     this._versusPrevButtons.delete('member:' + p.n);
@@ -6224,13 +6121,10 @@ export class Lobby {
   /** CONNECTED controllers that could be Player 2: everything but what Player 1 holds. */
   _detectLocalJoinCandidates() {
     const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
-    const owned = { handles: new Set(), devices: new Set(), indices: new Set(), slotIds: new Set(['P1']) };
+    const owned = { devices: new Set(), indices: new Set(), slotIds: new Set(['P1']) };
     if (this.input) {
       if (this.input.gamepadIndex !== null) owned.indices.add(this.input.gamepadIndex);
       if (this.input._slot?.hidDevice) owned.devices.add(this.input._slot.hidDevice);
-      if (this.input.steamInputHandle != null) owned.handles.add(this.input.steamInputHandle);
-      // Steam entry [0] is P1's only while P1 rides through Steam (#581).
-      const e = this._p1SteamEntry(); if (e) owned.handles.add(e.handle);
     }
     return this._detectJoinCandidates(pads, owned);
   }
@@ -6289,7 +6183,7 @@ export class Lobby {
       sto._wired = true;
       sto.addEventListener('click', () => {
         const c = (this._detectLocalJoinCandidates() || [])[0];
-        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry });
       });
     }
   }
@@ -6308,7 +6202,7 @@ export class Lobby {
       b.className = 'lobby-btn-p2-gp';
       b.setAttribute('data-key', c.key);
       b.innerHTML = `<span class="btn-local-join-main">JOIN AS PLAYER 2</span><span class="btn-local-join-padname">${esc(c.name)}</span><span class="btn-local-join-hint">CONNECTED · press any button on it, or click</span>`;
-      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry }));
+      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry }));
       wrap.appendChild(b);
     }
     const detectedEl = document.getElementById('local-join-detected');
@@ -6321,8 +6215,6 @@ export class Lobby {
   _leaveVersus() {
     this._stopVersusMonitor();
     for (const p of this._versusPlayers) {
-      // Unbind Steam handles so the InputManager defaults revert.
-      if (p.input) p.input.steamInputHandle = null;
       this._releasePhone(p.input);   // #562
       if (p.slotId === 'P1' || p.type !== 'gamepad' || !p.slotId) continue;
       // Return HID entries to the pool cleanly so re-entering the screen
@@ -6396,11 +6288,10 @@ export class Lobby {
       }
 
       // 2) Joined pad players: d-pad/stick left/right edge → pick team.
-      //    getGamepadState() unifies the sources (real pad, HID synthetic,
-      //    Steam synthetic all expose buttons 14/15 + axes[0]).
+      //    getGamepadState() unifies the sources (real pad and HID synthetic
+      //    both expose buttons 14/15 + axes[0]).
       //    Joiner InputManagers aren't in the game loop's poll set until
-      //    the race starts, so poll them here — Steam-bound managers need
-      //    it to refresh their snapshot (and gamepadConnected).
+      //    the race starts, so poll them here.
       for (const p of this._versusPlayers) {
         if (!p.input || p.input === this.input || p.type === 'keyboard' || p.type === 'bot') continue;
         p.input.pollGamepad();
@@ -6450,9 +6341,6 @@ export class Lobby {
 
   /**
    * Enumerate joinable controllers, one candidate per physical pad:
-   * - steam: Steam Input snapshot entries (Electron under Steam — the
-   *   Gamepad API is blind there; the snapshot is the source of truth,
-   *   so other sources are skipped to avoid double-listing).
    * - gamepad: unclaimed navigator.getGamepads() pads (Xbox/Switch/USB).
    * - hid: ControllerManager pool entries + claimed-but-unowned slots.
    *   This is the PRIMARY path in Electron: the PlayStation driver flips
@@ -6477,31 +6365,25 @@ export class Lobby {
     const p1 = this._versusPlayers[0];
     const canConvertP1 = !!(p1 && p1.type === 'keyboard');
     if (this._versusPlayers.length >= 4 && !canConvertP1) return [];
-    const owned = { handles: new Set(), devices: new Set(), indices: new Set(), slotIds: new Set() };
+    const owned = { devices: new Set(), indices: new Set(), slotIds: new Set() };
     for (const p of this._versusPlayers) {
-      if (p.input && p.input.steamInputHandle !== null) owned.handles.add(p.input.steamInputHandle);
       if (p.type !== 'gamepad' || !p.input) continue;
       const slot = p.input._slot;
       if (slot?.hidDevice) owned.devices.add(slot.hidDevice);
       if (slot) owned.slotIds.add(slot.id);
       if (p.input.gamepadIndex !== null) owned.indices.add(p.input.gamepadIndex);
     }
-    // P1 unpinned (legacy default = first entry) still owns Steam entry [0] —
-    // but only while P1 actually rides through Steam. A P1 on a WebHID Steam
-    // Controller doesn't own the DualSense Steam happens to list first (#581).
-    const p1Steam = this._p1SteamEntry();
-    if (p1Steam && p1 && p1.type === 'gamepad') owned.handles.add(p1Steam.handle);
     return this._detectJoinCandidates(pads, owned);
   }
 
   /**
    * The CONNECTED controllers that could join: live Gamepad-API pads, pooled
-   * WebHID devices that are streaming, claimed-but-unowned HID slots, and
-   * Steam Input handles — minus everything `owned` already seats. Shared by
+   * WebHID devices that are streaming, claimed-but-unowned HID slots — minus
+   * everything `owned` already seats. Shared by
    * the versus step (owners = its players) and the RIDE TOGETHER host step
    * (owner = Player 1). Each candidate carries `pollGp` for a join press.
    * @param {Gamepad[]} pads
-   * @param {{ handles: Set<any>, devices: Set<any>, indices: Set<number>, slotIds: Set<string> }} owned
+   * @param {{ devices: Set<any>, indices: Set<number>, slotIds: Set<string> }} owned
    */
   _detectJoinCandidates(pads, owned) {
     const out = [];
@@ -6512,26 +6394,22 @@ export class Lobby {
     for (const entry of this.phonePool ? this.phonePool.presentableEntries() : []) {
       out.push({ kind: 'phone', key: 'phone:' + entry.n, entry, name: entry.identity.name, pollGp: entry.synthetic });
     }
-    const steamActive = !!(this.input && this.input._steamInputActive);
     const ownedDevices = owned.devices;
     const ownedIndices = owned.indices;
     const ownedSlotIds = owned.slotIds;
-    // Gamepad API pads. Under Steam every captured pad also reaches Chromium
-    // as a virtual XInput device (#362) — the snapshot entry below is its
-    // card, so the twins are skipped while Steam Input is active.
-    if (!steamActive) {
-      for (const gp of pads) {
-        if (!gp || ownedIndices.has(gp.index)) continue;
-        if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-        out.push({
-          kind: 'gamepad',
-          key: 'gp:' + gp.index,
-          gpIndex: gp.index,
-          gp,
-          name: this._prettyGamepadName(gp.id),
-          pollGp: gp,
-        });
-      }
+    // Gamepad API pads. A controller Steam has captured arrives here too, as
+    // Steam's virtual XInput pad (emulation mode, docs/steam-input.md).
+    for (const gp of pads) {
+      if (!gp || ownedIndices.has(gp.index)) continue;
+      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
+      out.push({
+        kind: 'gamepad',
+        key: 'gp:' + gp.index,
+        gpIndex: gp.index,
+        gp,
+        name: this._prettyGamepadName(gp.id),
+        pollGp: gp,
+      });
     }
 
     if (mgr) {
@@ -6577,39 +6455,7 @@ export class Lobby {
         });
       }
     }
-    // Steam Input snapshot handles — minus the pads already streaming on
-    // WebHID (seated, or joinable above). WebHID wins (#581): under a Steam
-    // launch the same DualSense is in the snapshot AND the pool, and the
-    // Steam entry's join press is the IGA `Confirm` action, which the shipped
-    // DualSense binding (an XInput template) never fires. Offering that entry
-    // used to hide the WebHID card whose ✕ actually lands.
-    if (steamActive) {
-      const ownedHandles = owned.handles;
-      const hidDevices = [...ownedDevices, ...out.filter((c) => c.kind === 'hid').map((c) => c.device)];
-      for (const c of withoutWebHidTwins(this.input._steamInputSnapshot, hidDevices)) {
-        if (ownedHandles.has(c.handle)) continue;
-        out.push({
-          kind: 'steam',
-          key: 'steam:' + c.handle,
-          handle: c.handle,
-          name: this._prettySteamType(c.type),
-          pollGp: this._steamEntryToPollGp(c),
-        });
-      }
-    }
     return out; // all live candidates — join-time logic enforces seats
-  }
-
-  /** Gamepad-shaped poll object for a Steam Input snapshot entry. */
-  _steamEntryToPollGp(c) {
-    const d = c.digital || {};
-    const btn = (pressed) => ({ pressed: !!pressed, value: pressed ? 1 : 0 });
-    const buttons = [];
-    for (let i = 0; i < 16; i++) buttons.push(btn(false));
-    buttons[0] = btn(d.Confirm);
-    buttons[14] = btn(d.MenuLeft);
-    buttons[15] = btn(d.MenuRight);
-    return { buttons, axes: [0, 0, 0, 0] };
   }
 
   _stopVersusMonitor() {
@@ -6690,15 +6536,6 @@ export class Lobby {
       // over a keyboard Player 1 (that seat is bound to slot P1).
       if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
       input = c.entry.attach();
-    } else if (c.kind === 'steam') {
-      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
-      input = new InputManager({
-        enableKeyboard: false,
-        enableMotion: false,
-        enableTouch: false,
-      });
-      input.steamInputHandle = c.handle;
-      // Steam gyro auto-arms on first snapshot; nothing else to wire.
     } else if (c.kind === 'hid') {
       let slot = null;
       if (seatsLeft) {
@@ -6900,7 +6737,7 @@ export class Lobby {
    * What to call a versus player or candidate, and which prompts to draw for
    * it — core's identity (shortName, glyphFamily, swapAB), from whatever the
    * versus detection knows about it: a manager slot, a Gamepad-API pad, a
-   * WebHID device, a Steam Input handle, or the keyboard.
+   * WebHID device, or the keyboard.
    */
   /** #562 · a seat gave its phone back: it is a free controller again. */
   _releasePhone(input) {
@@ -6920,14 +6757,6 @@ export class Lobby {
       const p1 = this._p1Identity();
       if (p1 && (p1.entry || p1.glyphFamily !== 'generic')) return p1;
     }
-    if (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) {
-      // Steam Input type → that pad's own prompts (a Switch Pro under Steam is Nintendo).
-      const handle = x.kind === 'steam' ? x.handle : x.input.steamInputHandle;
-      const snap = (this.input && this.input._steamInputSnapshot) || [];
-      const entry = snap.find((e) => e.handle === handle);
-      return entry ? steamTypeGlyphIdentity(entry.type, x.name || 'Steam Controller')
-        : { ...identityOf(null, x.name || 'Steam Controller'), glyphFamily: 'steam' };
-    }
     const mgr = this.controllerManager;
     if (x.slotId && mgr && mgr.slotIdentity) {
       const slot = mgr.getSlot ? mgr.getSlot(x.slotId) : null;
@@ -6945,13 +6774,12 @@ export class Lobby {
    * players (badge P1–P4 in team colour) and every joinable controller
    * ("press ✕ to join", or "seats full" once four are seated). Rows use the
    * shape core's controllerRoster() returns, built from versus's own
-   * detection (it also sees Steam Input handles core doesn't).
+   * detection.
    */
   _renderVersusControllers(candidates) {
     const strip = document.getElementById('versus-roster');
     if (!strip) return;
     const connection = (x) => (x.type === 'keyboard' ? 'keyboard'
-      : (x.kind === 'steam' || (x.input && x.input.steamInputHandle != null)) ? 'steam-input'
       : (x.kind === 'hid' || (x.input && x.input._slot && x.input._slot._hidEntry)) ? 'webhid' : 'gamepad');
     const rows = [];
     for (const p of this._versusPlayers) {
