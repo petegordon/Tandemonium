@@ -124,6 +124,9 @@ async function hostAndJoin(tag) {
   await clickId(cap, 'btn-together');
   await waitFor(cap, () => document.getElementById('lobby-flow').current === 'lobby-role');
   await clickId(cap, 'btn-captain');
+  // #563: on a desktop / TV the room opens when wanted (a phone's Play, or this button).
+  await waitFor(cap, () => document.getElementById('lobby-flow').current === 'lobby-host');
+  await clickId(cap, 'btn-host-room-code');
   const gotCode = await waitFor(cap, () => /^TNDM-\w{4}$/.test(document.getElementById('room-code-display')?.textContent || ''));
   const code = await cap.evaluate(() => document.getElementById('room-code-display').textContent);
   check(gotCode, `${tag}OC-01 captain hosts and gets a room code from the relay`, code);

@@ -1,5 +1,5 @@
 // ============================================================
-// TODAY'S ROAD (pure) — the road everyone rides today
+// DAILY RIDE (pure) — the road everyone rides today
 // ============================================================
 //
 // C-2 (the practice-only form of plan item D-1). One 500 m road, generated from
@@ -114,12 +114,12 @@ export const DAILY_RULES_LINE = 'Same road for everyone today · new road at 09:
 
 // ── #400 · the demo's weekly road ─────────────────────────────────────────
 //
-// In the demo, Today's Road becomes "This Week's Road": one road per ISO week
+// In the demo, the Daily Ride becomes the "Weekly Ride": one road per ISO week
 // (keyed by its Monday, see weeklyKey), ridden on Chill with safety on (D10),
 // practice only. The full game is unchanged. Records and practice counts use
 // the Monday's key, so the storage format is the daily one.
 
-export const WEEKLY_NAME = "This Week's Road";
+export const WEEKLY_NAME = 'Weekly Ride';
 export const WEEKLY_DESCRIPTION = 'A new road every week';
 export const WEEKLY_DIFFICULTY = 'chill';
 export const WEEKLY_RULES_LINE = 'Same road for everyone this week · new road every Monday';
@@ -439,7 +439,7 @@ export function buildShareStrip(r, opts = {}) {
   const MEDALS = { gold: '🥇', silver: '🥈', bronze: '🥉' };
 
   // Line 1 — what, when, and who with.
-  let line1 = `Tandemonium · Today's Road · ${shortDate(r.key)}`;
+  let line1 = `Tandemonium · Daily Ride · ${shortDate(r.key)}`;
   if (r.partnerName) line1 += ` with ${r.partnerName}`;
 
   // Line 2 — how it went.

@@ -67,7 +67,7 @@ From partner.steamgames.com/doc/store/assets/standard and /libraryassets:
 | Page background | 1438x810 | `pagebg_1438x810.png` | 0.54 MB | no text, blurred + darkened | ambient |
 | Community icon | 184x184 | `community_icon_184x184.png` | 0.08 MB | n/a | from the pedal icon |
 | Client icon | 32x32 .ico | `client_icon.ico` (+`client_icon_32x32.png`) | 10 KB | n/a | 16/32/48 entries |
-| Screenshots | 1920x1080, at least 5 | `screenshot1..7_1920x1080.png` | 1.1-2.4 MB | gameplay only | upload in this order: 1 the finish at Grandma's (finish cinematic: presents fly to the pile, Grandma at her door), 2 chase cam, the Cyclists leaning through scattering geese, 3 the crash (rag-doll geese, handlebars off), 4 Versus 2 v 2 split screen, 5 local co-op on Today's Road (Georgian pair), 6 the TV lobby (geese backdrop + bike chooser), 7 the start at Your Home (Fancy pair) |
+| Screenshots | 1920x1080, at least 5 | `screenshot1..7_1920x1080.png` | 1.1-2.4 MB | gameplay only | upload in this order: 1 the finish at Grandma's (finish cinematic: presents fly to the pile, Grandma at her door), 2 chase cam, the Cyclists leaning through scattering geese, 3 the crash (rag-doll geese, handlebars off), 4 Versus 2 v 2 split screen, 5 local co-op on the Daily Ride (Georgian pair), 6 the TV lobby (geese backdrop + bike chooser), 7 the start at Your Home (Fancy pair) |
 
 ## Still needs a human
 
@@ -135,6 +135,8 @@ node scripts/reel/steam-art.mjs hero,main       # just these slots (one ride)
 node scripts/reel/steam-art.mjs crash,versus    # just these screenshot sessions (finish chase crash versus daily lobby start)
 SHARP_DIR=<dir with sharp> node scripts/reel/steam-art-compose.mjs
 ```
+
+The crash session (screenshot 3) rides square into a death cone and saves every camera in `CRASH_CAMS` (the game's chase cam plus lower, closer chase angles frozen at the impact frame, the game's 70 degree lens) every `CRASH_STEP` s from `CRASH_START` to `CRASH_END` after impact as `plates/candidates/crash_<cam>_<n>.png`; pick by eye (env: `CRASH_CAMS=l55,r55`, `CRASH_RIDERS=cyclists`, `CRASH_DIFF`, `CRASH_VIGNETTE=on` keeps the red crash vignette). It needs `vendor/rapier.mjs` (`npm run download-vendors`): the capture blocks the CDN, and without Rapier the crash is the canned fall with no rag dolls.
 
 Screenshot sessions are not frame-exact either: re-running one can land a different frame, so look at
 `plates/candidates/` and set `PICK` before composing. Knobs: `PAST` (metres past the line the bike is held, default 2), `SETTLE` (seconds for the presents to

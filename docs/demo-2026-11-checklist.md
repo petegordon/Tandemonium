@@ -14,7 +14,7 @@ cannot be done is written down as "not done, because —" rather than left blank
       `js/race-config.js` and the A-5 preset values stay as documented guesses
       and that fact is noted in the release notes.
 - [ ] All Phase B items merged (B-2 … B-5). B-1 (GDEX) written up.
-- [ ] C-1 dashboard routes deployed; C-2 Today's Road live.
+- [ ] C-1 dashboard routes deployed; C-2 Daily Ride live.
 - [ ] `npm test` green. `npm run smoke`, `smoke:boot`, `smoke:ride`,
       `smoke:crash`, `smoke:records`, `smoke:seed`, `smoke:daily`, `smoke:ctas`
       all pass on the release candidate.
@@ -43,11 +43,11 @@ because the data is not there, write "no data" — do not guess.
 
 ## 4. Content in the demo build
 
-- [ ] Tutorial, Grandma's, Today's Road (practice — the weekly road on Chill),
+- [ ] Tutorial, Grandma's, Daily Ride (practice — the weekly road on Chill),
       Slingshot stages 1-3 and Versus. Map Tourist is full-game only (its card
       is hidden in the demo); anything demo-gated shows a wishlist hint rather
       than a dead lock icon.
-- [ ] Today's Road is practice-only: no ranked runs, no streaks, no share strip,
+- [ ] The Daily Ride is practice-only: no ranked runs, no streaks, no share strip,
       no partners board. Those are Phase D, on the web build.
 - [ ] `?demo=1` is in the demo's launch URL, so `_isDemo` is true and the
       wishlist CTA appears.

@@ -13,9 +13,15 @@ uf-sheet .shell-line b, uf-sheet .shell-line strong { color: var(--uf-color-fg);
 uf-sheet .shell-line uf-controller-glyph { margin: 0 .1em; }
 
 /* A vertical menu of full-width buttons (the pause menu). */
-uf-sheet .shell-menu { display: grid; gap: var(--uf-space-3); width: 100%; }
+/* #576: the sheet body scrolls (overflow: auto), which clipped the focus ring on
+   the buttons' sides and under the last one; the padding keeps it inside. */
+uf-sheet .shell-menu { display: grid; gap: var(--uf-space-3); width: 100%; box-sizing: border-box; padding: 8px; }
 uf-sheet .shell-menu > uf-button { width: 100%; }
-uf-sheet .shell-menu > uf-button[hidden] { display: none; }
+uf-sheet .shell-menu > uf-button[hidden], uf-sheet .shell-menu[hidden] { display: none; }
+/* #576: the ride toggles under the pause menu, two to a row; ON reads in the accent. */
+#pause-toggles { grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); padding-top: var(--uf-space-3); }
+#pause-toggles .pause-state { margin-left: .35em; opacity: .7; }
+#pause-toggles .pause-on .pause-state { color: var(--uf-color-accent); opacity: 1; }
 
 /* Pad glyphs inside buttons and hints show only while a pad drives the menus
    (js/game.js + js/lobby.js toggle body.pad-menus); touch and mouse players
@@ -52,3 +58,34 @@ body.pad-menus .pad-only { display: inline-flex !important; }
   #help-modal #help-modal-inner > h3, #help-modal #help-modal-inner > p { column-span: all; }
   #help-modal .help-section { break-inside: avoid; }
 }
+
+/* #576 · the ride's top strip (speed, distance, time, sync) at TV / Steam size.
+   It was drawn at phone pixel sizes (speed 20px), unreadable from the couch.
+   zoom scales the whole strip together, bars and chips included. Not on touch
+   screens (a big tablet keeps the phone strip). */
+@media (min-width: 1024px) and (pointer: fine), (min-width: 1024px) and (pointer: none) {
+  #hud-dashboard { zoom: 1.5; }
+  /* The strip sits at the left here, so the one-line RANKED / help badge goes up
+     beside it (top centre) instead of under it, clear of the bigger strip. */
+  #ranked-badge, #help-badge { top: 14px; }
+}
+@media (min-width: 1600px) and (pointer: fine), (min-width: 1600px) and (pointer: none) {
+  #hud-dashboard { zoom: 2; }
+}
+@media (min-width: 2400px) and (pointer: fine), (min-width: 2400px) and (pointer: none) {
+  #hud-dashboard { zoom: 2.8; }
+}
+
+/* #578 · Help in the desktop (Steam) app: the phone is a controller there, not
+   the game, so the web's "play on your phone" rows go. */
+html.desktop-app #help-modal .help-web-only { display: none; }
+/* #578 · the ALL and ? badges are text, not SVG: size their letters to the
+   badge (inline 10px / 14px read tiny at TV sizes) and match the SVG badges' box. */
+#help-modal .help-toggle-row svg, #help-modal .help-toggle-row span.help-icon {
+  box-sizing: border-box;
+  /* one badge size for icons and letters (an older TV rule made the icons 90px) */
+  width: calc(var(--uf-size-md) * 2.4) !important; height: calc(var(--uf-size-md) * 2.4) !important;
+  padding: calc(var(--uf-size-md) * 0.45) !important;
+}
+#help-modal .help-toggle-row span.help-icon { font-size: var(--uf-size-lg) !important; line-height: 1; padding: 0 !important; }
+#help-modal .help-toggle-row span.help-icon-all { font-size: var(--uf-size-sm) !important; letter-spacing: .02em; }

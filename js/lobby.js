@@ -62,18 +62,22 @@ import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { steamTypeIdentity } from './controller-overlay-hud.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, steamTypeGlyphIdentity, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
+import { withoutWebHidTwins } from './lobby/join-candidates.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
-import { renderRoomQR } from './lobby/room-qr.js';
+import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
+
+/** #576 · the difficulty a leaderboard row was ridden on. */
+const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -306,7 +310,7 @@ export class Lobby {
         else if (this._activeModal === 'achievements' && this._achievementsSheet) scrollPage(this._achievementsSheet.body, dir);   // #540
       },
     });
-    this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | 'rejoin' | null
+    this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | null
     this._modalBack = null;
     this._gpPrevUp = false;
     this._gpPrevUp = false;
@@ -351,14 +355,16 @@ export class Lobby {
       document.getElementById('btn-versus-join-kb'),
       document.getElementById('btn-versus-controllers'),
       document.getElementById('btn-versus-connect-hid'),
+      document.getElementById('btn-versus-join-phone'),   // #562
       document.getElementById('btn-versus-continue'),
       document.getElementById('btn-back-versus'),
     ];
     this._stepItems.set(this.versusStep, versusItems);
     this._stepCenterItems.set(this.versusStep, versusItems);
     const hostItems = [
+      document.getElementById('btn-host-room-code'),   // #563
       document.getElementById('btn-back-role-host'),
-    ];
+    ].filter(Boolean);
     // Online / Local CHOOSE LEVEL: enabled once there are two players
     // (_refreshHostNext rebuilds this list when one becomes usable).
     this._stepItems.set(this.hostStep, hostItems);
@@ -400,7 +406,6 @@ export class Lobby {
     this._previewOriginalMats = null;
 
     // Leaderboard state
-    this._lbVideo = null;
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
@@ -589,6 +594,7 @@ export class Lobby {
           this.motionActive = true;
           if (this.input) this.input.motionEnabled = true;
           this._setToggleActive('motion', true);
+          this._joystickOffForGyro();
         }
       } else if (reason === 'hid-bound' && !this._motionPermitted) {
         this._motionPermitted = true;
@@ -596,6 +602,7 @@ export class Lobby {
         if (this.input) this.input.motionEnabled = true;
         this._showMotionToggle();
         this._setToggleActive('motion', true);
+        this._joystickOffForGyro();
       }
     });
   }
@@ -770,6 +777,8 @@ export class Lobby {
     } else if (prevStep === this.hostStep) {
       this._stopLocalJoinMonitor();
     }
+    // #563: the host step's "Scan to join" QR is up only while it shows.
+    if (step === this.hostStep || prevStep === this.hostStep) this._syncHostJoinQr();
 
     // Versus join monitor: run only while the team-setup screen is visible.
     // (Level select keeps the joined players but stops the polling loop.)
@@ -781,6 +790,7 @@ export class Lobby {
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
+      if (prevStep !== this.joinStep) this._renderRejoinCards();   // #547
       const leftCol = document.querySelector('.lobby-left-col');
       const rightCol = document.querySelector('.lobby-right-col');
       if (leftCol) leftCol.style.display = 'none';
@@ -998,7 +1008,7 @@ export class Lobby {
     // On a phone, the phone IS the controller: no WebHID pairing (phones have
     // no WebHID) and no "phone as controller" (that's a remote for a big screen).
     if (isMobile) {
-      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone']) {
+      for (const id of ['btn-mode-connect-hid', 'btn-mode-connect-hid-hint', 'btn-mode-phone', 'set-phone', 'btn-host-room-code', 'host-join-qr', 'btn-versus-join-phone']) {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       }
@@ -1025,13 +1035,10 @@ export class Lobby {
       this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER → check for rejoin, then role selection
+    // RIDE TOGETHER → role selection. A recent room is rejoined from JOIN A
+    // RIDE's Rejoin cards (#547), not from a pop-up here.
     document.getElementById('btn-together').addEventListener('click', async () => {
       analytics.trackFirstInput('together');
-      // Check for saved room to rejoin
-      const rejoined = await this._handleRejoinCheck();
-      if (rejoined) return;
-
       await this._requestMotion();
       this._syncMotionState();
       this._pendingMode = 'multiplayer';
@@ -1087,7 +1094,7 @@ export class Lobby {
       if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
       document.getElementById('room-code-display').textContent = '----';
       document.getElementById('room-qr').innerHTML = '';
-      { const tv = /** @type {any} */ (document.getElementById('room-qr-tv')); if (tv) tv.value = ''; }
+      this._hostRoomCode = null;   // #563
       this._showStep(this.roleStep);
     });
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
@@ -1107,8 +1114,26 @@ export class Lobby {
 
     // CAPTAIN (START A RIDE) — open to all players
     document.getElementById('btn-captain').addEventListener('click', async () => {
+      // #563 · on a desktop / TV the host step leads with one "Scan to join"
+      // QR, and the online room opens only when it is wanted: a phone picks
+      // "Play on this phone", or the code button (to type it elsewhere). A
+      // phone captain needs the code for its partner at once, as before.
+      if (!isMobile) {
+        if (this.net) { this.net.destroy(); this.net = null; }
+        this._hostRoomCode = null;
+        document.getElementById('room-code-display').textContent = '----';
+        document.getElementById('room-qr').innerHTML = '';
+        const hostStatus = document.getElementById('host-status');
+        if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
+        this._showStep(this.hostStep);
+        return;
+      }
       this._showStep(this.hostStep);
       this._createRoom();
+    });
+    // #563 · open the online room to type its code on another device.
+    document.getElementById('btn-host-room-code')?.addEventListener('click', () => {
+      if (!this.net && this._currentStep === this.hostStep) this._createRoom();
     });
 
     // STOKER (JOIN A RIDE)
@@ -1471,7 +1496,7 @@ export class Lobby {
 
   /**
    * #400 · the shared road with its identity attached: Today's Road, or in the
-   * demo This Week's Road (rules.weeklyRoad). Any other level comes back as is.
+   * demo Weekly Ride (rules.weeklyRoad). Any other level comes back as is.
    * `key`/`seed` are the captain's when a stoker resolves it (C-2).
    */
   resolveRoadLevel(level, { key, seed } = {}) {
@@ -1834,7 +1859,7 @@ export class Lobby {
       if (!line) return;
       const base = LEVELS.find(l => l.id === card.dataset.levelId);
       if (!base) return;
-      // Same swap as the card builder: in the demo the shared road is This Week's Road.
+      // Same swap as the card builder: in the demo the shared road is the Weekly Ride.
       const level = base.isDaily && this.roomRules().weeklyRoad ? asWeeklyRoad(base) : base;
       // The day line changes after every ride on Today's Road (a practice
       // count, the ranked time), and the cards are built once at boot.
@@ -1864,7 +1889,7 @@ export class Lobby {
     // (two teams, one screen) and a shared daily result means nothing there.
     const isVersus = mode === 'versus';
     // #400: every list offers only what this edition includes; in the demo the
-    // shared road is This Week's Road.
+    // shared road is the Weekly Ride.
     const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
     const levels = LEVELS.filter(l =>
       (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id))
@@ -2624,6 +2649,7 @@ export class Lobby {
           if (this.input) this.input.suppressGamepadLean = true;
         }
       } catch {}
+      if (this.input && this.input.gyroConnected) this._joystickOffForGyro();
       this._setToggleActive('joystick', this.joystickActive);
     }
 
@@ -2847,6 +2873,22 @@ export class Lobby {
     }
   }
 
+  /**
+   * #576 · a pad with a gyro steers by gyro: the stick starts OFF. Only a
+   * default: a rider who has set the Joystick toggle themselves keeps their
+   * choice (tandemonium_joystick in localStorage).
+   */
+  _joystickOffForGyro() {
+    let saved = null;
+    try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
+    if (saved !== null || !this.joystickActive) return;
+    // Never leave a rider with nothing to steer by: only once the gyro is live.
+    if (!this.input || !this.input.motionEnabled) return;
+    this.joystickActive = false;
+    if (this.input) this.input.suppressGamepadLean = true;
+    this._setToggleActive('joystick', false);
+  }
+
   _toggleJoystick() {
     if (this.joystickActive) {
       // Turning off — check if motion is also off
@@ -3061,7 +3103,7 @@ export class Lobby {
       if (e.key !== 'Escape' || e.defaultPrevented) return;
       if (!this.lobbyEl || this.lobbyEl.style.display === 'none') return;
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (document.querySelector('#phone-pad-panel.open')) return;   // the phone panel closes itself
+      if (document.querySelector('.phone-qr-panel.open')) return;   // the phone panel closes itself
       if (document.querySelector('#options-overlay.visible')) return; // Options closes itself (game.js)
       if (this.helpModal && this.helpModal.open) { this._closeHelp(); e.preventDefault(); return; }
       if (this._leaderboardSheet && this._leaderboardSheet.open) { this._closeLeaderboard(); e.preventDefault(); return; }
@@ -3353,7 +3395,6 @@ export class Lobby {
 
   /** The sheet closed (B, Esc, the scrim, its Close, or _closeLeaderboard). */
   _onLeaderboardClosed() {
-    this._stopLeaderboardVideo();
     this._lbClearFocus();
   }
 
@@ -3402,6 +3443,7 @@ export class Lobby {
   _onAchievementsClosed() {
     document.querySelectorAll('#achievements-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
     if (this._achievementDetailOpen()) this._achDetailSheet.close();
+    this._clearAchievementDim();
   }
 
   _lbResetFocus() {
@@ -3450,9 +3492,10 @@ export class Lobby {
   _buildLeaderboardTabs() {
     const mainContainer = document.getElementById('lb-main-tabs');
     const tabs = [
-      { id: 'solo', label: 'Solo' },
-      { id: 'together', label: 'Together' },
-      { id: 'you', label: 'You' },
+      // #576: say what each list is — every rider's rides vs only yours.
+      { id: 'solo', label: 'All Solo Rides' },
+      { id: 'together', label: 'All Together Rides' },
+      { id: 'you', label: 'My Rides' },   // #576: was "You", which read like a third board next to Solo
       { id: 'partners', label: 'Partners' }
     ];
     tabs.forEach(tab => {
@@ -3474,12 +3517,8 @@ export class Lobby {
   _buildSubTabs() {
     const container = document.getElementById('lb-sub-tabs');
     container.innerHTML = '';
-    if (this._lbMainTab === 'partners') {
-      this._stopLeaderboardVideo();
-      document.getElementById('leaderboard-video').style.display = 'none';
-      return;
-    }
-    document.getElementById('leaderboard-video').style.display = '';
+    // #576: no Grandma's-house clip over the board any more (it popped in and out between filters).
+    if (this._lbMainTab === 'partners') return;
     LEVELS.forEach(level => {
       const btn = document.createElement('button');
       btn.className = 'lb-tab' + (level.id === this._lbSubLevel ? ' active' : '');
@@ -3489,7 +3528,6 @@ export class Lobby {
         container.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
         this._lbSubLevel = level.id;
-        this._startLeaderboardVideo(level.id);
         this._renderLeaderboardContent();
       });
       container.appendChild(btn);
@@ -3512,9 +3550,6 @@ export class Lobby {
 
     this._leaderboardSheet.show();
     if (this._leaderboardSheet.body) this._leaderboardSheet.body.scrollTop = 0;
-    if (this._lbMainTab !== 'partners') {
-      this._startLeaderboardVideo(this._lbSubLevel);
-    }
     this._renderLeaderboardContent();
     this._lbResetFocus();
   }
@@ -3526,7 +3561,7 @@ export class Lobby {
 
     if (this._lbMainTab === 'you') {
       // Personal rides (#540: the badges moved to their own Achievements sheet)
-      this._leaderboardSheet.heading = 'Your Rides';
+      this._leaderboardSheet.heading = 'My Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3545,7 +3580,7 @@ export class Lobby {
         }
 
         await this._cacheAvatarUrls(entries.map(e => e.avatar_url));
-        list.innerHTML = this._renderEntries(entries, level, myId);
+        list.innerHTML = this._renderEntries(entries, level, myId, { mine: true });
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
       }
@@ -3572,8 +3607,8 @@ export class Lobby {
         list.innerHTML = '<div class="lb-no-data">Could not load partners</div>';
       }
     } else {
-      // SOLO or TOGETHER — hide achievements, show filtered leaderboard
-      this._leaderboardSheet.heading = 'Leaderboard';
+      // SOLO or TOGETHER — every rider's rides, fastest first
+      this._leaderboardSheet.heading = this._lbMainTab === 'solo' ? 'All Solo Rides' : 'All Together Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3595,11 +3630,13 @@ export class Lobby {
     }
   }
 
-  _renderEntries(entries, level, myId) {
+  /** `mine`: the My Rides list — every row is you, so no You tag and no rank (#576). */
+  _renderEntries(entries, level, myId, { mine = false } = {}) {
     const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
-      const isYou = myId && e.user_id === myId;
+      const isYou = !mine && myId && e.user_id === myId;
+      const diffHtml = DIFF_LABEL[e.difficulty] ? '<span class="lb-diff">' + DIFF_LABEL[e.difficulty] + '</span>' : '';
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
 
@@ -3629,10 +3666,11 @@ export class Lobby {
         : '';
 
       return '<div class="lb-entry' + youClass + '">' +
-        '<span class="lb-rank">' + (i + 1) + '</span>' +
+        (mine ? '' : '<span class="lb-rank">' + (i + 1) + '</span>') +
         avatar +
         '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
         modeHtml +
+        diffHtml +
         collectHtml +
         '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
         dateHtml +
@@ -3739,8 +3777,7 @@ export class Lobby {
 
   /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
   _onAchievementDetailClosed() {
-    const body = this._achievementsSheet.body;
-    if (body) { body.getAnimations().forEach(a => a.cancel()); body.style.filter = ''; }
+    this._clearAchievementDim();
     const lift = document.getElementById('ach-lift');
     if (lift) lift.remove();
     document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
@@ -3750,6 +3787,15 @@ export class Lobby {
     const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
     this._achResetFocus(tile);
     if (tile) tile.focus({ preventScroll: true });
+  }
+
+  /** #576: undim the grid (the card closed, or the grid has the pad with no card and no lift on the way). */
+  _clearAchievementDim() {
+    const body = this._achievementsSheet && this._achievementsSheet.body;
+    if (!body) return;
+    body.getAnimations().forEach(a => a.cancel());
+    body.style.filter = '';
+    body.classList.remove('ach-dim');
   }
 
   _achievementSectionTitle(sectionId) {
@@ -3844,9 +3890,10 @@ export class Lobby {
       { transform: 'translate(0, 0) scale(1)', opacity: 1 },
       { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + S + ')', opacity: 0.35 },
     ], { duration: 420, easing: 'cubic-bezier(0.65, 0, 0.35, 1)', fill: 'forwards' });
-    if (body) body.animate([{ filter: 'blur(0) brightness(1)' }, { filter: 'blur(6px) brightness(0.5)' }], { duration: 420, fill: 'forwards' });
+    if (body) body.classList.add('ach-dim');
+    this._achLifting = true;
     let fired = false;
-    const finish = () => { if (fired) return; fired = true; c.remove(); tile.classList.remove('lifting'); done(); };
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
     anim.finished.then(finish, finish);
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
@@ -3901,128 +3948,6 @@ export class Lobby {
     const d = new Date(isoStr);
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return months[d.getMonth()] + ' ' + d.getDate();
-  }
-
-  _startLeaderboardVideo(levelId) {
-    this._stopLeaderboardVideo();
-
-    const videoConfigs = {
-      grandma: {
-        src: 'assets/grandma_house_chromakey.mp4',
-        maskSrc: 'assets/grandma_house_chromakey_mask.png',
-        trimStart: 0.00, trimEnd: 5.50,
-        threshold: -0.02, smoothness: 0.110
-      }
-    };
-    const cfg = videoConfigs[levelId];
-    const canvas = document.getElementById('leaderboard-video');
-    if (!cfg) {
-      canvas.style.display = 'none';
-      return;
-    }
-
-    canvas.style.display = '';
-
-    const video = document.createElement('video');
-    video.src = cfg.src;
-    video.loop = false;
-    video.muted = true;
-    video.playsInline = true;
-    video.play().catch(() => {});
-    video.addEventListener('timeupdate', () => {
-      if (video.currentTime > cfg.trimEnd) {
-        video.currentTime = cfg.trimStart;
-        video.play().catch(() => {});
-      }
-    });
-
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(canvas.width, canvas.height);
-    renderer.setClearColor(0x000000, 0);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    camera.position.z = 2;
-
-    const videoTexture = new THREE.VideoTexture(video);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-
-    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-    fallbackMask.needsUpdate = true;
-    const maskUniform = { value: fallbackMask };
-    if (cfg.maskSrc) {
-      new THREE.TextureLoader().load(
-        cfg.maskSrc,
-        (tex) => { maskUniform.value = tex; },
-        undefined,
-        () => {}
-      );
-    }
-
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        map: { value: videoTexture },
-        maskTex: maskUniform,
-        threshold: { value: cfg.threshold },
-        smoothness: { value: cfg.smoothness }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        uniform sampler2D map;
-        uniform sampler2D maskTex;
-        uniform float threshold;
-        uniform float smoothness;
-        varying vec2 vUv;
-        void main() {
-          float mask = texture2D(maskTex, vUv).r;
-          if (mask > 0.5) discard;
-          vec4 texColor = texture2D(map, vUv);
-          float greenDom = texColor.g - max(texColor.r, texColor.b);
-          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
-          if (alpha < 0.01) discard;
-          vec3 col = texColor.rgb;
-          float spillMax = 0.5 * (col.r + col.b) + 0.05;
-          col.g = min(col.g, spillMax);
-          gl_FragColor = vec4(col, alpha);
-        }`,
-      transparent: true,
-      depthWrite: false
-    });
-
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(plane);
-
-    let animId = 0;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    this._lbVideo = { video, renderer, videoTexture, mat, scene, animId };
-  }
-
-  _stopLeaderboardVideo() {
-    if (!this._lbVideo) return;
-    const v = this._lbVideo;
-    cancelAnimationFrame(v.animId);
-    v.video.pause();
-    v.video.src = '';
-    v.videoTexture.dispose();
-    if (v.scene) {
-      v.scene.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-      });
-    }
-    v.mat.dispose();
-    v.renderer.dispose();
-    this._lbVideo = null;
   }
 
   _checkPermissionStates() {
@@ -4202,7 +4127,7 @@ export class Lobby {
       if (startBtn) startBtn.disabled = false;
     }
     if (expired) {
-      showInfoToast('📅', 'That road has expired', 'Here’s today’s road instead.');
+      showInfoToast('📅', 'That road has expired', 'Here’s today’s Daily Ride instead.');
     }
     analytics.trackEvent('daily_link', { key: param, expired });
   }
@@ -4236,6 +4161,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
+    this._hostRoomCode = null;   // #563: set once the relay has us in the room
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
@@ -4261,6 +4187,8 @@ export class Lobby {
     this.net.onRoomJoined = () => {
       if (!this._netSession.isCurrent(netEpoch)) return;
       codeEl.textContent = code;
+      this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
+      this._syncHostJoinQr();
       this._updateCardHeader(this._currentStep);
       statusEl.textContent = 'Waiting for partner...';
 
@@ -4428,67 +4356,51 @@ export class Lobby {
   // Recent-room localStorage now lives in js/lobby/room-store.js
   // (this._roomStore: .save() / .clear() / .getRecent()). (#318 Step 3)
 
-  _showRecentRoomsPrompt(rooms) {
-    const overlay = document.createElement('div');
-    overlay.id = 'rejoin-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-
+  /**
+   * JOIN A RIDE's "Rejoin a recent ride" row (#547): one kit card per room
+   * from the last 5 minutes (front seat or back seat), newest first. A pick
+   * rejoins in the seat you had (_rejoinRoom). No recent rooms, no row.
+   * Returns the cards so the step's focus scope can lead with them.
+   */
+  _renderRejoinCards() {
+    const wrap = document.getElementById('join-rejoin');
+    const list = document.getElementById('join-rejoin-cards');
+    if (!wrap || !list) return [];
+    const rooms = this._roomStore.getRecent()
+      .slice().sort((x, y) => y.timestamp - x.timestamp).slice(0, 3);
+    list.textContent = '';
+    wrap.hidden = rooms.length === 0;
     const now = Date.now();
-    const cardsHtml = rooms.map((r, i) => {
-      const roleName = r.role === 'captain' ? 'Captain' : 'Stoker';
-      const agoSec = Math.floor((now - r.timestamp) / 1000);
-      const agoText = agoSec < 60 ? 'just now' : Math.floor(agoSec / 60) + 'm ago';
-      const partnerText = r.partnerName ? 'with ' + this._escapeHtml(r.partnerName) + ' · ' : '';
-      const dimStyle = agoSec > 180 ? 'opacity:0.6;' : '';
-      return '<button class="rejoin-room-card" data-idx="' + i + '" style="' +
-        'display:block;width:100%;padding:12px 16px;border-radius:10px;border:1.5px solid rgba(255,255,255,0.15);' +
-        'background:rgba(255,255,255,0.06);color:#fff;cursor:pointer;text-align:left;font-family:inherit;' +
-        'transition:border-color 0.2s,background 0.2s;' + dimStyle + '">' +
-        '<div style="font-size:1em;font-weight:700;margin-bottom:2px;">' +
-          this._escapeHtml(r.roomCode) + '  ·  ' + roleName +
-        '</div>' +
-        '<div style="font-size:0.8em;color:rgba(255,255,255,0.5);">' + partnerText + agoText + '</div>' +
-      '</button>';
-    }).join('');
-
-    overlay.innerHTML =
-      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;width:90%;text-align:center;color:#fff;font-family:inherit;">' +
-        '<div style="font-size:1.1em;font-weight:700;margin-bottom:14px;">Recent Rooms</div>' +
-        '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">' + cardsHtml + '</div>' +
-        '<button id="btn-rejoin-new" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;width:100%;">New Room</button>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    // Default gamepad focus on first card
-    const cards = overlay.querySelectorAll('.rejoin-room-card');
-    if (cards.length > 0) cards[0].classList.add('gamepad-focus');
-
-    return new Promise((resolve) => {
-      cards.forEach((card) => {
-        card.addEventListener('click', () => {
-          const idx = parseInt(card.dataset.idx, 10);
-          overlay.remove();
-          resolve(rooms[idx]);
-        });
-      });
-      document.getElementById('btn-rejoin-new').addEventListener('click', () => {
-        overlay.remove();
-        resolve(null);
-      });
+    return rooms.map((r) => {
+      const code = String(r.roomCode || '').replace(/^TNDM-/, '');
+      const mins = Math.floor((now - r.timestamp) / 60000);
+      const card = /** @type {any} */ (document.createElement('uf-card'));
+      card.className = 'join-rejoin-card';
+      card.dataset.room = r.roomCode;
+      card.setAttribute('heading', 'Rejoin ' + code);
+      card.setAttribute('description', r.partnerName ? 'with ' + r.partnerName : (r.role === 'captain' ? 'Your room' : 'Your partner’s room'));
+      card.setAttribute('footer', (r.role === 'captain' ? 'Front seat' : 'Back seat') + ' · ' + (mins < 1 ? 'just now' : mins + ' min ago'));
+      card.addEventListener('click', () => this._rejoinRoom(r));
+      list.appendChild(card);
+      return card;
     });
   }
 
-  async _handleRejoinCheck() {
-    const rooms = this._roomStore.getRecent();
-    if (rooms.length === 0) return false;
+  /** The Rejoin cards currently shown on JOIN A RIDE (#547). */
+  _rejoinCards() {
+    const wrap = document.getElementById('join-rejoin');
+    if (!wrap || wrap.hidden) return [];
+    return Array.from(wrap.querySelectorAll('.join-rejoin-card'));
+  }
 
-    const selected = await this._showRecentRoomsPrompt(rooms);
-    if (!selected) return false; // User chose "New Room"
-
+  /** Rejoin a recent room in the seat you had (#547; was _handleRejoinCheck). */
+  async _rejoinRoom(saved) {
+    if (!saved || this._rejoining) return true;
+    this._rejoining = true;
+    setTimeout(() => { this._rejoining = false; }, 1500);
     // Rejoin: skip role selection, go straight to connection
     await this._requestMotion();
     this._pendingMode = 'multiplayer';
-    const saved = selected;
 
     if (saved.role === 'captain') {
       this._showStep(this.hostStep);
@@ -4544,6 +4456,11 @@ export class Lobby {
       this.net.enterRoom(saved.roomCode, 'captain');
     } else {
       this._showStep(this.joinStep);
+      // #547: already on JOIN A RIDE; show the status line, not the row or spinners.
+      const row = document.getElementById('join-rejoin');
+      if (row) row.hidden = true;
+      if (this._spinnerActive) this._showSpinners(false);
+      this._applyStepSpatialFocus(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
       const netEpoch = this._netSession.epoch;
@@ -4966,11 +4883,69 @@ export class Lobby {
     this._renderHostSeats(cands);
     const status = document.getElementById('host-status');
     if (status && local) { status.textContent = 'Online room closed: riding on this screen'; status.className = 'conn-status'; }
-    const items = [online && onBtn, local && locBtn, back].filter(Boolean);
+    // #563: the "Scan to join" QR while the stoker seat is open, and the room
+    // code button until the online room is open.
+    this._syncHostJoinQr();
+    const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
+    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
     if (this._currentStep === step) this._applyStepSpatialFocus(step);
+  }
+
+  /**
+   * #563 · the host step's one "Scan to join" QR (desktop / TV). Each phone
+   * that scans it chooses: Control the TV (a phone seat on the shared pad
+   * room, #562) or Play on this phone (the online partner: the RIDE TOGETHER
+   * room opens only then, openRoomForPhone). Up while the partner seat is
+   * free; the seats it offers close when it goes. Cheap to call often.
+   */
+  _syncHostJoinQr() {
+    if (isMobile) return;
+    const step = this.hostStep;
+    if (!step) return;
+    const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
+    const local = !online && !!(this._localSeatedOnHost && this._localP2InputManager);
+    const on = this._currentStep === step && !online && !local;
+    const pool = this.phonePool;
+    if (this.padRoom) this.padRoom.allowPlay = on;
+    // Only the offer this step made is withdrawn (versus has its own panel).
+    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true); }
+    else if (pool && !on && this._hostOffering) { this._hostOffering = false; pool.setOffering(false); }
+    const qr = /** @type {any} */ (document.getElementById('host-join-qr'));
+    if (qr) {
+      const link = on && pool ? (pool.joinLink({ play: true }) || '') : '';
+      if (qr.value !== link) qr.value = link;
+      const caption = !on ? ''
+        : !link ? (pool && pool.joinedEntries().length >= 3 ? 'Every phone seat is taken' : 'Opening…')
+        : this._hostRoomCode ? 'Scan with your phone, or type this code on another device:' : 'Scan with your phone';
+      if (qr.caption !== caption) qr.caption = caption;
+    }
+    step.classList.toggle('host-join-off', !on);
+    step.classList.toggle('host-room-open', !!this._hostRoomCode);
+    const codeBtn = document.getElementById('btn-host-room-code');
+    if (codeBtn) codeBtn.style.display = on && !this._hostRoomCode ? '' : 'none';
+  }
+
+  /**
+   * #563 · a phone on the host step's QR chose "Play on this phone": open the
+   * RIDE TOGETHER room now (or reuse the one already open) and hand back its
+   * code and join link. Null when that isn't on offer any more (another
+   * screen, the partner seat taken) or the room didn't open in time.
+   * @returns {Promise<{code: string, url: string}|null>}
+   */
+  async openRoomForPhone() {
+    const allowed = () => !isMobile && this._currentStep === this.hostStep
+      && !(this.net && this.net.connected) && !this._localSeatedOnHost;
+    if (!allowed()) return null;
+    if (!this._hostRoomCode && !this.net) this._createRoom();
+    for (const t0 = Date.now(); !this._hostRoomCode && Date.now() - t0 < 15000;) {
+      await new Promise((r) => setTimeout(r, 150));
+      if (!allowed() || !this.net) return null;
+    }
+    const code = this._hostRoomCode;
+    return code ? { code, url: joinUrl(code) } : null;
   }
 
   _handleRoomMessage(profile) {
@@ -5128,7 +5103,7 @@ export class Lobby {
     this._lastLevelRefused = profile.levelId || '';   // read by smoke:tourist
     if (profile.reason === 'demo') {
       showInfoToast('🔒', 'Your partner is on the demo',
-        'They can ride the Tutorial, Grandma’s House and This Week’s Road with you.');
+        'They can ride the Tutorial, Grandma’s House and the Weekly Ride with you.');
     } else {
       showInfoToast('🔒', 'Your partner can’t ride that one', 'Pick another level to ride together.');
     }
@@ -5240,6 +5215,30 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      // #578 · a seated local Player 2 presses B on their own pad to get up.
+      // Primed true on the seat's first frame so the press that joined (if it
+      // was B) doesn't unseat them straight away.
+      if (this._localSeatedOnHost && this._localP2Type === 'gamepad' && this._localP2InputManager) {
+        const im = this._localP2InputManager;
+        if (typeof im.pollGamepad === 'function') im.pollGamepad();
+        const p2gp = im.getGamepadState ? im.getGamepadState() : null;
+        const bIdx = im._gpSwapAB ? 0 : 1;
+        const bDown = !!(p2gp && p2gp.buttons && p2gp.buttons[bIdx] && p2gp.buttons[bIdx].pressed);
+        const prevB = this._localP2PrevB === undefined ? true : this._localP2PrevB;
+        this._localP2PrevB = bDown;
+        if (bDown && !prevB) {
+          this._localP2PrevB = undefined;
+          this._leaveLocalP2('stood up (B)');
+          // The B is still down: no pad joins again until it lets go.
+          this._localP2APrev = true;
+          for (const k of this._versusPrevButtons.keys()) if (k.startsWith('local:')) this._versusPrevButtons.set(k, { any: true });
+          this._refreshHostNext();
+          this._localJoinMonitorRAF = requestAnimationFrame(tick);
+          return;
+        }
+      } else {
+        this._localP2PrevB = undefined;
+      }
       // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
       const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
       for (const c of candidates) {
@@ -5252,7 +5251,7 @@ export class Lobby {
         if (seatOpen && any && !prev.any) {
           this._versusPrevButtons.set(key, { any });
           this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
-          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
+          this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
           // Desktop/TV: still on this step with Player 2 seated; keep watching.
           if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
           return;
@@ -5415,6 +5414,9 @@ export class Lobby {
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
               { slotId: state.slotId, steamHandle: state.steamHandle });
+            // #578: desktop/TV stays on this step with Player 2 seated; keep
+            // watching (their B stands them up). This path used to stop the loop.
+            if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
             return;
           }
           if (!aPressed) this._localP2APrev = false;
@@ -5859,6 +5861,7 @@ export class Lobby {
   _leaveLocalP2(reason) {
     const im = this._localP2InputManager;
     const slot = im && im._slot;
+    this._releasePhone(im);   // #562: a phone goes back to the join list
     if (slot && slot.id !== 'P1' && this.controllerManager) {
       this.controllerManager.releaseSlotToPool(slot.id);
     }
@@ -5959,7 +5962,12 @@ export class Lobby {
       try { this.net.destroy(); } catch (e) {}
       this.net = null;
     }
-    if (sourceType === 'gamepad') {
+    if (sourceType === 'gamepad' && opts.phone) {
+      // #562 · a phone: its own InputManager is Player 2's. It is "connected"
+      // while the phone is, so the drop pause treats it like a pad.
+      this._localP2InputManager = opts.phone.attach('Player 2');
+      this._localP2Type = 'gamepad';
+    } else if (sourceType === 'gamepad') {
       // Seat the pad now, in the slot the detection found it in (a manager
       // claim may already have put it in P2..P4), else P2. Seating explicitly
       // — rather than waiting for the slot to claim on first input — means a
@@ -6071,10 +6079,10 @@ export class Lobby {
   _versusP1Descriptor() {
     const inp = this.input;
     if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
-    if (inp._steamInputActive) {
-      const entry = inp._selectedSteamEntry();
-      return { type: 'gamepad', name: this._prettySteamType(entry?.type) };
-    }
+    // Named from Steam only when P1 rides through Steam Input; a P1 on a
+    // WebHID pad is named by that pad even while Steam lists other controllers.
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam) return { type: 'gamepad', name: this._prettySteamType(p1Steam.type) };
     if (inp.gamepadConnected) {
       const slot = inp._slot;
       if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };
@@ -6157,13 +6165,13 @@ export class Lobby {
       }).catch(() => {});
     }
 
-    // P1 auto-joins Team A. If Steam Input is active, pin P1 to the first
-    // captured controller so a joiner can't bind the same handle.
+    // P1 auto-joins Team A. If P1 rides through Steam Input, pin it to that
+    // captured controller so a joiner can't bind the same handle. A P1 on a
+    // live WebHID pad is NOT pinned: the first snapshot entry is then some
+    // other player's controller (a DualSense under Steam, #581).
     const p1 = this._versusP1Descriptor();
-    if (this.input && this.input._steamInputActive) {
-      const entry = this.input._selectedSteamEntry();
-      if (entry) this.input.steamInputHandle = entry.handle;
-    }
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam && this.input) this.input.steamInputHandle = p1Steam.handle;
     this._versusPlayers.push({
       n: 1,
       type: p1.type,
@@ -6205,6 +6213,7 @@ export class Lobby {
     if (!p || p.slotId === 'P1' || p.input === this.input) return;
     this._versusPlayers = this._versusPlayers.filter(x => x !== p);
     if (p.input) p.input.steamInputHandle = null;
+    this._releasePhone(p.input);   // #562
     if (p.type === 'gamepad' && p.slotId) this.controllerManager?.releaseSlotToPool(p.slotId);
     this._versusPrevButtons.delete('member:' + p.n);
     this._versusLastCardsKey = null;
@@ -6220,7 +6229,8 @@ export class Lobby {
       if (this.input.gamepadIndex !== null) owned.indices.add(this.input.gamepadIndex);
       if (this.input._slot?.hidDevice) owned.devices.add(this.input._slot.hidDevice);
       if (this.input.steamInputHandle != null) owned.handles.add(this.input.steamInputHandle);
-      if (this.input._steamInputActive) { const e = this.input._selectedSteamEntry(); if (e) owned.handles.add(e.handle); }
+      // Steam entry [0] is P1's only while P1 rides through Steam (#581).
+      const e = this._p1SteamEntry(); if (e) owned.handles.add(e.handle);
     }
     return this._detectJoinCandidates(pads, owned);
   }
@@ -6279,7 +6289,7 @@ export class Lobby {
       sto._wired = true;
       sto.addEventListener('click', () => {
         const c = (this._detectLocalJoinCandidates() || [])[0];
-        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name });
+        if (c) this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry });
       });
     }
   }
@@ -6298,7 +6308,7 @@ export class Lobby {
       b.className = 'lobby-btn-p2-gp';
       b.setAttribute('data-key', c.key);
       b.innerHTML = `<span class="btn-local-join-main">JOIN AS PLAYER 2</span><span class="btn-local-join-padname">${esc(c.name)}</span><span class="btn-local-join-hint">CONNECTED · press any button on it, or click</span>`;
-      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name }));
+      b.addEventListener('click', () => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, steamHandle: c.handle, name: c.name, phone: c.entry }));
       wrap.appendChild(b);
     }
     const detectedEl = document.getElementById('local-join-detected');
@@ -6313,6 +6323,7 @@ export class Lobby {
     for (const p of this._versusPlayers) {
       // Unbind Steam handles so the InputManager defaults revert.
       if (p.input) p.input.steamInputHandle = null;
+      this._releasePhone(p.input);   // #562
       if (p.slotId === 'P1' || p.type !== 'gamepad' || !p.slotId) continue;
       // Return HID entries to the pool cleanly so re-entering the screen
       // (or co-op) can claim them again.
@@ -6475,11 +6486,11 @@ export class Lobby {
       if (slot) owned.slotIds.add(slot.id);
       if (p.input.gamepadIndex !== null) owned.indices.add(p.input.gamepadIndex);
     }
-    // P1 unpinned (legacy default = first entry) still owns Steam entry [0].
-    if (this.input && this.input._steamInputActive) {
-      const p1Entry = this.input._selectedSteamEntry();
-      if (p1Entry && p1 && p1.type === 'gamepad') owned.handles.add(p1Entry.handle);
-    }
+    // P1 unpinned (legacy default = first entry) still owns Steam entry [0] —
+    // but only while P1 actually rides through Steam. A P1 on a WebHID Steam
+    // Controller doesn't own the DualSense Steam happens to list first (#581).
+    const p1Steam = this._p1SteamEntry();
+    if (p1Steam && p1 && p1.type === 'gamepad') owned.handles.add(p1Steam.handle);
     return this._detectJoinCandidates(pads, owned);
   }
 
@@ -6495,36 +6506,32 @@ export class Lobby {
   _detectJoinCandidates(pads, owned) {
     const out = [];
     const mgr = this.controllerManager;
-    // Steam Input active → snapshot handles are the truth.
-    if (this.input && this.input._steamInputActive) {
-      const ownedHandles = owned.handles;
-      for (const c of this.input._steamInputSnapshot) {
-        if (ownedHandles.has(c.handle)) continue;
-        out.push({
-          kind: 'steam',
-          key: 'steam:' + c.handle,
-          handle: c.handle,
-          name: this._prettySteamType(c.type),
-          pollGp: this._steamEntryToPollGp(c),
-        });
-      }
-      return out; // all live candidates — join-time logic enforces seats
+    // #562 · joined phones that aren't seated: controllers like any other.
+    // The entry carries a standard-mapping synthetic, so the screens poll it
+    // exactly as they poll a pad.
+    for (const entry of this.phonePool ? this.phonePool.presentableEntries() : []) {
+      out.push({ kind: 'phone', key: 'phone:' + entry.n, entry, name: entry.identity.name, pollGp: entry.synthetic });
     }
+    const steamActive = !!(this.input && this.input._steamInputActive);
     const ownedDevices = owned.devices;
     const ownedIndices = owned.indices;
     const ownedSlotIds = owned.slotIds;
-    // Gamepad API pads.
-    for (const gp of pads) {
-      if (!gp || ownedIndices.has(gp.index)) continue;
-      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-      out.push({
-        kind: 'gamepad',
-        key: 'gp:' + gp.index,
-        gpIndex: gp.index,
-        gp,
-        name: this._prettyGamepadName(gp.id),
-        pollGp: gp,
-      });
+    // Gamepad API pads. Under Steam every captured pad also reaches Chromium
+    // as a virtual XInput device (#362) — the snapshot entry below is its
+    // card, so the twins are skipped while Steam Input is active.
+    if (!steamActive) {
+      for (const gp of pads) {
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
+        out.push({
+          kind: 'gamepad',
+          key: 'gp:' + gp.index,
+          gpIndex: gp.index,
+          gp,
+          name: this._prettyGamepadName(gp.id),
+          pollGp: gp,
+        });
+      }
     }
 
     if (mgr) {
@@ -6567,6 +6574,26 @@ export class Lobby {
           slotId: s.id,
           name: prettyHidName(s.hidDevice, s.controllerLabel),
           pollGp: s.synthetic,
+        });
+      }
+    }
+    // Steam Input snapshot handles — minus the pads already streaming on
+    // WebHID (seated, or joinable above). WebHID wins (#581): under a Steam
+    // launch the same DualSense is in the snapshot AND the pool, and the
+    // Steam entry's join press is the IGA `Confirm` action, which the shipped
+    // DualSense binding (an XInput template) never fires. Offering that entry
+    // used to hide the WebHID card whose ✕ actually lands.
+    if (steamActive) {
+      const ownedHandles = owned.handles;
+      const hidDevices = [...ownedDevices, ...out.filter((c) => c.kind === 'hid').map((c) => c.device)];
+      for (const c of withoutWebHidTwins(this.input._steamInputSnapshot, hidDevices)) {
+        if (ownedHandles.has(c.handle)) continue;
+        out.push({
+          kind: 'steam',
+          key: 'steam:' + c.handle,
+          handle: c.handle,
+          name: this._prettySteamType(c.type),
+          pollGp: this._steamEntryToPollGp(c),
         });
       }
     }
@@ -6658,7 +6685,12 @@ export class Lobby {
     let slotId = null;
     let gpIndex = null;
 
-    if (c.kind === 'steam') {
+    if (c.kind === 'phone') {
+      // #562 · a phone brings its own InputManager; no slot. It never takes
+      // over a keyboard Player 1 (that seat is bound to slot P1).
+      if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
+      input = c.entry.attach();
+    } else if (c.kind === 'steam') {
       if (!seatsLeft) { console.log(`[versus] join ignored (roster full): ${c.name}`); return; }
       input = new InputManager({
         enableKeyboard: false,
@@ -6741,6 +6773,7 @@ export class Lobby {
       input,
     });
     this._versusPlayers.sort((a, b) => a.n - b.n);
+    if (c.kind === 'phone') c.entry.host.setLabel('Player ' + n);
     console.log(`[versus] ${c.name} joined as player ${n} (${c.kind}${slotId ? ', slot ' + slotId : ''})`);
     analytics.trackEvent('versus_player_joined', {
       source: c.kind,
@@ -6869,8 +6902,17 @@ export class Lobby {
    * versus detection knows about it: a manager slot, a Gamepad-API pad, a
    * WebHID device, a Steam Input handle, or the keyboard.
    */
+  /** #562 · a seat gave its phone back: it is a free controller again. */
+  _releasePhone(input) {
+    const e = this.phonePool && input && input.remoteOnly ? this.phonePool.entryForInput(input) : null;
+    if (e) e.release();
+  }
+
   _versusIdentity(x) {
     if (x.type === 'keyboard') return KEYBOARD_IDENTITY;
+    // #562 · a phone (a candidate, or a seat riding with one): generic prompts.
+    const phone = x.kind === 'phone' ? x.entry : (x.input && x.input.remoteOnly && this.phonePool ? this.phonePool.entryForInput(x.input) : null);
+    if (phone) return identityOf(null, phone.identity.name);
     if (x.type === 'bot') return identityOf(null, 'Bot');
     if (x.kind === 'gamepad' && x.gp) return identifyGamepadId(x.gp.id);
     if (x.kind === 'hid' && x.device) return hidDeviceIdentity(x.device) || identifyHidDevice(x.device);
@@ -7353,6 +7395,8 @@ export class Lobby {
     if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
       this._lastBarSync = nowSync;
       this._syncSystemBar();
+      // #576: a gyro that shows up late (Steam Input, a later HID grant) still turns the stick default off.
+      if (this.joystickActive && this.input && this.input.gyroConnected) this._joystickOffForGyro();
     }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
@@ -7366,7 +7410,7 @@ export class Lobby {
 
     // ...or while the phone QR panel is on top (it takes B / Start itself);
     // the next frame here re-primes, so the closing press isn't reused.
-    if (document.getElementById('phone-pad-panel')?.classList.contains('open')) return;
+    if (document.querySelector('.phone-qr-panel.open')) return;
 
     // Don't process lobby navigation while options overlay is open
     const optOverlay = document.getElementById('options-overlay');
@@ -7438,6 +7482,22 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
+    // #576 · Today's Road chooser (RANKED RUN / PRACTICE / Back) over the levels
+    // step: the pad moves between its buttons and A picks; B is Back. It had no
+    // branch here, so the pad kept driving the step underneath it.
+    const dailyOverlay = document.getElementById('daily-mode-overlay');
+    if (dailyOverlay && dailyOverlay.classList.contains('visible')) {
+      if (this._activeModal !== 'daily') {
+        this._activeModal = 'daily';
+        this._modalBack = () => dailyOverlay.classList.remove('visible');
+        const items = ['btn-daily-ranked', 'btn-daily-practice', 'btn-daily-cancel']
+          .map((id) => document.getElementById(id))
+          .filter((el) => el && !el.disabled && !el.hasAttribute('disabled'));
+        this._modalFocus.setSpatial(items, items[0]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
     // #540: an achievement's detail card over the leaderboard — only its Close
     // to focus; B closes it and the grid gets the pad back (uf-sheet:close).
     if (this._achievementDetailOpen()) {
@@ -7454,6 +7514,8 @@ export class Lobby {
     // set; the right stick scrolls, d-pad past the last row scrolls (onEdge).
     if (this._achievementsSheet && this._achievementsSheet.open) {
       scrollWithStick(this._achievementsSheet.body, gp.axes[3]);
+      // #576: no card open and no badge lifting, so nothing should dim the grid.
+      if (!this._achLifting && this._achievementsSheet.body.classList.contains('ach-dim')) this._clearAchievementDim();
       if (this._activeModal !== 'achievements') this._achResetFocus();
       else this._modalFocus.refreshSpatial(this._achFocusables());
       this._modalFocus.poll();
@@ -7491,20 +7553,6 @@ export class Lobby {
       this._gpPrevUp = up; this._gpPrevDown = down;
       this._gpPrevLeft = left; this._gpPrevRight = right;
       this._gpPrevA = a; this._gpPrevB = b;
-      return;
-    }
-
-    // Recent rooms popup: navigate room cards + New Room button. B = New Room.
-    const rejoinOverlay = document.getElementById('rejoin-overlay');
-    if (rejoinOverlay) {
-      const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
-      if (items.length === 0) { return; }
-      if (this._activeModal !== 'rejoin') {
-        this._activeModal = 'rejoin';
-        this._modalBack = () => { const n = document.getElementById('btn-rejoin-new'); if (n) n.click(); };
-        this._modalFocus.setItems(items);
-      }
-      this._modalFocus.poll();
       return;
     }
 
@@ -7630,7 +7678,9 @@ export class Lobby {
       // Desktop join step: the keypad's keys + Delete / Join are the scope.
       const tvJoin = step === this.joinStep && document.getElementById('join-tv');
       const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
-      const centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+      let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+      // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
+      if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
       this._modeColumns[1] = centerItems;
       const defaultEl = this._stepPrimaryFocus(step, centerItems);
       this._stepFocus.setSpatial(this._stepNavItems(), defaultEl);

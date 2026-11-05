@@ -100,6 +100,7 @@ import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
+import { installPhonePoolUI } from './remote/phone-pool-ui.js'; // more phones for co-op / versus (#562)
 
 // #421 · game states where a phone remote shows its pedals (else its menu pad).
 const PHONE_RIDE_STATES = new Set(['countdown', 'calibrating', 'playing', 'finishCinematic', 'versusCinematic']);
@@ -319,6 +320,18 @@ class Game {
       },
     });
     this._phonePadState = null;
+    // #562 · more phones: the co-op host step's "Scan to join" QR and the
+    // versus screen's "Use your phone as a controller". They are seats 2..4 of
+    // Player 1's pad room (one relay room, one QR for every phone). Each joined
+    // phone is a controller with its own InputManager; a seat that takes it
+    // rides with it. Its Pause pauses, like Player 1's phone.
+    this.phonePool = installPhonePoolUI({
+      room: this.phonePad,
+      onChange: () => this.lobby?._syncHostJoinQr?.(),
+      makeInput: () => new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false, remoteOnly: true }),
+      p1Input: this.input,
+      onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
+    });
 
     // Controller overlay — live 3D tiles of each rider's pad (C, or the quick
     // menu's CONTROLLERS entry). Reads the same slots the InputManagers do; the
@@ -582,6 +595,12 @@ class Game {
     this._onTap('btn-pause-restart', () => { this._closePause('restart'); document.getElementById('reset-btn').click(); });
     this._onTap('btn-pause-settings', () => this._openOptions());   // over the pause; closing it re-focuses the menu
     this._onTap('btn-pause-help', () => this._openHelpModal());
+    // #576 · the ride toggles from a pad: they flip the hidden side buttons (the
+    // single source of truth) and stay in the menu so the new ON / OFF shows.
+    this._onTap('btn-pause-safety', () => { this.safetyBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-speed', () => { this.speedBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-assist', () => { this.assistBtn.click(); this._syncPauseToggles(); });
+    this._onTap('btn-pause-clip', () => { this._closePause('clip'); this.recorder.saveClip(); });
     this._onTap('btn-pause-end', () => {
       // END RIDE = the ride's own LOBBY / ROOM button (the ranked-run confirm lives there).
       const wasPaused = !!this._pause;
@@ -857,6 +876,11 @@ class Game {
       input: this.input,
       controllerManager: this.controllerManager,
     });
+    this.lobby.phonePool = this.phonePool.pool;   // #562
+    // #563 · "Play on this phone": a phone on the host step's QR asks for the
+    // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
+    this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
+    this.lobby.padRoom = this.phonePad;
 
     // Background music
     this._musicEl = new Audio('assets/Krampus Workshop.mp3');
@@ -2623,6 +2647,7 @@ class Game {
   _playCrash(intensity = 1) {
     this.audioEngine.crash(intensity);
     this.phonePad?.cue('crash');
+    this.phonePool?.pool.cue('crash');
   }
 
   /**
@@ -2632,14 +2657,22 @@ class Game {
    */
   _syncPhonePad() {
     const pp = this.phonePad;
-    if (!pp || pp.status === 'idle') return;
+    const pool = this.phonePool?.pool;
+    const p1On = !!pp && pp.status !== 'idle';
+    if (!p1On && !(pool && pool.entries.size)) return;
     const riding = PHONE_RIDE_STATES.has(this.state) && !this._optionsOpen && !this._pause && !this._inputChoiceOpen;   // #529: the pause menu too
-    pp.setMode(riding ? 'ride' : 'menu');
+    if (p1On) pp.setMode(riding ? 'ride' : 'menu');
+    if (pool && pool.mode !== (riding ? 'ride' : 'menu')) pool.setMode(riding ? 'ride' : 'menu');   // #562
     if (this.state !== this._phonePadState) {
       const cue = PHONE_STATE_CUES[this.state];
-      if (cue) pp.cue(cue);
+      if (cue) { if (p1On) pp.cue(cue); pool?.cue(cue); }
       this._phonePadState = this.state;
     }
+  }
+
+  /** A phone QR panel (Player 1's or the join panel, #562) is on top. */
+  _phonePanelOpen() {
+    return !!((this.phonePad && this.phonePad.panelOpen) || (this.phonePool && this.phonePool.panelOpen));
   }
 
   _onTimerExpired() {
@@ -5415,6 +5448,7 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      this._gpPrevVersusL3 = null;
       // Team Blue's geese share materials with this bike: put the saved colours back.
       if (this.bike) this.bike.applyGooseColours();
       if (this.versusFrontViews) {
@@ -6259,7 +6293,7 @@ class Game {
     const bIdx = this.input._gpSwapAB ? 0 : 1;
     const b = gp.buttons[bIdx] && gp.buttons[bIdx].pressed;
     // The phone QR panel is on top and takes B / Start itself.
-    if (this.phonePad && this.phonePad.panelOpen) { this._gpPrevStart = start; this._gpPrevB = b; this._gpPrevView = view; return; }
+    if (this._phonePanelOpen()) { this._gpPrevStart = start; this._gpPrevB = b; this._gpPrevView = view; return; }
 
     if (start && !this._gpPrevStart) {
       if (this._optionsOpen) this._closeOptions();
@@ -6294,7 +6328,7 @@ class Game {
   _canPause({ phonePanel = false } = {}) {
     if (this.state !== 'playing' || this._drop || this._inputChoiceOpen) return false;
     if (this.mode === 'versus' && this._versusPaused) return false;
-    if (!phonePanel && this.phonePad && this.phonePad.panelOpen) return false;
+    if (!phonePanel && this._phonePanelOpen()) return false;
     if (this.recorder && this.recorder._previewPollId) return false;
     return true;
   }
@@ -6321,6 +6355,7 @@ class Game {
     if (restart) restart.hidden = !(resetBtn && sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot);
     const end = document.getElementById('btn-pause-end');
     if (end) end.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+    this._syncPauseToggles();
     this._freezeClock(true);
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
@@ -6338,6 +6373,33 @@ class Game {
     });
     this._overlayCooldownUntil = performance.now() + 250;
     try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
+  }
+
+  /**
+   * #576 · show / label the pause menu's ride toggles. Same rules as the quick
+   * menu: only the rider who owns the ride controls (not a stoker), SAFETY and
+   * SPEED are gone on a ranked run (their buttons are disabled), ASSIST only
+   * once it is offered, SAVE CLIP only while a clip is buffering.
+   */
+  _syncPauseToggles() {
+    const sideButtons = document.getElementById('side-buttons');
+    const rideControls = !!sideButtons && sideButtons.style.display !== 'none' && !this.isSlingshot && this.mode !== 'versus';
+    const set = (id, show, on) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.hidden = !show;
+      const st = el.querySelector('.pause-state');
+      if (st && on !== undefined) st.textContent = on ? 'ON' : 'OFF';
+      el.classList.toggle('pause-on', !!on);
+    };
+    const usable = (b) => !!b && !b.hasAttribute('disabled');
+    set('btn-pause-safety', rideControls && usable(this.safetyBtn), !!this.safetyMode);
+    set('btn-pause-speed', rideControls && usable(this.speedBtn), !!this.autoSpeed);
+    set('btn-pause-assist', rideControls && !!this.assistBtn && this.assistBtn.style.display !== 'none', this._assistWeight > 0);
+    const share = document.getElementById('share-btn');
+    set('btn-pause-clip', !!share && share.style.display !== 'none');
+    const box = document.getElementById('pause-toggles');
+    if (box) box.hidden = !box.querySelector('uf-button:not([hidden])');
   }
 
   /** Close the pause menu. `reason` is for analytics ('resume', 'restart', 'end', 'api'). */
@@ -6404,7 +6466,8 @@ class Game {
     const aIdx = this.input._gpSwapAB ? 1 : 0;
     const a = gp.buttons[aIdx] && gp.buttons[aIdx].pressed;
     // L3 (button 10) — quick gyro recenter
-    const l3 = gp.buttons[10] && gp.buttons[10].pressed;
+    // #578: either stick click (or both together) recenters the gyro.
+    const l3 = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
 
     // E-3 · X is the talk button: tap it to call a sprint, or hold it and flick
     // the d-pad to send an emote. The d-pad's four normal jobs (safety, speed,
@@ -6455,6 +6518,59 @@ class Game {
     this._gpPrevL3 = l3;
   }
 
+  /**
+   * #578 · local co-op: the stoker's own pad recenters their gyro with a stick
+   * click (L3, R3 or both), the same as the captain's. P2 had no binding, so a
+   * stoker could not recalibrate at all.
+   */
+  _pollP2Recenter() {
+    const im = this.inputP2;
+    if (this.mode !== 'local' || !im || !im.gamepadConnected) { this._gpPrevP2L3 = false; return; }
+    const gp = im.getGamepadState();
+    if (!gp || !gp.buttons) return;
+    const click = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
+    if (click && !this._gpPrevP2L3) {
+      if (im.gyroConnected) { im.recenterGyro(); im.calibrateGyro(); }
+      if (im.motionEnabled) im.startTiltCalibration();
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+      try { analytics.trackEvent('recenter', { seat: 'p2' }); } catch {}
+    }
+    this._gpPrevP2L3 = click;
+  }
+
+  /**
+   * #581 · versus: every seated pad recenters its own gyro with a stick click
+   * (L3, R3 or both) — the captain's L3 in solo, the stoker's in co-op (#578).
+   * _pollDpad / _pollP2Recenter are skipped in versus, so no versus player
+   * had the binding, P1 included.
+   */
+  _pollVersusRecenter() {
+    if (!this.versusRigs) return;
+    if (!this._gpPrevVersusL3) this._gpPrevVersusL3 = new Map();
+    let recentered = false;
+    for (const rig of this.versusRigs) {
+      for (const m of rig.members) {
+        const im = m.input;
+        if (!im || m.type === 'bot' || !im.gamepadConnected) { this._gpPrevVersusL3.set(im, false); continue; }
+        const gp = im.getGamepadState();
+        if (!gp || !gp.buttons) continue;
+        const click = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
+        if (click && !this._gpPrevVersusL3.get(im)) {
+          if (im.gyroConnected) { im.recenterGyro(); im.calibrateGyro(); }
+          if (im.motionEnabled) im.startTiltCalibration();
+          recentered = true;
+          try { analytics.trackEvent('recenter', { seat: 'versus', team: rig.id }); } catch {}
+        }
+        this._gpPrevVersusL3.set(im, click);
+      }
+    }
+    if (recentered) {
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+    }
+  }
+
   _updateConnBadge() {
     if (!this.net) return;
     const typeEl = document.getElementById('conn-type');
@@ -6498,7 +6614,7 @@ class Game {
   _pollOverlayGamepad() {
     // The phone QR panel is on top; when it closes, a button still held
     // from closing it is not a fresh press here.
-    if (this.phonePad && this.phonePad.panelOpen) { this._overlayAfterPanel = true; return; }
+    if (this._phonePanelOpen()) { this._overlayAfterPanel = true; return; }
     if (this._overlayAfterPanel) { this._overlayAfterPanel = false; this._overlayFocus.reprime(); }
     // #517: the right stick scrolls whatever is open (Settings, a long result screen).
     const gp = this.input.gamepadConnected ? this.input.getGamepadState() : null;
@@ -6892,7 +7008,8 @@ class Game {
       if (this.mode !== 'versus' && this._tickDropPause()) {
         // paused — nothing else runs this frame
       } else {
-      if (this.mode !== 'versus') this._pollDpad();
+      if (this.mode === 'versus') this._pollVersusRecenter();
+      else { this._pollDpad(); this._pollP2Recenter(); }
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
@@ -7631,11 +7748,18 @@ class Game {
     // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
     const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
+    // #581: the geese lean by the look-only lean (visualLean: the rider's own
+    // tilt before TUNE.motionGain), as the solo captain and the co-op riders
+    // do. By the steering lean (gain 0.3, then the assist blend) they barely
+    // moved while the bike tilted.
+    const riderLeanOf = (r) => (r.visualLean != null ? r.visualLean : r.leanInput);
+    const riderLeans = [riderLeanOf(balanceResult), 0];
     rig.hudLeans[0] = balanceResult.leanInput;
     rig.hudLeans[1] = 0;
     if (rig.balanceCtrls.length > 1) {
       const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
       rig.hudLeans[1] = second.leanInput;
+      riderLeans[1] = riderLeanOf(second);
       balanceResult.leanInput = Math.max(-1, Math.min(1,
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
@@ -7644,8 +7768,8 @@ class Game {
     // member[1] — solo teams keep the stoker upright. Each rig's bike has its
     // own skeleton + mixer (skinned clone), so the geese lean independently per
     // team. No-op on the plain frame model (no riderMixer).
-    balanceResult.captainLean = rig.hudLeans[0];
-    balanceResult.stokerLean = rig.isDuo ? rig.hudLeans[1] : 0;
+    balanceResult.captainLean = riderLeans[0];
+    balanceResult.stokerLean = rig.isDuo ? riderLeans[1] : 0;
     bike._balanceAssist = assist;
 
     const wasFallen = bike.fallen;
@@ -8550,7 +8674,7 @@ class Game {
         const pollL3 = () => {
           if (resolved) return;
           const gp = this.input.getGamepadState();
-          if (gp && gp.buttons[10] && gp.buttons[10].pressed) {
+          if (gp && ((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed))) {   // #578: L3 or R3
             resolved = true;
             this._recalibrateTilt();
             resolve();

@@ -150,6 +150,7 @@ export function lowestFreePlayerNumber(players, max = 4) {
  */
 export function versusJoinSeat(players, { p1SlotEmpty, kind }) {
   const p1 = players[0];
-  if (p1 && p1.type === 'keyboard' && p1SlotEmpty && kind !== 'steam') return { takeP1: true, n: 1 };
+  // Steam handles and phones (#562) bring their own input: they can't sit in slot P1.
+  if (p1 && p1.type === 'keyboard' && p1SlotEmpty && kind !== 'steam' && kind !== 'phone') return { takeP1: true, n: 1 };
   return { takeP1: false, n: lowestFreePlayerNumber(players) };
 }

@@ -17,7 +17,7 @@
 //   'coins'         { amount, mode, kind, total }  every deposit, every mode
 //   'upgrade'       { id, level, price }
 //   'rebuild'       { rebuilds }
-//   'todaysLaunch'  { key, distance, best, earned }
+//   'dailyLaunch'  { key, distance, best, earned }
 //   'stageCleared'  { stage }  (the stage just cleared)
 //   'bigAir'        { seconds }
 //   'pot'           { stage }  a pot of gold collected (#546)

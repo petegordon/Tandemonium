@@ -64,7 +64,7 @@ test('roles: host and pad-1..pad-4 only', () => {
 test('the phone link keeps the secret in the #fragment and parses back', () => {
   const link = buildPadLink('https://tandemonium.housetandem.com/pr-preview/pr-422/', 'ABCDEF', 1, 'a'.repeat(32));
   assert.equal(link, 'https://tandemonium.housetandem.com/pr-preview/pr-422/remote/?pad=ABCDEF&seat=1#k=' + 'a'.repeat(32));
-  assert.deepEqual(parsePadLink(link), { code: 'ABCDEF', seat: 1, secret: 'a'.repeat(32), relay: null });
+  assert.deepEqual(parsePadLink(link), { code: 'ABCDEF', seat: 1, secret: 'a'.repeat(32), relay: null, seats: [1], play: false });
   assert.equal(parsePadLink('https://x/remote/?pad=AB&seat=1'), null);
   assert.equal(parsePadLink('https://x/remote/?pad=ABCDEF&seat=9#k=' + 'a'.repeat(32)), null);
   assert.equal(parsePadLink('https://x/remote/?pad=ABCDEF&seat=2').secret, null);
@@ -721,4 +721,201 @@ test('a phone sending only the menu heartbeat stays connected; silent past 2 s i
   host._lastCheckAt = performance.now();
   host._checkStale();
   assert.equal(drops, 1);
+});
+
+// ── #562 · several seats in ONE pad room; #563 · open-room ──
+import { JOIN_SEATS, playJoinUrl } from '../../js/remote/pad-protocol.js';
+
+/** A fake seat input that records its calls. */
+function seatInput() {
+  const calls = [];
+  return {
+    calls,
+    feedRemoteTilt: (t) => calls.push(['tilt', t]),
+    setRemotePedals: (...a) => calls.push(['pedals', ...a]),
+    setRemoteNav: (on, nav) => calls.push(['nav', on, nav]),
+    startTiltCalibration: () => calls.push(['recenter']),
+    detachRemote: () => calls.push(['detach']),
+  };
+}
+
+/** A room (seat 1 = Player 1) on a v2 relay, plus join seats 2 and 3 opened. */
+async function multiRoom(hooks = {}) {
+  const h = roomHost(hooks);
+  h.host._onMessage(JSON.stringify({ type: 'relay', v: 2 }));
+  const in2 = seatInput(), in3 = seatInput();
+  const ev = [];
+  const s2 = h.host.addSeat(2, { input: in2, label: 'Phone 2', onDrop: () => ev.push('drop2'), onReturn: () => ev.push('return2'), onHandOff: (on) => ev.push('handoff2:' + on) });
+  const s3 = h.host.addSeat(3, { input: in3, label: 'Phone 3', onDrop: () => ev.push('drop3') });
+  await Promise.all([s2.open(), s3.open()]);
+  const seatFrame = (seat, f) => { const b = encodeFrame({ seq: 1, tilt: 0, left: false, right: false, tapsL: 0, tapsR: 0, nav: 0, ...f }); const w = new Uint8Array(9); w[0] = seat; w.set(b, 1); h.host._onMessage(w.buffer); };
+  return { ...h, s2, s3, in2, in3, ev, seatFrame };
+}
+const pairsFor = (sent, seat) => sent.filter((m) => m.type === 'pair' && m.seat === seat);
+const roomReplies = (sent, seat) => sent.filter((m) => m.type === 'to-pad' && m.seat === seat && m.msg.type === 'room').map((m) => m.msg);
+
+test('links: a shared join link lists its seats and parses back seat-first; play=1 is the #563 choice', () => {
+  const link = buildPadLink('https://x/', 'ABCDEF', 2, 'b'.repeat(32), { seats: JOIN_SEATS, play: true });
+  assert.equal(link, 'https://x/remote/?pad=ABCDEF&seat=2&seats=2%2C3%2C4&play=1#k=' + 'b'.repeat(32));
+  const p = parsePadLink(link);
+  assert.deepEqual([p.seat, p.seats, p.play, p.secret], [2, [2, 3, 4], true, 'b'.repeat(32)]);
+  assert.deepEqual(parsePadLink('https://x/remote/?pad=ABCDEF&seat=3&seats=2,3,4,9#k=' + 'b'.repeat(32)).seats, [3, 4, 2], 'starts at seat, wraps, drops junk');
+  assert.deepEqual(parsePadLink('https://x/remote/?pad=ABCDEF&seat=1#k=' + 'b'.repeat(32)).seats, [1]);
+});
+
+test('play link: the join link the TV sent if it is on our site and names the room, else ../?room=CODE', () => {
+  const page = 'https://t.example/pr/remote/index.html?pad=ABCDEF&seat=2';
+  assert.equal(playJoinUrl(page, 'TNDM-AB12', 'https://t.example/pr/index.html?room=TNDM-AB12&demo=1'), 'https://t.example/pr/index.html?room=TNDM-AB12&demo=1');
+  assert.equal(playJoinUrl(page, 'TNDM-AB12', 'https://evil.example/?room=TNDM-AB12'), 'https://t.example/pr/?room=TNDM-AB12', 'another site is never followed');
+  assert.equal(playJoinUrl(page, 'TNDM-AB12', 'https://t.example/pr/?room=OTHER'), 'https://t.example/pr/?room=TNDM-AB12');
+  assert.equal(playJoinUrl(page, 'TNDM-AB12', null), 'https://t.example/pr/?room=TNDM-AB12');
+  assert.equal(playJoinUrl(page, '<script>', null), null);
+});
+
+test('multi-seat: free join seats share ONE join secret; the join link names them all', async () => {
+  const { host, sent, s2, s3 } = await multiRoom();
+  const [p2, p3] = [pairsFor(sent, 2).at(-1), pairsFor(sent, 3).at(-1)];
+  assert.ok(p2 && p3);
+  assert.equal(p2.qr, p3.qr, 'one QR opens every free seat');
+  assert.equal(p2.qr, await sha256hex(host._join.secret));
+  assert.equal(s2.link, host.joinLink());
+  assert.equal(s3.link, host.joinLink());
+  assert.match(host.joinLink(), /seat=2&seats=2%2C3%2C4&/);
+  assert.match(host.joinLink({ play: true }), /&play=1/);
+  assert.notEqual(host.joinLink(), host.link, 'the Player 1 QR is separate');
+});
+
+test('multi-seat: a phone taking a join seat moves THAT seat to its own secret at once (without dropping it); the QR stays', async () => {
+  const { host, sent, s2, s3 } = await multiRoom();
+  const join = pairsFor(sent, 2).at(-1).qr;
+  const link = host.joinLink();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 2, via: 'qr' }));
+  const moved = pairsFor(sent, 2).at(-1);
+  assert.notEqual(moved.qr, join, 'the next phone scanning the QR cannot land on seat 2');
+  assert.equal(moved.phone, null);
+  assert.equal(pairsFor(sent, 3).at(-1).qr, join, 'seat 3 is still on offer');
+  assert.equal(host.joinLink(), link, 'the QR on screen does not change');
+  assert.equal(s2.status, 'connected');
+  assert.equal(s3.status, 'waiting');
+  assert.equal(s2.takeovers, 0, 'taking a free seat is not a takeover');
+  // Then the #454 rekey, as for seat 1.
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 2, msg: { type: 'hello', v: 2 } }));
+  await flush();
+  const rekey = sent.filter((m) => m.type === 'to-pad' && m.seat === 2 && m.msg.type === 'rekey')[0];
+  assert.ok(rekey, 'the phone gets its own key');
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 2, msg: { type: 'rekeyed', k: rekey.msg.k } }));
+  assert.equal(pairsFor(sent, 2).at(-1).phone, await sha256hex(rekey.msg.k));
+  assert.notEqual(s2.link, host.joinLink(), 'the seat 2 link (shown if it drops) is its own');
+});
+
+test('multi-seat: frames go to their own seat input; a seat ignores frames before its phone joined', async () => {
+  const { host, calls, in2, in3, seatFrame } = await multiRoom();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 2, via: 'qr' }));
+  const before = calls.length;
+  seatFrame(2, { seq: 2, left: true, tilt: 12 });
+  assert.deepEqual(in2.calls.find((c) => c[0] === 'tilt'), ['tilt', 12]);
+  assert.ok(in2.calls.some((c) => c[0] === 'pedals' && c[1] === true));
+  seatFrame(3, { seq: 2, right: true });
+  assert.equal(in3.calls.filter((c) => c[0] === 'pedals').length, 0, 'seat 3 has no phone yet');
+  assert.equal(calls.length, before, 'the Player 1 input is untouched');
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 3, via: 'qr' }));
+  seatFrame(3, { seq: 3, right: true });
+  assert.ok(in3.calls.some((c) => c[0] === 'pedals' && c[2] === true));
+});
+
+test('multi-seat: drop and reconnect are per seat; a silent phone does not redial while another phone gets through', async () => {
+  const { host, s2, s3, ev, seatFrame } = await multiRoom();
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 2, via: 'paired' }));
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 3, via: 'paired' }));
+  seatFrame(2, { seq: 2 }); seatFrame(3, { seq: 2 });
+  s2._lastAt -= 2500;
+  s2._lastCheckAt = performance.now();
+  s2._checkStale();
+  assert.deepEqual(ev, ['drop2']);
+  assert.equal(s2.status, 'waiting');
+  assert.equal(s3.status, 'connected');
+  assert.equal(host.redials, 0, 'seat 3 still gets through: it is the seat 2 phone, not our socket');
+  host._onMessage(JSON.stringify({ type: 'pad-left', seat: 3 }));
+  assert.deepEqual(ev, ['drop2', 'drop3']);
+  seatFrame(2, { seq: 3 });
+  assert.deepEqual(ev, ['drop2', 'drop3', 'return2']);
+});
+
+test('multi-seat: closing a seat says bye and locks it; the room stays open until its last seat closes', async () => {
+  const { host, sent, s2, s3 } = await multiRoom();
+  host._active = true;   // the Player 1 seat is open too
+  s3.close();
+  assert.equal(sent.filter((m) => m.type === 'to-pad' && m.seat === 3).at(-1).msg.type, 'bye');
+  const locked = pairsFor(sent, 3).at(-1);
+  assert.notEqual(locked.qr, pairsFor(sent, 2).at(-1).qr, 'the join QR no longer opens seat 3');
+  assert.equal(host.seats.has(3), false);
+  assert.equal(host._closed, false);
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 3, via: 'qr' }));
+  assert.equal(s3.status, 'idle', 'a closed seat ignores the relay');
+  s2.close();
+  host.close();
+  assert.equal(host._closed, true, 'no seat open: the room closes');
+  assert.equal(host.code, null);
+});
+
+test('multi-seat: a new seat on a number is a fresh seat (the old one is retired)', async () => {
+  const { host, s3 } = await multiRoom();
+  assert.throws(() => host.addSeat(3, { input: seatInput() }), /in use/);
+  s3.close();
+  const again = host.addSeat(3, { input: seatInput() });
+  assert.notEqual(again, s3);
+  await again.open();
+  assert.equal(again.link, host.joinLink());
+});
+
+test('open-room (#563): only a join seat with its phone here, while the game allows it; the reply carries the code', async () => {
+  const { host, sent, ev } = await multiRoom();
+  const asked = [];
+  host.onOpenRoom = async (seat) => { asked.push(seat); return { code: 'TNDM-AB12', url: 'https://x/index.html?room=TNDM-AB12' }; };
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 2, via: 'qr' }));
+  // Not allowed now (e.g. versus, or the partner seat is taken).
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 2, msg: { type: 'open-room' } }));
+  await flush();
+  assert.deepEqual(roomReplies(sent, 2), [{ type: 'room', error: 'not-now' }]);
+  assert.deepEqual(asked, []);
+  // The Player 1 seat never opens a room.
+  host.allowPlay = true;
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 1, via: 'paired' }));
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 1, msg: { type: 'open-room' } }));
+  await flush();
+  assert.deepEqual(roomReplies(sent, 1), [{ type: 'room', error: 'not-now' }]);
+  // A seat whose phone is not here (no valid key got one onto the relay) is refused.
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 3, msg: { type: 'open-room' } }));
+  await flush();
+  assert.deepEqual(roomReplies(sent, 3), [{ type: 'room', error: 'not-now' }]);
+  // Allowed: the game opens the room and the phone gets its code.
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 2, msg: { type: 'open-room' } }));
+  await flush();
+  assert.deepEqual(asked, [2]);
+  assert.deepEqual(roomReplies(sent, 2).at(-1), { type: 'room', code: 'TNDM-AB12', url: 'https://x/index.html?room=TNDM-AB12' });
+  assert.deepEqual(ev, ['handoff2:true']);
+  assert.equal(host.seats.get(2).handedOff, true);
+});
+
+test('open-room (#563): a room that fails to open is reported, and the phone is a controller again', async () => {
+  const { host, sent, ev } = await multiRoom();
+  host.allowPlay = true;
+  host.onOpenRoom = async () => null;
+  host._onMessage(JSON.stringify({ type: 'pad-joined', seat: 2, via: 'qr' }));
+  host._onMessage(JSON.stringify({ type: 'from-pad', seat: 2, msg: { type: 'open-room' } }));
+  await flush();
+  assert.deepEqual(roomReplies(sent, 2), [{ type: 'room', error: 'failed' }]);
+  assert.deepEqual(ev, ['handoff2:true', 'handoff2:false']);
+  assert.equal(host.seats.get(2).handedOff, false);
+});
+
+test('multi-seat: a refused room moves every open seat to the new code (and a new join QR)', async () => {
+  const { host, s2 } = await multiRoom();
+  host._active = true;
+  const oldJoin = host.joinLink(), oldCode = host.code;
+  assert.ok(await host._newRoom());
+  assert.notEqual(host.code, oldCode);
+  assert.notEqual(host.joinLink(), oldJoin);
+  assert.equal(s2.link, host.joinLink());
+  assert.ok(host.link.includes('pad=' + host.code));
 });
