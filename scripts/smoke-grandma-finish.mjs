@@ -127,11 +127,11 @@ console.log("Grandma's");
   await page.close();
 }
 
-console.log("Today's Road");
+console.log("Daily Ride");
 {
   const page = await ride('daily');
   const s = await state(page);
-  check(s.hasSet && s.props.length === 4, "Today's Road ends at Grandma's too: the same four pieces", s.props.length);
+  check(s.hasSet && s.props.length === 4, "The Daily Ride ends at Grandma's too: the same four pieces", s.props.length);
   await page.close();
 }
 

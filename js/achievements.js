@@ -17,7 +17,7 @@ import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
   ACHIEVEMENTS, SECTIONS, STATS_VERSION,
-  migrateStats, applyEvent, seedStats, RideTracker, versusResult,
+  migrateStats, applyEvent, seedStats, RideTracker, versusResult, migrateEarned,
 } from './achievement-defs.js';
 
 export { ACHIEVEMENTS, SECTIONS };
@@ -89,8 +89,10 @@ export class AchievementManager {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const arr = JSON.parse(raw);
-        arr.forEach(a => this._earned.set(a.id, a));
+        // #575: an earned todays_launch becomes daily_launch, written back once.
+        const { list, changed } = migrateEarned(JSON.parse(raw));
+        list.forEach(a => this._earned.set(a.id, a));
+        if (changed) this._save();
       }
     } catch (e) {}
   }

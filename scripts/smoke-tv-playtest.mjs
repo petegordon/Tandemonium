@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // smoke:tv-playtest · #576: fixes from the TV / Steam playtest of 2026-11-04.
 //
-//   TP-01  Today's Road chooser: the pad's focus is on RANKED RUN (or PRACTICE
+//   TP-01  Daily Ride chooser: the pad's focus is on RANKED RUN (or PRACTICE
 //          when the ranked run is spent), ↓ moves, B is Back, A picks PRACTICE
 //          and the ride starts.
 //   TP-02  Pause menu: SAFETY / AUTO SPEED are there with ON / OFF, the pad
@@ -125,7 +125,7 @@ await pads.press(0, 'B', 160);
 await until(() => document.getElementById('leaderboard-modal').open === false);
 await sleep(400);
 
-// ── TP-01 · Today's Road chooser ──
+// ── TP-01 · Daily Ride chooser ──
 const focusId = () => page.evaluate(() => document.querySelector('#daily-mode-overlay .gamepad-focus')?.id || null);
 const openChooser = () => page.evaluate(() => {
   const l = window._game.lobby;

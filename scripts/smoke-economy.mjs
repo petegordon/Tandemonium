@@ -4,7 +4,7 @@
 // RESTART → finish pays the rest + the finish bonuses on the victory screen;
 // GARAGE → opens the one garage, a purchase debits the shared wallet; the
 // lobby's GARAGE button and wallet balance; a stage gate sends you to the
-// level it needs; Today's Launch runs and pays; prestige; the demo's stage cap.
+// level it needs; Daily Launch runs and pays; prestige; the demo's stage cap.
 // Headless renders at ~1-2 fps, so distances are set directly.
 //   node scripts/smoke-economy.mjs [--shots <dir>]
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
@@ -142,7 +142,7 @@ check(garageText.includes(String(w3.coins)), `the garage shows the wallet after 
 await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
-// 7. A stage gate (D11a): stage 6 needs a finished Today's Road; its button goes there.
+// 7. A stage gate (D11a): stage 6 needs a finished Daily Ride; its button goes there.
 await setLS('tandemonium_slingshot', { v: 3, best: 800, runs: 20, stage: 6, daily: null });
 await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
@@ -150,22 +150,22 @@ const lock = await page.evaluate(() => ({
   text: document.querySelector('#sling-garage .sling-lock')?.textContent || '',
   launch: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /^LAUNCH!$/.test(b.textContent.trim())),
 }));
-check(/Today's Road/.test(lock.text) && !lock.launch, `a locked stage says why and offers no launch ("${lock.text}")`);
-await clickText('#sling-garage button, #sling-garage uf-button', /RIDE TODAY'S ROAD/);
+check(/Daily Ride/.test(lock.text) && !lock.launch, `a locked stage says why and offers no launch ("${lock.text}")`);
+await clickText('#sling-garage button, #sling-garage uf-button', /TAKE THE DAILY RIDE/);
 await new Promise(r => setTimeout(r, 800));
 const went = await page.evaluate(() => ({ state: window._game.state, level: window._game.lobby.selectedLevel?.id,
   step: document.getElementById('lobby-level').style.display }));
-check(went.state === 'lobby' && went.level === 'daily' && went.step !== 'none', `the lock's button picks Today's Road in the lobby (${went.level})`);
+check(went.state === 'lobby' && went.level === 'daily' && went.step !== 'none', `the lock's button picks the Daily Ride in the lobby (${went.level})`);
 
-// 8. Today's Launch (D11b): the day's course, no goal; it pays the wallet and keeps the day's best.
+// 8. Daily Launch (D11b): the day's course, no goal; it pays the wallet and keeps the day's best.
 await setLS('tandemonium_slingshot', { v: 3, best: 300, runs: 2, stage: 2, daily: null });
 await page.evaluate(() => window._game._openSlingGarage());
 await waitState('slingGarage', 20000);
-await clickText('#sling-garage button, #sling-garage uf-button', /TODAY'S LAUNCH/);
+await clickText('#sling-garage button, #sling-garage uf-button', /DAILY LAUNCH/);
 await waitState('slingAim', 60000);
 const tl = await page.evaluate(() => ({ name: window._game.lobby.selectedLevel.name, daily: !!window._game._slingDaily,
   hud: document.querySelector('#sling-hud .sling-togo')?.textContent || '' }));
-check(/Today's Launch/.test(tl.name) && tl.daily && /📅/.test(tl.hud), `Today's Launch arms the day's course ("${tl.hud}")`);
+check(/Daily Launch/.test(tl.name) && tl.daily && /📅/.test(tl.hud), `the Daily Launch arms the day's course ("${tl.hud}")`);
 const tlBefore = (await wallet()).coins;
 await page.evaluate(() => { const g = window._game; g._slingRun.pull = 0.6; g._slingGo(); });
 await waitState('playing', 60000);
@@ -174,7 +174,7 @@ await waitState('slingResults', 120000);
 const tlSave = await slingSave();
 const tlW = await wallet();
 check(tlSave.daily && tlSave.daily.runs === 1 && tlSave.daily.best >= 200 && tlSave.stage === 2 && tlW.coins > tlBefore,
-  `Today's Launch pays (+${tlW.coins - tlBefore}) and keeps the day's best (${tlSave.daily && tlSave.daily.best} m), stage untouched`);
+  `the Daily Launch pays (+${tlW.coins - tlBefore}) and keeps the day's best (${tlSave.daily && tlSave.daily.best} m), stage untouched`);
 await clickText('#sling-results button, #sling-results uf-button', /LOBBY/);
 await waitState('lobby', 20000);
 
@@ -191,7 +191,7 @@ check(pw.rebuilds === 1 && Object.keys(pw.lv).length === 0 && pw.coins === 5000 
 await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
-// 10. The demo: the stage after the edition's cap is the demo's end, with WISHLIST; no Today's Launch.
+// 10. The demo: the stage after the edition's cap is the demo's end, with WISHLIST; no Daily Launch.
 await setLS('tandemonium_slingshot', { v: 3, best: 600, runs: 9, stage: 4, daily: null });
 await setLS('tandemonium_records', { 'grandma|chill|solo': { timeMs: 1000, splits: [], date: '2026-10-04' } });
 await boot('?demo=1');
@@ -200,9 +200,9 @@ await waitState('slingGarage', 20000);
 const demo = await page.evaluate(() => ({
   lock: document.querySelector('#sling-garage .sling-lock')?.textContent || '',
   wish: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /WISHLIST/.test(b.textContent)),
-  today: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /TODAY'S LAUNCH/.test(b.textContent)),
+  today: Array.from(document.querySelectorAll('#sling-garage button, #sling-garage uf-button')).some(b => /DAILY LAUNCH/.test(b.textContent)),
 }));
-check(/demo/i.test(demo.lock) && demo.wish && !demo.today, `the demo stops at its cap with WISHLIST, no Today's Launch ("${demo.lock}")`);
+check(/demo/i.test(demo.lock) && demo.wish && !demo.today, `the demo stops at its cap with WISHLIST, no Daily Launch ("${demo.lock}")`);
 await shot('4-demo-end');
 
 // 11. m9: the demo's end is not a dead end — LAUNCH replays the last stage

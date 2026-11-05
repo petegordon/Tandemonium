@@ -173,7 +173,7 @@ const RUN = {
 
 test('a ranked solo finish reads exactly as specified', () => {
   assert.equal(buildShareStrip(RUN), [
-    "Tandemonium · Today's Road · Sep 8",
+    "Tandemonium · Daily Ride · Sep 8",
     '2:41 · 🥈 · 🎁 9/12 · 💥 1',
     '▰▰▰▰▰▰▰▰▰▰▰▰ 500m',
     'https://tandemonium.housetandem.com/?daily=2026-09-08'
@@ -182,7 +182,7 @@ test('a ranked solo finish reads exactly as specified', () => {
 
 test('a pair finish names the partner and the sync', () => {
   const strip = buildShareStrip({ ...RUN, mode: 'pair', sync: 0.82 * 100, partnerName: 'Sam' });
-  assert.match(strip, /Today's Road · Sep 8 with Sam/);
+  assert.match(strip, /Daily Ride · Sep 8 with Sam/);
   assert.match(strip, /^👥 2:41/m);
   assert.match(strip, /🔗 82%/);
 });

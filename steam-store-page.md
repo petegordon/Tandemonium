@@ -29,7 +29,7 @@ Lean too far? The bike tips. Hit 77 degrees and it's over. Unless you somehow re
 "Grandma called — she needs her presents!"
 A short, sweet sprint through the countryside. Collect presents along the way. Sounds easy. It isn't.
 
-[b]Today's Road[/b]
+[b]Daily Ride[/b]
 A brand-new road every day — same for everyone. Ride it, post a time, come back tomorrow for another.
 
 [b]Map Tourist[/b]
@@ -85,7 +85,7 @@ Four tabs. Four ways to compete.
 [*] [b]You[/b] — Your personal ride history. Every attempt, every time, every role.
 [/list]
 
-Every leaderboard entry shows whether you rode as Captain, Stoker, or Solo. Filter by level. See who's actually the fastest on Grandma's House vs Today's Road.
+Every leaderboard entry shows whether you rode as Captain, Stoker, or Solo. Filter by level. See who's actually the fastest on Grandma's House vs the Daily Ride.
 
 [h2]See Your Partner. See Them Pedal. Hear the Panic![/h2]
 
@@ -97,7 +97,7 @@ Built-in video and voice chat. Watch your partner's face as the bike starts tipp
 [*] Physics-based tandem bicycle with realistic balance, lean, and crash mechanics
 [*] Online multiplayer via peer-to-peer connection — play with anyone, anywhere
 [*] Solo mode for lone riders who enjoy suffering
-[*] Grandma's House plus a new Today's Road every day, with presents to collect
+[*] Grandma's House plus a new Daily Ride every day, with presents to collect
 [*] Map Tourist — ride real streets in 3D
 [*] Slingshot mode and split-screen Versus
 [*] 7 named bikes with unique colors
