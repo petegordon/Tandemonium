@@ -21,8 +21,8 @@
 //   'stageCleared'  { stage }  (the stage just cleared)
 //   'bigAir'        { seconds }
 //   'pot'           { stage }  a pot of gold collected (#546)
-//   'ride'          { mode, kind, newRide, metres, finished, earned }  every
-//                   regular-ride payout (metres/earned: only what is new)
+//   'ride'          { mode, kind, newRide, metres, finished, earned, tokens }
+//                   every regular-ride payout (metres/earned/tokens: only what is new)
 //   'slingLaunch'   { stage, daily }   the bands let go
 //   'slingRun'      { distance, record, pot, fullTrails, straight, daily }
 // Pure rules: js/economy.js (scoreRide), js/wallet.js, js/slingshot.js.
@@ -33,6 +33,10 @@ import * as walletLib from './wallet.js';
 import { scoreRide, newLedger, ledgerStep } from './economy.js';
 import { COIN, toast } from './slingshot-ui.js';
 import { humanTeams } from './versus/versus-bot.js';
+import { CollectibleManager } from './collectibles.js';
+import { SparkleBurst } from './slingshot-fx.js';
+import { planTokenRuns } from './token-runs.js';
+import { itemSeed, SALT } from './daily-seed.js';
 
 const fmt = n => Math.floor(n).toLocaleString('en-US');
 
@@ -61,9 +65,93 @@ class EconomyMode {
     return w;
   }
 
+  // ---- #512 · Tandem Tokens on the road ----------------------------------
+
+  /**
+   * Lay this ride's token runs (js/token-runs.js) around the presents, pylons
+   * and geese the managers just placed, and build their CollectibleManager.
+   * `layout` overrides the presents/obstacles (the tutorial places its items
+   * later, from TUTORIAL_ITEMS). No tokens in Slingshot (its coins are its
+   * own) or Map Tourist (no road line).
+   */
+  _setupTokens(level, difficultyName, camera, layout = null) {
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }
+    this._tokenPlan = null;
+    if (!level || this.isSlingshot || level.isTourist || !this.world || !this.world.roadPath) {
+      if (this.hud) this.hud.hideTokens();
+      return;
+    }
+    const pos = items => (items || []).map(it => ({ d: it.absoluteD, offset: it.lateralOffset }));
+    const presents = layout ? layout.presents : pos(this.collectibleManager && this.collectibleManager._items);
+    const obstacles = layout ? layout.obstacles : pos(this.obstacleManager && this.obstacleManager._items);
+    const geese = ((this.geeseManager && this.geeseManager._items) || []).map(g => ({ d: g.homeD ?? g.absoluteD, offset: g.homeLat ?? g.lateralOffset }));
+    const rm0 = this.mode === 'versus' ? (this.versusRigs && this.versusRigs[0] && this.versusRigs[0].raceManager) : this.raceManager;
+    const checkpoints = rm0 && Array.isArray(rm0.checkpoints) ? rm0.checkpoints.slice() : [];
+    // Seeded like the other managers (B-4): the Daily Ride from the day seed
+    // with its own salt, so everyone meets the same runs; other roads move
+    // with the placement salt the captain shares.
+    const seed = itemSeed(level, SALT.tokens, this._placementSalt || 0, level.id.charCodeAt(0) * 3000 + 29);
+    const plan = planTokenRuns({ levelId: level.id, distance: level.distance, seed, presents, obstacles, geese, checkpoints });
+    this._tokenPlan = plan;
+    if (!plan.available) { if (this.hud) this.hud.hideTokens(); return; }
+    this.tokenManager = new CollectibleManager(this.scene, this.world.roadPath, { ...level, collectibles: 'tokens' },
+      camera, difficultyName, 0, { items: plan.tokens.map(t => ({ d: t.d, offset: t.offset, value: t.value })) });
+    if (level.isTutorial) this.tokenManager._tutorialRadius = 2.8;   // as forgiving as the tutorial's presents
+    const rms = this.mode === 'versus' ? (this.versusRigs || []).map(r => r.raceManager) : [this.raceManager];
+    for (const rm of rms) if (rm) rm.setTokensTotal(plan.available);
+    if (this.hud) this.hud.showTokens(plan.available);
+  }
+
+  /** Solo / co-op: advance the tokens and pay out any the bike rode through. */
+  _updateTokens(dt) {
+    if (!this.tokenManager || !this.bike) return;
+    const got = this.tokenManager.update(dt, this.bike.distanceTraveled, this.bike.position);
+    if (got.length) this._onTokens(got);
+    if (this._tokenFx) this._tokenFx.update(dt);
+  }
+
+  /**
+   * Tokens grabbed this frame (item indices): tally them on the race manager
+   * (solo/co-op) or the team rig (versus), burst sparkles at the bike, pop
+   * the HUD. No boost — that is the presents' job.
+   */
+  _onTokens(indices, rig = null) {
+    const mgr = this.tokenManager;
+    if (!mgr || !indices.length) return;
+    let value = 0;
+    for (const i of indices) value += (mgr._items[i] && mgr._items[i].value) || 0;
+    if (rig) {
+      rig.tokens = (rig.tokens || 0) + indices.length;
+      rig.tokenValue = (rig.tokenValue || 0) + value;
+      if (rig.raceManager) rig.raceManager.setTokens(rig.tokens, rig.tokenValue);
+    } else {
+      this._syncTokenTally(value);
+    }
+    const bike = rig ? rig.bike : this.bike;
+    if (bike && this.scene) {
+      if (!this._tokenFx) this._tokenFx = new SparkleBurst(this.scene);
+      const h = bike.heading || 0;
+      this._tokenFx.burst({ x: bike.position.x + Math.sin(h) * 1.5, y: bike.position.y + 1.1, z: bike.position.z + Math.cos(h) * 1.5 });
+    }
+    this._playBeep(1500, 0.05);
+    try {
+      analytics.trackRideEvent('collectible', bike ? bike.distanceTraveled : 0,
+        { collectible_type: 'token', count: indices.length, value, ...(rig ? { team: rig.id } : {}) });
+    } catch (_) { /* offline */ }
+  }
+
+  /** The solo/co-op token tally, from the manager, onto the race manager and HUD. */
+  _syncTokenTally(gained = 0) {
+    const mgr = this.tokenManager;
+    if (!mgr) return;
+    if (this.raceManager) this.raceManager.setTokens(mgr.collected, mgr.collectedValue());
+    if (this.hud) this.hud.updateTokens(mgr.collected, mgr.getTotalItems(), gained);
+  }
+
   /** What the current ride has done, for a payout — or null when there is no ride. */
   _rideSnapshot(kind, opts = {}) {
     const level = this.lobby && this.lobby.selectedLevel;
+    const tm = this.tokenManager;
     if (this.mode === 'versus') {
       const all = this.versusRigs;
       if (!all || !all.length || !all[0].raceManager) return null;
@@ -73,11 +161,15 @@ class EconomyMode {
       const cap = level ? level.distance : Infinity;
       const distance = Math.max(...rigs.map(r => Math.min(cap, r.bike.distanceTraveled || 0)));
       // One device: paid once per race, on the furthest team, plus the finish.
-      return { ref: all[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus' };
+      // #512: every token a human team on this device took pays this wallet.
+      const sum = key => rigs.reduce((a, r) => a + (r[key] || 0), 0);
+      return { ref: all[0].raceManager, distance, pickups: 0, finished: rigs.some(r => r.finished), mode: 'versus',
+               tokens: sum('tokens'), tokenValue: sum('tokenValue'), tokensTotal: tm ? tm.getTotalItems() : 0 };
     }
     if (opts.tutorial) {
       return { ref: this._rideRef || this.raceManager || {}, distance: level ? level.distance : 0,
-               pickups: opts.pickups || 0, finished: true, mode: 'tutorial' };
+               pickups: opts.pickups || 0, finished: true, mode: 'tutorial',
+               tokens: tm ? tm.collected : 0, tokenValue: tm ? tm.collectedValue() : 0, tokensTotal: tm ? tm.getTotalItems() : 0 };
     }
     if (!this.raceManager || !level) return null;
     const summary = opts.summary;
@@ -90,6 +182,11 @@ class EconomyMode {
       : (this.bike ? this.bike.distanceTraveled || 0 : 0));
     const pickups = summary && summary.collectibles != null ? summary.collectibles
       : (this.collectibleManager ? this.collectibleManager.collected : (this.raceManager.collectiblesCount || 0));
+    // #512: the stoker's finish takes the captain's token numbers (finishStats);
+    // everything else reads the local manager.
+    const tokens = summary && summary.tokens != null ? summary.tokens : (tm ? tm.collected : 0);
+    const tokenValue = summary && summary.tokenValue != null ? summary.tokenValue : (tm ? tm.collectedValue() : 0);
+    const tokensTotal = summary && summary.tokensTotal ? summary.tokensTotal : (tm ? tm.getTotalItems() : 0);
     const outcome = finished ? this._lastRecordOutcome : null;
     const mode = this._touristRoute ? 'tourist'
       : level.isTutorial ? 'tutorial'
@@ -97,8 +194,9 @@ class EconomyMode {
       : this.mode;
     // M2: one ledger per ride (Game._rideRef), not per RaceManager — a retry of
     // segment 1 builds a new RaceManager but is the same ride.
-    return { ref: this._rideRef || this.raceManager, distance, pickups, finished,
-             medal: outcome ? outcome.medal : null, newBest: !!(outcome && outcome.isNewBest), mode };
+    return { ref: this._rideRef || this.raceManager, distance, pickups, finished, tokens, tokenValue, tokensTotal,
+             medal: outcome ? outcome.medal : null, newBest: !!(outcome && outcome.isNewBest), mode,
+             dailyBonus: finished && level.isDaily ? this._dailyBonusInfo || null : null };
   }
 
   /**
@@ -112,20 +210,26 @@ class EconomyMode {
     if (this.isSlingshot) return null;
     const ride = this._rideSnapshot(kind, opts);
     this._lastRecordOutcome = null;
+    this._dailyBonusInfo = null;
     if (!ride) return null;
     const newRide = !this._rideLedger || this._rideLedger.ref !== ride.ref;
     if (newRide) this._rideLedger = { ref: ride.ref, ledger: newLedger() };
     const step = ledgerStep(this._rideLedger.ledger, ride);
     this._rideLedger.ledger = step.ledger;
-    const w = this._loadWallet();
-    const score = scoreRide({ ...step.pay, medal: ride.medal, newBest: ride.newBest, multiplier: walletLib.coinMultiplier(w) });
+    this._loadWallet();
+    // #512: no multiplier here — the garage's Token multiplier is Slingshot's.
+    const score = scoreRide({ ...step.pay, medal: ride.medal, newBest: ride.newBest,
+                              tokens: ride.tokens, tokensTotal: ride.tokensTotal, dailyBonus: ride.dailyBonus });
     if (score.total > 0) {
       this._depositCoins(score.total, { mode: ride.mode, kind });
-      try { analytics.trackEvent('ride_coins', { mode: ride.mode, kind, earned: score.total, metres: score.metres }); } catch (_) { /* offline */ }
+      try {
+        analytics.trackEvent('ride_coins', { mode: ride.mode, kind, earned: score.total, metres: score.metres,
+          tokens: score.tokens, tokens_total: score.tokensTotal, token_pay: score.tokenPay, daily_pay: score.dailyPay + score.streakPay });
+      } catch (_) { /* offline */ }
     }
     // #401: the ride itself — distance, rides, days, Payday — for the achievements.
     this._economyEvent('ride', { mode: ride.mode, kind, newRide, metres: score.metres,
-                                 finished: !!step.pay.finished, earned: score.total });
+                                 finished: !!step.pay.finished, earned: score.total, tokens: score.tokenPay });
     return { score, wallet: this._wallet };
   }
 
@@ -177,21 +281,15 @@ class EconomyMode {
   }
 
   /**
-   * The Slingshot tally's look for a regular ride: metres → coins, pickups,
-   * bonuses, the multiplier, and the count rolling up to what was earned.
+   * The finish tally for a regular ride (#512): distance, tokens n/N,
+   * presents, finish, medal, new best, the Daily Ride bonus and its streak,
+   * and the total rolling up to what was earned. The lines of a kit <uf-ledger>.
    */
   _renderRideCoins(box, s, wallet) {
-    // A kit <uf-ledger> (#428): one coin breakdown for every end screen.
-    const items = [{ label: `Distance (${fmt(s.metres)} m)`, amount: s.distPay }];
-    if (s.pickupPay) items.push({ label: `Pickups (${s.pickups})`, amount: s.pickupPay });
-    if (s.finishPay) items.push({ label: 'Finished', amount: s.finishPay });
-    if (s.medalPay) items.push({ label: `${s.medal[0].toUpperCase()}${s.medal.slice(1)} medal`, amount: s.medalPay });
-    if (s.bestPay) items.push({ label: 'New best', amount: s.bestPay });
-    if (s.multiplier !== 1) items.push({ label: 'Multiplier', display: `×${s.multiplier.toFixed(2)}` });
     box.replaceChildren();
     const ledger = /** @type {any} */ (document.createElement('uf-ledger'));
     Object.assign(ledger, { heading: 'Tandem Tokens', unit: COIN });
-    ledger.items = items;
+    ledger.items = rideTallyItems(s);
     ledger.balance = wallet.coins;
     ledger.total = 0;
     box.appendChild(ledger);
@@ -240,6 +338,24 @@ class EconomyMode {
       this._onTap('btn-' + which + '-garage', () => this._openGarageFromRide(which));
     }
   }
+}
+
+/**
+ * The tally's lines for a scoreRide() result (#512), pure so it can be tested:
+ * distance, tokens n/N (always, when the road has tokens), presents, finish,
+ * medal, new best, Daily Ride bonus, streak. Zero lines are left out except
+ * the tokens — "0/20" is the point of the line.
+ */
+export function rideTallyItems(s) {
+  const items = [{ label: `Distance (${fmt(s.metres)} m)`, amount: s.distPay }];
+  if (s.tokensTotal > 0 || s.tokenPay) items.push({ label: `Tokens (${s.tokens}/${s.tokensTotal})`, amount: s.tokenPay });
+  if (s.pickupPay) items.push({ label: `Presents (${s.pickups})`, amount: s.pickupPay });
+  if (s.finishPay) items.push({ label: 'Finished', amount: s.finishPay });
+  if (s.medalPay) items.push({ label: `${s.medal[0].toUpperCase()}${s.medal.slice(1)} medal`, amount: s.medalPay });
+  if (s.bestPay) items.push({ label: 'New best', amount: s.bestPay });
+  if (s.dailyPay) items.push({ label: 'First Daily Ride today', amount: s.dailyPay });
+  if (s.streakPay) items.push({ label: `Streak (${s.streakDays} days)`, amount: s.streakPay });
+  return items;
 }
 
 /** Copy the methods onto Game's prototype (they run as Game methods). */

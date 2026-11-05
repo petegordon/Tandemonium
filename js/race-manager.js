@@ -50,6 +50,9 @@ export class RaceManager {
     this.finishTime = 0;
     this._pausedAt = null;   // #459 · wall-clock time the ride froze at, while frozen
     this.collectiblesCount = 0;
+    // #512 · Tandem Tokens: how many of the road's tokens this ride took, and what they pay.
+    this.tokensCount = 0;
+    this.tokenValue = 0;
     this.crashCount = 0;
     this.timeoutCount = 0;
     this.restartCount = 0;
@@ -249,6 +252,9 @@ export class RaceManager {
       checkpointsTotal: this.checkpoints.length,
       collectibles: this.collectiblesCount,
       collectiblesTotal: this._collectiblesTotal || 0,
+      tokens: this.tokensCount,
+      tokensTotal: this._tokensTotal || 0,
+      tokenValue: this.tokenValue,
       crashes: this.crashCount,
       timeoutCount: this.timeoutCount,
       restarts: this.restartCount,
@@ -259,5 +265,16 @@ export class RaceManager {
 
   setCollectiblesTotal(total) {
     this._collectiblesTotal = total;
+  }
+
+  /** #512 · the road's token count, so the finish can say "n of N". */
+  setTokensTotal(total) {
+    this._tokensTotal = total;
+  }
+
+  /** #512 · the token tally as the manager has it (also after a checkpoint rewind). */
+  setTokens(count, value) {
+    this.tokensCount = count;
+    this.tokenValue = value;
   }
 }

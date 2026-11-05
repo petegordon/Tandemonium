@@ -305,6 +305,7 @@
   #sling-hud.visible { display: flex; }
   #sling-hud .sling-coins { color: var(--uf-color-accent-2); font-size: 17px; display: inline-block; }
   #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
+  #token-counter.pop { animation: sling-coin-pop 0.45s ease-out; color: var(--uf-color-accent-2); }
   @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px var(--uf-color-accent-2); } 100% { transform: scale(1); } }
   .sling-coin-float {
     position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
@@ -5029,6 +5030,11 @@
       <div class="hud-stat" id="collectible-counter">
         <span class="hud-stat-icon" id="collectible-icon"></span>
         <span id="collectible-count"></span>
+      </div>
+      <!-- #512 · Tandem Tokens taken on this road, n/N. -->
+      <div class="hud-stat" id="token-counter">
+        <span class="hud-stat-icon">&#x1FA99;</span>
+        <span id="token-count">0</span>
       </div>
       <div class="hud-stat" id="geese-counter">
         <span class="hud-stat-icon">&#x1FABF;</span>
