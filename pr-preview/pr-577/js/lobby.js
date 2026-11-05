@@ -3471,8 +3471,9 @@ export class Lobby {
   _buildLeaderboardTabs() {
     const mainContainer = document.getElementById('lb-main-tabs');
     const tabs = [
-      { id: 'solo', label: 'Solo' },
-      { id: 'together', label: 'Together' },
+      // #576: say what each list is — every rider's rides vs only yours.
+      { id: 'solo', label: 'All Solo Rides' },
+      { id: 'together', label: 'All Together Rides' },
       { id: 'you', label: 'My Rides' },   // #576: was "You", which read like a third board next to Solo
       { id: 'partners', label: 'Partners' }
     ];
@@ -3539,7 +3540,7 @@ export class Lobby {
 
     if (this._lbMainTab === 'you') {
       // Personal rides (#540: the badges moved to their own Achievements sheet)
-      this._leaderboardSheet.heading = 'Your Rides';
+      this._leaderboardSheet.heading = 'My Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3585,24 +3586,14 @@ export class Lobby {
         list.innerHTML = '<div class="lb-no-data">Could not load partners</div>';
       }
     } else {
-      // SOLO or TOGETHER — hide achievements, show filtered leaderboard
-      this._leaderboardSheet.heading = 'Leaderboard';
+      // SOLO or TOGETHER — every rider's rides, fastest first
+      this._leaderboardSheet.heading = this._lbMainTab === 'solo' ? 'All Solo Rides' : 'All Together Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
         const mode = this._lbMainTab === 'solo' ? 'solo' : 'together';
-        // #576: a board is each rider's best, not every ride (with one regular
-        // rider, Solo was the same list as their own rides). Rows come fastest
-        // first, so the first row per rider is their best.
-        const data = await this.auth.getLeaderboard(levelId, null, 200, { mode });
-        const seen = new Set();
-        const entries = (data.entries || []).filter((e) => {
-          if (e.user_id == null) return true;
-          const k = String(e.user_id);
-          if (seen.has(k)) return false;
-          seen.add(k);
-          return true;
-        }).slice(0, 20);
+        const data = await this.auth.getLeaderboard(levelId, null, null, { mode });
+        const entries = data.entries || [];
         const myId = this.auth.user ? this.auth.user.serverId : null;
 
         if (entries.length === 0) {
