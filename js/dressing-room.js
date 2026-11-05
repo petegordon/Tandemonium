@@ -199,6 +199,15 @@ export class DressingRoom {
     if (preview) {
       // The transition's last frame: one exact resize + redraw so the goose never stays stretched.
       preview.addEventListener('transitionend', () => { c.transitionUntil = 0; this._resizePreview(c); });
+      // Mouse (the shared couch mouse, and the keyboard player's path): drag = orbit, wheel = zoom.
+      let drag = null;
+      preview.addEventListener('pointerdown', (e) => { drag = { x: e.clientX }; preview.setPointerCapture?.(e.pointerId); e.preventDefault(); });
+      preview.addEventListener('pointermove', (e) => { if (!drag || !this._preview) return; const dx = e.clientX - drag.x; drag.x = e.clientX; this._preview.orbitBy('p' + c.n, dx * 0.012); });
+      const end = () => { drag = null; };
+      preview.addEventListener('pointerup', end);
+      preview.addEventListener('pointercancel', end);
+      preview.addEventListener('wheel', (e) => { if (!this._preview) return; e.preventDefault(); this._preview.zoomBy('p' + c.n, -e.deltaY * 0.0015); }, { passive: false });
+      preview.addEventListener('dblclick', () => { if (this._preview) this._preview.resetView('p' + c.n); });
     }
   }
 
@@ -352,6 +361,8 @@ export class DressingRoom {
   /** Each frame: the roster, every card's own pad, disconnects, the previews. */
   poll(now = performance.now()) {
     if (!this.open) return;
+    const dt = this._lastPoll ? Math.min(0.1, (now - this._lastPoll) / 1000) : 1 / 60;
+    this._lastPoll = now;
     this._sync();
     for (const c of this.cards.values()) {
       if (c.type === 'gamepad') {
@@ -361,6 +372,17 @@ export class DressingRoom {
       if (c.focus) {
         c.focus.refreshSpatial(this._items(c));
         c.focus.poll();
+      }
+      // Right stick on THIS player's pad orbits / zooms their own preview (Ready or Editing);
+      // R3 resets. The d-pad / left stick stay with the pickers (FocusController above).
+      if (c.type === 'gamepad' && this._preview) {
+        const gp = c.player.input.getGamepadState ? c.player.input.getGamepadState() : null;
+        if (gp && gp.axes) {
+          const r3 = !!(gp.buttons && gp.buttons[11] && gp.buttons[11].pressed);
+          const reset = r3 && !c.prevR3;
+          c.prevR3 = r3;
+          this._preview.control('p' + c.n, { x: gp.axes[2] || 0, y: gp.axes[3] || 0, reset, dt });
+        }
       }
       // While the preview's height transitions, keep the bitmap the size of its box every frame.
       if (c.transitionUntil && this._preview) { this._resizePreview(c); if (now > c.transitionUntil) c.transitionUntil = 0; }

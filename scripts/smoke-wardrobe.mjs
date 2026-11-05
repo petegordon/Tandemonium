@@ -126,6 +126,21 @@ await cardClick(page, 2, 'button[data-act="find"]');
 check(await until(page, (n) => window.__ledCalls.length > n + 2, before), 'WD-03: FIND MY CONTROLLER on P2\'s card flashes P2\'s lightbar', (await page.evaluate(() => window.__ledCalls.length)) - before);
 check(await until(page, () => /Buzzing Player 2/.test(document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent || '')), 'WD-03: the card says whose pad is buzzing');
 await h.shot(page, 'wd03-room-both-editing');
+// Right stick on P1's pad orbits P1's preview only; R3 resets it and restarts the turntable.
+const view = () => page.evaluate(() => { const p = window._game.lobby._room._preview; return { p1: p.viewOf('p1'), p2: p.viewOf('p2') }; });
+const v0 = await view();
+await pads.stick(0, 'RX', 1.0);
+await pads.stick(0, 'RY', -1.0);
+check(await until(page, (y0) => { const p = window._game.lobby._room._preview; const v = p.viewOf('p1'); return v && !v.auto && v.yaw > y0 + 0.3 && v.zoom > 0.2; }, v0.p1.yaw), 'WD-03: P1\'s right stick orbits + zooms P1\'s preview and stops its turntable', { before: v0.p1, after: (await view()).p1 });
+await pads.stick(0, 'RX', 0);
+await pads.stick(0, 'RY', 0);
+const held = (await view()).p1;
+await new Promise((r) => setTimeout(r, 250));
+const still = await view();
+check(Math.abs(still.p1.yaw - held.yaw) < 1e-6 && still.p1.zoom === held.zoom && !still.p1.auto, 'WD-03: the view stays where P1 left it (turntable off)', { held, now: still.p1 });
+check(still.p2.auto && Math.abs(still.p2.zoom) < 1e-6, 'WD-03: P2\'s preview is unaffected (its turntable still runs, no zoom)', still.p2);
+await pads.tap(0, 'RS');
+check(await until(page, () => { const v = window._game.lobby._room._preview.viewOf('p1'); return v && v.auto && v.zoom === 0; }), 'WD-03: R3 on P1 resets P1\'s framing and restarts the turntable', (await view()).p1);
 // P1 done (B while editing) → Ready; a second B from P1 while P2 edits only nudges P2.
 await pads.tap(0, 'B');
 check(await until(page, () => window._game.lobby._room.states()[1] === 'ready' && window._game.lobby._room.states()[2] === 'editing'), 'WD-03: B on P1 while editing = P1 Ready; P2 keeps editing', (await room(page)).states);

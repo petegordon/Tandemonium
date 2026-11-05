@@ -25,7 +25,12 @@ import { colourwayParamsForBody, applyColourway } from './goose-colourways.js';
 import { GooseRiders, disposeTree } from './goose-riders.js';
 
 const FRAME_MS = 1000 / 30;
-const TURN_RATE = 0.25;        // rad/s turntable
+const TURN_RATE = 0.25;        // rad/s turntable (auto)
+const ORBIT_RATE = Math.PI / 2; // rad/s at full right-stick deflection (~90°/s)
+const ZOOM_RATE = 1.0;          // whole zoom range per second at full deflection
+const DEADZONE = 0.2;
+/** Stick response: deadzone, then cubic over the rest of the travel. */
+const curve = (a) => { const m = Math.abs(a); if (m < DEADZONE) return 0; const t = (m - DEADZONE) / (1 - DEADZONE); return Math.sign(a) * t * t * t; };
 const CRANK_RATE = 1.5;        // rad/s pedalling
 const ROLL_SPEED = 1.2;        // m/s the wheels roll at
 const BIKE_DIM = 0.45;         // the bike's colours × this, so the goose stays the subject
@@ -105,7 +110,10 @@ export class DressingRoomPreview {
       scene.add(turntable);
       const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 80);
       s = { key, canvas, ctx: canvas.getContext('2d'), scene, camera, turntable, bike: null, riders: null, seat, look: null,
-        path: null, body: null, gen: 0, crank: 0, dist: 0, framed: false, bikeReady: null };
+        path: null, body: null, gen: 0, crank: 0, dist: 0, framed: false, bikeReady: null,
+        // Per-card camera: yaw (the turntable), zoom 0 = whole tandem … 1 = head and shoulders,
+        // auto = the slow turntable runs until the player's stick / mouse takes over (R3 restarts it).
+        yaw: 0, zoom: 0, auto: true, far: null, near: null, dirty: true };
       this._slots.set(key, s);
       s.bikeReady = loadBike().then(({ scene: src, animations }) => {
         if (!this._slots.has(key)) return;
@@ -167,6 +175,8 @@ export class DressingRoomPreview {
   _frame(s) {
     const r = s.riders && s.riders.riders[s.seat];
     if (!r) return;
+    const yaw = s.turntable.rotation.y;
+    s.turntable.rotation.y = 0;   // measure in the unrotated frame; the target then holds for any yaw
     s.turntable.updateMatrixWorld(true);
     const box = new THREE.Box3();
     const v = new THREE.Vector3();
@@ -176,14 +186,79 @@ export class DressingRoomPreview {
     const size = box.getSize(new THREE.Vector3());
     const centre = box.getCenter(new THREE.Vector3());
     const h = Math.max(size.y, size.x * 0.7, size.z * 0.7) || 1;
-    // The frame height is the goose / 0.75; aim a little below the goose's centre so the
-    // bike shows under them.
-    const dist = ((h / 0.75) / 2) / Math.tan((s.camera.fov * Math.PI / 180) / 2);
-    const target = new THREE.Vector3(centre.x, centre.y - h * 0.12, centre.z);
-    s.camera.position.set(target.x + dist * 0.62, target.y + h * 0.3, target.z + dist * 0.78);
-    s.camera.lookAt(target);
+    const tan = Math.tan((s.camera.fov * Math.PI / 180) / 2);
+    // Whole tandem (zoom 0): the goose is 75 % of the frame, aimed a little below its centre so
+    // the bike shows under them. Head and shoulders (zoom 1): the top ~40 % of the goose, aimed
+    // at the chest. The rider's chest sits over the seat, which is the turntable's pivot, so
+    // the target barely moves as the view orbits.
+    s.far = { dist: ((h / 0.75) / 2) / tan, ty: centre.y - h * 0.12, up: h * 0.3 };
+    s.near = { dist: ((h * 0.56) / 2) / tan, ty: centre.y + h * 0.3, up: h * 0.1 };
+    s.cx = centre.x; s.cz = centre.z;
+    s.turntable.rotation.y = yaw;
+    s.turntable.updateMatrixWorld(true);
     s.framed = true;
+    this._applyCamera(s);
   }
+
+  /** Place the camera for the slot's yaw (the turntable) and zoom. */
+  _applyCamera(s) {
+    if (!s.far) return;
+    const z = Math.max(0, Math.min(1, s.zoom));
+    const dist = s.far.dist + (s.near.dist - s.far.dist) * z;
+    const ty = s.far.ty + (s.near.ty - s.far.ty) * z;
+    const up = s.far.up + (s.near.up - s.far.up) * z;
+    s.turntable.rotation.y = s.yaw;
+    s.camera.position.set(s.cx + dist * 0.62, ty + up, s.cz + dist * 0.78);
+    s.camera.lookAt(s.cx, ty, s.cz);
+    s.dirty = true;
+  }
+
+  /**
+   * The player's right stick on their own card: X orbits (steady rate, deadzone + cubic), Y zooms
+   * (up = in). The turntable stops as soon as the stick leaves the deadzone and the view stays
+   * where it was left; `reset` (R3) goes back to the default framing and restarts the turntable.
+   * @param {string} key @param {{x?: number, y?: number, reset?: boolean, dt: number}} c
+   */
+  control(key, { x = 0, y = 0, reset = false, dt }) {
+    const s = this._slots.get(key);
+    if (!s) return;
+    if (reset) { this.resetView(key); return; }
+    const ox = curve(x), oy = curve(y);
+    if (ox === 0 && oy === 0) return;
+    s.auto = false;
+    s.yaw += ox * ORBIT_RATE * dt;
+    s.zoom = Math.max(0, Math.min(1, s.zoom - oy * ZOOM_RATE * dt));
+    this._applyCamera(s);
+  }
+
+  /** Mouse drag on a card: orbit by a yaw delta (radians); the turntable stops. */
+  orbitBy(key, dYaw) {
+    const s = this._slots.get(key);
+    if (!s || !dYaw) return;
+    s.auto = false;
+    s.yaw += dYaw;
+    this._applyCamera(s);
+  }
+
+  /** Mouse wheel on a card: zoom by a delta in [0..1] units (+ = in). */
+  zoomBy(key, dz) {
+    const s = this._slots.get(key);
+    if (!s || !dz) return;
+    s.auto = false;
+    s.zoom = Math.max(0, Math.min(1, s.zoom + dz));
+    this._applyCamera(s);
+  }
+
+  /** Default framing + the turntable back on. */
+  resetView(key) {
+    const s = this._slots.get(key);
+    if (!s) return;
+    s.yaw = 0; s.zoom = 0; s.auto = true;
+    this._applyCamera(s);
+  }
+
+  /** Tests: the card's camera state. */
+  viewOf(key) { const s = this._slots.get(key); return s ? { yaw: s.yaw, zoom: s.zoom, auto: s.auto } : null; }
 
   /** Advance and draw every card; call each frame (it rate-limits itself to 30 fps). */
   tick(now) {
@@ -196,12 +271,15 @@ export class DressingRoomPreview {
       const w = s.canvas.clientWidth | 0, h = s.canvas.clientHeight | 0;
       if (!w || !h) continue;
       if (s.canvas.width !== w || s.canvas.height !== h) { s.canvas.width = w; s.canvas.height = h; }
-      s.turntable.rotation.y += TURN_RATE * dt;
+      if (s.auto) { s.yaw += TURN_RATE * dt; s.dirty = true; }
+      // The pedal advances every tick, so a seated card redraws every tick (30 fps cap); the
+      // camera only moves when its yaw / zoom did.
       s.crank += CRANK_RATE * dt;
       s.dist += ROLL_SPEED * dt;
       if (s.riders) { s.riders.setCrank(s.crank); s.riders.setDistance(s.dist); s.riders.update(); }
       if (!s.framed && s.riders && s.riders.riders[s.seat]) this._frame(s);
       if (!s.framed) continue;   // nothing to show until the rider is seated
+      if (s.dirty) { this._applyCamera(s); s.dirty = false; }
       const r = this._getRenderer();
       if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false);
       s.camera.aspect = w / h;
