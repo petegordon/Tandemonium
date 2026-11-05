@@ -6,7 +6,8 @@
 //   WD-02  P2's △/Y opens the Dressing Room for everyone: P2's card in Edit, P1's Ready; P1's
 //          pad does not move P2's card focus, P2's does; both can edit at the same time
 //   WD-03  P2 picks Gander + Georgian + a gold light: saved under player 2 AND the pad, the
-//          lightbar goes gold, the preview loads the exact rider GLB, FIND MY CONTROLLER flashes;
+//          lightbar goes gold (and that pick buzzes P2's pad once), the preview loads the exact rider
+//          GLB, the Buzz strip's P2 chip buzzes P2 only and P2's pad can never focus the strip;
 //          B from P1 while P2 edits only nudges P2's card; B from P2 = Ready (picks kept);
 //          all ready → BACK TO SEATS; B from anyone closes; P2 stays seated
 //   WD-02d a pad unplugged while editing counts as Ready (the room can't stick)
@@ -95,8 +96,10 @@ const afterP1 = await room(page);
 check(afterP1.focus[2] === r.focus[2] && afterP1.states[2] === 'editing', 'WD-02: P1\'s pad does not move P2\'s card focus', { before: r.focus[2], after: afterP1.focus[2] });
 await pads.tap(p2, 'LEFT');
 check(await until(page, () => { const c = window._game.lobby._room.cards.get(2); return c.focus.focused && c.focus.focused.dataset.val === 'm'; }), 'WD-02: P2\'s LEFT moves P2\'s focus to Gander', (await room(page)).focus);
-// P1 edits at the same time: focus sits on P1's EDIT, A opens the rows.
-check(await until(page, () => { const c = window._game.lobby._room.cards.get(1); return c.focus.focused && c.focus.focused.dataset.act === 'edit'; }), 'WD-02: P1\'s card focus is on EDIT', (await room(page)).focus);
+// P1's DOWN above took P1's focus into the Buzz strip (only P1's pad can); UP returns to the card.
+check(await until(page, () => { const c = window._game.lobby._room.cards.get(1); return c.focus.focused && c.focus.focused.dataset.buzz === '1'; }), 'WD-02: P1\'s DOWN past the card lands on the Buzz strip (P1\'s chip first)', (await room(page)).focus);
+await pads.tap(0, 'UP');
+check(await until(page, () => { const c = window._game.lobby._room.cards.get(1); return c.focus.focused && c.focus.focused.dataset.act === 'edit'; }), 'WD-02: UP from the strip returns P1 to the card (EDIT)', (await room(page)).focus);
 await pads.tap(0, 'A');
 check(await until(page, () => window._game.lobby._room.states()[1] === 'editing' && window._game.lobby._room.states()[2] === 'editing'), 'WD-02: A on P1\'s EDIT — both cards editing at once', (await room(page)).states);
 
@@ -119,12 +122,27 @@ check(saved.colourRow[0] === 'default' && saved.colourRow.includes('g_claret'), 
 check(/Gander · Georgian .* Gold light/.test(saved.summary || ''), 'WD-03: the card summary follows the picks', saved.summary);
 let led = await page.evaluate(() => window.__ledCalls);
 check(led.some((c) => c.n === 2 && c.lightbar && c.lightbar.r === 255 && c.lightbar.g === 160 && c.lightbar.b === 0 && c.playerLEDs === 0x0a), 'WD-03: the pad in P2 got a gold lightbar + the P2 player LEDs', led.at(-1));
+// The settled light pick buzzes P2's pad once (debounced 400 ms): a flash = several lightbar calls.
+check(await until(page, () => (window._game.lobby._room.cards.get(2).buzzCount || 0) === 1 && window.__ledCalls.length >= 8), 'WD-03: picking a new light buzzes that pad once', { buzzes: await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount), calls: (await page.evaluate(() => window.__ledCalls.length)) });
+await cardClick(page, 2, 'button[data-pick="led"][data-val="pink"]');
+await cardClick(page, 2, 'button[data-pick="led"][data-val="gold"]');
+await new Promise((r) => setTimeout(r, 700));
+check((await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount)) === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount));
+const noFind = await page.evaluate(() => document.querySelectorAll('#dr-cards button[data-act="find"]').length);
+check(noFind === 0, 'WD-03: no FIND MY CONTROLLER button on the cards (the strip replaces it)', noFind);
+const scopes = await page.evaluate(() => { const r = window._game.lobby._room; const has = (n) => r.cards.get(n).focus.items.some((el) => el.dataset && el.dataset.buzz); return { p1: has(1), p2: has(2), chips: [...document.querySelectorAll('#dr-buzz-chips button')].map((b) => b.dataset.buzz) }; });
+check(scopes.chips.join() === '1,2' && scopes.p1 && !scopes.p2, 'WD-03: the Buzz strip has a chip per pad; only P1\'s pad can reach it', scopes);
 check(await until(page, () => { const p = window._game.lobby._room._preview; return p && p.loaded('p2') && p.pathOf('p2') === 'tandem-3d/goose/goose_stoker_georgian_m.glb'; }, null, 60000), 'WD-03: P2\'s preview loads the exact rider the ride will seat (stoker, Georgian gander)', await page.evaluate(() => window._game.lobby._room._preview && window._game.lobby._room._preview.pathOf('p2')));
 check(await until(page, () => { const p = window._game.lobby._room._preview; return p && p.loaded('p1') && p.pathOf('p1') === 'tandem-3d/goose/goose_captain.glb'; }, null, 60000), 'WD-03: P1\'s preview is the Victorian captain');
-const before = led.length;
-await cardClick(page, 2, 'button[data-act="find"]');
-check(await until(page, (n) => window.__ledCalls.length > n + 2, before), 'WD-03: FIND MY CONTROLLER on P2\'s card flashes P2\'s lightbar', (await page.evaluate(() => window.__ledCalls.length)) - before);
-check(await until(page, () => /Buzzing Player 2/.test(document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent || '')), 'WD-03: the card says whose pad is buzzing');
+let before = await page.evaluate(() => window.__ledCalls.length);
+await page.evaluate(() => document.querySelector('#dr-buzz-chips button[data-buzz="1"]').click());
+await new Promise((r) => setTimeout(r, 400));
+const b1 = await page.evaluate(() => window._game.lobby._room.cards.get(1).buzzCount || 0);
+check((await page.evaluate(() => window.__ledCalls.length)) === before && b1 >= 1, 'WD-03: the P1 chip buzzes P1 only (P2\'s lightbar untouched)', { p1buzzes: b1, p2calls: (await page.evaluate(() => window.__ledCalls.length)) - before });
+before = await page.evaluate(() => window.__ledCalls.length);
+await page.evaluate(() => document.querySelector('#dr-buzz-chips button[data-buzz="2"]').click());
+check(await until(page, (n) => window.__ledCalls.length > n + 2, before), 'WD-03: the P2 chip flashes P2\'s lightbar', (await page.evaluate(() => window.__ledCalls.length)) - before);
+check(await until(page, () => /Buzzing Player 2/.test(document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent || '')), 'WD-03: P2\'s card says its pad is buzzing');
 await h.shot(page, 'wd03-room-both-editing');
 // Right stick on P1's pad orbits P1's preview only; R3 resets it and restarts the turntable.
 const view = () => page.evaluate(() => { const p = window._game.lobby._room._preview; return { p1: p.viewOf('p1'), p2: p.viewOf('p2') }; });
