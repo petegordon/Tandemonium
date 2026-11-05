@@ -6,7 +6,7 @@ import {
   stageGoal, stageBonus, STAGE_GOALS, scoreRun, emptySave, loadSave, writeSave, applyRun,
   buyUpgrade, planCoinTrails, planCourse, LANES, COINS_PER_TRAIL, STORAGE_KEY, SAVE_VERSION, spentOn, RETIRED_UPGRADES,
   runDistance, dragToAim, aimPose, roadExitDistance, MIN_LAUNCH_PULL, potBonus, potCashed,
-  todaysLaunchStatus, applyTodaysLaunch,
+  dailyLaunchStatus, applyDailyLaunch,
   SLING_POST_D, SLING_REST_D, SLING_PULL_BACK, SLING_MAX_LATERAL, SLING_MAX_AIM, ROAD_HALF_WIDTH
 } from '../../js/slingshot.js';
 import { emptyWallet, loadWallet, deposit, coinMultiplier } from '../../js/wallet.js';
@@ -163,24 +163,24 @@ test('B5: an old save that cashed the jackpot keeps the pot cashed', () => {
     daily: { key: '2026-10-05', best: 200, runs: 1, jackpot: true } }) });
   assert.equal(potCashed(s), true);
   assert.equal(potCashed({ ...s, stage: 4 }), false);
-  assert.equal(potCashed({ ...todaysLaunchStatus(s, '2026-10-05'), stage: 3 }), true);
+  assert.equal(potCashed({ ...dailyLaunchStatus(s, '2026-10-05'), stage: 3 }), true);
 });
 
 test("B5: the Daily Launch pays the pot of gold at most once a day", () => {
   const key = '2026-10-05';
   let save = emptySave();
   const run = { distance: 300, coins: 5, pot: true };
-  const today = () => ({ ...todaysLaunchStatus(save, key), stage: 7 });
+  const today = () => ({ ...dailyLaunchStatus(save, key), stage: 7 });
   const first = scoreRun(run, today());
   assert.equal(first.potPaid, true);
-  save = applyTodaysLaunch(save, key, first);
-  assert.equal(todaysLaunchStatus(save, key).jackpot, true);
+  save = applyDailyLaunch(save, key, first);
+  assert.equal(dailyLaunchStatus(save, key).jackpot, true);
   assert.equal(potCashed(today()), true);
   const again = scoreRun(run, today());
   assert.equal(again.potPaid, false);
   assert.equal(again.potPay, 0);
   // Tomorrow is a new day.
-  assert.equal(scoreRun(run, { ...todaysLaunchStatus(save, '2026-10-06'), stage: 7 }).potPaid, true);
+  assert.equal(scoreRun(run, { ...dailyLaunchStatus(save, '2026-10-06'), stage: 7 }).potPaid, true);
 });
 
 test('a short run is not a record and pays no record bonus', () => {

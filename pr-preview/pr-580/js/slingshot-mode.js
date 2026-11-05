@@ -84,7 +84,7 @@ class SlingshotMode {
   }
 
   /** Today's Launch (D11b) is full-game only. */
-  _todaysLaunchOn() {
+  _dailyLaunchOn() {
     return !getEditionRules().isDemo;
   }
 
@@ -107,7 +107,7 @@ class SlingshotMode {
    */
   _slingScoreSave() {
     const daily = this._slingDaily;
-    if (daily) return { ...sling.todaysLaunchStatus(this._slingSave, daily.key), stage: this._slingSave.stage };
+    if (daily) return { ...sling.dailyLaunchStatus(this._slingSave, daily.key), stage: this._slingSave.stage };
     const stage = this._slingPlayStage();
     return stage !== this._slingSave.stage ? { ...this._slingSave, stage } : this._slingSave;
   }
@@ -130,7 +130,7 @@ class SlingshotMode {
       const buttons = slingUI.renderGarage(this._slingSave, this._wallet, {
         standalone,
         lock,
-        todays: this._todaysLaunchOn() ? sling.todaysLaunchStatus(this._slingSave, dailyKey()) : null,
+        todays: this._dailyLaunchOn() ? sling.dailyLaunchStatus(this._slingSave, dailyKey()) : null,
         // m9: at the demo's end, LAUNCH replays its last stage; no Rebuild in the demo.
         replay: lock && lock.kind === 'demo' && !this._slingLock(this._slingPlayStage()) ? this._slingPlayStage() : null,
         rebuildOffered: !getEditionRules().isDemo,
@@ -192,7 +192,7 @@ class SlingshotMode {
     const save = this._slingSave;
     // A stage that needs a medal (or is past the demo) goes back to the garage, which says why.
     if (!daily && this._slingLock(this._slingPlayStage())) { this._openSlingGarage(); return; }
-    if (daily && !this._todaysLaunchOn()) { this._openSlingGarage(); return; }
+    if (daily && !this._dailyLaunchOn()) { this._openSlingGarage(); return; }
     this._clearOverlayButtons();
     slingUI.hideGarage();
     slingUI.hideResults();
@@ -217,7 +217,7 @@ class SlingshotMode {
     // from the slingshot's rest point, so the finish sits that much further on.
     // Today's Launch has no goal: its "finish" is the end of the course, past every stage goal.
     const stage = this._slingPlayStage();   // m9: the demo replays its last stage
-    const finishD = (daily ? sling.TODAYS_LAUNCH_LENGTH : sling.stageGoal(stage)) + sling.SLING_REST_D;
+    const finishD = (daily ? sling.DAILY_LAUNCH_LENGTH : sling.stageGoal(stage)) + sling.SLING_REST_D;
     this.lobby.selectedLevel = {
       id: 'slingshot',
       name: daily ? 'Daily Launch' : `Slingshot · Stage ${stage}`,
@@ -303,7 +303,7 @@ class SlingshotMode {
     // pot of gold, left out once it has paid (its sign stays). It replaces the level's scattered pickups and the
     // random cones — nothing in the way should be a surprise crash.
     const course = this._slingDaily
-      ? sling.todaysLaunchCourse(this._slingDaily.key)
+      ? sling.dailyLaunchCourse(this._slingDaily.key)
       : sling.planCourse(this._slingPlayStage(), level.distance);
     this.collectibleManager.replaceItems(course.coins);
     if (this.obstacleManager) this.obstacleManager.replaceItems([]);
@@ -335,7 +335,7 @@ class SlingshotMode {
     const predicted = sling.predictCoast(this._slingStats, pull, 'dirt');
     const exitAt = sling.roadExitDistance(pose.lateral, pose.angle);
     this._slingRig.hold(b, pull, { length: Math.min(60, 3 + predicted * 0.15), exitAt });
-    const best = this._slingDaily ? sling.todaysLaunchStatus(this._slingSave, this._slingDaily.key).best : this._slingSave.best;
+    const best = this._slingDaily ? sling.dailyLaunchStatus(this._slingSave, this._slingDaily.key).best : this._slingSave.best;
     slingUI.showPull(pull, { predicted, best });
   }
 
@@ -622,7 +622,7 @@ class SlingshotMode {
       coins: run.coins,
       distance: sling.runDistance(this.bike.distanceTraveled),
       goal: daily ? null : sling.stageGoal(this._slingPlayStage()),
-      best: daily ? sling.todaysLaunchStatus(this._slingSave, daily.key).best : 0,
+      best: daily ? sling.dailyLaunchStatus(this._slingSave, daily.key).best : 0,
     });
   }
 
@@ -669,13 +669,13 @@ class SlingshotMode {
     let score;
     if (daily) {
       score = sling.scoreRun(runData, this._slingScoreSave(), mult);
-      this._slingSave = sling.applyTodaysLaunch(this._slingSave, daily.key, score);
+      this._slingSave = sling.applyDailyLaunch(this._slingSave, daily.key, score);
     } else {
       score = sling.scoreRun(runData, this._slingScoreSave(), mult);
       this._slingSave = sling.applyRun(this._slingSave, runData, score);
     }
     sling.writeSave(this._slingStore(), this._slingSave);
-    this._depositCoins(score.total, { mode: daily ? 'todaysLaunch' : 'slingshot', kind: cause });
+    this._depositCoins(score.total, { mode: daily ? 'dailyLaunch' : 'slingshot', kind: cause });
     // #401: the run, for the Slingshot achievements (Slingshot keeps ride checks off).
     this._economyEvent('slingRun', {
       distance: score.distance, record: score.isRecord, pot: !!run.pot, daily: !!daily,
@@ -683,7 +683,7 @@ class SlingshotMode {
       straight: sling.isStraightShot(score.distance, run.steerAt),
     });
     if (daily) {
-      this._economyEvent('todaysLaunch', { key: daily.key, distance: score.distance, best: score.isRecord, earned: score.total });
+      this._economyEvent('dailyLaunch', { key: daily.key, distance: score.distance, best: score.isRecord, earned: score.total });
     } else if (runData.stageCleared) {
       this._economyEvent('stageCleared', { stage: this._slingSave.stage - 1 });
     }

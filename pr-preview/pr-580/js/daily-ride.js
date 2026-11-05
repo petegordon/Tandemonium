@@ -114,12 +114,12 @@ export const DAILY_RULES_LINE = 'Same road for everyone today · new road at 09:
 
 // ── #400 · the demo's weekly road ─────────────────────────────────────────
 //
-// In the demo, the Daily Ride becomes "This Week's Road": one road per ISO week
+// In the demo, the Daily Ride becomes the "Weekly Ride": one road per ISO week
 // (keyed by its Monday, see weeklyKey), ridden on Chill with safety on (D10),
 // practice only. The full game is unchanged. Records and practice counts use
 // the Monday's key, so the storage format is the daily one.
 
-export const WEEKLY_NAME = "This Week's Road";
+export const WEEKLY_NAME = 'Weekly Ride';
 export const WEEKLY_DESCRIPTION = 'A new road every week';
 export const WEEKLY_DIFFICULTY = 'chill';
 export const WEEKLY_RULES_LINE = 'Same road for everyone this week · new road every Monday';
