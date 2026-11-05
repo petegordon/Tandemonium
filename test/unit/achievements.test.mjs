@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import {
   ACHIEVEMENTS, SECTIONS, DEMO_UNEARNABLE, MEDAL_LEVELS,
   emptyStats, migrateStats, applyEvent, RideTracker, versusResult, opensMedalGate,
-  STATS_VERSION, stageForDistance,
+  STATS_VERSION, stageForDistance, RENAMED_IDS, migrateEarned, getDefinition,
 } from '../../js/achievement-defs.js';
 import { DEMO_RULES, FULL_RULES } from '../../js/edition.js';
 import { completedTrails, isStraightShot, COINS_PER_TRAIL, planCourse } from '../../js/slingshot.js';
@@ -27,7 +27,7 @@ const EXISTING = [
 // daily_streak_3/7 (m5): the demo rides the weekly road, which feeds no day streak.
 const SPEC_FULL_ONLY = [
   'sling_stage5', 'daily_streak_3', 'daily_streak_7',
-  'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'todays_launch', 'launch_week',
+  'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'daily_launch', 'launch_week',
   'coins_10000', 'max_upgrade', 'garage_royalty', 'rebuilt', 'ship_of_theseus', 'daily_first',
   'daily_streak_30', 'pair_100km', 'standing_date', 'distance_between_us', 'grand_tour',
 ];
@@ -122,7 +122,7 @@ test('each full-only reason matches the edition rules', () => {
     switch (a.full) {
       case 'tourist': assert.equal(DEMO_RULES.tourist, false); assert.equal(FULL_RULES.tourist, true); break;
       case 'ranked': assert.equal(DEMO_RULES.ranked, false); assert.equal(FULL_RULES.ranked, true); break;
-      case 'todaysLaunch': assert.equal(DEMO_RULES.isDemo, true); break;   // slingshot-mode · _todaysLaunchOn
+      case 'dailyLaunch': assert.equal(DEMO_RULES.isDemo, true); break;   // slingshot-mode · _dailyLaunchOn
       case 'slingStage':
         assert.ok(a.stage > DEMO_RULES.slingshot.maxStage, `${a.id}: stage ${a.stage} is inside the demo`);
         assert.equal(FULL_RULES.slingshot.maxStage, null);
@@ -180,7 +180,7 @@ test('stats: rides, distinct days, distance, Tourist, Payday', () => {
   assert.equal(L.cumulativeDistance, 1650);   // the launch is not riding
 });
 
-test("stats: Today's Road day streak and medal keys", () => {
+test("stats: Daily Ride day streak and medal keys", () => {
   let L = emptyStats();
   for (const day of ['2026-10-01', '2026-10-02', '2026-10-02', '2026-10-03']) {
     L = applyEvent(L, 'finish', { finishedLevel: 'daily' }, day);
@@ -211,8 +211,8 @@ test('stats: the economy events', () => {
   L = applyEvent(L, 'upgrade', { id: 'magnet', level: 8, price: 900 });
   L = applyEvent(L, 'upgrade', { id: 'sling', level: 1, price: 40, allMaxed: true });
   L = applyEvent(L, 'rebuild', { rebuilds: 2 });
-  L = applyEvent(L, 'todaysLaunch', { key: '2026-10-04' });
-  L = applyEvent(L, 'todaysLaunch', { key: '2026-10-04' });
+  L = applyEvent(L, 'dailyLaunch', { key: '2026-10-04' });
+  L = applyEvent(L, 'dailyLaunch', { key: '2026-10-04' });
   L = applyEvent(L, 'stageCleared', { stage: 3 });
   L = applyEvent(L, 'slingRun', { distance: 130, pot: true, record: true, fullTrails: 2, straight: false });
   assert.equal(L.coinsEarned, 120);
@@ -551,7 +551,43 @@ test('medal achievements say which time they mean and point the card at it', () 
     assert.match(a.desc, /each difficulty has its own/, `${a.id}: says the time is per difficulty`);
   }
   const allGold = ACHIEVEMENTS.find(a => a.id === 'all_gold');
-  assert.match(allGold.desc, /Grandma's and Today's Road/, 'Gilded Goose names both timed roads');
+  assert.match(allGold.desc, /Grandma's and the Daily Ride/, 'Gilded Goose names both timed roads');
   const key = ACHIEVEMENTS.find(a => a.id === 'medal_key');
   assert.match(key.desc, /bronze on Grandma's for stage 4, gold for stage 7/, 'Medal Key names the gates');
+});
+
+// ---- #575 · todays_launch → daily_launch -----------------------------------
+
+test('#575: an earned todays_launch moves to daily_launch once, keeping the earlier unlock', () => {
+  for (const [from, to] of Object.entries(RENAMED_IDS)) {
+    assert.ok(getDefinition(to), `${to} is a current achievement`);
+    assert.equal(getDefinition(from), null, `${from} is gone from the list`);
+  }
+  const old = [
+    { id: 'todays_launch', name: "Today's Launch", icon: '🌅', earnedAt: 100 },
+    { id: 'launch_week', name: 'Launch Week', icon: '📅', earnedAt: 200 },
+  ];
+  const m = migrateEarned(old);
+  assert.equal(m.changed, true, 'the stored list is rewritten');
+  assert.deepEqual(m.list.map(a => a.id), ['daily_launch', 'launch_week']);
+  assert.equal(m.list[0].name, 'Daily Launch', 'takes the new name');
+  assert.equal(m.list[0].icon, '🌅');
+  assert.equal(m.list[0].earnedAt, 100, 'keeps when it was earned');
+  assert.deepEqual(m.list[1], old[1], 'other entries are untouched');
+
+  // Already migrated: nothing to write.
+  const again = migrateEarned(m.list);
+  assert.equal(again.changed, false);
+  assert.deepEqual(again.list, m.list);
+
+  // Earned on two devices, under both ids: one row, the earlier unlock wins.
+  const both = migrateEarned([{ id: 'daily_launch', earnedAt: 300 }, { id: 'todays_launch', earnedAt: 100 }]);
+  assert.equal(both.changed, true);
+  assert.equal(both.list.length, 1);
+  assert.equal(both.list[0].id, 'daily_launch');
+  assert.equal(both.list[0].earnedAt, 100);
+
+  // A fresh or unreadable store.
+  assert.deepEqual(migrateEarned(null), { list: [], changed: false });
+  assert.deepEqual(migrateEarned([]), { list: [], changed: false });
 });

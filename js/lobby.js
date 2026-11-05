@@ -1496,7 +1496,7 @@ export class Lobby {
 
   /**
    * #400 · the shared road with its identity attached: Today's Road, or in the
-   * demo This Week's Road (rules.weeklyRoad). Any other level comes back as is.
+   * demo Weekly Ride (rules.weeklyRoad). Any other level comes back as is.
    * `key`/`seed` are the captain's when a stoker resolves it (C-2).
    */
   resolveRoadLevel(level, { key, seed } = {}) {
@@ -1859,7 +1859,7 @@ export class Lobby {
       if (!line) return;
       const base = LEVELS.find(l => l.id === card.dataset.levelId);
       if (!base) return;
-      // Same swap as the card builder: in the demo the shared road is This Week's Road.
+      // Same swap as the card builder: in the demo the shared road is the Weekly Ride.
       const level = base.isDaily && this.roomRules().weeklyRoad ? asWeeklyRoad(base) : base;
       // The day line changes after every ride on Today's Road (a practice
       // count, the ranked time), and the cards are built once at boot.
@@ -1889,7 +1889,7 @@ export class Lobby {
     // (two teams, one screen) and a shared daily result means nothing there.
     const isVersus = mode === 'versus';
     // #400: every list offers only what this edition includes; in the demo the
-    // shared road is This Week's Road.
+    // shared road is the Weekly Ride.
     const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
     const levels = LEVELS.filter(l =>
       (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id))
@@ -4127,7 +4127,7 @@ export class Lobby {
       if (startBtn) startBtn.disabled = false;
     }
     if (expired) {
-      showInfoToast('📅', 'That road has expired', 'Here’s today’s road instead.');
+      showInfoToast('📅', 'That road has expired', 'Here’s today’s Daily Ride instead.');
     }
     analytics.trackEvent('daily_link', { key: param, expired });
   }
@@ -5103,7 +5103,7 @@ export class Lobby {
     this._lastLevelRefused = profile.levelId || '';   // read by smoke:tourist
     if (profile.reason === 'demo') {
       showInfoToast('🔒', 'Your partner is on the demo',
-        'They can ride the Tutorial, Grandma’s House and This Week’s Road with you.');
+        'They can ride the Tutorial, Grandma’s House and the Weekly Ride with you.');
     } else {
       showInfoToast('🔒', 'Your partner can’t ride that one', 'Pick another level to ride together.');
     }
