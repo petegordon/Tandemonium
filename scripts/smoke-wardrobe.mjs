@@ -6,8 +6,8 @@
 //   WD-02  P2's △/Y opens the Wardrobe for Player 2; P1's pad does not move its focus, P2's does
 //   WD-03  P2 picks Gander + Georgian + a gold light: the look saves under player 2 AND the pad;
 //          the pad's lightbar is set to gold; FIND MY CONTROLLER flashes it
-//   WD-04  in the local ride the stoker rides as Georgian: no goose_stoker_georgian_m.glb yet, so
-//          the resolver falls back to goose_stoker_georgian.glb and logs the wanted file once
+//   WD-04  in the local ride the stoker rides as the Georgian gander (goose_stoker_georgian_m.glb,
+//          the new-contract file), with no fallback logged
 //   WD-05  next session: the same pad (same vendor:product, slot P2) gets its look back
 //   WD-06  versus: a joined pad's △/Y opens its own Wardrobe; B closes it without leaving the seat
 import { startHarness, clickId, waitState } from './lib/smoke-harness.mjs';
@@ -110,17 +110,17 @@ await pads.tap(p2, 'B');
 check(await until(page, () => !window._game.lobby._wardrobe && !document.getElementById('wardrobe-sheet').open), 'WD-03: B on P2\'s pad closes the Wardrobe');
 check(await page.evaluate(() => window._game.lobby._localSeatedOnHost), 'WD-03: Player 2 is still seated after closing');
 
-console.log('WD-04 the stoker rides in Player 2\'s look (falling back to the outfit\'s goose)');
+console.log('WD-04 the stoker rides in Player 2\'s look');
 await clickId(page, 'btn-host-local-next');
 await until(page, () => document.getElementById('lobby-flow').current === 'lobby-level');
 await clickId(page, 'btn-start-ride');
 await waitState(page, 'playing');
-check(await until(page, () => window._game.mode === 'local' && window._game.bike && window._game.bike._gooseRiderPaths && window._game.bike._gooseRiderPaths.Stoker === 'tandem-3d/goose/goose_stoker_georgian.glb', null, 20000),
-  'WD-04: stoker rider path = goose_stoker_georgian.glb (the gander file is not built yet)', await page.evaluate(() => window._game.bike._gooseRiderPaths));
+check(await until(page, () => window._game.mode === 'local' && window._game.bike && window._game.bike._gooseRiderPaths && window._game.bike._gooseRiderPaths.Stoker === 'tandem-3d/goose/goose_stoker_georgian_m.glb', null, 20000),
+  'WD-04: stoker rider path = goose_stoker_georgian_m.glb (the new-contract gander file)', await page.evaluate(() => window._game.bike._gooseRiderPaths));
 const seatLooks = await page.evaluate(() => window._game.bike.seatLooks);
 check(seatLooks && seatLooks.Captain.outfit === 'victorian' && seatLooks.Captain.body === 'm' && seatLooks.Stoker.outfit === 'georgian' && seatLooks.Stoker.body === 'm', 'WD-04: seat looks = P1 Victorian gander, P2 Georgian gander', seatLooks);
-const fallbackLogs = logs.filter((t) => t.includes('goose_stoker_georgian_m.glb'));
-check(fallbackLogs.length === 1, 'WD-04: the missing goose_stoker_georgian_m.glb is logged exactly once', fallbackLogs);
+const fallbackLogs = logs.filter((t) => t.includes('[wardrobe] no '));
+check(fallbackLogs.length === 0, 'WD-04: no rider fallback logged (every combo has its file)', fallbackLogs);
 await h.shot(page, 'wd04-local-ride');
 await page.close();
 

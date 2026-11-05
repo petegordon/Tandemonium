@@ -62,6 +62,18 @@ test('a missing (seat, outfit, body) falls back to the seat\'s existing body and
   assert.equal(riderPath('Stoker', 'fancy', 'm'), 'tandem-3d/goose/goose_stoker.glb');
 });
 
+test('all 16 (seat, outfit, body) combos resolve to their own file, no fallback', () => {
+  _resetRiderWarnings();
+  for (const o of Object.keys(GOOSE_OUTFITS)) for (const s of SEATS) for (const b of ['m', 'f']) {
+    const r = resolveRider(s, o, b, () => assert.fail('no fallback expected'));
+    assert.equal(r.fallback, false, `${s}/${o}/${b}`);
+    assert.equal(r.body, b);
+    assert.ok(fs.existsSync(r.path), r.path);
+    if (b !== SEAT_BODY[s]) assert.equal(r.path, riderFileName(s, o, b));
+  }
+  assert.equal(RIDER_FILES.size, 8);
+});
+
 test('every new-contract file listed as shipped is on disk and named by the contract', () => {
   for (const f of RIDER_FILES) {
     assert.match(f, /^tandem-3d\/goose\/goose_(captain|stoker)_(victorian|cyclists|fancy|georgian)_(m|f)\.glb$/, f);

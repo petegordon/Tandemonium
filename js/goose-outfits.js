@@ -59,8 +59,16 @@ export const SEATS = ['Captain', 'Stoker'];
 /** The body each seat's existing rider file has. */
 export const SEAT_BODY = { Captain: 'm', Stoker: 'f' };
 
-/** New-contract rider files that have shipped (relative paths). Empty until the 3D side delivers them. */
+/**
+ * New-contract rider files that have shipped (relative paths): the lady on the front seat and the
+ * gent on the back seat of every outfit (claude-3d ride_fit.py, 2026-11-04). With these, all 16
+ * (seat, outfit, body) combos exist; the fallback below only matters for outfits added later.
+ */
 export const RIDER_FILES = new Set([
+  DIR + 'goose_captain_victorian_f.glb', DIR + 'goose_stoker_victorian_m.glb',
+  DIR + 'goose_captain_cyclists_f.glb', DIR + 'goose_stoker_cyclists_m.glb',
+  DIR + 'goose_captain_fancy_f.glb', DIR + 'goose_stoker_fancy_m.glb',
+  DIR + 'goose_captain_georgian_f.glb', DIR + 'goose_stoker_georgian_m.glb',
 ]);
 
 /** The contract file name for a (seat, outfit, body). Pure; does not say whether the file exists. */
