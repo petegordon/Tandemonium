@@ -1,4 +1,11 @@
-# Steam Input — Full Controller Design
+# Steam Input — Full Controller Design (superseded)
+
+> **Status, 2026-11 (#581):** history, not the plan. The decision is the one this
+> doc's own hardware session reached — **emulation mode only**: no action
+> manifest, Steam's virtual XInput pad for whatever Steam captures, WebHID for
+> everything else. The action-set / `getMotionData` / per-controller-source
+> machinery described below was deleted from the game. `docs/steam-input.md`
+> is the current, short model. Kept for the hardware facts and the reasoning.
 
 Companion to `steam-input.md` (the mechanics quick-reference). This doc is the
 *architecture*: which controller takes which path, why, and the work to get
