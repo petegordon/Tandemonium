@@ -48,7 +48,9 @@ async function check(label, viewport) {
     document.getElementById('grade-row').classList.add('visible','up');
     document.getElementById('grade-value').textContent = '12%';
 
-    const ids = ['hud-top','coach-card','lookahead','disruption-banner','ping-call','ping-bubbles',
+    // #576: the visible strip, not #hud-top (a transparent full-width band); on a
+    // wide screen the strip is at the left and the badge sits beside it.
+    const ids = ['hud-dashboard','coach-card','lookahead','disruption-banner','ping-call','ping-bubbles',
                  'ranked-badge','split-delta','pedal-bar','sync-row','ping-row','coop-coach'];
     const out = {};
     for (const id of ids) {
@@ -67,9 +69,9 @@ async function check(label, viewport) {
   const hit = (a, b) => !(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y);
   for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) {
     const [A, B] = [keys[i], keys[j]];
-    // sync-row and ping-row live inside hud-top by design.
-    if (['sync-row','ping-row'].includes(A) && B === 'hud-top') continue;
-    if (['sync-row','ping-row'].includes(B) && A === 'hud-top') continue;
+    // sync-row and ping-row live inside the strip by design.
+    if (['sync-row','ping-row'].includes(A) && B === 'hud-dashboard') continue;
+    if (['sync-row','ping-row'].includes(B) && A === 'hud-dashboard') continue;
     if (hit(boxes[A], boxes[B])) overlaps.push(`${A} × ${B}`);
   }
   console.log(`\n${label}`);

@@ -6,6 +6,9 @@
 //   TV-02  Steering feel (#542): the Stable / Responsive labels and the slider
 //          thumb are readable / reachable, on the tutorial finish screen and
 //          in the Controls sheet.
+//   TV-04  a TV's own browser (Android TV, 960×540, no touch): TV lobby laid out
+//          1920 wide, Phone as controller (no WebHID Pair), Low tier, a
+//          "Press any button" boot veil, and the perf readout names the device.
 import { startHarness } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8994, outDir: 'tandemonium-tv-sizes' });
@@ -106,6 +109,41 @@ const ctl = await page.evaluate(() => {
 check(ctl.ends.length === 2 && ctl.ends.every((v) => v >= K.md - 0.5), 'TV-02 Controls sheet: Stable / Responsive at --uf-size-md', { ...ctl, md: K.md });
 check(ctl.h >= 24, 'TV-02 Controls sheet: the slider is taller than the browser default', ctl);
 await h.shot(page, '3-controls');
+
+// ── TV-04 · a TV's built-in browser is a big screen, not a phone ──
+const TV_UA = 'Mozilla/5.0 (Linux; Android 12; BRAVIA 4K VH2 Build/STT1.211025.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const tvPage = await h.gamePage({ viewport: { width: 960, height: 540, isMobile: true, hasTouch: false }, userAgent: TV_UA, query: '?debug=perf', storage: { tandemonium_tutorial_done: 'smoke' } });
+await tvPage.waitForFunction(() => window._game && window._game.lobby && document.getElementById('lobby-mode')?.hasAttribute('active'), { timeout: 90000, polling: 100 });
+const tv = await tvPage.evaluate(() => {
+  const shown = (id) => { const el = document.getElementById(id); return !!el && el.style.display !== 'none' && el.getClientRects().length > 0; };
+  return { tv: window.__tandemoniumTV, width: window.innerWidth, bar: shown('lobby-bar'), phone: shown('btn-mode-phone'), pair: shown('btn-mode-connect-hid'), tier: window._game._quality };
+});
+check(tv.tv === true && tv.width >= 1024 && tv.bar, 'TV-04 TV browser: laid out 1920 wide with the TV system bar', tv);
+check(tv.phone && !tv.pair, 'TV-04 TV browser: Phone as controller is offered; Pair (WebHID) is not', tv);
+check(tv.tier === 'low', 'TV-04 TV browser: Auto starts at Low', tv);
+await tvPage.waitForFunction(() => /display /.test(document.getElementById('perf-readout')?.textContent || ''), { timeout: 15000, polling: 100 });
+const perfLine = await tvPage.evaluate(() => document.getElementById('perf-readout').textContent.split('\n').find((l) => l.startsWith('display ')));
+check(/TV browser · BRAVIA 4K VH2 · screen \d+×\d+/.test(perfLine), 'TV-04 perf readout names the display device', perfLine);
+await h.shot(tvPage, '4-tv-browser');
+// First visit on a TV: the boot veil waits for a press (not a stuck "Loading…"),
+// and a remote key (Enter) lifts it.
+const firstVisit = await h.gamePage({
+  viewport: { width: 960, height: 540, isMobile: true, hasTouch: false }, userAgent: TV_UA, waitGame: false,
+  before: (p) => p.evaluateOnNewDocument(() => { try { localStorage.removeItem('tandemonium_started'); } catch {} }),
+});
+await firstVisit.waitForFunction(() => window._game && window._game.lobby, { timeout: 90000, polling: 100 });
+await firstVisit.waitForFunction(() => /Press any button/.test(document.getElementById('tap-to-start-text')?.textContent || ''), { timeout: 15000, polling: 100 }).catch(() => {});
+const veilText = await firstVisit.evaluate(() => document.getElementById('tap-to-start-text')?.textContent);
+check(veilText === 'Press any button to start', 'TV-04 TV first visit: the boot veil says Press any button to start', veilText);
+await firstVisit.keyboard.press('Enter');
+const lifted = await firstVisit.waitForFunction(() => !document.getElementById('tap-to-start')?.isConnected || document.getElementById('tap-to-start').classList.contains('fade-out') || getComputedStyle(document.getElementById('tap-to-start')).display === 'none', { timeout: 10000, polling: 100 }).then(() => true, () => false);
+check(lifted, 'TV-04 TV first visit: a remote key lifts the boot veil', lifted);
+
+// A phone (touch) with the same width still gets the phone lobby.
+const phonePage = await h.gamePage({ viewport: { width: 412, height: 915, isMobile: true, hasTouch: true }, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36', storage: { tandemonium_tutorial_done: 'smoke' } });
+await phonePage.waitForFunction(() => window._game && window._game.lobby, { timeout: 90000, polling: 100 });
+const ph = await phonePage.evaluate(() => ({ tv: window.__tandemoniumTV, width: window.innerWidth, phone: document.getElementById('btn-mode-phone')?.style.display }));
+check(ph.tv === false && ph.width < 1024 && ph.phone === 'none', 'TV-04 a phone is still a phone', ph);
 
 check(h.errors.length === 0, 'no page errors', h.errors);
 await h.finish();

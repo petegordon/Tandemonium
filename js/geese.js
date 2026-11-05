@@ -25,15 +25,15 @@
 // camera, so billboards must be re-faced per pass.
 
 import * as THREE from 'three';
-import { isMobile } from './config.js';
+import { isLowPower } from './config.js';
 import { billboardRoll } from './physics/physics-fx.js';
 
 // Pool has to cover everything on screen at once: the visible window holds
 // roughly (VISIBLE_AHEAD + VISIBLE_BEHIND) / GROUP_GAP groups, and airborne
 // geese hold their slot past the window until they time out. Undersized, the
 // far geese simply never appear.
-const POOL_SIZE = isMobile ? 34 : 72;
-const FEATHER_POOL = isMobile ? 90 : 220;
+const POOL_SIZE = isLowPower ? 34 : 72;
+const FEATHER_POOL = isLowPower ? 90 : 220;
 
 // A standing Canada goose is about a metre tall and near two across in flight.
 const GOOSE_SIZE = 1.3;

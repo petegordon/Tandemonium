@@ -40,7 +40,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamFamilyType, isSteamTwinPad } from './input-manager.js';
-import { isMobile, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
@@ -74,6 +74,9 @@ import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
+
+/** #576 · the difficulty a leaderboard row was ridden on. */
+const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
 
 // Timeout wrapper for permission promises that may hang on iOS stale tabs
 const PERMISSION_TIMEOUT_MS = 8000;
@@ -210,6 +213,7 @@ export class Lobby {
     this.helpModal = document.getElementById('help-modal');
     this.toggleProfile = document.getElementById('toggle-profile');
     this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
+    this.toggleAchievements = document.getElementById('toggle-achievements');   // #540
     this.cameraActive = false;
     this.motionActive = false;
     this.joystickActive = true; // joystick steering on by default when gamepad connected
@@ -300,7 +304,10 @@ export class Lobby {
       orientation: 'vertical',
       onBack: () => { if (this._modalBack) this._modalBack(); },
       // #517: d-pad past the leaderboard's last row scrolls its sheet.
-      onEdge: (dir) => { if (this._activeModal === 'leaderboard' && this._leaderboardSheet) scrollPage(this._leaderboardSheet.body, dir); },
+      onEdge: (dir) => {
+        if (this._activeModal === 'leaderboard' && this._leaderboardSheet) scrollPage(this._leaderboardSheet.body, dir);
+        else if (this._activeModal === 'achievements' && this._achievementsSheet) scrollPage(this._achievementsSheet.body, dir);   // #540
+      },
     });
     this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | 'rejoin' | null
     this._modalBack = null;
@@ -322,7 +329,7 @@ export class Lobby {
 
     // Column-based navigation for mode step
     this._modeColumns = [
-      [this.toggleHelp, this.toggleLeaderboard, this.toggleProfile],
+      [this.toggleHelp, this.toggleLeaderboard, this.toggleAchievements, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
       [this.toggleAll, this.toggleCamera, this.toggleAudio],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
@@ -398,7 +405,6 @@ export class Lobby {
     this._previewOriginalMats = null;
 
     // Leaderboard state
-    this._lbVideo = null;
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
     this._achievements = new AchievementManager();
@@ -587,6 +593,7 @@ export class Lobby {
           this.motionActive = true;
           if (this.input) this.input.motionEnabled = true;
           this._setToggleActive('motion', true);
+          this._joystickOffForGyro();
         }
       } else if (reason === 'hid-bound' && !this._motionPermitted) {
         this._motionPermitted = true;
@@ -594,6 +601,7 @@ export class Lobby {
         if (this.input) this.input.motionEnabled = true;
         this._showMotionToggle();
         this._setToggleActive('motion', true);
+        this._joystickOffForGyro();
       }
     });
   }
@@ -1406,6 +1414,7 @@ export class Lobby {
     this.toggleHelp.addEventListener('click', () => this._openHelp());
     this.toggleProfile.addEventListener('click', () => this._toggleProfile());
     this.toggleLeaderboard.addEventListener('click', () => this._openLeaderboard());
+    this.toggleAchievements.addEventListener('click', () => this._openAchievements());   // #540
   }
 
   /**
@@ -2414,6 +2423,13 @@ export class Lobby {
     // close it; the video and the pad focus stop with it whatever closed it).
     this._leaderboardSheet = /** @type {any} */ (document.getElementById('leaderboard-modal'));
     this._leaderboardSheet.addEventListener('uf-sheet:close', () => this._onLeaderboardClosed());
+    // #540: Achievements, a sibling sheet of the Leaderboard, and one
+    // achievement's detail card, a second sheet over it.
+    this._achievementsSheet = /** @type {any} */ (document.getElementById('achievements-modal'));
+    this._achievementsSheet.addEventListener('uf-sheet:close', () => this._onAchievementsClosed());
+    this._achDetailSheet = /** @type {any} */ (document.getElementById('ach-detail'));
+    this._achDetailSheet.addEventListener('uf-sheet:close', () => this._onAchievementDetailClosed());
+    this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
     if (this.auth.isLoggedIn()) {
@@ -2634,6 +2650,7 @@ export class Lobby {
           if (this.input) this.input.suppressGamepadLean = true;
         }
       } catch {}
+      if (this.input && this.input.gyroConnected) this._joystickOffForGyro();
       this._setToggleActive('joystick', this.joystickActive);
     }
 
@@ -2857,6 +2874,22 @@ export class Lobby {
     }
   }
 
+  /**
+   * #576 · a pad with a gyro steers by gyro: the stick starts OFF. Only a
+   * default: a rider who has set the Joystick toggle themselves keeps their
+   * choice (tandemonium_joystick in localStorage).
+   */
+  _joystickOffForGyro() {
+    let saved = null;
+    try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
+    if (saved !== null || !this.joystickActive) return;
+    // Never leave a rider with nothing to steer by: only once the gyro is live.
+    if (!this.input || !this.input.motionEnabled) return;
+    this.joystickActive = false;
+    if (this.input) this.input.suppressGamepadLean = true;
+    this._setToggleActive('joystick', false);
+  }
+
   _toggleJoystick() {
     if (this.joystickActive) {
       // Turning off — check if motion is also off
@@ -2998,6 +3031,7 @@ export class Lobby {
     this._barPills = {
       help: pill('bar-help', () => this._openHelp()),
       leaderboard: pill('bar-leaderboard', () => this._openLeaderboard()),
+      achievements: pill('bar-achievements', () => this._openAchievements()),   // #540
       profile: pill('bar-profile', (el) => { this._anchorPopup(this.profilePopup, el); this._toggleProfile(); }),
       controls: pill('bar-controls', () => this._openControlsSheet()),
       music: pill('bar-music', (el) => {
@@ -3015,8 +3049,22 @@ export class Lobby {
     // Spatial focus: the pills join the toggle columns (hidden toggles and,
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
-    this._modeColumns[0].push(p.help, p.leaderboard, p.profile);
+    this._modeColumns[0].push(p.help, p.leaderboard, p.achievements, p.profile);
     this._modeColumns[2].push(p.controls, p.music, p.settings, p.quit);   // #517: Quit on the far right
+    // The bike chooser's ‹ › join the D-pad focus too: a phone remote or a TV
+    // remote has no L1 / R1, so ← from RIDE TOGETHER lands on › and OK changes
+    // the bike. Hidden off the first page, where the focus skips them.
+    this._modeColumns[0].push(...['bike-prev', 'bike-next'].map((id) => $(id)).filter(Boolean));
+    // Explicit links (the nearest-by-geometry pick from RIDE TOGETHER is "Pair it").
+    // Only in the TV layout: on a phone-width screen the chooser sits above the buttons.
+    const linkChooser = () => {
+      const tv = this._tvQuery.matches;
+      for (const id of ['btn-together', 'btn-solo']) { const el = $(id); if (el) { if (tv) el.dataset.navLeft = 'bike-next'; else delete el.dataset.navLeft; } }
+      const next = $('bike-next');
+      if (next) { if (tv) next.dataset.navRight = 'btn-together'; else delete next.dataset.navRight; }
+    };
+    linkChooser();
+    this._tvQuery.addEventListener?.('change', linkChooser);
 
     // Popups that lived inside the (now hidden) toggle columns move to <body>
     // on desktop and anchor above their pill; back in place on a phone.
@@ -3195,6 +3243,13 @@ export class Lobby {
       const text = id ? `${id.shortName} · ${mode}` : 'Controls';
       if (label.textContent !== text) label.textContent = text;
     }
+    // #540: the Achievements pill reads "earned / total" (Pete: the count, not the word).
+    const count = document.getElementById('bar-achievements-count');
+    if (count && this._achievements) {
+      if (!this._achTotal) this._achTotal = this._achievements.getAllDefinitions().length;
+      const text = `${this._achievements.getEarnedIds().length} of ${this._achTotal}`;
+      if (count.textContent !== text) count.textContent = text;
+    }
     const Glyph = customElements.get('uf-controller-glyph');
     const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
     if (Glyph && key !== this._glyphKey) {
@@ -3341,7 +3396,6 @@ export class Lobby {
 
   /** The sheet closed (B, Esc, the scrim, its Close, or _closeLeaderboard). */
   _onLeaderboardClosed() {
-    this._stopLeaderboardVideo();
     this._lbClearFocus();
   }
 
@@ -3356,6 +3410,41 @@ export class Lobby {
       ...document.querySelectorAll('#lb-sub-tabs .lb-tab'),
       this._leaderboardSheet.querySelector('.uf-sheet__close'),
     ].filter(Boolean);
+  }
+
+  // ── #540 · Achievements: its own sheet, a sibling of the Leaderboard ──
+  // Reached from the bar's Achievements pill (TV / desktop) or the round ⭐
+  // toggle (phone). The badges + the sheet's Close are the pad's focus set.
+  _achFocusables() {
+    return [
+      ...document.querySelectorAll('#lb-achievements .lb-ach-item'),
+      this._achievementsSheet.querySelector('.uf-sheet__close'),
+    ].filter(Boolean);
+  }
+
+  _openAchievements() {
+    this._renderAchievements();
+    this._achievementsSheet.show();
+    if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
+    this._achResetFocus();
+  }
+
+  _achResetFocus(initial = null) {
+    this._activeModal = 'achievements';
+    this._modalBack = () => this._closeAchievements();
+    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
+  }
+
+  _closeAchievements() {
+    if (this._achievementsSheet.open) this._achievementsSheet.close();
+    else this._onAchievementsClosed();
+  }
+
+  /** The sheet closed (B, Esc, the scrim, its Close): the detail card goes with it. */
+  _onAchievementsClosed() {
+    document.querySelectorAll('#achievements-modal .gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
+    if (this._achievementDetailOpen()) this._achDetailSheet.close();
+    this._clearAchievementDim();
   }
 
   _lbResetFocus() {
@@ -3404,9 +3493,10 @@ export class Lobby {
   _buildLeaderboardTabs() {
     const mainContainer = document.getElementById('lb-main-tabs');
     const tabs = [
-      { id: 'solo', label: 'Solo' },
-      { id: 'together', label: 'Together' },
-      { id: 'you', label: 'You' },
+      // #576: say what each list is — every rider's rides vs only yours.
+      { id: 'solo', label: 'All Solo Rides' },
+      { id: 'together', label: 'All Together Rides' },
+      { id: 'you', label: 'My Rides' },   // #576: was "You", which read like a third board next to Solo
       { id: 'partners', label: 'Partners' }
     ];
     tabs.forEach(tab => {
@@ -3428,12 +3518,8 @@ export class Lobby {
   _buildSubTabs() {
     const container = document.getElementById('lb-sub-tabs');
     container.innerHTML = '';
-    if (this._lbMainTab === 'partners') {
-      this._stopLeaderboardVideo();
-      document.getElementById('leaderboard-video').style.display = 'none';
-      return;
-    }
-    document.getElementById('leaderboard-video').style.display = '';
+    // #576: no Grandma's-house clip over the board any more (it popped in and out between filters).
+    if (this._lbMainTab === 'partners') return;
     LEVELS.forEach(level => {
       const btn = document.createElement('button');
       btn.className = 'lb-tab' + (level.id === this._lbSubLevel ? ' active' : '');
@@ -3443,7 +3529,6 @@ export class Lobby {
         container.querySelectorAll('.lb-tab').forEach(t => t.classList.remove('active'));
         btn.classList.add('active');
         this._lbSubLevel = level.id;
-        this._startLeaderboardVideo(level.id);
         this._renderLeaderboardContent();
       });
       container.appendChild(btn);
@@ -3466,23 +3551,18 @@ export class Lobby {
 
     this._leaderboardSheet.show();
     if (this._leaderboardSheet.body) this._leaderboardSheet.body.scrollTop = 0;
-    if (this._lbMainTab !== 'partners') {
-      this._startLeaderboardVideo(this._lbSubLevel);
-    }
     this._renderLeaderboardContent();
     this._lbResetFocus();
   }
 
   async _renderLeaderboardContent() {
     const list = document.getElementById('leaderboard-list');
-    const achDiv = document.getElementById('lb-achievements');
     const levelId = this._lbSubLevel;
     const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
 
     if (this._lbMainTab === 'you') {
-      // Show achievements + personal rides
-      this._leaderboardSheet.heading = 'Your Rides';
-      this._renderAchievements();
+      // Personal rides (#540: the badges moved to their own Achievements sheet)
+      this._leaderboardSheet.heading = 'My Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3501,13 +3581,12 @@ export class Lobby {
         }
 
         await this._cacheAvatarUrls(entries.map(e => e.avatar_url));
-        list.innerHTML = this._renderEntries(entries, level, myId);
+        list.innerHTML = this._renderEntries(entries, level, myId, { mine: true });
       } catch (e) {
         list.innerHTML = '<div class="lb-no-data">Could not load rides</div>';
       }
     } else if (this._lbMainTab === 'partners') {
       this._leaderboardSheet.heading = 'Partners';
-      achDiv.innerHTML = '';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3529,9 +3608,8 @@ export class Lobby {
         list.innerHTML = '<div class="lb-no-data">Could not load partners</div>';
       }
     } else {
-      // SOLO or TOGETHER — hide achievements, show filtered leaderboard
-      this._leaderboardSheet.heading = 'Leaderboard';
-      achDiv.innerHTML = '';
+      // SOLO or TOGETHER — every rider's rides, fastest first
+      this._leaderboardSheet.heading = this._lbMainTab === 'solo' ? 'All Solo Rides' : 'All Together Rides';
       list.innerHTML = '<div class="lb-no-data">Loading...</div>';
 
       try {
@@ -3553,11 +3631,13 @@ export class Lobby {
     }
   }
 
-  _renderEntries(entries, level, myId) {
+  /** `mine`: the My Rides list — every row is you, so no You tag and no rank (#576). */
+  _renderEntries(entries, level, myId, { mine = false } = {}) {
     const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
-      const isYou = myId && e.user_id === myId;
+      const isYou = !mine && myId && e.user_id === myId;
+      const diffHtml = DIFF_LABEL[e.difficulty] ? '<span class="lb-diff">' + DIFF_LABEL[e.difficulty] + '</span>' : '';
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
 
@@ -3587,10 +3667,11 @@ export class Lobby {
         : '';
 
       return '<div class="lb-entry' + youClass + '">' +
-        '<span class="lb-rank">' + (i + 1) + '</span>' +
+        (mine ? '' : '<span class="lb-rank">' + (i + 1) + '</span>') +
         avatar +
         '<span class="lb-name">' + this._escapeHtml((e.display_name || 'Player').split(' ')[0]) + youTag + '</span>' +
         modeHtml +
+        diffHtml +
         collectHtml +
         '<span class="lb-time">' + this._formatTime(e.time_ms) + '</span>' +
         dateHtml +
@@ -3643,15 +3724,179 @@ export class Lobby {
           ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
           : '';
         const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
-        html += '<div class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '">' +
+        // #540: a button — a tap, Enter, or the pad's A opens the detail card.
+        html += '<button type="button" class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '"' +
+          ' aria-label="' + this._escapeHtml(d.name + (d.earned ? ', unlocked' : ', locked')) + '">' +
           '<span class="lb-ach-icon">' + d.icon + '</span>' +
           '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
           prog +
-        '</div>';
+        '</button>';
       });
       html += '</div></div>';
     }
     container.innerHTML = html;
+    if (!container.dataset.achClicks) {
+      container.dataset.achClicks = '1';
+      container.addEventListener('click', (e) => {
+        const tile = /** @type {HTMLElement} */ (e.target).closest('.lb-ach-item');
+        if (tile) this._openAchievementDetail(tile.dataset.ach);
+      });
+    }
+  }
+
+  // ── #540 · one achievement's detail card ──
+  // The badge lifts off the grid toward the camera (the grid behind dims), then
+  // the card shows: the badge large, name, what to do, unlocked with its date
+  // or locked (with a counter's progress), and its number. Hidden Chaos ones
+  // keep their "?" until earned. B / Esc / Close go back to the grid with the
+  // pad focus on the same badge.
+  _achievementDetailOpen() {
+    return !!(this._achDetailSheet && this._achDetailSheet.open);
+  }
+
+  _openAchievementDetail(id) {
+    if (!id || this._achievementDetailOpen()) return;
+    const d = this._achievements.getAllDefinitions().find(a => a.id === id);
+    if (!d) return;
+    this._achDetailId = id;
+    this._renderAchievementDetail(d);
+    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]'));
+    const show = () => {
+      this._achDetailSheet.heading = this._achievementSectionTitle(d.section);
+      this._achDetailSheet.show();
+      this._activeModal = 'achievement';
+      this._modalBack = () => this._closeAchievementDetail();
+      const close = this._achDetailSheet.querySelector('.uf-sheet__close');
+      this._modalFocus.setSpatial([close].filter(Boolean), close);
+    };
+    this._liftBadge(tile, show);
+  }
+
+  _closeAchievementDetail() {
+    if (this._achievementDetailOpen()) this._achDetailSheet.close();
+  }
+
+  /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
+  _onAchievementDetailClosed() {
+    this._clearAchievementDim();
+    const lift = document.getElementById('ach-lift');
+    if (lift) lift.remove();
+    document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
+    const id = this._achDetailId;
+    this._achDetailId = null;
+    if (!this._achievementsSheet.open) return;
+    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
+    this._achResetFocus(tile);
+    if (tile) tile.focus({ preventScroll: true });
+  }
+
+  /** #576: undim the grid (the card closed, or the grid has the pad with no card and no lift on the way). */
+  _clearAchievementDim() {
+    const body = this._achievementsSheet && this._achievementsSheet.body;
+    if (!body) return;
+    body.getAnimations().forEach(a => a.cancel());
+    body.style.filter = '';
+    body.classList.remove('ach-dim');
+  }
+
+  _achievementSectionTitle(sectionId) {
+    const sec = this._achievements.getSections().find(s => s.id === sectionId);
+    return sec ? sec.title : 'Achievement';
+  }
+
+  _renderAchievementDetail(d) {
+    const card = document.getElementById('ach-detail-card');
+    if (!card) return;
+    const fmt = v => Math.floor(v).toLocaleString('en-US');
+    const total = this._achievements.getAllDefinitions().length;
+    let state, kicker, status;
+    if (d.earned) {
+      state = 'earned'; kicker = 'Achievement unlocked';
+      status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
+    } else if (d.secret) {
+      state = 'secret'; kicker = 'Hidden'; status = 'Revealed when you earn it';
+    } else if (d.demoLocked) {
+      state = 'full'; kicker = 'Full game'; status = 'Unlocks in the full game';
+    } else if (d.progress && d.progress[0] > 0) {
+      state = 'progress'; kicker = 'In progress';
+      status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
+    } else {
+      state = 'locked'; kicker = 'Locked'; status = 'Not yet';
+    }
+    const bar = state === 'progress'
+      ? '<div class="ach-detail-bar"><i style="width:' + Math.round(100 * d.progress[0] / Math.max(1, d.progress[1])) + '%"></i></div>'
+      : '';
+    card.dataset.state = state;
+    card.innerHTML =
+      '<div class="ach-detail-kicker">' + kicker + '</div>' +
+      '<div class="ach-detail-badge"><span>' + d.icon + '</span></div>' +
+      '<div class="ach-detail-name">' + this._escapeHtml(d.name) + '</div>' +
+      '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
+      this._medalTimesHtml(d) +
+      '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
+      '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
+  }
+
+  /**
+   * A medal achievement's live times, one per difficulty — what "gold on
+   * Grandma's" means in seconds (race-config.js getMedals, so a retune shows
+   * here too). '' for everything else.
+   */
+  _medalTimesHtml(d) {
+    if (!d.medal || d.secret) return '';
+    const level = LEVELS.find(l => l.id === d.medal.level);
+    if (!level) return '';
+    const parts = [['chill', 'Chill'], ['adventurous', 'Adventurous'], ['daredevil', 'Daredevil']].map(([key, label]) => {
+      const m = getMedals(level.id, key);
+      return m ? '<span class="ach-detail-time"><b>' + label + '</b> ' + records.formatTime(m[d.medal.rank]) + '</span>' : '';
+    }).filter(Boolean);
+    if (!parts.length) return '';
+    const rank = d.medal.rank.charAt(0).toUpperCase() + d.medal.rank.slice(1);
+    return '<div class="ach-detail-times">' + records.MEDAL_ICON[d.medal.rank] + ' ' + rank + ' time on ' + this._escapeHtml(level.name) + ': ' + parts.join(' · ') + '</div>';
+  }
+
+  /** "November 1, 2026" from ms since epoch, or the server's SQLite "2026-11-01 15:00:00" (UTC). */
+  _longDate(when) {
+    try {
+      let v = when;
+      if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(v)) v = v.replace(' ', 'T') + 'Z';
+      const d = new Date(v);
+      if (isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    } catch (e) { return ''; }
+  }
+
+  /**
+   * The reels' lead-in (#506), live: a copy of the badge lifts toward the
+   * camera while the grid dims, then `done` opens the card. No motion (or no
+   * tile on screen) → the card opens at once.
+   */
+  _liftBadge(tile, done) {
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const r = tile ? tile.getBoundingClientRect() : null;
+    if (!tile || !r || !r.width || reduce || typeof tile.animate !== 'function') { done(); return; }
+    const old = document.getElementById('ach-lift');
+    if (old) old.remove();
+    const c = /** @type {HTMLElement} */ (tile.cloneNode(true));
+    c.id = 'ach-lift';
+    c.classList.remove('gamepad-focus');
+    c.style.left = r.left + 'px'; c.style.top = r.top + 'px'; c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
+    document.body.appendChild(c);
+    tile.classList.add('lifting');
+    const W = window.innerWidth, H = window.innerHeight;
+    const S = Math.min(0.6 * W / r.width, 0.45 * H / r.height);
+    const dx = W / 2 - (r.left + r.width / 2), dy = H / 2 - (r.top + r.height / 2);
+    const body = this._achievementsSheet.body;
+    const anim = c.animate([
+      { transform: 'translate(0, 0) scale(1)', opacity: 1 },
+      { transform: 'translate(' + dx + 'px, ' + dy + 'px) scale(' + S + ')', opacity: 0.35 },
+    ], { duration: 420, easing: 'cubic-bezier(0.65, 0, 0.35, 1)', fill: 'forwards' });
+    if (body) body.classList.add('ach-dim');
+    this._achLifting = true;
+    let fired = false;
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
+    anim.finished.then(finish, finish);
+    setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
 
   _escapeHtml(str) {
@@ -3704,128 +3949,6 @@ export class Lobby {
     const d = new Date(isoStr);
     const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     return months[d.getMonth()] + ' ' + d.getDate();
-  }
-
-  _startLeaderboardVideo(levelId) {
-    this._stopLeaderboardVideo();
-
-    const videoConfigs = {
-      grandma: {
-        src: 'assets/grandma_house_chromakey.mp4',
-        maskSrc: 'assets/grandma_house_chromakey_mask.png',
-        trimStart: 0.00, trimEnd: 5.50,
-        threshold: -0.02, smoothness: 0.110
-      }
-    };
-    const cfg = videoConfigs[levelId];
-    const canvas = document.getElementById('leaderboard-video');
-    if (!cfg) {
-      canvas.style.display = 'none';
-      return;
-    }
-
-    canvas.style.display = '';
-
-    const video = document.createElement('video');
-    video.src = cfg.src;
-    video.loop = false;
-    video.muted = true;
-    video.playsInline = true;
-    video.play().catch(() => {});
-    video.addEventListener('timeupdate', () => {
-      if (video.currentTime > cfg.trimEnd) {
-        video.currentTime = cfg.trimStart;
-        video.play().catch(() => {});
-      }
-    });
-
-    const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
-    renderer.setSize(canvas.width, canvas.height);
-    renderer.setClearColor(0x000000, 0);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-    camera.position.z = 2;
-
-    const videoTexture = new THREE.VideoTexture(video);
-    videoTexture.minFilter = THREE.LinearFilter;
-    videoTexture.magFilter = THREE.LinearFilter;
-
-    const fallbackMask = new THREE.DataTexture(new Uint8Array(4), 1, 1, THREE.RGBAFormat);
-    fallbackMask.needsUpdate = true;
-    const maskUniform = { value: fallbackMask };
-    if (cfg.maskSrc) {
-      new THREE.TextureLoader().load(
-        cfg.maskSrc,
-        (tex) => { maskUniform.value = tex; },
-        undefined,
-        () => {}
-      );
-    }
-
-    const mat = new THREE.ShaderMaterial({
-      uniforms: {
-        map: { value: videoTexture },
-        maskTex: maskUniform,
-        threshold: { value: cfg.threshold },
-        smoothness: { value: cfg.smoothness }
-      },
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }`,
-      fragmentShader: `
-        uniform sampler2D map;
-        uniform sampler2D maskTex;
-        uniform float threshold;
-        uniform float smoothness;
-        varying vec2 vUv;
-        void main() {
-          float mask = texture2D(maskTex, vUv).r;
-          if (mask > 0.5) discard;
-          vec4 texColor = texture2D(map, vUv);
-          float greenDom = texColor.g - max(texColor.r, texColor.b);
-          float alpha = 1.0 - smoothstep(threshold, threshold + smoothness, greenDom);
-          if (alpha < 0.01) discard;
-          vec3 col = texColor.rgb;
-          float spillMax = 0.5 * (col.r + col.b) + 0.05;
-          col.g = min(col.g, spillMax);
-          gl_FragColor = vec4(col, alpha);
-        }`,
-      transparent: true,
-      depthWrite: false
-    });
-
-    const plane = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat);
-    scene.add(plane);
-
-    let animId = 0;
-    const animate = () => {
-      animId = requestAnimationFrame(animate);
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    this._lbVideo = { video, renderer, videoTexture, mat, scene, animId };
-  }
-
-  _stopLeaderboardVideo() {
-    if (!this._lbVideo) return;
-    const v = this._lbVideo;
-    cancelAnimationFrame(v.animId);
-    v.video.pause();
-    v.video.src = '';
-    v.videoTexture.dispose();
-    if (v.scene) {
-      v.scene.traverse(child => {
-        if (child.geometry) child.geometry.dispose();
-      });
-    }
-    v.mat.dispose();
-    v.renderer.dispose();
-    this._lbVideo = null;
   }
 
   _checkPermissionStates() {
@@ -5104,6 +5227,30 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      // #578 · a seated local Player 2 presses B on their own pad to get up.
+      // Primed true on the seat's first frame so the press that joined (if it
+      // was B) doesn't unseat them straight away.
+      if (this._localSeatedOnHost && this._localP2Type === 'gamepad' && this._localP2InputManager) {
+        const im = this._localP2InputManager;
+        if (typeof im.pollGamepad === 'function') im.pollGamepad();
+        const p2gp = im.getGamepadState ? im.getGamepadState() : null;
+        const bIdx = im._gpSwapAB ? 0 : 1;
+        const bDown = !!(p2gp && p2gp.buttons && p2gp.buttons[bIdx] && p2gp.buttons[bIdx].pressed);
+        const prevB = this._localP2PrevB === undefined ? true : this._localP2PrevB;
+        this._localP2PrevB = bDown;
+        if (bDown && !prevB) {
+          this._localP2PrevB = undefined;
+          this._leaveLocalP2('stood up (B)');
+          // The B is still down: no pad joins again until it lets go.
+          this._localP2APrev = true;
+          for (const k of this._versusPrevButtons.keys()) if (k.startsWith('local:')) this._versusPrevButtons.set(k, { any: true });
+          this._refreshHostNext();
+          this._localJoinMonitorRAF = requestAnimationFrame(tick);
+          return;
+        }
+      } else {
+        this._localP2PrevB = undefined;
+      }
       // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
       const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
       for (const c of candidates) {
@@ -5279,6 +5426,9 @@ export class Lobby {
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
               { slotId: state.slotId, steamHandle: state.steamHandle });
+            // #578: desktop/TV stays on this step with Player 2 seated; keep
+            // watching (their B stands them up). This path used to stop the loop.
+            if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
             return;
           }
           if (!aPressed) this._localP2APrev = false;
@@ -5965,6 +6115,9 @@ export class Lobby {
     // Desktop builds grant every HID device in main (setDevicePermissionHandler)
     // and pool them at boot — the button is a browser-only fallback.
     if (navigator.userAgent.includes('Electron')) { btn.style.display = 'none'; return; }
+    // No WebHID to pair with: a TV's browser (Google TV has none) or any browser
+    // without navigator.hid. A dead-end link is worse than none.
+    if (isTV || !navigator.hid) { btn.style.display = 'none'; return; }
     btn.addEventListener('click', async () => {
       const hintEl = document.getElementById(hintId);
       const say = (t) => { if (hintEl) { hintEl.textContent = t; hintEl.style.display = t ? '' : 'none'; } };
@@ -7243,6 +7396,8 @@ export class Lobby {
     if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
       this._lastBarSync = nowSync;
       this._syncSystemBar();
+      // #576: a gyro that shows up late (Steam Input, a later HID grant) still turns the stick default off.
+      if (this.joystickActive && this.input && this.input.gyroConnected) this._joystickOffForGyro();
     }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
 
@@ -7325,6 +7480,45 @@ export class Lobby {
         const btns = Array.from(this._volBtns || []);
         this._modalFocus.setSpatial(btns, btns.find((b) => b.classList.contains('active')) || btns[0]);
       }
+      this._modalFocus.poll();
+      return;
+    }
+    // #576 · Today's Road chooser (RANKED RUN / PRACTICE / Back) over the levels
+    // step: the pad moves between its buttons and A picks; B is Back. It had no
+    // branch here, so the pad kept driving the step underneath it.
+    const dailyOverlay = document.getElementById('daily-mode-overlay');
+    if (dailyOverlay && dailyOverlay.classList.contains('visible')) {
+      if (this._activeModal !== 'daily') {
+        this._activeModal = 'daily';
+        this._modalBack = () => dailyOverlay.classList.remove('visible');
+        const items = ['btn-daily-ranked', 'btn-daily-practice', 'btn-daily-cancel']
+          .map((id) => document.getElementById(id))
+          .filter((el) => el && !el.disabled && !el.hasAttribute('disabled'));
+        this._modalFocus.setSpatial(items, items[0]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
+    // #540: an achievement's detail card over the leaderboard — only its Close
+    // to focus; B closes it and the grid gets the pad back (uf-sheet:close).
+    if (this._achievementDetailOpen()) {
+      if (this._activeModal !== 'achievement') {
+        this._activeModal = 'achievement';
+        this._modalBack = () => this._closeAchievementDetail();
+        const close = this._achDetailSheet.querySelector('.uf-sheet__close');
+        this._modalFocus.setSpatial([close].filter(Boolean), close);
+      }
+      this._modalFocus.poll();
+      return;
+    }
+    // #540: the Achievements sheet — the badges and Close form the spatial
+    // set; the right stick scrolls, d-pad past the last row scrolls (onEdge).
+    if (this._achievementsSheet && this._achievementsSheet.open) {
+      scrollWithStick(this._achievementsSheet.body, gp.axes[3]);
+      // #576: no card open and no badge lifting, so nothing should dim the grid.
+      if (!this._achLifting && this._achievementsSheet.body.classList.contains('ach-dim')) this._clearAchievementDim();
+      if (this._activeModal !== 'achievements') this._achResetFocus();
+      else this._modalFocus.refreshSpatial(this._achFocusables());
       this._modalFocus.poll();
       return;
     }

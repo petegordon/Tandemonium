@@ -487,6 +487,14 @@ function startSteamInputTickLoop() {
 // Renderer-facing IPC channel names stay identical to the old steamworks.js
 // implementation; only the handler bodies changed. preload.js and every JS
 // file under js/ that calls window.steam.* keep working without edits.
+// Perf readout: the display the game window is on (Windows names it, e.g. the TV's model).
+ipcMain.handle('app:display', (e) => {
+  const { screen } = require('electron');
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
+  return { label: d.label || '', width: d.size.width, height: d.size.height, scale: d.scaleFactor,
+    hz: d.displayFrequency || 0, internal: !!d.internal, count: screen.getAllDisplays().length };
+});
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
