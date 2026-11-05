@@ -75,3 +75,17 @@ body.pad-menus .pad-only { display: inline-flex !important; }
 @media (min-width: 2400px) and (pointer: fine), (min-width: 2400px) and (pointer: none) {
   #hud-dashboard { zoom: 2.8; }
 }
+
+/* #578 · Help in the desktop (Steam) app: the phone is a controller there, not
+   the game, so the web's "play on your phone" rows go. */
+html.desktop-app #help-modal .help-web-only { display: none; }
+/* #578 · the ALL and ? badges are text, not SVG: size their letters to the
+   badge (inline 10px / 14px read tiny at TV sizes) and match the SVG badges' box. */
+#help-modal .help-toggle-row svg, #help-modal .help-toggle-row span.help-icon {
+  box-sizing: border-box;
+  /* one badge size for icons and letters (an older TV rule made the icons 90px) */
+  width: calc(var(--uf-size-md) * 2.4) !important; height: calc(var(--uf-size-md) * 2.4) !important;
+  padding: calc(var(--uf-size-md) * 0.45) !important;
+}
+#help-modal .help-toggle-row span.help-icon { font-size: var(--uf-size-lg) !important; line-height: 1; padding: 0 !important; }
+#help-modal .help-toggle-row span.help-icon-all { font-size: var(--uf-size-sm) !important; letter-spacing: .02em; }
