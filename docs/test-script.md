@@ -123,7 +123,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-17 | Tourist: hidden without Maps key; two addresses plan a route; arrival result shares | A | `smoke:tourist` |
 | SR-18 | Tourist on real Google 3D tiles: loads, rides, no holes in the road | M | — |
 | SR-19 | Achievements unlock during a ride and appear in the list | A | `smoke:achievements` |
-| SR-20 | Chaos Coins: one wallet across modes; payout on game-over and victory | A | `smoke:economy` |
+| SR-20 | Tandem Tokens: one wallet across modes; payout on game-over and victory | A | `smoke:economy` |
 | SR-21 | Options → goose outfit and colourway apply to the geese on the bike, chosen in the lobby or live mid-ride; "own colours" restores; saved for the next ride | A | `smoke:solo-extras` |
 | SR-22 | (PB ghost removed in #400) old saved ghost tracks are dropped, times kept | A | `test/unit/records` |
 | SR-23 | 10-minute ride: no fps decay, no memory climb | M | `probe-memory.mjs` (manual run) |

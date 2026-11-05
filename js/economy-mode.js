@@ -190,7 +190,7 @@ class EconomyMode {
     if (s.multiplier !== 1) items.push({ label: 'Multiplier', display: `×${s.multiplier.toFixed(2)}` });
     box.replaceChildren();
     const ledger = /** @type {any} */ (document.createElement('uf-ledger'));
-    Object.assign(ledger, { heading: 'Chaos Coins', unit: COIN });
+    Object.assign(ledger, { heading: 'Tandem Tokens', unit: COIN });
     ledger.items = items;
     ledger.balance = wallet.coins;
     ledger.total = 0;

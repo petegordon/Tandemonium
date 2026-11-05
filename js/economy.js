@@ -19,7 +19,7 @@ import { getMedals } from './race-config.js';
  * Target 1 — a Grandma's finish pays ~100 before any medal.
  */
 export const RIDE_PAY = Object.freeze({
-  metresPerCoin: 5,                     // 1 Chaos Coin per 5 m ridden
+  metresPerCoin: 5,                     // 1 Tandem Token per 5 m ridden
   perPickup: 5,                         // each present / gem
   finish: 25,                           // reaching the finish (Tourist: arriving)
   medal: Object.freeze({ bronze: 25, silver: 50, gold: 100 }),

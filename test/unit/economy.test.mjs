@@ -92,7 +92,7 @@ test('garage: every buy button can say how many metres it adds', () => {
   const g = upgradeGain({}, 'sling');
   assert.ok(g > 30, `sling L1 adds ${g.toFixed(1)} m`);
   assert.ok(upgradeGain({}, 'wheels') > 10);
-  assert.equal(upgradeGain({}, 'magnet'), 0, 'the Coin multiplier buys coins, not metres');
+  assert.equal(upgradeGain({}, 'magnet'), 0, 'the Token multiplier buys tokens, not metres');
   assert.equal(upgradeGain({ sling: 10 }, 'sling'), 0, 'maxed');
   const lv = { sling: 2 };
   assert.ok(Math.abs(upgradeGain(lv, 'sling') -

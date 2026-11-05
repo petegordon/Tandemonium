@@ -1,5 +1,5 @@
 // ============================================================
-// WALLET — one Chaos Coin wallet + one garage for every mode (#400 D4)
+// WALLET — one Tandem Token wallet + one garage for every mode (#400 D4)
 // ============================================================
 //
 // Every ride in every mode pays into this wallet (js/economy.js scores a

@@ -156,7 +156,7 @@ const SHOTS = {
     await advance(page, 6);
     await take('versus', s, 12);
   },
-  // Slingshot: drag back, aim, let go, fly over the Chaos Coins
+  // Slingshot: drag back, aim, let go, fly over the Tandem Tokens
   async sling() {
     const s = await launch({ storage: { ...STORAGE, tandemonium_slingshot: JSON.stringify({ coins: 400, best: 0, runs: 3, stage: 1, lv: { power: 3, grip: 2 } }) } });
     const { page } = s;

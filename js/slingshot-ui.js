@@ -62,15 +62,15 @@ export function renderGarage(save, wallet, opts = {}) {
     gSheet.open = true;
     if (rebuilt) root.appendChild(el('div', null, rebuilt.trim()));   // the rebuild badge, under the headline
   } else root.appendChild(el('h2', null, `🛠️ GARAGE${rebuilt}`));
-  root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Chaos Coins`));
-  const multLine = `Every ride in every mode pays ×${mult.toFixed(2)}`;
+  root.appendChild(el('div', 'sling-wallet', `${COIN} ${fmt(wallet.coins)} Tandem Tokens`));
+  const multLine = `Slingshot pays ×${mult.toFixed(2)}`;
   root.appendChild(el('div', 'sling-sub', standalone
-    ? `${multLine}.<br>Ride anything to earn Chaos Coins; spend them here on the Slingshot.`
+    ? `${multLine}.<br>Ride anything to earn Tandem Tokens; spend them here on the Slingshot.`
     : `Stage ${save.stage}: reach <b>${fmt(stageGoal(save.stage))} m</b>` +
       ` · best ${fmt(save.best)} m · ${multLine}<br>` +
       'Touch and drag back (or pull the left stick back) to stretch the slingshot, ' +
       'left or right to aim, and let go. ' +
-      'Then steer: sweep the Chaos Coins, do not crash, and reset any time to go ' +
+      'Then steer: sweep the Tandem Tokens, do not crash, and reset any time to go ' +
       'back to the slingshot.'));
 
   const buttons = [];
@@ -117,7 +117,7 @@ export function renderGarage(save, wallet, opts = {}) {
     const price = maxed ? 0 : upgradeCost(u, lvl);
     // What the next level actually does, so a purchase visibly helps (D5).
     const gain = maxed ? '' : (u.id === 'magnet'
-      ? '+0.25× coins'
+      ? '+0.25× Slingshot pay'
       : `+${fmt(upgradeGain(wallet.lv, u.id))} m`);
     // A kit row card (shared/ui uf-card layout=row, #428): icon | name, what it
     // does, level pips | price and gain. `locked` = maxed or not affordable.
@@ -141,11 +141,11 @@ export function renderGarage(save, wallet, opts = {}) {
     const capped = (wallet.rebuilds || 0) >= REBUILD_CAP;
     const label = capped
       ? `🔧 REBUILD THE BIKE · bonus maxed at +${Math.round(REBUILD_BONUS * REBUILD_CAP * 100)}%, adds nothing more`
-      : `🔧 REBUILD THE BIKE · +${Math.round(REBUILD_BONUS * 100)}% coins forever`;
+      : `🔧 REBUILD THE BIKE · +${Math.round(REBUILD_BONUS * 100)}% Slingshot pay forever`;
     const r = btn('primary', label, 'sling-rebuild');
     let armed = false;
     r.addEventListener('click', () => {
-      if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0, coins + stages kept'; return; }
+      if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0, tokens + stages kept'; return; }
       opts.onRebuild && opts.onRebuild();
     });
     const box = el('div', 'sling-buttons');
@@ -201,7 +201,7 @@ export function renderResults({ cause, score, run, save, wallet, stageCleared, d
   const rows = el('div', 'sling-rows');
   const row = (label, v, cls = 'row') => rows.appendChild(el('div', cls, `<span>${label}</span><span>${v}</span>`));
   row('Distance', `${COIN} ${fmt(score.distPay)}`);
-  row(`Chaos Coins (${run.coins})`, `${COIN} ${fmt(score.coinPay)}`);
+  row(`Tokens (${run.coins})`, `${COIN} ${fmt(score.coinPay)}`);
   if (score.recordPay) row(daily ? "Beat today's best" : 'Record bonus', `${COIN} ${fmt(score.recordPay)}`);
   if (score.stagePay) row('Stage bonus', `${COIN} ${fmt(score.stagePay)}`);
   if (score.potPay) row('Pot of gold', `${COIN} ${fmt(score.potPay)}`);
@@ -241,7 +241,7 @@ export function hideResults() { $('sling-results').classList.remove('visible'); 
 // ---- In-ride ------------------------------------------------
 
 let _hudText = '';
-/** A Chaos Coin was grabbed: bump the counter and float the payout up from it. */
+/** A Tandem Token was grabbed: bump the counter and float the payout up from it. */
 export function coinPop(amount) {
   const c = document.querySelector('#sling-hud .sling-coins');
   if (c) { c.classList.remove('pop'); void /** @type {HTMLElement} */ (c).offsetWidth; c.classList.add('pop'); }

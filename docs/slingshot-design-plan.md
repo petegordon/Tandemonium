@@ -58,7 +58,7 @@ value is stale. The ES modules have no cache-busting.
 | # | Finding | Evidence |
 |---|---|---|
 | G1 | **The dominant strategy is "aim dead straight, never steer".** Coast mode swapped out the friction but kept the normal ride's *multiplicative* road-edge and grass drag. That drag is proportional to speed, so it swamps the coast drag. | Full pull, no upgrades, road measured: **centre 162 m · 1.0 m off 47 m · 1.3 m off 33 m · 1.8 m off 22 m.** |
-| G2 | **Chaos Coins cost more than they pay.** Trails sit up to ±1.8 m off-centre. Sweeping one throws away most of the run for 25 coins, which is about 125 m of distance pay. | Follows from G1. |
+| G2 | **Tandem Tokens cost more than they pay.** Trails sit up to ±1.8 m off-centre. Sweeping one throws away most of the run for 25 coins, which is about 125 m of distance pay. | Follows from G1. |
 | G3 | **Aiming has no upside and no visibility.** ±20° plus a 1.4 m offset leaves the 5 m road in about 11 m, and nothing on the road rewards any line but the centre. | Emulated phone: bike off-road at about 22 m, 2 km/h. |
 | G4 | **Progression is broken by the maths.** Stage 1 (300 m) needs about 5 Slingshot levels (about 575 coins, 8+ identical grind runs). Fully maxed, the bike coasts **1,718 m** at best (centre strip) or 1,472 m off it, so **stages 5–7 (1,800 / 2,400 / 3,600 m) can never be cleared.** Stage 4 (1,200 m) is exactly one lap of the loop road. | Integrated from `slingshot.js`. Maxing everything costs 21,485 coins. |
 | G5 | **The run has no events.** It's flat, there's no air, and obstacles stay at chill density until stage 4. A launch is about 20 s of watching a number climb. Car Evolve works because the car is a *spectacle* (bounces, flips, air); this is a bike rolling to a stop. | |

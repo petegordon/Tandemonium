@@ -4502,7 +4502,7 @@ class Game {
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
-    // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
+    // Slingshot: Tandem Tokens are money, not a boost; the gates are the boost.
     if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
     else {
       this.bike.boostTimer = 3; // 3-second speed boost
@@ -5047,7 +5047,7 @@ class Game {
 
     // B-5: wishlist + send-a-link, after the ride buttons.
     this._updateCtaButtons('victory');
-    // #400 D4: the ride pays Chaos Coins — the tally, and GARAGE → to spend them.
+    // #400 D4: the ride pays Tandem Tokens — the tally, and GARAGE → to spend them.
     this._showRideCoins('victory', 'finish', { summary });
 
     // Gamepad navigation for victory buttons: the sheet's action row in its
@@ -9705,7 +9705,7 @@ class Game {
 if (isTouristMode()) await resolveTouristOrigin();
 
 installSlingshotMode(Game);   // js/slingshot-mode.js
-installEconomyMode(Game);     // js/economy-mode.js — every ride pays Chaos Coins (#400 D4)
+installEconomyMode(Game);     // js/economy-mode.js — every ride pays Tandem Tokens (#400 D4)
 installHelpingHandMode(Game); // js/helping-hand-mode.js — retries get easier, visibly (#403)
 const game = new Game();
 window._game = game;

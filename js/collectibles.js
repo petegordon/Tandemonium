@@ -36,7 +36,7 @@ const THEMES = {
       };
     },
   },
-  // Slingshot mode's Chaos Coins: big glossy gold discs stood on edge so the
+  // Slingshot mode's Tandem Tokens: big glossy gold discs stood on edge so the
   // spin flashes the face, each with a soft halo and twinkling star sparkles
   // that orbit with the spin — they have to read from the chase camera.
   coins: {

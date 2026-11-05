@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// smoke-economy.mjs — #400 D4/D5/D11: one Chaos Coin wallet across every mode.
+// smoke-economy.mjs — #400 D4/D5/D11: one Tandem Token wallet across every mode.
 // A regular Grandma's ride pays on the game-over screen (distance only), then
 // RESTART → finish pays the rest + the finish bonuses on the victory screen;
 // GARAGE → opens the one garage, a purchase debits the shared wallet; the
