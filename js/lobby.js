@@ -310,7 +310,7 @@ export class Lobby {
         else if (this._activeModal === 'achievements' && this._achievementsSheet) scrollPage(this._achievementsSheet.body, dir);   // #540
       },
     });
-    this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | 'rejoin' | null
+    this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | null
     this._modalBack = null;
     this._gpPrevUp = false;
     this._gpPrevUp = false;
@@ -790,6 +790,7 @@ export class Lobby {
 
     // Hide toggle columns and gamepad back hint on join step
     if (step === this.joinStep) {
+      if (prevStep !== this.joinStep) this._renderRejoinCards();   // #547
       const leftCol = document.querySelector('.lobby-left-col');
       const rightCol = document.querySelector('.lobby-right-col');
       if (leftCol) leftCol.style.display = 'none';
@@ -1034,13 +1035,10 @@ export class Lobby {
       this._showStep(this.levelStep);
     });
 
-    // RIDE TOGETHER → check for rejoin, then role selection
+    // RIDE TOGETHER → role selection. A recent room is rejoined from JOIN A
+    // RIDE's Rejoin cards (#547), not from a pop-up here.
     document.getElementById('btn-together').addEventListener('click', async () => {
       analytics.trackFirstInput('together');
-      // Check for saved room to rejoin
-      const rejoined = await this._handleRejoinCheck();
-      if (rejoined) return;
-
       await this._requestMotion();
       this._syncMotionState();
       this._pendingMode = 'multiplayer';
@@ -4358,67 +4356,51 @@ export class Lobby {
   // Recent-room localStorage now lives in js/lobby/room-store.js
   // (this._roomStore: .save() / .clear() / .getRecent()). (#318 Step 3)
 
-  _showRecentRoomsPrompt(rooms) {
-    const overlay = document.createElement('div');
-    overlay.id = 'rejoin-overlay';
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
-
+  /**
+   * JOIN A RIDE's "Rejoin a recent ride" row (#547): one kit card per room
+   * from the last 5 minutes (front seat or back seat), newest first. A pick
+   * rejoins in the seat you had (_rejoinRoom). No recent rooms, no row.
+   * Returns the cards so the step's focus scope can lead with them.
+   */
+  _renderRejoinCards() {
+    const wrap = document.getElementById('join-rejoin');
+    const list = document.getElementById('join-rejoin-cards');
+    if (!wrap || !list) return [];
+    const rooms = this._roomStore.getRecent()
+      .slice().sort((x, y) => y.timestamp - x.timestamp).slice(0, 3);
+    list.textContent = '';
+    wrap.hidden = rooms.length === 0;
     const now = Date.now();
-    const cardsHtml = rooms.map((r, i) => {
-      const roleName = r.role === 'captain' ? 'Captain' : 'Stoker';
-      const agoSec = Math.floor((now - r.timestamp) / 1000);
-      const agoText = agoSec < 60 ? 'just now' : Math.floor(agoSec / 60) + 'm ago';
-      const partnerText = r.partnerName ? 'with ' + this._escapeHtml(r.partnerName) + ' · ' : '';
-      const dimStyle = agoSec > 180 ? 'opacity:0.6;' : '';
-      return '<button class="rejoin-room-card" data-idx="' + i + '" style="' +
-        'display:block;width:100%;padding:12px 16px;border-radius:10px;border:1.5px solid rgba(255,255,255,0.15);' +
-        'background:rgba(255,255,255,0.06);color:#fff;cursor:pointer;text-align:left;font-family:inherit;' +
-        'transition:border-color 0.2s,background 0.2s;' + dimStyle + '">' +
-        '<div style="font-size:1em;font-weight:700;margin-bottom:2px;">' +
-          this._escapeHtml(r.roomCode) + '  ·  ' + roleName +
-        '</div>' +
-        '<div style="font-size:0.8em;color:rgba(255,255,255,0.5);">' + partnerText + agoText + '</div>' +
-      '</button>';
-    }).join('');
-
-    overlay.innerHTML =
-      '<div style="background:#1a1a2e;border-radius:16px;padding:24px 28px;max-width:340px;width:90%;text-align:center;color:#fff;font-family:inherit;">' +
-        '<div style="font-size:1.1em;font-weight:700;margin-bottom:14px;">Recent Rooms</div>' +
-        '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">' + cardsHtml + '</div>' +
-        '<button id="btn-rejoin-new" style="padding:10px 20px;border-radius:8px;border:none;background:#444;color:#fff;font-size:1em;cursor:pointer;width:100%;">New Room</button>' +
-      '</div>';
-    document.body.appendChild(overlay);
-
-    // Default gamepad focus on first card
-    const cards = overlay.querySelectorAll('.rejoin-room-card');
-    if (cards.length > 0) cards[0].classList.add('gamepad-focus');
-
-    return new Promise((resolve) => {
-      cards.forEach((card) => {
-        card.addEventListener('click', () => {
-          const idx = parseInt(card.dataset.idx, 10);
-          overlay.remove();
-          resolve(rooms[idx]);
-        });
-      });
-      document.getElementById('btn-rejoin-new').addEventListener('click', () => {
-        overlay.remove();
-        resolve(null);
-      });
+    return rooms.map((r) => {
+      const code = String(r.roomCode || '').replace(/^TNDM-/, '');
+      const mins = Math.floor((now - r.timestamp) / 60000);
+      const card = /** @type {any} */ (document.createElement('uf-card'));
+      card.className = 'join-rejoin-card';
+      card.dataset.room = r.roomCode;
+      card.setAttribute('heading', 'Rejoin ' + code);
+      card.setAttribute('description', r.partnerName ? 'with ' + r.partnerName : (r.role === 'captain' ? 'Your room' : 'Your partner’s room'));
+      card.setAttribute('footer', (r.role === 'captain' ? 'Front seat' : 'Back seat') + ' · ' + (mins < 1 ? 'just now' : mins + ' min ago'));
+      card.addEventListener('click', () => this._rejoinRoom(r));
+      list.appendChild(card);
+      return card;
     });
   }
 
-  async _handleRejoinCheck() {
-    const rooms = this._roomStore.getRecent();
-    if (rooms.length === 0) return false;
+  /** The Rejoin cards currently shown on JOIN A RIDE (#547). */
+  _rejoinCards() {
+    const wrap = document.getElementById('join-rejoin');
+    if (!wrap || wrap.hidden) return [];
+    return Array.from(wrap.querySelectorAll('.join-rejoin-card'));
+  }
 
-    const selected = await this._showRecentRoomsPrompt(rooms);
-    if (!selected) return false; // User chose "New Room"
-
+  /** Rejoin a recent room in the seat you had (#547; was _handleRejoinCheck). */
+  async _rejoinRoom(saved) {
+    if (!saved || this._rejoining) return true;
+    this._rejoining = true;
+    setTimeout(() => { this._rejoining = false; }, 1500);
     // Rejoin: skip role selection, go straight to connection
     await this._requestMotion();
     this._pendingMode = 'multiplayer';
-    const saved = selected;
 
     if (saved.role === 'captain') {
       this._showStep(this.hostStep);
@@ -4474,6 +4456,11 @@ export class Lobby {
       this.net.enterRoom(saved.roomCode, 'captain');
     } else {
       this._showStep(this.joinStep);
+      // #547: already on JOIN A RIDE; show the status line, not the row or spinners.
+      const row = document.getElementById('join-rejoin');
+      if (row) row.hidden = true;
+      if (this._spinnerActive) this._showSpinners(false);
+      this._applyStepSpatialFocus(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
       const netEpoch = this._netSession.epoch;
@@ -7569,20 +7556,6 @@ export class Lobby {
       return;
     }
 
-    // Recent rooms popup: navigate room cards + New Room button. B = New Room.
-    const rejoinOverlay = document.getElementById('rejoin-overlay');
-    if (rejoinOverlay) {
-      const items = [...rejoinOverlay.querySelectorAll('.rejoin-room-card'), document.getElementById('btn-rejoin-new')].filter(Boolean);
-      if (items.length === 0) { return; }
-      if (this._activeModal !== 'rejoin') {
-        this._activeModal = 'rejoin';
-        this._modalBack = () => { const n = document.getElementById('btn-rejoin-new'); if (n) n.click(); };
-        this._modalFocus.setItems(items);
-      }
-      this._modalFocus.poll();
-      return;
-    }
-
     // If "Tap to Start" overlay is showing, any button dismisses it
     if (this._tapOverlay) {
       if ((a && !this._gpPrevA) || (b && !this._gpPrevB)) {
@@ -7705,7 +7678,9 @@ export class Lobby {
       // Desktop join step: the keypad's keys + Delete / Join are the scope.
       const tvJoin = step === this.joinStep && document.getElementById('join-tv');
       const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
-      const centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+      let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+      // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
+      if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
       this._modeColumns[1] = centerItems;
       const defaultEl = this._stepPrimaryFocus(step, centerItems);
       this._stepFocus.setSpatial(this._stepNavItems(), defaultEl);
