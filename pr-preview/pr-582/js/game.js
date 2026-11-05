@@ -3295,6 +3295,7 @@ class Game {
     this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
     this._showRideCoins('gameover', 'crash');
+    this._markSheetScroll('gameover-sheet');   // #512
     // #459 item 15: the sheet's action row in its own order; focus starts on
     // RESTART (the primary — #458 item 10), never on SAVE CLIP.
     const btns = focusResult(this._overlayFocus, document.getElementById('gameover-sheet'), { primary: document.getElementById('btn-restart') });
@@ -4548,6 +4549,27 @@ class Game {
     }
   }
 
+  /**
+   * #512 · an end sheet that has to scroll says so: data-scroll="yes" on its
+   * body draws a fade and "▼ more" (css/end-screens.css) until the body is
+   * scrolled to the end. The sheets are laid out to fit a laptop, a Deck and
+   * a TV without scrolling; this is for the phone held sideways.
+   */
+  _markSheetScroll(sheetId) {
+    const body = document.querySelector('#' + sheetId + ' .uf-sheet__body');
+    if (!body) return;
+    const mark = () => {
+      const more = body.scrollHeight - body.clientHeight > 4 && body.scrollTop + body.clientHeight < body.scrollHeight - 4;
+      body.dataset.scroll = more ? 'yes' : 'no';
+    };
+    if (!body._scrollMarked) {
+      body._scrollMarked = true;
+      body.addEventListener('scroll', mark, { passive: true });
+      window.addEventListener('resize', mark);
+    }
+    requestAnimationFrame(mark);
+  }
+
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
@@ -4909,20 +4931,21 @@ class Game {
       }
 
       // A grid of kit <uf-stat>s (#428): icon, value and what it measures.
+      // #512: the geese, crash and restart counts sit in the grid too (each
+      // used to be a full-width row under it, which pushed the tally off a
+      // 1280×800 screen).
       const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"></uf-stat>';
-      let html = '<div class="victory-stats-grid">' + [...left, ...right].map(stat).join('') + '</div>';
-
+      const cells = [...left, ...right];
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
       const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
-      if (geeseScattered > 0) {
-        html += stat({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
-      }
+      if (geeseScattered > 0) cells.push({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
+      if (summary.crashes > 0) cells.push({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
+      if (summary.restarts > 0) cells.push({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
+      let html = '<div class="victory-stats-grid">' + cells.map(stat).join('') + '</div>';
 
-      // Perfect ride / crashes
-      if (summary.crashes > 0) {
-        html += stat({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
-      } else {
+      // Perfect ride
+      if (!(summary.crashes > 0)) {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
       // B-3 \u00B7 the ride you just did, measured against the rides you have done
@@ -4932,9 +4955,6 @@ class Game {
       html += this._buildDailyStripHtml(summary, level);
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
-      if (summary.restarts > 0) {
-        html += stat({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
-      }
 
       statsEl.innerHTML = html;
 
@@ -5106,6 +5126,7 @@ class Game {
     this._updateCtaButtons('victory');
     // #400 D4: the ride pays Tandem Tokens — the tally, and GARAGE → to spend them.
     this._showRideCoins('victory', 'finish', { summary });
+    this._markSheetScroll('victory-sheet');   // #512
 
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
@@ -5480,6 +5501,7 @@ class Game {
         rig.dispose(this.scene);
       }
       this.versusRigs = null;
+      this._gpPrevVersusL3 = null;
       // Team Blue's geese share materials with this bike: put the saved colours back.
       if (this.bike) this.bike.applyGooseColours();
       if (this.versusFrontViews) {
@@ -6572,6 +6594,38 @@ class Game {
     this._gpPrevP2L3 = click;
   }
 
+  /**
+   * #581 · versus: every seated pad recenters its own gyro with a stick click
+   * (L3, R3 or both) — the captain's L3 in solo, the stoker's in co-op (#578).
+   * _pollDpad / _pollP2Recenter are skipped in versus, so no versus player
+   * had the binding, P1 included.
+   */
+  _pollVersusRecenter() {
+    if (!this.versusRigs) return;
+    if (!this._gpPrevVersusL3) this._gpPrevVersusL3 = new Map();
+    let recentered = false;
+    for (const rig of this.versusRigs) {
+      for (const m of rig.members) {
+        const im = m.input;
+        if (!im || m.type === 'bot' || !im.gamepadConnected) { this._gpPrevVersusL3.set(im, false); continue; }
+        const gp = im.getGamepadState();
+        if (!gp || !gp.buttons) continue;
+        const click = !!((gp.buttons[10] && gp.buttons[10].pressed) || (gp.buttons[11] && gp.buttons[11].pressed));
+        if (click && !this._gpPrevVersusL3.get(im)) {
+          if (im.gyroConnected) { im.recenterGyro(); im.calibrateGyro(); }
+          if (im.motionEnabled) im.startTiltCalibration();
+          recentered = true;
+          try { analytics.trackEvent('recenter', { seat: 'versus', team: rig.id }); } catch {}
+        }
+        this._gpPrevVersusL3.set(im, click);
+      }
+    }
+    if (recentered) {
+      const flash = document.getElementById('calibrate-flash');
+      if (flash) { flash.style.display = 'block'; setTimeout(() => { flash.style.display = 'none'; }, 400); }
+    }
+  }
+
   _updateConnBadge() {
     if (!this.net) return;
     const typeEl = document.getElementById('conn-type');
@@ -7009,7 +7063,8 @@ class Game {
       if (this.mode !== 'versus' && this._tickDropPause()) {
         // paused — nothing else runs this frame
       } else {
-      if (this.mode !== 'versus') { this._pollDpad(); this._pollP2Recenter(); }
+      if (this.mode === 'versus') this._pollVersusRecenter();
+      else { this._pollDpad(); this._pollP2Recenter(); }
 
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
@@ -7755,11 +7810,18 @@ class Game {
     // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
     const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
+    // #581: the geese lean by the look-only lean (visualLean: the rider's own
+    // tilt before TUNE.motionGain), as the solo captain and the co-op riders
+    // do. By the steering lean (gain 0.3, then the assist blend) they barely
+    // moved while the bike tilted.
+    const riderLeanOf = (r) => (r.visualLean != null ? r.visualLean : r.leanInput);
+    const riderLeans = [riderLeanOf(balanceResult), 0];
     rig.hudLeans[0] = balanceResult.leanInput;
     rig.hudLeans[1] = 0;
     if (rig.balanceCtrls.length > 1) {
       const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
       rig.hudLeans[1] = second.leanInput;
+      riderLeans[1] = riderLeanOf(second);
       balanceResult.leanInput = Math.max(-1, Math.min(1,
         (balanceResult.leanInput + second.leanInput) * 0.5
       ));
@@ -7768,8 +7830,8 @@ class Game {
     // member[1] — solo teams keep the stoker upright. Each rig's bike has its
     // own skeleton + mixer (skinned clone), so the geese lean independently per
     // team. No-op on the plain frame model (no riderMixer).
-    balanceResult.captainLean = rig.hudLeans[0];
-    balanceResult.stokerLean = rig.isDuo ? rig.hudLeans[1] : 0;
+    balanceResult.captainLean = riderLeans[0];
+    balanceResult.stokerLean = rig.isDuo ? riderLeans[1] : 0;
     bike._balanceAssist = assist;
 
     const wasFallen = bike.fallen;
