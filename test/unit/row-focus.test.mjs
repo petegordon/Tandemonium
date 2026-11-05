@@ -39,3 +39,32 @@ test('nothing in that direction → -1', () => {
   assert.equal(nearestRowIndex(tutorial, 'up', all.filter((b) => b !== tutorial)), -1);
   assert.equal(nearestRowIndex(help, 'down', all.filter((b) => b !== help)), -1);
 });
+
+// #581 · left / right stay in the row: a full-width centre button has nothing
+// beside it, so a stick push left (Player 1's team switch) must not drop the
+// highlight into the bottom bar. Only down reaches the bar.
+import { sameRowIndex } from '../../js/row-focus.js';
+const side = (from, dir, boxes) => { const others = boxes.filter((b) => b !== from); const i = sameRowIndex(from, dir, others); return i < 0 ? null : others[i]; };
+
+test('versus step: left / right on a full-width centre button goes nowhere; down reaches the bar', () => {
+  const joinKb = box(300, 760, 1320, 70), chooseLevel = box(300, 850, 1320, 70);
+  const items = [joinKb, chooseLevel, help, profile, music, settings];
+  assert.equal(side(chooseLevel, 'left', items), null);
+  assert.equal(side(chooseLevel, 'right', items), null);
+  assert.equal(side(joinKb, 'left', items), null);
+  const others = items.filter((b) => b !== chooseLevel);
+  assert.equal(others[nearestRowIndex(chooseLevel, 'down', others)], profile);
+});
+
+test('left / right still walk a row: the difficulty row, the cards, the bar pills', () => {
+  assert.equal(side(chill, 'right', all), adv);
+  assert.equal(side(dare, 'left', all), adv);
+  assert.equal(side(grandma, 'right', all), road);
+  assert.equal(side(help, 'right', all), profile);
+  assert.equal(side(music, 'right', all), settings);
+});
+
+test('the end of a row is the end: Chill Ride left does not jump up to a card', () => {
+  assert.equal(side(chill, 'left', all), null);
+  assert.equal(side(settings, 'right', all), null);
+});
