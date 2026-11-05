@@ -109,339 +109,44 @@ try {
   steam = null;
 }
 
-// --- Steam Input (action-based gyro→Steer) ---
-// We declare ONE analog action "Steer" in steam/game_actions_<appid>.vdf and
-// let Steam Input map the controller's gyro to it (input_mode joystick_move).
-// At runtime we ask Steam Input which controllers it has captured, read the
-// Steer vector for each, and push the snapshot to the renderer at ~60Hz. The
-// renderer overrides motionLean for slots that Steam Input owns; everything
-// else (sticks, buttons, triggers, keyboard) flows through the existing
-// Gamepad API / WebHID / keyboard pipelines unchanged.
+// --- Steam Input (emulation mode) ---
+// The game ships NO action manifest (IGA), on purpose. Without one, Steam
+// treats Tandemonium as a plain gamepad game and re-emits every controller it
+// captures as a virtual XInput pad that navigator.getGamepads() can see; the
+// player's Steam layout decides what that pad's inputs do (the official layout
+// routes the Steam Controller's gyro onto the left stick). Steam Input is
+// initialised only so getControllerForGamepadIndex / getInputTypeForHandle can
+// name the physical controller behind each virtual pad (#362): the renderer
+// uses that to hide the XInput twin of a Steam Controller it already reads
+// over WebHID. docs/steam-input.md has the whole model.
 let steamInputReady = false;
-let steamInputSetHandle = 0n;
-let steamInputSteerHandle = 0n;
-const steamInputActivated = new Set(); // controller handles we've already activated the action set on
-let steamInputSnapshot = [];
 let steamInputTimer = null;
 
 if (steam) {
   try {
-    // Mirror the depot-shipped IGA to Steam's root controller_config dir.
-    // Steam Input caches action-set definitions from THIS path at runtime —
-    // a stale IGA there overrides our depot copy and causes new actions to
-    // resolve as zero handles. Best-effort: if Electron lacks write access
-    // to the Steam dir (typical without admin), we log and continue.
-    // <Steam>/steamapps/common/<game>/Tandemonium.exe → three dirnames up.
-    if (app.isPackaged) {
-      try {
-        const exeDir = path.dirname(app.getPath('exe'));
-        const srcIga = path.join(exeDir, 'controller_config', `game_actions_${appId}.vdf`);
-        const steamRoot = path.dirname(path.dirname(path.dirname(exeDir)));
-        const destDir = path.join(steamRoot, 'controller_config');
-        const destIga = path.join(destDir, `game_actions_${appId}.vdf`);
-        if (fs.existsSync(srcIga)) {
-          if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-          const srcStat = fs.statSync(srcIga);
-          let needCopy = true;
-          if (fs.existsSync(destIga)) {
-            const destStat = fs.statSync(destIga);
-            if (destStat.size === srcStat.size && destStat.mtimeMs >= srcStat.mtimeMs) needCopy = false;
-          }
-          if (needCopy) {
-            fs.copyFileSync(srcIga, destIga);
-            _diagLog(`[SteamInput diag] Mirrored IGA to Steam-root: ${destIga} (${srcStat.size} bytes)`);
-          } else {
-            _diagLog(`[SteamInput diag] Steam-root IGA already in sync: ${destIga}`);
-          }
-        }
-      } catch (e) {
-        _diagLog(`[SteamInput diag] IGA mirror to Steam-root failed: ${e.message}. If digital action handles resolve to 0, manually copy controller_config/game_actions_${appId}.vdf from the game install dir to <Steam>/controller_config/`);
-      }
-    }
-
-    // ORDER MATTERS: SetInputActionManifestFilePath MUST be called BEFORE
-    // input.init() per Valve's ISteamInput docs and steamworks-ffi-node JSDoc.
-    // Calling it after init is a silent no-op — Steam Input has already
-    // loaded its (empty) manifest by then and won't reload from a new path.
-    // This was the root cause of the "Steam parses our IGA but action set
-    // never registers" symptom we'd been treating as a Valve-side blocker.
-    try {
-      const igaForSet = app.isPackaged
-        ? path.join(path.dirname(app.getPath('exe')), 'controller_config', `game_actions_${appId}.vdf`)
-        : path.join(__dirname, '..', 'steam', `game_actions_${appId}.vdf`);
-      if (fs.existsSync(igaForSet)) {
-        const setOk = steam.input.setInputActionManifestFilePath(igaForSet);
-        _diagLog(`[SteamInput diag] setInputActionManifestFilePath(${igaForSet}) -> ${setOk}`);
-      } else {
-        _diagLog(`[SteamInput diag] IGA not at ${igaForSet} (skipping explicit set)`);
-      }
-    } catch (e) {
-      _diagLog('[SteamInput diag] setInputActionManifestFilePath threw: ' + e.message);
-    }
-
-    // explicitCallRunFrame=true means we drive ISteamInput::RunFrame() from
-    // our tick loop. The upstream steamworks.js package didn't expose
-    // RunFrame and that's why action handles never populated for us.
+    // explicitCallRunFrame=true: we drive ISteamInput::RunFrame() from the tick.
     const inputOk = steam.input.init(true);
     if (!inputOk) throw new Error('Steam Input init returned false');
     steamInputReady = true;
-    _diagLog('Steam Input initialized');
+    _diagLog('Steam Input initialized (emulation mode: no action manifest)');
   } catch (err) {
     _diagLog('Steam Input init failed: ' + err.message);
   }
-
-  // Sanity-check the action manifest is actually present in the install
-  // dir at the path Steam Input expects. When packaged, the exe sits at
-  // <install>/Tandemonium.exe, so the manifest should be at
-  // <install>/controller_config/game_actions_<appid>.vdf.
-  try {
-    const exeDir = path.dirname(app.getPath('exe'));
-    const igaPath = path.join(exeDir, 'controller_config', `game_actions_${appId}.vdf`);
-    _diagLog(`[SteamInput diag] expected IGA path: ${igaPath}`);
-    if (fs.existsSync(igaPath)) {
-      const stat = fs.statSync(igaPath);
-      _diagLog(`[SteamInput diag] IGA file exists: ${stat.size} bytes`);
-      // Sniff for non-ASCII bytes that could trip Steam's VDF parser.
-      const buf = fs.readFileSync(igaPath);
-      let nonAscii = 0;
-      for (let i = 0; i < buf.length; i++) if (buf[i] > 0x7F) nonAscii++;
-      _diagLog(`[SteamInput diag] IGA non-ASCII byte count: ${nonAscii}`);
-    } else {
-      _diagLog('[SteamInput diag] IGA file MISSING at expected path');
-    }
-  } catch (e) {
-    _diagLog('[SteamInput diag] IGA path check threw: ' + e.message);
-  }
 }
 
-// Handle resolution is lazy: Steam may not have loaded the action manifest
-// at init() time, so we re-try every tick until both handles are non-zero.
-// Diagnostic logging stays in place until end-to-end success is confirmed
-// (we'll strip it in a follow-up commit).
-let _diagFirstResolveLogged = false;
-let _diagSetHandleLogged = false;
-let _diagSteerHandleLogged = false;
-let _diagDigitalHandlesLogged = false;
-let _diagControllersEverSeen = 0;
+// Diag heartbeat: how many controllers Steam reports as captured. In emulation
+// mode that is normally 0 even while virtual XInput pads exist. A non-zero count
+// means Steam is treating the game as a Steam Input API game — a stray
+// game_actions_<appid>.vdf left in <Steam>/controller_config/, for one.
 let _diagHeartbeatAt = 0;
-const _diagMotionLogged = new Set(); // controller handles whose motion availability we've logged
-const steamInputActiveLogged = new Set(); // controller handles for which we've logged active-action diagnostic
-const steamInputLastPressed = new Map(); // controller handle -> last comma-joined pressed-action names
-
-// Digital action names declared in the IGA. Handles are resolved lazily
-// alongside Steer (Steam may not have loaded the manifest at init() time).
-const STEAM_INPUT_DIGITAL_ACTIONS = [
-  'MenuUp', 'MenuDown', 'MenuLeft', 'MenuRight',
-  'Confirm', 'Cancel',
-  'PedalLeft', 'PedalRight',
-  'Pause',
-];
-const steamInputDigitalHandles = {}; // name -> bigint handle (0n = unresolved)
-for (const name of STEAM_INPUT_DIGITAL_ACTIONS) steamInputDigitalHandles[name] = 0n;
-
-function resolveSteamInputHandles() {
-  if (!steamInputReady) return false;
-  if (steamInputSetHandle === 0n) {
-    try { steamInputSetHandle = steam.input.getActionSetHandle('InGameControls'); }
-    catch (e) { /* manifest not yet loaded */ }
-  }
-  if (steamInputSteerHandle === 0n) {
-    try { steamInputSteerHandle = steam.input.getAnalogActionHandle('Steer'); }
-    catch (e) { /* manifest not yet loaded */ }
-  }
-  // Type-agnostic "is this handle zero?" check. The Steamworks binding can
-  // return BigInt 0n for unrecognized actions but also sometimes a plain
-  // Number 0 — `=== 0n` alone misses the Number case and silently treats
-  // the action as resolved.
-  const isZeroHandle = (h) => h == null || h === 0n || h === 0;
-  let unresolvedDigital = 0;
-  for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-    if (isZeroHandle(steamInputDigitalHandles[name])) {
-      try { steamInputDigitalHandles[name] = steam.input.getDigitalActionHandle(name); }
-      catch (e) { /* manifest not yet loaded */ }
-      if (isZeroHandle(steamInputDigitalHandles[name])) unresolvedDigital++;
-    }
-  }
-  if (!_diagFirstResolveLogged) {
-    _diagFirstResolveLogged = true;
-    _diagLog(`[SteamInput diag] first resolve: set=${steamInputSetHandle.toString()} steer=${steamInputSteerHandle.toString()}`);
-  }
-  if (!_diagSetHandleLogged && steamInputSetHandle !== 0n) {
-    _diagSetHandleLogged = true;
-    _diagLog(`[SteamInput diag] InGameControls action set resolved: ${steamInputSetHandle.toString()}`);
-  }
-  if (!_diagSteerHandleLogged && steamInputSteerHandle !== 0n) {
-    _diagSteerHandleLogged = true;
-    _diagLog(`[SteamInput diag] Steer analog action resolved: ${steamInputSteerHandle.toString()}`);
-  }
-  if (!_diagDigitalHandlesLogged && unresolvedDigital === 0) {
-    _diagDigitalHandlesLogged = true;
-    const parts = STEAM_INPUT_DIGITAL_ACTIONS.map(n => `${n}=${steamInputDigitalHandles[n].toString()}`);
-    _diagLog(`[SteamInput diag] digital action handles resolved: ${parts.join(', ')}`);
-  }
-  // Same type-agnostic check as above — `!== 0n` alone treats a plain Number 0
-  // as "resolved" and reports the action layer ready when it isn't.
-  return !isZeroHandle(steamInputSetHandle) && !isZeroHandle(steamInputSteerHandle);
-}
-
 function tickSteamInput() {
-  // Drive ISteamInput::RunFrame each tick - required for getConnectedControllers
-  // and getAnalogActionData to return fresh values when init(true) was used.
   try { steam.input.runFrame(); } catch (e) { /* skip transient errors */ }
-
-  // Action handles need the IGA shipped; raw motion (design B, #347) does NOT.
-  // So resolve the handles but DO NOT gate the tick on them — an early return
-  // here would also kill getConnectedControllers/getMotionData whenever the IGA
-  // is absent, which is the exact configuration design B is meant to serve.
-  // (This gate used to pass by accident: unresolved handles come back as Number
-  // 0, and the old `!== 0n` check read that as resolved. Tightening that check
-  // without this decoupling would have hard-blocked the motion path.)
-  // Every action read below is individually guarded on `actionsReady` instead.
-  const actionsReady = resolveSteamInputHandles();
-
-  let controllers;
-  try { controllers = steam.input.getConnectedControllers(); }
-  catch (e) { return []; }
-  if (controllers.length > _diagControllersEverSeen) {
-    _diagControllersEverSeen = controllers.length;
-    _diagLog(`[SteamInput diag] getConnectedControllers() now returning ${controllers.length} captured pad(s)`);
-  }
-  // Heartbeat. A silent log is ambiguous — no controller captured, or the tick
-  // died? Log the live count periodically so a zero-capture session is
-  // unmistakable in tandemonium-diag.log.
   if (Date.now() - _diagHeartbeatAt > 10000) {
     _diagHeartbeatAt = Date.now();
-    _diagLog(`[SteamInput diag] heartbeat: ${controllers.length} captured pad(s); actions ${actionsReady ? 'ready' : 'UNRESOLVED (no IGA — motion path only)'}`);
+    let n = 0;
+    try { n = steam.input.getConnectedControllers().length; } catch (e) {}
+    _diagLog(`[SteamInput diag] heartbeat: ${n} captured pad(s) (emulation mode expects 0)`);
   }
-
-  const out = [];
-  const seen = new Set();
-  for (const handle of controllers) {
-    const handleStr = handle.toString();
-    seen.add(handleStr);
-    if (actionsReady && !steamInputActivated.has(handleStr)) {
-      try {
-        steam.input.activateActionSet(handle, steamInputSetHandle);
-        steamInputActivated.add(handleStr);
-        // Diag: confirm Steam actually accepted the activation. If
-        // getCurrentActionSet returns something other than our handle,
-        // Steam silently rejected (cause: missing Steamworks-side config,
-        // unknown action set, etc.).
-        let active = null;
-        try { active = steam.input.getCurrentActionSet(handle); } catch (e) {}
-        _diagLog(`[SteamInput diag] activateActionSet(handle=${handleStr}, set=${steamInputSetHandle.toString()}) -> current=${active && active.toString()}`);
-      } catch (e) {
-        _diagLog(`[SteamInput diag] activateActionSet threw: ${e.message}`);
-      }
-    }
-    let data = { x: 0, y: 0, active: false };
-    if (actionsReady) {
-      try { data = steam.input.getAnalogActionData(handle, steamInputSteerHandle); }
-      catch (e) { /* leave at zero */ }
-    }
-    let type = 'Unknown';
-    try { type = steam.input.getInputTypeForHandle(handle); }
-    catch (e) {}
-    // Read each digital action's state for this controller. Steam returns
-    // { state, active } per action; we forward state bits as a flat map.
-    const digital = {};
-    let _diagAnyPressed = false;
-    let _diagAnyInactive = [];
-    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-      const h = steamInputDigitalHandles[name];
-      if (!h || h === 0n || h === 0) { digital[name] = false; continue; }
-      try {
-        const d = steam.input.getDigitalActionData(handle, h);
-        digital[name] = !!(d && d.state);
-        if (d && !d.active) _diagAnyInactive.push(name);
-        if (d && d.state) _diagAnyPressed = true;
-      } catch (e) { digital[name] = false; }
-    }
-    // First-tick diagnostic: log which actions Steam reports as ACTIVE
-    // (i.e. bound to a physical input under the current binding). If
-    // an action is in the snapshot but inactive, the binding file isn't
-    // wiring physical input to it for this controller type.
-    if (actionsReady && !steamInputActiveLogged.has(handleStr)) {
-      steamInputActiveLogged.add(handleStr);
-      _diagLog(`[SteamInput diag] controller ${handleStr} inactive digital actions: ${_diagAnyInactive.join(', ') || '(none — all bound)'}`);
-      // Stronger check: getDigitalActionOrigins returns the actual physical
-      // EInputActionOrigin values bound to each action. Empty array = no
-      // physical input wired (binding file isn't actually reaching the action).
-      const originSummary = [];
-      for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-        const h = steamInputDigitalHandles[name];
-        if (!h || h === 0n || h === 0) { originSummary.push(`${name}=<no handle>`); continue; }
-        try {
-          const origins = steam.input.getDigitalActionOrigins(handle, steamInputSetHandle, h);
-          originSummary.push(`${name}=[${(origins || []).join(',')}]`);
-        } catch (e) { originSummary.push(`${name}=<err:${e.message}>`); }
-      }
-      _diagLog(`[SteamInput diag] digital action origins: ${originSummary.join(' | ')}`);
-      // Same for Steer (analog) so we can confirm the gyro/stick wiring.
-      try {
-        const steerOrigins = steam.input.getAnalogActionOrigins(handle, steamInputSetHandle, steamInputSteerHandle);
-        _diagLog(`[SteamInput diag] Steer analog origins: [${(steerOrigins || []).join(',')}]`);
-      } catch (e) { _diagLog(`[SteamInput diag] Steer origins err: ${e.message}`); }
-    }
-    // Log button-press edges so we can verify physical→action firing.
-    if (_diagAnyPressed) {
-      const pressed = STEAM_INPUT_DIGITAL_ACTIONS.filter(n => digital[n]).join(',');
-      const prev = steamInputLastPressed.get(handleStr) || '';
-      if (pressed !== prev) {
-        steamInputLastPressed.set(handleStr, pressed);
-        _diagLog(`[SteamInput diag] digital pressed: ${pressed}`);
-      }
-    } else {
-      const prev = steamInputLastPressed.get(handleStr);
-      if (prev) {
-        steamInputLastPressed.set(handleStr, '');
-        _diagLog(`[SteamInput diag] digital released (was: ${prev})`);
-      }
-    }
-    // Raw motion for design-B gyro (#347/#348): getMotionData needs no IGA and
-    // no binding — Steam returns the controller's fused orientation plus raw
-    // accel/gyro directly. The renderer feeds this into the same SensorFusion
-    // the WebHID pads use, so an always-captured Steam Controller steers by
-    // gyro without a gyro->Steer binding.
-    let motion = null;
-    try {
-      const m = steam.input.getMotionData(handle);
-      // Reject the DEGENERATE struct. Steam returns an all-zero quaternion when
-      // it has no motion for this controller — and [0,0,0,0] is not a valid
-      // orientation (identity is w=1), so it is "no data", not "not moving".
-      // Passing it through would feed a zero gravity vector into SensorFusion
-      // and present a dead source as a live one (observed on the 2026 Puck).
-      const q = m && (Math.abs(m.rotQuatX) + Math.abs(m.rotQuatY)
-                    + Math.abs(m.rotQuatZ) + Math.abs(m.rotQuatW));
-      if (m && q > 1e-6) motion = {
-        rotQuat: [m.rotQuatX, m.rotQuatY, m.rotQuatZ, m.rotQuatW],
-        accel:   [m.posAccelX, m.posAccelY, m.posAccelZ],
-        rotVel:  [m.rotVelX, m.rotVelY, m.rotVelZ],
-      };
-    } catch (e) { /* no motion for this controller */ }
-    // One-shot per handle: does this pad report motion at all, and in what
-    // units? Decides design-B viability and answers open question #3 (frame /
-    // scale) in docs/steam-input-design.md without a rebuild-and-guess loop.
-    if (!_diagMotionLogged.has(handleStr)) {
-      _diagMotionLogged.add(handleStr);
-      const f = (arr) => arr.map(v => Number(v).toFixed(3)).join(',');
-      _diagLog(motion
-        ? `[SteamInput diag] motion on ${handleStr} (type=${type}): quat=[${f(motion.rotQuat)}] accel=[${f(motion.accel)}] rotVel=[${f(motion.rotVel)}]`
-        : `[SteamInput diag] NO motion from getMotionData on ${handleStr} (type=${type}) — design-B gyro unavailable for this pad`);
-    }
-    out.push({
-      handle: handleStr,
-      type: String(type),
-      steerX: data.x,
-      steerY: data.y,
-      active: !!data.active,
-      digital,
-      motion,
-    });
-  }
-  // Drop handles that disappeared so re-attach re-activates.
-  for (const h of steamInputActivated) if (!seen.has(h)) steamInputActivated.delete(h);
-  return out;
 }
 
 // XInput-slot identity link (#362). In Steam's emulation mode
@@ -450,7 +155,7 @@ function tickSteamInput() {
 // "Xbox 360 Controller" pads with no way to tell a DualSense from the Steam
 // Controller's own twin. getControllerForGamepadIndex(i) DOES resolve those
 // slots to live handles (observed on hardware), and getInputTypeForHandle
-// names the pad behind each. Probed every tick, pushed alongside the snapshot.
+// names the pad behind each. Probed every tick and pushed to the renderer.
 let steamXInputMap = [];
 let _diagXInputKey = '';
 function probeSteamXInputSlots() {
@@ -474,10 +179,9 @@ function probeSteamXInputSlots() {
 function startSteamInputTickLoop() {
   if (steamInputTimer || !steamInputReady) return;
   steamInputTimer = setInterval(() => {
-    steamInputSnapshot = tickSteamInput();
+    tickSteamInput();
     steamXInputMap = probeSteamXInputSlots();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('steam:input:tick', steamInputSnapshot);
       mainWindow.webContents.send('steam:input:xinput', steamXInputMap);
     }
   }, 16);
@@ -497,7 +201,6 @@ ipcMain.handle('app:display', (e) => {
 });
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
-ipcMain.handle('steam:input:poll', () => steamInputSnapshot);
 ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
 // B4c: preload reads this synchronously at load so js/edition.js sees
 // window.tandemoniumSteam.isDemo before the first getEditionRules() call.
@@ -506,71 +209,17 @@ ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
 // app.quit() closes the window and runs will-quit like the window's close box.
 ipcMain.on('app:quit', () => { _diagLog('[app] quit requested from the lobby'); app.quit(); });
 
-// Full-diagnostic dump for the in-game Steam Input test page. Queries Steam
-// on demand for every piece of state we can read (handles, controllers,
-// per-action origins, motion data, current action set, gamepad-index probe).
-// Returns plain JS shapes (no BigInts) so the renderer can JSON.stringify.
+// Diagnostic: what Steam Input reports right now — the captured controllers
+// (normally none in emulation mode) and the XInput-slot map.
 ipcMain.handle('steam:input:fullDiag', () => {
-  const out = {
-    ready: steamInputReady,
-    setHandle: steamInputReady ? steamInputSetHandle.toString() : '0',
-    steerHandle: steamInputReady ? steamInputSteerHandle.toString() : '0',
-    digitalHandles: {},
-    controllers: [],
-    gamepadIndexProbe: [],
-    sessionConfig: null,
-  };
+  const out = { ready: steamInputReady, controllers: [], xinput: steamXInputMap };
   if (!steamInputReady) return out;
-  try {
-    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-      const h = steamInputDigitalHandles[name];
-      out.digitalHandles[name] = h ? h.toString() : '0';
-    }
-  } catch (e) {}
-  try { out.sessionConfig = steam.input.getSessionInputConfigurationSettings(); }
-  catch (e) { out.sessionConfig = `err: ${e.message}`; }
-  // Gamepad-index probe — secondary enumeration path.
-  for (let i = 0; i < 4; i++) {
-    try {
-      const h = steam.input.getControllerForGamepadIndex(i);
-      out.gamepadIndexProbe.push({ index: i, handle: h ? h.toString() : '0' });
-    } catch (e) {
-      out.gamepadIndexProbe.push({ index: i, handle: 'err' });
-    }
-  }
   let controllers = [];
   try { controllers = steam.input.getConnectedControllers(); } catch (e) {}
   for (const handle of controllers) {
-    const c = { handle: handle.toString(), type: 'Unknown', steer: null, digital: {}, origins: { steer: [], digital: {} }, motion: null };
-    try { c.type = String(steam.input.getInputTypeForHandle(handle)); } catch (e) {}
-    try { c.currentSet = steam.input.getCurrentActionSet(handle).toString(); } catch (e) { c.currentSet = 'err'; }
-    if (steamInputSteerHandle && steamInputSteerHandle !== 0n) {
-      try {
-        const d = steam.input.getAnalogActionData(handle, steamInputSteerHandle);
-        c.steer = { x: d.x, y: d.y, active: !!d.active, mode: d.mode };
-      } catch (e) { c.steer = { err: e.message }; }
-      try {
-        const origins = steam.input.getAnalogActionOrigins(handle, steamInputSetHandle, steamInputSteerHandle);
-        c.origins.steer = (origins || []).map(String);
-      } catch (e) { c.origins.steer = [`err: ${e.message}`]; }
-    }
-    for (const name of STEAM_INPUT_DIGITAL_ACTIONS) {
-      const h = steamInputDigitalHandles[name];
-      if (!h || h === 0n || h === 0) { c.digital[name] = { state: false, active: false, noHandle: true }; continue; }
-      try {
-        const d = steam.input.getDigitalActionData(handle, h);
-        c.digital[name] = { state: !!(d && d.state), active: !!(d && d.active) };
-      } catch (e) { c.digital[name] = { err: e.message }; }
-      try {
-        const origins = steam.input.getDigitalActionOrigins(handle, steamInputSetHandle, h);
-        c.origins.digital[name] = (origins || []).map(String);
-      } catch (e) { c.origins.digital[name] = [`err: ${e.message}`]; }
-    }
-    try {
-      const m = steam.input.getMotionData(handle);
-      c.motion = m ? { rotQuat: [m.rotQuatX, m.rotQuatY, m.rotQuatZ, m.rotQuatW], accel: [m.posAccelX, m.posAccelY, m.posAccelZ], rotVel: [m.rotVelX, m.rotVelY, m.rotVelZ] } : null;
-    } catch (e) { c.motion = { err: e.message }; }
-    out.controllers.push(c);
+    let type = 'Unknown';
+    try { type = String(steam.input.getInputTypeForHandle(handle)); } catch (e) {}
+    out.controllers.push({ handle: handle.toString(), type });
   }
   return out;
 });

@@ -161,7 +161,7 @@ const optLayout = await page.evaluate(() => {
   const r = (id) => document.getElementById(id).getBoundingClientRect();
   const tops = ['opt-high', 'opt-medium', 'opt-low', 'opt-auto'].map((id) => Math.round(r(id).top));
   return { sm, md, small, btnMin: Math.min(...btns.map((b) => parseFloat(getComputedStyle(b).fontSize))),
-    oneRow: tops.every((t) => t === tops[0]), twoCols: r('opt-ds-auto').left > r('opt-auto').right && Math.round(r('opt-ds-auto').top) === tops[0] };
+    oneRow: tops.every((t) => t === tops[0]), twoCols: r('opt-gyro-euler').left > r('opt-auto').right && Math.round(r('opt-gyro-euler').top) === tops[0] };
 });
 check(optLayout.small.length === 0 && optLayout.btnMin >= optLayout.md, 'LY-09 every Settings text is at least --uf-size-sm and the options at least --uf-size-md (#523)', optLayout);
 check(optLayout.oneRow && optLayout.twoCols, 'LY-09 each choice is one row (High | Medium | Low | Auto), sections in two columns (#523)', optLayout);
