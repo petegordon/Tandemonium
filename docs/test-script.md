@@ -214,6 +214,8 @@ real-hardware rows stay manual.
 | MC-18h | MC-16 to MC-18 with real phones (iOS Safari + Android Chrome) on a TV: two people scan at once, one picks Play and joins as the online partner | M | — |
 | MC-19 | One pad room, several seats (#562): free join seats share one QR secret; a phone taking a seat moves that seat to its own secret at once (the next scan lands on the next seat); frames, drops and reconnects are per seat; a closed seat is locked; open-room is answered only for a join seat whose phone is here, while the game allows it | A | `test/unit/phone-pad` |
 | MC-15b | A phone next to a pad: both drive P1's seat (what the game does today) | A | `smoke:phone-coop` |
+| MC-21 | Seat churn (TV playtest 2026-11-06): with the controller overlay on, Player 2 stands up (B) and sits down (A) 20 times; the game never loses its WebGL context nor reloads, live WebGL contexts stay flat, and one B stands them up for good | A | `smoke:seat-churn` |
+| MC-21h | MC-21 on the TV under Steam with two Steam Controllers + a DualSense: hammer B/A on the second Steam Controller for a minute; no reload, one B always stands up. Afterwards `%USERPROFILE%\tandemonium-diag.log` shows each seat/leave and no `[window] page loaded (#2, a RELOAD)` | M | — |
 
 ### Versus (split screen)
 
