@@ -469,6 +469,29 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
      scrolls into view (RowFocusController, js/row-focus.js). */
   #dressing-room .dr-card { overflow: hidden auto; }
 }
+/* Editing a wide card (co-op, or a versus team of one): two columns, the goose
+   at the card's full height on the left and the pickers on the right — a full-
+   width preview over the pickers was a 5:1 strip. The editing card takes most
+   of the row; the Ready card beside it, preview only, gets a taller shape. */
+@media (min-width: 1024px) {
+  #dr-cards > .dr-card[data-state="editing"] { flex-grow: 2.3; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] {
+    display: grid; column-gap: var(--uf-space-5); row-gap: var(--uf-space-3);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "head head" "preview rows" "preview actions" "stick note";
+  }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-head { grid-area: head; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-preview { grid-area: preview; height: 100%; min-height: 0; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-stick-hint { grid-area: stick; display: block; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-rows-wrap { grid-area: rows; align-self: start; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-actions { grid-area: actions; justify-content: flex-start; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] > .dr-hint { grid-area: note; text-align: left; }
+  /* The pickers' column is narrower than a full card: labels go back above their buttons. */
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] .dr-rows { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: var(--uf-space-3); }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] .dr-group { display: block; }
+  :is(#dr-cards > .dr-card, .dr-team:not(:has(.dr-card ~ .dr-card)) > .dr-card)[data-state="editing"] .dr-label { margin-bottom: var(--uf-space-2); }
+}
 /* A laptop-height screen (1280×800): tighter rows; the stick hint waits until Ready. */
 @media (min-width: 1024px) and (max-height: 900px) {
   #dressing-room .dr-card { padding: var(--uf-space-3); gap: var(--uf-space-2); }
