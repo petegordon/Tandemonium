@@ -154,8 +154,14 @@ const _pressTwins = new Map();
 // synthetic already reads released by the time the twin reads pressed (#581).
 const TWIN_WINDOW_MS = 500;
 const _scHistory = new Map();   // HidEntry → Map(button index → last pressed ms)
+// #617 · which Steam Controller each XInput twin belongs to, keyed by Gamepad index →
+// { id, entry }: learned when the twin's presses mirror exactly one streaming
+// Steam Controller. Rumble for a Steam Controller goes to its twin (Steam turns
+// the virtual pad's rumble into the controller's haptics; the WebHID driver has
+// no rumble command of its own).
+const _twinLinks = new Map();
 /** Tests: forget every press-identified twin and press history. */
-export function resetSteamTwinMemory() { _pressTwins.clear(); _scHistory.clear(); }
+export function resetSteamTwinMemory() { _pressTwins.clear(); _scHistory.clear(); _twinLinks.clear(); }
 
 function isLiveSteamControllerEntry(e, now) {
   return !!e && !!e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0 && (now - e.hidActiveSince) < 5000;
@@ -178,6 +184,7 @@ export function noteSteamControllerPresses(now = performance.now()) {
     const btns = (e.synthetic && e.synthetic.buttons) || [];
     for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) m.set(i, now);
   }
+  if (live.size) linkSteamTwins(live);
 }
 
 /**
@@ -294,10 +301,15 @@ function steamSlotTwin(gp, padsOverride, bodies) {
  * its synthetic shows now.
  */
 function pressesMirrorSteamController(gp) {
+  return mirroredSteamControllers(gp).length > 0;
+}
+
+/** The streaming Steam Controllers (HidEntry) whose recent presses include every one of this pad's. */
+function mirroredSteamControllers(gp) {
   const mgr = _controllerManager;
-  if (!mgr || !mgr._recentPadBtns || typeof mgr._recentPressed !== 'function') return false;
+  if (!mgr || !mgr._recentPadBtns || typeof mgr._recentPressed !== 'function') return [];
   const padSet = mgr._recentPressed(mgr._recentPadBtns.get(gp.index));
-  if (!padSet.size) return false;
+  if (!padSet.size) return [];
   const now = performance.now();
   const fanout = (e) => isLiveSteamControllerEntry(e, now);
   const setOf = (e) => {
@@ -311,7 +323,50 @@ function pressesMirrorSteamController(gp) {
   const entries = [];
   if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (fanout(e)) entries.push(e);
   for (const s of (mgr.slots || [])) if (fanout(s._hidEntry)) entries.push(s._hidEntry);
-  return entries.some((e) => { const sc = setOf(e); return [...padSet].every((i) => sc.has(i)); });
+  return entries.filter((e) => { const sc = setOf(e); return [...padSet].every((i) => sc.has(i)); });
+}
+
+/** Once per frame: link each XInput twin to the one Steam Controller its presses mirror (#617). */
+function linkSteamTwins(live) {
+  const pads = (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
+  for (const [i, l] of _twinLinks) {
+    const p = pads[i];
+    if (!p || p.id !== l.id || !live.has(l.entry)) _twinLinks.delete(i);
+  }
+  for (const gp of pads) {
+    if (!gp || !isXInputPadId(gp.id) || _twinLinks.has(gp.index)) continue;
+    if (!(gp.buttons || []).some((b) => b && b.pressed)) continue;
+    const hits = mirroredSteamControllers(gp);
+    if (hits.length === 1) _twinLinks.set(gp.index, { id: gp.id, entry: hits[0] });
+  }
+}
+
+/**
+ * #617 · where to send rumble for the Steam Controller behind `entry`: its XInput
+ * twin's Gamepad index (vibrationActuator) and/or Steam Input's handle for it
+ * (TriggerVibration / SetLEDColor), or null when neither is known. With one Steam
+ * Controller there is nothing to tell apart, so its single twin / Steam slot is
+ * taken even before a press has linked them.
+ * @param {any} entry a Steam Controller HidEntry
+ * @returns {{ padIndex: number|null, handle: string|null }|null}
+ */
+export function steamTargetForEntry(entry, padsOverride = null) {
+  if (!entry || !entry.driver?.constructor?.needsSiblingFanout) return null;
+  const pads = padsOverride || (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
+  let padIndex = null;
+  for (const [i, l] of _twinLinks) if (l.entry === entry && pads[i] && pads[i].id === l.id) padIndex = i;
+  const single = liveWebHidSteamControllers() <= 1;
+  if (padIndex == null && single) {
+    const twins = [...pads].filter((p) => p && isXInputPadId(p.id) && isSteamTwinPad(p, pads));
+    if (twins.length === 1) padIndex = twins[0].index;
+  }
+  let handle = null;
+  if (padIndex != null) { const s = steamSlotForGamepad(pads[padIndex], pads); handle = s ? String(s.handle) : null; }
+  if (!handle && single) {
+    const fam = steamXInputMap().filter((e) => isSteamFamilyType(e.type));
+    if (fam.length === 1) handle = String(fam[0].handle);
+  }
+  return padIndex == null && !handle ? null : { padIndex, handle };
 }
 
 /**
@@ -593,6 +648,8 @@ export class InputManager {
   get _gpName() { return this._slot?.controllerLabel ?? ''; }
   get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
   get _controllerDriver() { return this._slot?.driver ?? null; }
+  /** #617 · this player's Steam Controller twin / Steam Input handle (haptics.js rumbles it), or null. */
+  steamRumbleTarget() { return steamTargetForEntry(this._slot?._hidEntry ?? null); }
   get _gyroConnType() { return this._slot?.driver?.connectionType ?? null; }
 
   /**

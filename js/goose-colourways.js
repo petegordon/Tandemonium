@@ -14,10 +14,28 @@ import DATA from './goose-colourways-data.js';
 
 export const DEFAULT_COLOURWAY = 'default';
 
-/** [{key, label}] for an outfit pair ('default' first); [] for an unknown pair. */
+/**
+ * #617 · one word per colourway on the buttons ("Navy", not "Navy + mustard"). The generated data
+ * keeps the review sheet's full names (regenerated from tandemonium-claude-3d), so the short name
+ * lives here. A colourway missing from this table shows its first word.
+ */
+export const COLOURWAY_NAMES = Object.freeze({
+  default: 'Original',
+  v_navy: 'Navy', v_forest: 'Forest', v_charcoal: 'Charcoal',
+  c_blue: 'Sky', c_burgundy: 'Burgundy', c_green: 'Moss',
+  f_royal: 'Royal', f_emerald: 'Emerald', f_plum: 'Plum',
+  g_claret: 'Claret', g_green: 'Sage', g_grey: 'Dove',
+});
+
+/** The one-word name of a colourway. @param {string} key @param {string} [label] the data's full name */
+export function colourwayName(key, label = '') {
+  return COLOURWAY_NAMES[key] || String(label).split(/[\s+]+/).filter(Boolean)[0] || 'Original';
+}
+
+/** [{key, label}] for an outfit pair ('default' first); [] for an unknown pair. Labels are one word (#617). */
 export function colourwaysFor(outfit) {
   const p = DATA[outfit];
-  return p ? p.ways.map(w => ({ key: w.key, label: w.label })) : [];
+  return p ? p.ways.map(w => ({ key: w.key, label: colourwayName(w.key, w.label) })) : [];
 }
 
 /** A known colourway of the pair, else the default. */

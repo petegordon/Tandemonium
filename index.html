@@ -4207,13 +4207,13 @@
   .dr-card[data-tone="team-a"] { --_tone: var(--uf-color-team-a); }
   .dr-card[data-tone="team-b"] { --_tone: var(--uf-color-team-b); }
   .dr-card[data-state="editing"] { border-color: var(--_tone); box-shadow: 0 0 18px -4px var(--_tone); flex-grow: 1.7; max-width: 560px; }
-  .dr-card[data-state="readonly"] { opacity: .8; }
   .dr-card.dr-nudge { animation: dr-nudge .6s ease-out; }
   @keyframes dr-nudge { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
   .dr-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
   .dr-head .dr-who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dr-who { font: 700 var(--uf-size-md)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); }
-  .dr-who b { color: var(--_tone); }
+  /* #617 · the seat cards' P# badge (uf-seat__badge), here inline before the name. */
+  .dr-pnum { display: inline-block; margin-right: .5em; padding: 3px 6px; border-radius: var(--uf-radius-sm); background: var(--_tone); color: var(--uf-color-bg); font: 800 var(--uf-size-xs)/1 var(--uf-font-mono); vertical-align: .12em; }
   .dr-badge { flex: none; white-space: nowrap; font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.2px; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,.08); color: var(--uf-color-fg-muted); }
   .dr-card[data-state="editing"] .dr-badge { background: color-mix(in srgb, var(--_tone) 25%, transparent); color: var(--_tone); }
   .dr-card[data-state="ready"] .dr-badge { background: rgba(60,200,80,.18); color: var(--uf-color-accent); }
@@ -6054,7 +6054,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.2628b01 | 11-06-2026 13:13</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.3d48a89 | 11-06-2026 17:47</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
