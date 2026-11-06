@@ -408,11 +408,18 @@ console.log('MC-19 DualSense behind a frozen Gamepad twin: a press seats it as P
   const page = await h.gamePage({ storage: STORAGE, before: async (p) => { slowLoad(p); await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p); } });
   const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
   await waitFor(page, streamingAll(['ds']));
-  // The TV case is a DualSense switched on long after launch: wait out the lobby's
-  // startup detection (it claims a lone pad for Player 1 within 2 s, no press needed).
-  await sleep(3500);
   await ctx.pads.plug('dualsense');   // the frozen twin: listed, never pressed
   await sleep(800);
+  // The TV case is a DualSense switched on long after launch, Player 1 already
+  // freed. The lobby's startup detection hands a lone pad to Player 1 with no
+  // press (and can start late in a smoke): if it did, free Player 1 the way the
+  // TV had it, and wait out the manager's re-claim cooldown.
+  const cooldown = await page.evaluate(() => {
+    const m = window.__controllerManager;
+    if (m.getSlot('P1').state === 'claimed') m.releaseSlotToPool('P1');
+    return m.opts.reclaimCooldownMs || 0;
+  });
+  await sleep(cooldown + 600);
   let s = await snap(page);
   check(slot(s, 'P1').state === 'empty', 'MC-19: (setup) nobody holds Player 1', slot(s, 'P1'));
   await ctx.hid.hold('ds', FACE_A.ds5Usb, true);
