@@ -1528,8 +1528,14 @@
   }
 
   /* Online room bar on the Level screen: the two seats, compact, above the cards. */
-  .level-room-team { width: 100%; max-width: 720px; margin: 0 auto 10px; }
+  /* Compact: each seat one line (role · name · connection), so the cards and START RIDE keep their room. */
+  .level-room-team { width: 100%; max-width: 720px; margin: 0 auto 10px; padding: 6px 10px; gap: 6px; }
   .level-room-team[hidden] { display: none; }
+  .level-room-team > .uf-team__title { font-size: var(--uf-size-xs); }
+  .level-room-team > uf-seat { min-height: 0; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: baseline; column-gap: .55em; row-gap: 0; padding: 5px 40px 5px 10px; text-align: left; animation: none; }
+  .level-room-team > uf-seat .uf-seat__who { font-size: var(--uf-size-md); }
+  .level-room-team > uf-seat .uf-seat__badge { top: 50%; transform: translateY(-50%); }
+  @media (max-width: 600px) { #level-room-team[layout] > uf-seat { flex: 1 1 100%; } }
 
   /* ── COMPONENT: Level Cards ── */
   .level-cards {

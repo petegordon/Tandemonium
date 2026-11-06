@@ -35,6 +35,11 @@ const PEERJS_CONFIG = {
   secure: PEERJS_SECURE,
 };
 
+/** The relay replaced our socket: re-dial once after this long… */
+const REPLACED_REDIAL_MS = 3000;
+/** …and a second replace within this window means the seat is taken. */
+const REPLACED_REDIAL_WINDOW_MS = 30000;
+
 export class RoomTransport {
   constructor() {
     this.peer = null;
@@ -191,6 +196,7 @@ export class RoomTransport {
   }
 
   _handleMessage(data) {
+    if (this._destroyed) return;
     let bytes;
     if (data instanceof ArrayBuffer) {
       bytes = new Uint8Array(data);
@@ -383,8 +389,12 @@ export class RoomTransport {
 
   _handleDisconnect() {
     clearTimeout(this._reconnectTimeout);
+    if (this._destroyed) return;
     this.connected = false;
     this._stopHeartbeat();
+    // Another connection holds this room seat (see the 'replaced' close): re-dialling would take
+    // it back and start a tug of war. Only an explicit retry (retryConnection) dials again.
+    if (this._evicted) return;
 
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
@@ -392,8 +402,9 @@ export class RoomTransport {
       const delay = this._reconnectAttempts <= this._fastReconnectAttempts
         ? Math.pow(2, this._reconnectAttempts - 1) * 1000
         : 16000;
-      setTimeout(() => {
-        if (!this.connected) this._attemptReconnect();
+      clearTimeout(this._reconnectDelayTimer);
+      this._reconnectDelayTimer = setTimeout(() => {
+        if (!this.connected && !this._destroyed) this._attemptReconnect();
       }, delay);
     } else {
       if (this.onDisconnected) this.onDisconnected('Connection lost');
@@ -402,6 +413,9 @@ export class RoomTransport {
 
   // Public: reset retry counter and start a fresh reconnection cycle
   retryConnection() {
+    if (this._destroyed) return;
+    this._evicted = false;
+    this._lastReplacedAt = 0;
     this._reconnectAttempts = 0;
     this._ensureBrokerConnection();
     this._handleDisconnect();
@@ -415,6 +429,7 @@ export class RoomTransport {
   }
 
   _attemptReconnect() {
+    if (this._destroyed || this._evicted) return;
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
 
     // Close stale connections
@@ -545,7 +560,24 @@ export class RoomTransport {
       // The relay replaced this socket with a newer one for the same room + role:
       // another connection holds the seat now. Re-dialling would replace it back.
       if (ev && ev.reason === 'replaced') {
-        console.warn('NET: Relay socket replaced by a newer connection — not reconnecting');
+        // Our own re-dials never get here (the old socket's handlers are detached first), so
+        // another connection took this seat: usually a dial of ours that raced this socket to
+        // the relay, sometimes the same room opened elsewhere. Take the seat back once, a moment
+        // later; replaced again soon after means it is really taken — stop and say so rather
+        // than tug the seat back and forth.
+        const now = Date.now();
+        if (now - (this._lastReplacedAt || 0) > REPLACED_REDIAL_WINDOW_MS) {
+          this._lastReplacedAt = now;
+          console.warn('NET: Relay socket replaced by another connection — re-dialling once');
+          clearTimeout(this._replacedRedialTimer);
+          this._replacedRedialTimer = setTimeout(() => { if (!this._destroyed && !this._relayWs && !this._evicted) this._connectRelay(); }, REPLACED_REDIAL_MS);
+          return;
+        }
+        console.warn('NET: Relay seat taken by another connection again — giving it up');
+        this._evicted = true;
+        clearTimeout(this._reconnectTimeout);
+        if (this.connected) { this.connected = false; this._stopHeartbeat(); }
+        if (this.onDisconnected) this.onDisconnected('This room was opened somewhere else');
         return;
       }
       // If P2P is active, silently ignore relay failures (it's just a hot standby)
@@ -643,6 +675,9 @@ export class RoomTransport {
     const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
 
     this._fetchIceServers().then(iceServers => {
+      // Destroyed while the TURN fetch was in flight: a Peer made now would never be destroyed,
+      // hold this room's peer id ("peer ID in use") and could take the partner's connection.
+      if (this._destroyed) return;
       this.peer = new window.Peer(peerId, {
         ...PEERJS_CONFIG,
         config: { iceServers }
@@ -794,6 +829,8 @@ export class RoomTransport {
   destroy() {
     this._destroyed = true;   // pending relay retries and late socket events stop here
     clearTimeout(this._authRetryTimer);
+    clearTimeout(this._reconnectDelayTimer);
+    clearTimeout(this._replacedRedialTimer);
     this._stopHeartbeat();
     this._stopStatsPolling();
     clearTimeout(this._reconnectTimeout);

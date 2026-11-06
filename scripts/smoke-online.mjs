@@ -258,6 +258,27 @@ try {
     await waitFor(sto, () => !!window._game.net.connected && !window._game._drop && !window._game._reconnecting, null, 60000);
     await h.shot(cap, '1-captain-riding');
 
+    // OC-14 (TV playtest 2026-11-06: the phone sat on TOO SLOW for good). The stoker's TOO SLOW
+    // clears by itself while the captain's clock streams (a lost EVT_RESET can't strand it); a
+    // silent captain gets a "Waiting for the captain…" sheet, never the drop pause, and the
+    // sheet lifts the moment the captain is heard from again.
+    const tooSlow = (ago) => sto.evaluate((a) => { const g = window._game; g._stokerTimeoutShown = true; g._stokerTimeoutAt = performance.now() - a; g._lastCaptainAt = performance.now() - a; document.getElementById('timeout-flash').classList.add('visible'); }, ago);
+    await cap.evaluate(() => { const g = window._game; g.raceManager.segmentTimeRemaining = Math.max(g.raceManager.segmentTimeRemaining, 30); });
+    await tooSlow(13000);
+    const healed = await waitFor(sto, () => !window._game._stokerTimeoutShown && !document.getElementById('timeout-flash').classList.contains('visible'), null, 5000);
+    const healedSheet = await sto.evaluate(() => document.getElementById('disconnect-overlay').style.display === 'flex');
+    check(healed && !healedSheet, "OC-14 a stuck TOO SLOW clears itself from the captain's running clock (no sheet)", { healed, healedSheet });
+    // Silence the captain: no state, no events (as if paused, or its messages lost).
+    await cap.evaluate(() => { const n = window._game.net; window.__mute = { s: n.sendState, e: n.sendEvent }; n.sendState = () => {}; n.sendEvent = () => {}; });
+    await sleep(1500);
+    await tooSlow(13000);
+    const waiting = await waitFor(sto, () => document.getElementById('disconnect-overlay').style.display === 'flex' && /Waiting for the captain/.test(document.getElementById('disconnect-msg').textContent), null, 5000);
+    const quiet = await sto.evaluate(() => ({ netLost: window._game._netLost, drop: !!window._game._drop, state: window._game.state }));
+    check(waiting && !quiet.netLost && !quiet.drop && quiet.state === 'playing', 'OC-14 a silent captain: "Waiting for the captain…" sheet, no drop pause, link not marked lost', { waiting, quiet });
+    await cap.evaluate(() => { const n = window._game.net; n.sendState = window.__mute.s; n.sendEvent = window.__mute.e; });
+    const lifted = await waitFor(sto, () => document.getElementById('disconnect-overlay').style.display !== 'flex' && !window._game._waitingForCaptain && !window._game._stokerTimeoutShown, null, 8000);
+    check(lifted, 'OC-14 the captain heard from again: the sheet lifts and TOO SLOW clears', await sto.evaluate(() => ({ overlay: document.getElementById('disconnect-overlay').style.display, waiting: window._game._waitingForCaptain, tooSlow: window._game._stokerTimeoutShown })));
+
     // OC-11: finish, then BACK TO ROOM: both on level select, same room, connected.
     await cap.evaluate(() => { const g = window._game; g.bike.resetToDistance(g.lobby.selectedLevel.distance - 0.5); g.bike.speed = 10; });
     const won = await waitFor(cap, () => window._game.state === 'victory', null, 180000);
