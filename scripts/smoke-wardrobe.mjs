@@ -295,5 +295,92 @@ console.log('WD-07 three-player versus room at 1920×1080');
   await p.close();
 }
 
+// ── WD-08 · four editing at once on a 720p screen; P# badges; one-word colours ──
+console.log('WD-08 four players editing at 1280×720');
+{
+  const p = await h.gamePage({ viewport: { width: 1280, height: 720 }, storage: STORAGE, before: (pg) => installFakeGamepads(pg, { atBoot: ['xbox'] }) });
+  const fp = fakePads(p);
+  await until(p, () => !!window.__controllerManager && !!window.__playerLooks);
+  await clickId(p, 'btn-versus');
+  await until(p, () => document.getElementById('lobby-flow').current === 'lobby-versus');
+  const idx = [];
+  for (const kind of ['switchpro', 'dualsense', 'ds4']) {
+    const i = await fp.plug(kind);
+    idx.push(i);
+    const want = idx.length + 1;
+    await until(p, () => (window._game.lobby._versusCandidates || []).length > 0);
+    await fp.tap(i, 'A');
+    await until(p, (w) => window._game.lobby._versusPlayers.length === w, want);
+  }
+  check(await until(p, () => window._game.lobby._versusPlayers.length === 4), 'WD-08: four players seated');
+  await fp.tap(idx[1], 'Y');
+  await until(p, () => window._game.lobby._room && window._game.lobby._room.cards.size === 4);
+  // Everyone else presses EDIT too.
+  for (const n of [1, 2, 4]) await cardClick(p, n, 'button[data-act="edit"]');
+  check(await until(p, () => Object.values(window._game.lobby._room.states()).every((s) => s === 'editing')), 'WD-08: all four cards editing', await room(p));
+  // P3 walks down to the last row of their card.
+  for (let k = 0; k < 8; k++) { await fp.tap(idx[1], 'DOWN'); await new Promise((r) => setTimeout(r, 120)); }
+  await new Promise((r) => setTimeout(r, 500));
+  const s = await p.evaluate(() => {
+    const c = document.querySelector('#dr-cards .dr-card[data-n="3"]');
+    const r = c.getBoundingClientRect(), pv = c.querySelector('.dr-preview').getBoundingClientRect(), done = c.querySelector('.dr-done').getBoundingClientRect();
+    const wrap = c.querySelector('.dr-rows-wrap');
+    const f = window._game.lobby._room.cards.get(3).focus.focused;
+    return { wide: c.hasAttribute('data-wide'), cardScroll: c.scrollTop, wrapScroll: wrap.scrollTop, wrapScrolls: wrap.scrollHeight > wrap.clientHeight + 1,
+      previewShows: pv.top >= r.top - 1 && pv.bottom <= r.bottom + 1 && pv.height > 40, doneShows: done.top >= r.top - 1 && done.bottom <= r.bottom + 1,
+      focused: f ? (f.dataset.pick || f.dataset.act || f.dataset.buzz) : null };
+  });
+  check(s.cardScroll === 0 && s.previewShows && s.doneShows, "WD-08: walking down P3's card never scrolls the goose or DONE away (only the pickers scroll)", s);
+  // UP until P3's focus is back on the first row (Body), however many outfit lines wrapped.
+  const atTop = () => p.evaluate(() => { const f = window._game.lobby._room.cards.get(3).focus.focused; return !!f && f.dataset.pick === 'body'; });
+  for (let k = 0; k < 16 && !(await atTop()); k++) { await fp.tap(idx[1], 'UP'); await new Promise((r) => setTimeout(r, 150)); }
+  await new Promise((r) => setTimeout(r, 300));
+  const back = await p.evaluate(() => { const c = document.querySelector('#dr-cards .dr-card[data-n="3"]'); const f = window._game.lobby._room.cards.get(3).focus.focused; return { cardScroll: c.scrollTop, wrapScroll: c.querySelector('.dr-rows-wrap').scrollTop, focused: f ? (f.dataset.pick || f.dataset.act) + ':' + f.dataset.val : null }; });
+  check(back.cardScroll === 0 && back.wrapScroll <= 2, 'WD-08: back up at the first row the pickers scroll back to the top', back);
+  const ui = await p.evaluate(() => ({
+    badges: [...document.querySelectorAll('#dr-cards .dr-card')].map((c) => (c.querySelector('.dr-who .dr-pnum') || {}).textContent),
+    playerWord: [...document.querySelectorAll('#dr-cards .dr-who')].some((w) => /Player\s*\d/.test(w.textContent)),
+    colours: [...document.querySelectorAll('#dr-cards .dr-card[data-n="1"] .dr-opts[data-pick="colourway"] button')].map((b) => b.textContent.trim()),
+  }));
+  check([...ui.badges].sort().join() === 'P1,P2,P3,P4' && !ui.playerWord, 'WD-08: each card shows the P# badge, not "Player #"', ui);
+  check(ui.colours.length > 1 && ui.colours.every((t) => /^[A-Z][a-z]+$/.test(t)), 'WD-08: every colour button is one word', ui.colours);
+  await h.shot(p, 'wd08-versus-4-editing-720');
+
+  // ── WD-09 · a phone-seated player drives their own card with the phone's menu pad ──
+  console.log('WD-09 a phone player edits on the TV');
+  const ph = await p.evaluate(() => {
+    const live = window._game.lobby._room;
+    live.close('test');
+    // The phone seat's InputManager in menu mode, as js/remote/phone-pad-host.js leaves it: a
+    // gamepad whose buttons are the phone's OK (A) / Back (B) and D-pad.
+    const btn = () => ({ pressed: false, value: 0 });
+    const pad = { id: 'phone', mapping: 'standard', axes: [0, 0, 0, 0], buttons: Array.from({ length: 17 }, btn) };
+    const phone = { remoteOnly: true, remotePresent: true, get gamepadConnected() { return this.remotePresent; }, getGamepadState: () => pad, _gpSwapAB: false };
+    window.__phonePad = pad;
+    const r = new live.constructor({ sheet: document.getElementById('dressing-room'), roster: () => [{ n: 2, input: phone, type: 'gamepad', label: 'Phone', team: null, seat: 'Stoker' }], padKeyFor: () => null, controllerManager: null });
+    window.__phoneRoom = r;
+    r.show(0);
+    const c = r.cards.get(2);
+    return { type: c.type, state: c.state, hasFocus: !!c.focus, edit: !!c.el.querySelector('button[data-act="edit"]'), note: !!c.el.querySelector('.dr-note') };
+  });
+  check(ph.type === 'phone' && ph.state === 'ready' && ph.hasFocus && ph.edit && !ph.note, 'WD-09: a phone player gets a working card (EDIT button, driven by the phone), not "Edit on your phone"', ph);
+  const press = (b) => p.evaluate(async (i) => {
+    const r = window.__phoneRoom, pad = window.__phonePad;
+    const step = () => r.poll(performance.now());
+    for (let k = 0; k < 3; k++) step();
+    pad.buttons[i] = { pressed: true, value: 1 }; for (let k = 0; k < 3; k++) step();
+    pad.buttons[i] = { pressed: false, value: 0 }; for (let k = 0; k < 3; k++) step();
+  }, b);
+  await press(0);   // OK on EDIT
+  const edited = await p.evaluate(() => window.__phoneRoom.states()[2]);
+  await press(15);   // D-pad right: the next body
+  const moved = await p.evaluate(() => { const f = window.__phoneRoom.cards.get(2).focus.focused; return f ? f.dataset.val : null; });
+  await press(1);   // Back = Ready
+  const readied = await p.evaluate(() => window.__phoneRoom.states()[2]);
+  check(edited === 'editing' && moved && readied === 'ready', "WD-09: the phone's OK edits, its D-pad moves, its Back readies", { edited, moved, readied });
+  await p.evaluate(() => window.__phoneRoom.close('test'));
+  await p.close();
+}
+
 check(h.errors.length === 0, 'no page errors', h.errors);
 await h.finish();

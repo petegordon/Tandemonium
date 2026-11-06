@@ -66,6 +66,47 @@ export function removeHapticSource(src) {
   if (_hapticSources.length === 0) _hapticSources = null;
 }
 
+/** Test seam + diag: the Steam Input bridge (preload's window.steam.input), and the last route per source. */
+export const hapticHooks = {
+  steamInput: () => (typeof window !== 'undefined' && window.steam && window.steam.input) || null,
+  /** @type {WeakMap<object, string>} */ routes: new WeakMap(),
+};
+
+/** One diag line the first time a source rumbles by a new route (TV debugging; DevTools is not practical there). */
+function _noteRoute(src, route) {
+  if (hapticHooks.routes.get(src) === route) return;
+  hapticHooks.routes.set(src, route);
+  try { if (typeof window !== 'undefined' && window.electronApp && window.electronApp.diag) window.electronApp.diag('[haptics] ' + (src._slot ? src._slot.id : '?') + ' rumbles via ' + route); } catch (e) { /* no diag */ }
+}
+
+/**
+ * #617 · a Steam Controller: its WebHID driver has no rumble command, and the
+ * Gamepad pad Steam makes of it (its XInput twin) is hidden from the seats, so
+ * the slot's pad index is null. Rumble the twin (Steam turns XInput rumble into
+ * the controller's haptics) and ask Steam Input directly as well; both set the
+ * same motors, so the pulse does not double.
+ * @returns {boolean} true when a route took it
+ */
+function _steamControllerRumble(src, gamepads, strong, weak, duration) {
+  if (typeof src.steamRumbleTarget !== 'function') return false;
+  const t = src.steamRumbleTarget();
+  if (!t) return false;
+  const routes = [];
+  const gp = t.padIndex != null ? gamepads[t.padIndex] : null;
+  if (gp && gp.vibrationActuator) {
+    const r = gp.vibrationActuator.playEffect('dual-rumble', { startDelay: 0, duration, weakMagnitude: weak, strongMagnitude: strong });
+    if (r && typeof r.catch === 'function') r.catch(() => {});
+    routes.push('twin pad ' + t.padIndex);
+  }
+  const si = t.handle ? hapticHooks.steamInput() : null;
+  if (si && typeof si.vibrate === 'function') {
+    si.vibrate(t.handle, strong, weak, duration);
+    routes.push('Steam Input ' + t.handle);
+  }
+  if (routes.length) _noteRoute(src, routes.join(' + '));
+  return routes.length > 0;
+}
+
 function _gamepadRumble(strong, weak, duration, sources = null) {
   try {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -103,6 +144,7 @@ function _gamepadRumble(strong, weak, duration, sources = null) {
           driver.setRumble(strong, weak, duration).catch(() => {});
           continue;
         }
+        if (_steamControllerRumble(src, gamepads, strong, weak, duration)) continue;
 
         const idx = src.gamepadIndex;
         if (idx == null) continue;
