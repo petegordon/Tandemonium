@@ -6524,6 +6524,20 @@ export class Lobby {
     return out; // all live candidates — join-time logic enforces seats
   }
 
+  /**
+   * #581 · a slot turned out to hold a Steam Controller's XInput twin: whoever
+   * the lobby seated on it gets up (the game then releases the slot). Player 1
+   * stays bound to slot P1 and falls back to the keyboard until a real pad
+   * claims it again.
+   */
+  _dropTwinSeat(slotId) {
+    this._diag(`[steam] ${slotId} held a Steam Controller's XInput twin: released`, 'steam-twin:' + slotId);
+    const im = this._localP2InputManager;
+    if (im && im._slot && im._slot.id === slotId) this._leaveLocalP2('Steam XInput twin');
+    const p = (this._versusPlayers || []).find((x) => x.slotId === slotId && x.input !== this.input);
+    if (p) this._versusUnseat(p);
+  }
+
   /** Is the step's highlight on the bottom bar (the Help / Profile / Quit pills)? */
   _versusFocusInBar() {
     const el = this._stepFocus && this._stepFocus.focusedEl;
