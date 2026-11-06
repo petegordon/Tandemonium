@@ -14,9 +14,11 @@
 /**
  * A Gamepad-shaped poll object whose buttons are pressed when EITHER source
  * has them pressed, and whose axes take the larger deflection of the two.
- * @param {{ buttons?: ArrayLike<{ pressed?: boolean }|undefined>, axes?: ArrayLike<number> }|null|undefined} gp
- * @param {{ buttons?: ArrayLike<{ pressed?: boolean }|undefined>, axes?: ArrayLike<number> }|null|undefined} synthetic
- * @returns {{ buttons: { pressed: boolean, value: number }[], axes: number[] }}
+ * It keeps the pad's id, and says 'standard' mapping only when every source
+ * present does (isJoinPress needs to know where B is).
+ * @param {{ id?: string, mapping?: string, buttons?: ArrayLike<{ pressed?: boolean }|undefined>, axes?: ArrayLike<number> }|null|undefined} gp
+ * @param {{ id?: string, mapping?: string, buttons?: ArrayLike<{ pressed?: boolean }|undefined>, axes?: ArrayLike<number> }|null|undefined} synthetic
+ * @returns {{ id: string, mapping: string, buttons: { pressed: boolean, value: number }[], axes: number[] }}
  */
 export function mergedPollGp(gp, synthetic) {
   const a = (gp && gp.buttons) || [];
@@ -33,7 +35,32 @@ export function mergedPollGp(gp, synthetic) {
     const x = Number(ax[i]) || 0, y = Number(bx[i]) || 0;
     axes.push(Math.abs(y) > Math.abs(x) ? y : x);
   }
-  return { buttons, axes };
+  const sources = [gp, synthetic].filter(Boolean);
+  const mapping = sources.length && sources.every((s) => s && s.mapping === 'standard') ? 'standard' : '';
+  const id = String((gp && gp.id) || (synthetic && synthetic.id) || '');
+  return { id, mapping, buttons, axes };
+}
+
+/**
+ * Does this pad's press mean "join the stoker seat"? Any button does, except
+ * the pad's B: B is "stand up", and pressing it to leave must never sit the
+ * player straight back down (TV playtest 2026-11-06: B seated the second
+ * Steam Controller just like A). B's position is only known on a
+ * standard-mapped pad: index 1, or 0 on a Nintendo-order pad (swapAB). A pad
+ * Chromium doesn't map reports raw HID order, where ✕ can be index 1, so
+ * there every button still joins. Pure; exported for the unit test.
+ * @param {{ mapping?: string, buttons?: ArrayLike<{ pressed?: boolean }|undefined> }|null|undefined} gp
+ * @param {boolean} [swapAB]
+ * @returns {boolean}
+ */
+export function isJoinPress(gp, swapAB = false) {
+  const buttons = (gp && gp.buttons) || [];
+  const bIndex = gp && gp.mapping === 'standard' ? (swapAB ? 0 : 1) : -1;
+  for (let i = 0; i < buttons.length; i++) {
+    if (i === bIndex) continue;
+    if (buttons[i] && buttons[i].pressed) return true;
+  }
+  return false;
 }
 
 /**

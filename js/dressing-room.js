@@ -32,6 +32,9 @@ const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '
  * @typedef {{ n: number, input: any, type: 'gamepad'|'keyboard'|'phone', label: string, team: 'A'|'B'|null, seat: 'Captain'|'Stoker' }} RoomPlayer
  */
 
+/** A card at least this wide (content box, CSS px) edits with the goose beside the pickers. */
+const WIDE_CARD_PX = 560;
+
 export class DressingRoom {
   /**
    * @param {Object} o
@@ -61,6 +64,7 @@ export class DressingRoom {
     this._cardsEl = null;
     this._backBtn = null;
     this._statusEl = null;
+    this._ro = null;            // marks each card data-wide when it has room for goose-beside-pickers
   }
 
   // ── open / close ──
@@ -77,6 +81,12 @@ export class DressingRoom {
     // Rebound on every open: a new room instance each time, so a listener from the last one would close a dead room.
     if (this._backBtn) this._backBtn.onclick = () => { if (this.open && !this.anyEditing()) this.close('back'); };
     this._preview = this._makePreview ? this._makePreview() : null;
+    // The editing layout follows the card's own width, not the player count: a wide card puts
+    // the goose beside the pickers, a narrow one stacks them (css/lobby-tv.css). Card widths
+    // come from flex shares, never from this attribute, so it cannot oscillate.
+    this._ro = typeof ResizeObserver === 'function'
+      ? new ResizeObserver((entries) => { for (const e of entries) e.target.toggleAttribute('data-wide', e.contentRect.width >= WIDE_CARD_PX); })
+      : null;
     this._onKey = (e) => this._keyboard(e);
     document.addEventListener('keydown', this._onKey, true);
     document.addEventListener('keyup', this._onKey, true);
@@ -91,6 +101,7 @@ export class DressingRoom {
     for (const c of this.cards.values()) this._dropCard(c);
     this.cards.clear();
     if (this._preview) { this._preview.dispose(); this._preview = null; }
+    if (this._ro) { this._ro.disconnect(); this._ro = null; }
     if (this._onKey) { document.removeEventListener('keydown', this._onKey, true); document.removeEventListener('keyup', this._onKey, true); this._onKey = null; }
     this._keyInput = null;
     if (this._cardsEl) this._cardsEl.innerHTML = '';
@@ -139,6 +150,7 @@ export class DressingRoom {
       c.focus = new FocusController({ input: c.manual, onConfirm: (x) => x.click(), onBack: () => this._back(c) });
     }
     this.cards.set(p.n, c);
+    if (this._ro) this._ro.observe(el);
     this._place(c);
     this._renderCard(c);
     return c;
@@ -169,6 +181,7 @@ export class DressingRoom {
     if (c.focus) c.focus.clear();
     if (c.manual === this._keyInput) this._keyInput = null;
     if (this._preview) this._preview.remove('p' + c.n);
+    if (this._ro) this._ro.unobserve(c.el);
     c.el.remove();
     const team = c.player.team;
     if (team) {
