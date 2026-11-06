@@ -444,6 +444,7 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   #dressing-room .dr-card[data-state="editing"] .dr-preview { min-height: 5em; }
   #dressing-room .dr-preview--static { font-size: var(--uf-size-2xl); }
   #dressing-room .dr-who { font-size: var(--uf-size-lg); }
+  #dressing-room .dr-pnum { font-size: var(--uf-size-sm); }
   #dressing-room .dr-badge { font-size: var(--uf-size-sm); padding: .25em .7em; }
   #dressing-room .dr-summary { font-size: var(--uf-size-md); }
   #dressing-room .dr-stick-hint, #dressing-room .dr-hint { font-size: var(--uf-size-sm); }
@@ -468,6 +469,11 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   /* Last resort on a short screen: the card scrolls, and the focused button
      scrolls into view (RowFocusController, js/row-focus.js). */
   #dressing-room .dr-card { overflow: hidden auto; }
+  /* #617 · an editing card never scrolls as a whole: its pickers scroll in their own box, so the
+     goose and DONE stay on the card. (The whole card scrolling hid the preview for good once a
+     narrow card's last rows had scrolled it off: there is nothing to focus above the first row.) */
+  #dressing-room .dr-card[data-state="editing"] { overflow: hidden; }
+  #dressing-room .dr-card[data-state="editing"] > .dr-rows-wrap { min-height: 0; overflow: hidden auto; overscroll-behavior: contain; padding: 4px; margin: -4px; }
 }
 /* Editing a wide card (data-wide, set from its width by js/dressing-room.js): two columns, the goose
    at the card's full height on the left and the pickers on the right — a full-
@@ -478,13 +484,13 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   #dressing-room .dr-card[data-state="editing"][data-wide] {
     display: grid; column-gap: var(--uf-space-5); row-gap: var(--uf-space-3);
     grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-    grid-template-rows: auto minmax(min-content, 1fr) auto auto;   /* the pickers never run under DONE: a short card scrolls */
+    grid-template-rows: auto minmax(0, 1fr) auto auto;   /* the pickers never run under DONE: on a short card they scroll */
     grid-template-areas: "head head" "preview rows" "preview actions" "stick note";
   }
   #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-head { grid-area: head; }
   #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-preview { grid-area: preview; height: 100%; min-height: 0; contain: size; }   /* its bitmap follows its box: never let it size the row */
   #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-stick-hint { grid-area: stick; display: block; }
-  #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-rows-wrap { grid-area: rows; align-self: start; }
+  #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-rows-wrap { grid-area: rows; align-self: stretch; }
   #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-actions { grid-area: actions; justify-content: flex-start; }
   #dressing-room .dr-card[data-state="editing"][data-wide] > .dr-hint { grid-area: note; text-align: left; }
   /* The pickers' column is narrower than a full card: labels go back above their buttons. */
@@ -507,7 +513,7 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   #dressing-room .dr-team:has(> .dr-card[data-state="editing"]) { flex-grow: 4; }
   #dressing-room .dr-team > .dr-card[data-state="editing"][data-wide] {
     grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
-    grid-template-rows: auto minmax(min-content, 1fr) auto auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto auto;
     grid-template-areas: "head head" "preview rows" "actions rows" "stick rows" "note note";
   }
   #dressing-room .dr-team > .dr-card[data-state="editing"][data-wide] > .dr-actions { justify-content: center; }
@@ -515,6 +521,7 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   /* A narrow editing card (several editing at once, or a small screen): the goose on top,
      each label above its buttons so they wrap across the card; a long card scrolls. */
   #dressing-room .dr-card[data-state="editing"]:not([data-wide]) .dr-preview { min-height: 8em; }
+  #dressing-room .dr-card[data-state="editing"]:not([data-wide]) > .dr-rows-wrap { flex: 0 1 auto; min-height: 5em; }
   #dressing-room .dr-card[data-state="editing"]:not([data-wide]) .dr-rows { grid-template-columns: minmax(0, 1fr); }
   #dressing-room .dr-card[data-state="editing"]:not([data-wide]) .dr-group { display: block; }
   #dressing-room .dr-card[data-state="editing"]:not([data-wide]) .dr-label { margin-bottom: var(--uf-space-2); }
