@@ -17,6 +17,8 @@
 //          disconnect + reconnect (a NEW HIDDevice object, as Chrome hands out)
 //   MC-12  two Steam Controller bodies on one Puck (+ an idle receiver
 //          interface): two seats, each its own body, idle interface unseated
+//   MC-16  co-op with two Puck bodies: the stoker stands up with B and A
+//          seats it again on its own body (#581)
 //
 //   boot   a pad + already-granted HID device present at boot: the controller
 //          is held once and seats once (the core poolDevice race, fixed in
@@ -260,6 +262,45 @@ console.log('MC-12 two Steam Controllers on one Puck');
   });
   check(ids.length === 2, 'MC-12: the roster lists two seated controllers', ids);
   await ctx.page.close();
+}
+
+// ── MC-16 co-op with two Steam Controllers on one Puck: stand up, sit back down ──
+// TV playtest (#581): the stoker's Steam Controller stood up with B and then
+// could not take the stoker seat again.
+console.log('MC-16 co-op: Steam Controller stoker stands up and sits back down');
+{
+  const ctx = await open([hidDevice.steamPuck('body-1'), hidDevice.steamPuck('body-2'), hidDevice.puckIdleSibling('puck-idle')]);
+  const page = ctx.page;
+  await page.evaluate(() => {
+    const l = window._game.lobby;
+    document.getElementById('room-code-display').textContent = 'TNDM-LOCL';
+    l._pendingMode = 'multiplayer'; l._roomRole = 'captain';
+    l._showStep(l.hostStep); l._refreshHostNext();
+  });
+  const B = { offset: FACE_A.steam.offset, mask: 0x02 };
+  const coop = () => page.evaluate(() => {
+    const l = window._game.lobby;
+    const im = l._localP2InputManager;
+    return { seated: !!(im && l._localSeatedOnHost), p2Slot: im && im._slot ? im._slot.id : null,
+      p2Hid: im && im._slot && im._slot.hidDevice ? im._slot.hidDevice.__fakeKey : null,
+      p2State: im && im._slot ? im._slot.state : null };
+  });
+  const coopUntil = async (pred, ms = WAIT_MS) => { let c; for (const t0 = Date.now(); ;) { c = await coop(); if (pred(c) || Date.now() - t0 > ms) return c; await sleep(200); } };
+  const hold = async (key, bit, pred) => {
+    await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, true), key, bit.offset, bit.mask);
+    const c = await coopUntil(pred);
+    await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, false), key, bit.offset, bit.mask);
+    await sleep(600);
+    return c;
+  };
+  await holdUntil(ctx, null, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').hid === 'body-1');
+  let c = await hold('body-2', FACE_A.steam, (x) => x.seated);
+  check(c.seated && c.p2Hid === 'body-2' && c.p2State === 'claimed', 'MC-16: body 2 takes the stoker seat on its own pad', c);
+  c = await hold('body-2', B, (x) => !x.seated);
+  check(!c.seated, 'MC-16: B on body 2 stands the stoker up', c);
+  c = await hold('body-2', FACE_A.steam, (x) => x.seated && x.p2State === 'claimed');
+  check(c.seated && c.p2Hid === 'body-2' && c.p2State === 'claimed', 'MC-16: A on body 2 sits it back down, on a claimed slot holding body 2', c);
+  await page.close();
 }
 
 // ── Pad + granted HID both present at boot: the controller is held once ──
