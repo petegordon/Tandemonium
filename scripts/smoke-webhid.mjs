@@ -19,6 +19,8 @@
 //          interface): two seats, each its own body, idle interface unseated
 //   MC-16  co-op with two Puck bodies: the stoker stands up with B and A
 //          seats it again on its own body (#581)
+//   MC-17  MC-16 under Steam, each body also a virtual XInput pad: the twin
+//          never shows on the seat screen nor takes the seat (#581)
 //
 //   boot   a pad + already-granted HID device present at boot: the controller
 //          is held once and seats once (the core poolDevice race, fixed in
@@ -26,6 +28,7 @@
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 import { installFakeWebHid, fakeHid, hidDevice, FACE_A } from './lib/fake-webhid.mjs';
+import { installFakeSteam } from './lib/fake-steam.mjs';
 
 const h = await startHarness({ port: 8964 });
 const { check } = h;
@@ -300,6 +303,57 @@ console.log('MC-16 co-op: Steam Controller stoker stands up and sits back down')
   check(!c.seated, 'MC-16: B on body 2 stands the stoker up', c);
   c = await hold('body-2', FACE_A.steam, (x) => x.seated && x.p2State === 'claimed');
   check(c.seated && c.p2Hid === 'body-2' && c.p2State === 'claimed', 'MC-16: A on body 2 sits it back down, on a claimed slot holding body 2', c);
+  await page.close();
+}
+
+// ── MC-17 · MC-16 under Steam: each body also shows as Steam's virtual XInput pad ──
+// The TV case (#581): an "Xbox 360 Controller" twin of the stoker's Steam
+// Controller appeared on the seat screen and came and went with B and A. Steam's
+// slot list (one named slot) disagrees with Chromium's two XInput pads, so the
+// rank match refuses to guess; the twin mirrors body 2's presses.
+console.log('MC-17 co-op under Steam: the stoker\'s XInput twin never takes the seat');
+{
+  const page = await h.gamePage({ storage: STORAGE, before: async (p) => {
+    slowLoad(p);
+    await installFakeWebHid(p, [hidDevice.steamPuck('body-1'), hidDevice.steamPuck('body-2'), hidDevice.puckIdleSibling('puck-idle')]);
+    await installFakeGamepads(p);
+    await installFakeSteam(p, { xinput: [{ index: 0, handle: '100', type: '14' }] });
+  } });
+  const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
+  await waitFor(page, streamingAll(['body-1', 'body-2']));
+  const twin1 = await ctx.pads.plug('xbox');
+  const twin2 = await ctx.pads.plug('xbox');
+  await page.evaluate(() => {
+    const l = window._game.lobby;
+    document.getElementById('room-code-display').textContent = 'TNDM-LOCL';
+    l._pendingMode = 'multiplayer'; l._roomRole = 'captain';
+    l._showStep(l.hostStep); l._refreshHostNext();
+  });
+  const B = { offset: FACE_A.steam.offset, mask: 0x02 };
+  const coop = () => page.evaluate(() => {
+    const l = window._game.lobby;
+    const im = l._localP2InputManager;
+    const rows = (document.getElementById('host-roster')?.rows || []).map((r) => r.name);
+    return { seated: !!(im && l._localSeatedOnHost), p2Hid: im && im._slot && im._slot.hidDevice ? im._slot.hidDevice.__fakeKey : null,
+      p2Pad: im && im._slot ? im._slot.gamepadIndex : null, rows };
+  });
+  const until = async (pred, ms = WAIT_MS) => { let c; for (const t0 = Date.now(); ;) { c = await coop(); if (pred(c) || Date.now() - t0 > ms) return c; await sleep(200); } };
+  // One physical press = the body's HID report AND its twin's XInput button, together.
+  const hold = async (key, bit, padIdx, padBtn, pred) => {
+    await page.evaluate((k, o, m, pi, pb) => { window.__fakeHid.hold(k, o, m, true); window.__fakePads.hold(pi, pb, true); }, key, bit.offset, bit.mask, padIdx, padBtn);
+    const c = await until(pred);
+    await page.evaluate((k, o, m, pi, pb) => { window.__fakeHid.hold(k, o, m, false); window.__fakePads.hold(pi, pb, false); }, key, bit.offset, bit.mask, padIdx, padBtn);
+    await sleep(600);
+    return c;
+  };
+  await holdUntil(ctx, twin1, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').hid === 'body-1');
+  let c = await hold('body-2', FACE_A.steam, twin2, 'A', (x) => x.seated);
+  check(c.seated && c.p2Hid === 'body-2', 'MC-17: body 2 takes the stoker seat on its own body, not its XInput twin', c);
+  c = await hold('body-2', B, twin2, 'B', (x) => !x.seated);
+  check(!c.seated, 'MC-17: B stands the stoker up', c);
+  check(!c.rows.some((n) => /xbox/i.test(n || '')), 'MC-17: no "Xbox" twin on the seat screen after standing up', c.rows);
+  c = await hold('body-2', FACE_A.steam, twin2, 'A', (x) => x.seated);
+  check(c.seated && c.p2Hid === 'body-2' && c.p2Pad == null, 'MC-17: A seats body 2 again, on its own body (the twin claimed nothing)', c);
   await page.close();
 }
 

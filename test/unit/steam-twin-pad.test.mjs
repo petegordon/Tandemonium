@@ -70,3 +70,54 @@ test('a non-XInput pad, or XInput pads Steam did not emit, are left alone', () =
   // Two XInput pads but Steam only emitted one: ranks can't be trusted.
   assert.equal(isSteamTwinPad(pad(1), [pad(0), pad(1)]), false);
 });
+
+// #581 · the rank match refuses to guess when Chromium's XInput pad count and
+// Steam's slot list differ (Chromium reveals a pad only after its first press),
+// and the Steam Controller's twin leaked into the seat screens as an "Xbox"
+// pad. A pad whose presses mirror a live WebHID Steam Controller is its twin,
+// sticky until that Gamepad index empties or holds another pad.
+import { resetSteamTwinMemory } from '../../js/input-manager.js';
+
+/** A manager whose fold-window history says: pad `padBtns`, Steam Controllers `scBtns[k]`. */
+function pressWorld({ padBtns = {}, scBtns = [], slots = [] }) {
+  globalThis.window = { steam: { input: { getXInputMap: () => slots } } };
+  const now = performance.now();
+  const recent = (btns) => new Map(btns.map((i) => [i, now]));
+  const pool = new Map();
+  scBtns.forEach((b, k) => pool.set('sc' + k, { driver: new SteamControllerDriver(), hidActiveSince: now - 10, _recentBtns: recent(b), synthetic: { buttons: [] } }));
+  const padMap = new Map(Object.entries(padBtns).map(([i, b]) => [Number(i), recent(b)]));
+  setControllerManager({
+    _hidPool: pool, slots: [], _frameNow: now, opts: { foldWindowMs: 350 },
+    _recentPadBtns: padMap,
+    _recentPressed(m) { const s = new Set(); if (!m) return s; for (const [i, ts] of m) if (this._frameNow - ts <= 350) s.add(i); return s; },
+  });
+}
+
+test('#581: counts disagree (no slot map match), but the pad mirrors a Steam Controller\'s A → twin, and it stays one', () => {
+  resetSteamTwinMemory();
+  const pads = [pad(0), pad(1)];
+  pressWorld({ padBtns: { 1: [0] }, scBtns: [[0]], slots: [slot(0, 14)] });   // 2 XInput pads, 1 Steam slot: rank match refuses
+  assert.equal(isSteamTwinPad(pads[1], pads), true);
+  pressWorld({ padBtns: {}, scBtns: [[]], slots: [slot(0, 14)] });            // released: nothing to correlate any more
+  assert.equal(isSteamTwinPad(pads[1], pads), true, 'sticky');
+});
+
+test('#581: a pad pressing what no Steam Controller pressed is not a twin', () => {
+  resetSteamTwinMemory();
+  const pads = [pad(0), pad(1)];
+  pressWorld({ padBtns: { 1: [1] }, scBtns: [[0]] });
+  assert.equal(isSteamTwinPad(pads[1], pads), false);
+  pressWorld({ padBtns: { 1: [] }, scBtns: [[]] });
+  assert.equal(isSteamTwinPad(pads[1], pads), false, 'an idle pad gives no evidence');
+});
+
+test('#581: never more press-twins than Steam Controllers; a new pad at a freed index is judged afresh', () => {
+  resetSteamTwinMemory();
+  const pads = [pad(0), pad(1)];
+  pressWorld({ padBtns: { 0: [0], 1: [0] }, scBtns: [[0]] });               // one Steam Controller, two pads pressing A together
+  const t0 = isSteamTwinPad(pads[0], pads), t1 = isSteamTwinPad(pads[1], pads);
+  assert.equal(Number(t0) + Number(t1), 1, 'one twin for one Steam Controller');
+  const realXbox = { index: 0, id: 'Xbox Wireless Controller (XInput STANDARD GAMEPAD)', axes: [0, 0, 0, 0], buttons: [] };
+  pressWorld({ padBtns: {}, scBtns: [[]] });
+  assert.equal(isSteamTwinPad(realXbox, [realXbox, pads[1]]), false, 'another pad at index 0 is not remembered as the twin');
+});

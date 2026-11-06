@@ -142,10 +142,37 @@ function isUnknownSteamType(type) {
  * Controller is live on WebHID — if WebHID does not hold one, the XInput pad
  * is that controller's only presence and must stay eligible.
  */
+// Twins found by their presses (#581), keyed by Gamepad index → pad id. Sticky
+// until that index empties or holds another pad: the rank match below refuses to
+// guess whenever Chromium's XInput pad count differs from Steam's slot list,
+// and Chromium reveals a pad only after its first press, so the counts drift
+// exactly while players press A / B on the seat screens.
+const _pressTwins = new Map();
+/** Tests: forget every press-identified twin. */
+export function resetSteamTwinMemory() { _pressTwins.clear(); }
+
 export function isSteamTwinPad(gp, padsOverride = null) {
   if (!gp || !isXInputPadId(gp.id)) return false;
   const bodies = liveWebHidSteamControllers();
   if (!bodies) return false;
+  const pads = padsOverride || (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
+  for (const [i, id] of _pressTwins) {
+    const p = pads[i];
+    if (!p || p.id !== id) _pressTwins.delete(i);
+  }
+  if (_pressTwins.get(gp.index) === gp.id) return true;
+  if (steamSlotTwin(gp, padsOverride, bodies)) return true;
+  // The twin mirrors its Steam Controller: the same buttons, at the same time.
+  // Never more press-twins than Steam Controllers streaming on WebHID.
+  if (_pressTwins.size < bodies && pressesMirrorSteamController(gp)) {
+    _pressTwins.set(gp.index, gp.id);
+    return true;
+  }
+  return false;
+}
+
+/** The XInput-slot (rank) rule: Steam names the slot Steam-family, or #535. */
+function steamSlotTwin(gp, padsOverride, bodies) {
   const slot = steamSlotForGamepad(gp, padsOverride);
   if (!slot) return false;
   if (isSteamFamilyType(slot.type)) return true;
@@ -160,6 +187,31 @@ export function isSteamTwinPad(gp, padsOverride = null) {
   const unknown = map.filter((e) => isUnknownSteamType(e.type)).sort((a, b) => a.index - b.index);
   const rank = unknown.findIndex((e) => e.index === slot.index);
   return rank >= 0 && rank < unnamedTwins;
+}
+
+/**
+ * Has this XInput pad's every recent press also shown up on a Steam Controller
+ * streaming over WebHID (pooled or seated)? The manager keeps each pad's and
+ * each pooled entry's buttons over its fold window; a seated entry adds what
+ * its synthetic shows now.
+ */
+function pressesMirrorSteamController(gp) {
+  const mgr = _controllerManager;
+  if (!mgr || !mgr._recentPadBtns || typeof mgr._recentPressed !== 'function') return false;
+  const padSet = mgr._recentPressed(mgr._recentPadBtns.get(gp.index));
+  if (!padSet.size) return false;
+  const now = performance.now();
+  const fanout = (e) => !!e && !!e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0 && (now - e.hidActiveSince) < 5000;
+  const setOf = (e) => {
+    const out = mgr._recentPressed(e._recentBtns);
+    const btns = (e.synthetic && e.synthetic.buttons) || [];
+    for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) out.add(i);
+    return out;
+  };
+  const entries = [];
+  if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (fanout(e)) entries.push(e);
+  for (const s of (mgr.slots || [])) if (fanout(s._hidEntry)) entries.push(s._hidEntry);
+  return entries.some((e) => { const sc = setOf(e); return [...padSet].every((i) => sc.has(i)); });
 }
 
 /**
