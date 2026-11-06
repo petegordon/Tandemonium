@@ -6525,13 +6525,13 @@ export class Lobby {
   }
 
   /**
-   * #581 · a slot turned out to hold a Steam Controller's XInput twin: whoever
-   * the lobby seated on it gets up (the game then releases the slot). Player 1
-   * stays bound to slot P1 and falls back to the keyboard until a real pad
-   * claims it again.
+   * #581 · the game is releasing a slot (it held a Steam Controller's XInput
+   * twin, or its Steam Controller was switched off): whoever the lobby seated on
+   * it gets up. Player 1 stays bound to slot P1 and falls back to the keyboard
+   * until a pad claims it again.
    */
-  _dropTwinSeat(slotId) {
-    this._diag(`[steam] ${slotId} held a Steam Controller's XInput twin: released`, 'steam-twin:' + slotId);
+  _dropSeat(slotId, why = 'released') {
+    this._diag(`[seat] ${slotId} ${why}: released`, 'drop-seat:' + slotId);
     const im = this._localP2InputManager;
     if (im && im._slot && im._slot.id === slotId) this._leaveLocalP2('Steam XInput twin');
     const p = (this._versusPlayers || []).find((x) => x.slotId === slotId && x.input !== this.input);

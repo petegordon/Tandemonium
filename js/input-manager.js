@@ -165,6 +165,9 @@ function isLiveSteamControllerEntry(e, now) {
 export function noteSteamControllerPresses(now = performance.now()) {
   const mgr = _controllerManager;
   if (!mgr) return;
+  const remember = (e) => { if (e && e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0) _lastStateAt.set(e, e.hidActiveSince); };
+  if (mgr._hidPool) for (const e of mgr._hidPool.values()) remember(e);
+  for (const s of (mgr.slots || [])) remember(s._hidEntry);
   const live = new Set();
   if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (isLiveSteamControllerEntry(e, now)) live.add(e);
   for (const s of (mgr.slots || [])) if (isLiveSteamControllerEntry(s._hidEntry, now)) live.add(s._hidEntry);
@@ -175,6 +178,57 @@ export function noteSteamControllerPresses(now = performance.now()) {
     const btns = (e.synthetic && e.synthetic.buttons) || [];
     for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) m.set(i, now);
   }
+}
+
+/**
+ * #581 · a Steam Controller switched off stays "connected": the Puck receiver is
+ * still plugged in, so its HID device never disconnects — the body just stops
+ * sending STATE reports. A Steam Controller streams continuously, IMU included,
+ * even lying still, so this much silence means it is off.
+ */
+export const PUCK_SILENT_MS = 4000;
+
+// The last STATE report each Steam Controller entry has delivered. The manager
+// zeroes hidActiveSince once a pad has been stale a moment (slot.effectiveGamepad),
+// which reads the same as "never streamed" — so remember the last real value.
+const _lastStateAt = new WeakMap();
+function lastStateAt(e) { return Math.max(e.hidActiveSince || 0, _lastStateAt.get(e) || 0); }
+
+/** Is this claimed slot holding a Steam Controller that has stopped reporting (switched off)? */
+export function isSilentSteamControllerSlot(slot, now = performance.now()) {
+  const e = slot && slot.state === 'claimed' ? slot._hidEntry : null;
+  if (!e || !e.driver?.constructor?.needsSiblingFanout) return false;
+  const last = lastStateAt(e);
+  return last > 0 && now - last > PUCK_SILENT_MS;
+}
+
+/**
+ * #581 · pooled WebHID pads that a button press should seat but the
+ * ControllerManager will not: it leaves a HID claim to the Gamepad API when an
+ * unclaimed Gamepad pad has the same product name, and a DualSense switched on
+ * after launch has exactly that — its compat-mode Gamepad entry, frozen once
+ * the driver switched it to full reports (#590). That entry never shows a
+ * press, so neither side claimed it ("seen but can't become Player 1").
+ * Returned when every such Gamepad twin shows no press while the HID pad does.
+ * @returns {any[]} HidEntry objects
+ */
+export function frozenTwinHidEntries(pads) {
+  const mgr = _controllerManager;
+  if (!mgr || !mgr._hidPool || typeof mgr._recentPressed !== 'function') return [];
+  const claimedIdx = new Set((mgr.slots || []).filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
+  const out = [];
+  for (const e of mgr._hidPool.values()) {
+    if (typeof e.hasFreshButtonPress !== 'function' || !e.hasFreshButtonPress()) continue;
+    const name = String((e.device && e.device.productName) || '').trim().toLowerCase();
+    if (!name) continue;
+    const twins = (pads || []).filter((gp) => gp && !claimedIdx.has(gp.index) && String(gp.id || '').toLowerCase().includes(name));
+    if (!twins.length) continue;   // the manager claims it itself
+    const pressed = (gp) => mgr._recentPressed(mgr._recentPadBtns && mgr._recentPadBtns.get(gp.index)).size > 0
+      || (gp.buttons || []).some((b) => b && b.pressed);
+    if (twins.some(pressed)) continue;   // a live twin: the manager's Gamepad claim takes it
+    out.push(e);
+  }
+  return out;
 }
 
 /**
@@ -499,7 +553,10 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
     if (this.remoteOnly) return this.remotePresent;
-    if (this._slot?.state === 'claimed') return true;
+    // A switched-off Steam Controller keeps its slot (the Puck stays plugged in)
+    // but is not connected (#581): the ride's disconnect pause and the versus
+    // freeze read this, and its first report back reconnects it.
+    if (this._slot?.state === 'claimed') return !isSilentSteamControllerSlot(this._slot);
     // A phone remote showing its menu pad (#421) is a gamepad to the menus.
     if (this._remoteMenu) return true;
     return false;
