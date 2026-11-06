@@ -114,6 +114,7 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby .diff-desc { white-space: nowrap; }
   #lobby #level-extras { margin-top: var(--uf-space-5) !important; }
   #lobby #btn-start-ride { min-width: 14em; font-size: var(--uf-size-lg) !important; }
+  #lobby .level-room-team { max-width: 60em; margin-bottom: var(--uf-space-4); }
   /* Level select needs the whole width for the cards: drop the art panel
      (and the wordmark over it); kit sheets and the system bar follow the inset. */
   :root:has(#lobby:not([style*="none"]) #lobby-level[active]) { --uf-stage-inset: 0px; }

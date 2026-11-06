@@ -274,6 +274,12 @@ try {
     check(capRoom && stoRoom && after.same && after.code === netBefore && after.connected && stoWait.connected,
       'OC-11 BACK TO ROOM returns both to level select on the same room, still connected', { after, stoWait, code });
     check(after.start && stoWait.wait, 'OC-11 the captain picks the next level; the stoker waits for it', { start: after.start, wait: stoWait.wait });
+    // The Level screen is part of the online room: both see both seats and the partner connected.
+    const bar = (pg) => pg.evaluate(() => { const t = document.getElementById('level-room-team'); const s = (id) => { const e = document.getElementById(id); return { who: e.who, dev: e.dev, state: e.state }; };
+      return { shown: !!t && !t.hidden && t.getBoundingClientRect().height > 0, heading: t && t.heading, captain: s('level-room-captain'), stoker: s('level-room-stoker') }; });
+    const capBar = await bar(cap), stoBar = await bar(sto);
+    check(capBar.shown && stoBar.shown && /Online room TNDM-/.test(capBar.heading || '') && capBar.stoker.state === 'joined' && /connected/i.test(capBar.stoker.dev) && stoBar.captain.state === 'joined' && /connected/i.test(stoBar.captain.dev),
+      'OC-11 the Level screen shows the online room: both seats, the partner connected', { capBar, stoBar });
     await h.shot(cap, '2-captain-back-in-room');
     await cap.close(); await sto.close();
   }

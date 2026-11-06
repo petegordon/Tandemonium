@@ -1527,6 +1527,10 @@
     padding: 70px 0 6px;  /* top: space for pip-level-mode circles; bottom: gamepad outline */
   }
 
+  /* Online room bar on the Level screen: the two seats, compact, above the cards. */
+  .level-room-team { width: 100%; max-width: 720px; margin: 0 auto 10px; }
+  .level-room-team[hidden] { display: none; }
+
   /* ── COMPONENT: Level Cards ── */
   .level-cards {
     display: flex;
@@ -5742,6 +5746,13 @@ ON</button>
              Back: #lobby-mode (solo), #lobby-host (online captain, local), or leave (online stoker)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-level" class="lobby-step">
+          <!-- The Level screen is part of the online room too (2026-11-06): both seats, who is in
+               them and whether the partner is connected, under the room code. Shown only while an
+               online session is on (lobby._syncLevelRoomBar). -->
+          <uf-team id="level-room-team" class="level-room-team" tone="coop" layout="row" hidden>
+            <uf-seat id="level-room-captain" seat="Captain · front seat" tone="captain" badge="P1" state="open"></uf-seat>
+            <uf-seat id="level-room-stoker" seat="Stoker · back seat" tone="stoker" badge="P2" state="open"></uf-seat>
+          </uf-team>
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-level">&larr; Back</uf-button>

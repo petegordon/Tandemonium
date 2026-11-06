@@ -1323,8 +1323,11 @@ class Game {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
         this._clearStokerTimeout();
-        // Idempotent: captain may retry-send FINISH for reliability.
-        if (this.state === 'victory' || this.state === 'finishCinematic') return;
+        // Idempotent: captain may retry-send FINISH for reliability. A copy that lands after
+        // the first was handled must do nothing: after the co-op tutorial the stoker sits on its
+        // complete screen ('gameover'), and back in the room ('lobby'); a late copy there used
+        // to start the finish cinematic and strand the stoker on VICTORY (smoke:online OC-13).
+        if (['victory', 'finishCinematic', 'gameover', 'lobby'].includes(this.state)) return;
         // Tutorial: show completion screen instead of normal victory
         if (this._tutorialActive) {
           this._showStokerTutorialComplete();
