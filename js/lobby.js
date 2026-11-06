@@ -5232,6 +5232,12 @@ export class Lobby {
         this._localP2PrevB = bDown;
         if (bDown && !prevB) {
           this._localP2PrevB = undefined;
+          // Remember which controller stood up: no press joins until it has let
+          // go of every button. The B is still down, and the manager can hand
+          // the same body straight back on a new slot; with only a flag, one
+          // frame polling another pad cleared it and the held B re-seated the
+          // player ("press B twice to stand up", TV playtest 2026-11-06).
+          this._standUpHold = { device: (im._slot && im._slot.hidDevice) || null, gpIndex: im._slot ? im._slot.gamepadIndex : null, at: performance.now() };
           this._leaveLocalP2('stood up (B)');
           // The B is still down: no pad joins again until it lets go.
           this._localP2APrev = true;
@@ -5244,7 +5250,9 @@ export class Lobby {
         this._localP2PrevB = undefined;
       }
       // The stoker seat is taken (online partner, or a local Player 2): presses don't join.
-      const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost;
+      // Nor while the controller that just stood up still holds a button.
+      const standingUp = this._standUpStillHeld();
+      const seatOpen = !(this.net && this.net.connected) && !this._localSeatedOnHost && !standingUp;
       for (const c of candidates) {
         const gp = c.pollGp;
         if (!gp || !gp.buttons) continue;
@@ -5408,7 +5416,7 @@ export class Lobby {
             for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) pressed.push(i);
             this._diag(`[local] P2 poll: pressed=[${pressed.join(',')}] mapping=${gp.mapping || '(non-standard)'} → joining`, 'poll');
           }
-          if (aPressed && !this._localP2APrev) {
+          if (aPressed && !this._localP2APrev && !standingUp) {
             console.log('P2 action button pressed — joining as gamepad', state.gpIndex, state.slotId || '');
             this._localP2APrev = true;
             this._onLocalJoinClick('gamepad', state.gpIndex, state.hidDevice || null,
@@ -5424,6 +5432,29 @@ export class Lobby {
       this._localJoinMonitorRAF = requestAnimationFrame(tick);
     };
     this._localJoinMonitorRAF = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Is the controller that just stood up (B) still holding any button? Read
+   * from wherever it is now: a slot that holds its HID device or pad, the
+   * pool, or the Gamepad API. Clears once it reads released (or after 3 s, so
+   * a missed release can never lock joining).
+   */
+  _standUpStillHeld() {
+    const hold = this._standUpHold;
+    if (!hold) return false;
+    if (performance.now() - hold.at > 3000) { this._standUpHold = null; return false; }
+    const down = (gp) => !!(gp && gp.buttons && gp.buttons.some((b) => b && b.pressed));
+    const m = this.controllerManager;
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    let held = false;
+    if (hold.device && m) {
+      for (const s of m.slots) if (s.hidDevice === hold.device && (down(s.synthetic) || down(s._hidEntry && s._hidEntry.synthetic))) held = true;
+      for (const e of m._hidPool.values()) if (e.device === hold.device && down(e.synthetic)) held = true;
+    }
+    if (hold.gpIndex != null && down(pads[hold.gpIndex])) held = true;
+    if (!held) this._standUpHold = null;
+    return held;
   }
 
   _stopLocalJoinMonitor() {
@@ -8091,6 +8122,7 @@ export class Lobby {
     }
     if (this._previewRenderer) {
       this._previewRenderer.dispose();
+      this._previewRenderer.forceContextLoss();   // free the context now, not at GC
       this._previewRenderer = null;
     }
     this._previewCamera = null;
