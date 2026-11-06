@@ -148,8 +148,52 @@ function isUnknownSteamType(type) {
 // and Chromium reveals a pad only after its first press, so the counts drift
 // exactly while players press A / B on the seat screens.
 const _pressTwins = new Map();
-/** Tests: forget every press-identified twin. */
-export function resetSteamTwinMemory() { _pressTwins.clear(); }
+// Each streaming Steam Controller's buttons over the last TWIN_WINDOW_MS, seated
+// or pooled (the manager keeps history for pooled entries only). Steam's virtual
+// press lands a moment after the hardware's, so on a quick tap the seated pad's
+// synthetic already reads released by the time the twin reads pressed (#581).
+const TWIN_WINDOW_MS = 500;
+const _scHistory = new Map();   // HidEntry → Map(button index → last pressed ms)
+/** Tests: forget every press-identified twin and press history. */
+export function resetSteamTwinMemory() { _pressTwins.clear(); _scHistory.clear(); }
+
+function isLiveSteamControllerEntry(e, now) {
+  return !!e && !!e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0 && (now - e.hidActiveSince) < 5000;
+}
+
+/** Once per frame, after ControllerManager.ingestFrame: note what every live Steam Controller presses. */
+export function noteSteamControllerPresses(now = performance.now()) {
+  const mgr = _controllerManager;
+  if (!mgr) return;
+  const live = new Set();
+  if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (isLiveSteamControllerEntry(e, now)) live.add(e);
+  for (const s of (mgr.slots || [])) if (isLiveSteamControllerEntry(s._hidEntry, now)) live.add(s._hidEntry);
+  for (const e of _scHistory.keys()) if (!live.has(e)) _scHistory.delete(e);
+  for (const e of live) {
+    let m = _scHistory.get(e);
+    if (!m) { m = new Map(); _scHistory.set(e, m); }
+    const btns = (e.synthetic && e.synthetic.buttons) || [];
+    for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) m.set(i, now);
+  }
+}
+
+/**
+ * Slots holding a Steam Controller's XInput twin through the Gamepad API (no
+ * WebHID entry of their own): a twin claimed on a press that beat the hardware's
+ * own report to us, before it could be recognised. The caller releases them.
+ * @returns {string[]} slot ids
+ */
+export function claimedSteamTwinSlots(pads) {
+  const mgr = _controllerManager;
+  if (!mgr) return [];
+  const out = [];
+  for (const s of (mgr.slots || [])) {
+    if (s.state !== 'claimed' || s._hidEntry || s.gamepadIndex == null) continue;
+    const gp = pads[s.gamepadIndex];
+    if (gp && isSteamTwinPad(gp, pads)) out.push(s.id);
+  }
+  return out;
+}
 
 export function isSteamTwinPad(gp, padsOverride = null) {
   if (!gp || !isXInputPadId(gp.id)) return false;
@@ -201,11 +245,13 @@ function pressesMirrorSteamController(gp) {
   const padSet = mgr._recentPressed(mgr._recentPadBtns.get(gp.index));
   if (!padSet.size) return false;
   const now = performance.now();
-  const fanout = (e) => !!e && !!e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0 && (now - e.hidActiveSince) < 5000;
+  const fanout = (e) => isLiveSteamControllerEntry(e, now);
   const setOf = (e) => {
     const out = mgr._recentPressed(e._recentBtns);
     const btns = (e.synthetic && e.synthetic.buttons) || [];
     for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) out.add(i);
+    const hist = _scHistory.get(e);
+    if (hist) for (const [i, ts] of hist) if (now - ts <= TWIN_WINDOW_MS) out.add(i);
     return out;
   };
   const entries = [];

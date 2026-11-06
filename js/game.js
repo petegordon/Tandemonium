@@ -42,7 +42,7 @@ import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { gyroOnlySteer } from './achievement-defs.js';
-import { InputManager, readGyroRollMode, setControllerManager } from './input-manager.js';
+import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -6967,6 +6967,16 @@ class Game {
     // transitions in one place. Must run before any input reads.
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     this.controllerManager.ingestFrame(pads, performance.now());
+    // #581 · Steam's XInput twin of a Steam Controller: remember the hardware's
+    // presses so a quick tap still matches its late virtual press, and on the
+    // lobby screens evict a twin that got claimed before it could be recognised.
+    noteSteamControllerPresses();
+    if (this.state === 'lobby') {
+      for (const id of claimedSteamTwinSlots(pads)) {
+        if (this.lobby && this.lobby._dropTwinSeat) this.lobby._dropTwinSeat(id);
+        this.controllerManager.releaseSlotToPool(id);
+      }
+    }
 
     // Poll gamepad every frame before reading any input
     this.input.pollGamepad();
