@@ -77,7 +77,9 @@ const p2 = await pads.plug('dualsense');
 await until(page, () => (window._game.lobby._detectLocalJoinCandidates() || []).length > 0);
 await pads.tap(p2, 'A');
 check(await until(page, () => window._game.lobby._localSeatedOnHost), 'WD-01: the DualSense press seats Player 2');
-check(await until(page, () => document.querySelectorAll('#host-wardrobe uf-button').length === 2), 'WD-01: a WARDROBE button for P1 and P2 under the seats', await rowButtons(page, 'host-wardrobe'));
+check(await until(page, () => /for wardrobe/i.test(document.getElementById('host-wardrobe')?.textContent || '') && !document.querySelector('#host-wardrobe uf-button')), 'WD-01: "Press Y for wardrobe" under the seats, no WARDROBE buttons', await page.evaluate(() => document.getElementById('host-wardrobe')?.innerHTML));
+check(await until(page, () => document.getElementById('host-seat-stoker')?.badge === 'P2'), "WD-01: the seated stoker card shows P2 in its corner, like the captain's P1", await page.evaluate(() => document.getElementById('host-seat-stoker')?.badge));
+await h.shot(page, 'wd01-host-seats');
 const keys = await page.evaluate(() => ({ p1: window.__playerLooks.padKey(1), p2: window.__playerLooks.padKey(2) }));
 check(keys.p2 === 'pad:054c:0ce6:P2' && keys.p1 === 'pad:name:xbox-360-controller:P1', 'WD-01: look keys = vendor:product + slot (DualSense); name + slot (XInput pad: no vid:pid in the browser)', keys);
 
@@ -234,7 +236,7 @@ console.log('WD-06 versus join screen');
   await until(p, () => (window._game.lobby._versusCandidates || []).length > 0);
   await fp.tap(i, 'A');
   check(await until(p, () => window._game.lobby._versusPlayers.length === 2), 'WD-06: the Switch Pro joins as player 2');
-  check(await until(p, () => document.querySelectorAll('#versus-wardrobe uf-button').length === 2), 'WD-06: WARDROBE buttons for both players', await rowButtons(p, 'versus-wardrobe'));
+  check(!(await rowButtons(p, 'versus-wardrobe')).length && /wardrobe/i.test(await p.evaluate(() => document.getElementById('versus-join-hint')?.textContent || '')), 'WD-06: no WARDROBE buttons; the join hint says Y opens the wardrobe');
   await fp.tap(i, 'Y');
   check(await until(p, () => window._game.lobby._room && window._game.lobby._room.states()[2] === 'editing'), 'WD-06: player 2\'s Y opens the room with their card in Edit', await room(p));
   // The camera hint is a pad thing: a card whose player is not on a pad (here: made to look like a phone/keyboard card) hides it.
