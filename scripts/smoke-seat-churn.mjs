@@ -15,6 +15,9 @@
 //          held B was re-claimed onto a new slot by Steam's live behaviour,
 //          which these fakes do not reproduce, so this passes on the old code
 //          too; the TV diag log is the evidence for the fix.
+//   SC-04  B never seats: stood up, released, a fresh B press leaves the
+//          stoker standing; A still seats them (same playtest: B sat the
+//          second Steam Controller down just like A).
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 import { installFakeGamepads } from './lib/fake-gamepads.mjs';
 import { installFakeWebHid, hidDevice, FACE_A } from './lib/fake-webhid.mjs';
@@ -76,9 +79,9 @@ const state = () => page.evaluate(() => {
   };
 });
 const until = async (pred, ms = WAIT_MS) => { let s; for (const t0 = Date.now(); ;) { s = await state(); if (pred(s) || Date.now() - t0 > ms) return s; await sleep(200); } };
-const hold = async (key, bit, pred) => {
+const hold = async (key, bit, pred, ms) => {
   await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, true), key, bit.offset, bit.mask); await page.evaluate((i, b, v) => window.__fakePads.hold(i, b, v), TWIN[key], bit.mask === 0x02 ? 'B' : 'A', true);
-  const s = await until(pred);
+  const s = await until(pred, ms);
   await page.evaluate((k, o, m) => window.__fakeHid.hold(k, o, m, false), key, bit.offset, bit.mask); await page.evaluate((i, b, v) => window.__fakePads.hold(i, b, v), TWIN[key], bit.mask === 0x02 ? 'B' : 'A', false);
   await sleep(400);
   return s;
@@ -124,5 +127,13 @@ check(!s.gl.lostGame && !s.gl.reloaded, `SC-01 ${ROUNDS} stand-up/sit-down round
 check(!s.gl.reloaded && s.gl.live <= start.live + 2, 'SC-01 live WebGL contexts stay bounded (released tiles free their context)', { start, end: s.gl });
 check(!failedAt && s.seated && s.p2Hid === 'body-2', 'SC-02 after the churn the stoker is seated on body 2', { failedAt, seated: s.seated, p2Hid: s.p2Hid });
 check(reseated === 0, 'SC-03 one B stands the stoker up and they stay up (never re-seated by the held B)', { reseated, rounds: ROUNDS });
+// SC-04: stand up, let go, then a fresh B press must not seat anyone.
+await hold('body-2', B, (x) => !x.seated);
+await sleep(600);
+const bSeats = (await hold('body-2', B, (x) => x.seated, 2500)).seated || (await state()).seated;
+await sleep(600);
+const bSeatsAgain = (await hold('body-2', B, (x) => x.seated, 2500)).seated || (await state()).seated;
+s = await hold('body-2', A, (x) => x.seated);
+check(!bSeats && !bSeatsAgain && s.seated, 'SC-04 a fresh B press never seats the stoker; A still does', { bSeats, bSeatsAgain, aSeats: s.seated });
 await h.shot(page, 'sc-end');
 await h.finish();

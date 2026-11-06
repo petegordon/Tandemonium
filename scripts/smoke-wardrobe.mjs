@@ -15,6 +15,10 @@
 //   WD-05  next session: the same pad (same vendor:product, slot P2) gets its look back
 //   WD-06  versus: a joined pad's △/Y opens the room (cards grouped by team); B closes it without
 //          leaving the seat
+//   WD-07  versus with a shared team on a 1080p TV (3 players, P3 editing beside a Ready teammate):
+//          every card fits the room, the editing card needs no scrolling (goose beside the
+//          pickers), and no Ready preview balloons past its card (TV playtest 2026-11-06: the
+//          wrapped team line grew to ~1500 px and ran the cards off the screen)
 import { startHarness, clickId, waitState } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
@@ -77,7 +81,9 @@ const p2 = await pads.plug('dualsense');
 await until(page, () => (window._game.lobby._detectLocalJoinCandidates() || []).length > 0);
 await pads.tap(p2, 'A');
 check(await until(page, () => window._game.lobby._localSeatedOnHost), 'WD-01: the DualSense press seats Player 2');
-check(await until(page, () => document.querySelectorAll('#host-wardrobe uf-button').length === 2), 'WD-01: a WARDROBE button for P1 and P2 under the seats', await rowButtons(page, 'host-wardrobe'));
+check(await until(page, () => /for wardrobe/i.test(document.getElementById('host-wardrobe')?.textContent || '') && !document.querySelector('#host-wardrobe uf-button')), 'WD-01: "Press Y for wardrobe" under the seats, no WARDROBE buttons', await page.evaluate(() => document.getElementById('host-wardrobe')?.innerHTML));
+check(await until(page, () => document.getElementById('host-seat-stoker')?.badge === 'P2'), "WD-01: the seated stoker card shows P2 in its corner, like the captain's P1", await page.evaluate(() => document.getElementById('host-seat-stoker')?.badge));
+await h.shot(page, 'wd01-host-seats');
 const keys = await page.evaluate(() => ({ p1: window.__playerLooks.padKey(1), p2: window.__playerLooks.padKey(2) }));
 check(keys.p2 === 'pad:054c:0ce6:P2' && keys.p1 === 'pad:name:xbox-360-controller:P1', 'WD-01: look keys = vendor:product + slot (DualSense); name + slot (XInput pad: no vid:pid in the browser)', keys);
 
@@ -234,7 +240,7 @@ console.log('WD-06 versus join screen');
   await until(p, () => (window._game.lobby._versusCandidates || []).length > 0);
   await fp.tap(i, 'A');
   check(await until(p, () => window._game.lobby._versusPlayers.length === 2), 'WD-06: the Switch Pro joins as player 2');
-  check(await until(p, () => document.querySelectorAll('#versus-wardrobe uf-button').length === 2), 'WD-06: WARDROBE buttons for both players', await rowButtons(p, 'versus-wardrobe'));
+  check(!(await rowButtons(p, 'versus-wardrobe')).length && /wardrobe/i.test(await p.evaluate(() => document.getElementById('versus-join-hint')?.textContent || '')), 'WD-06: no WARDROBE buttons; the join hint says Y opens the wardrobe');
   await fp.tap(i, 'Y');
   check(await until(p, () => window._game.lobby._room && window._game.lobby._room.states()[2] === 'editing'), 'WD-06: player 2\'s Y opens the room with their card in Edit', await room(p));
   // The camera hint is a pad thing: a card whose player is not on a pad (here: made to look like a phone/keyboard card) hides it.
@@ -250,6 +256,42 @@ console.log('WD-06 versus join screen');
   check(v.players === 2, 'WD-06: the closing B did not unseat player 2', v);
   check(v.teams.flat().includes(2) && v.teams.flat().includes(1), 'WD-06: the teams payload carries player numbers for the looks', v.teams);
   await h.shot(p, 'wd06-versus');
+  await p.close();
+}
+
+// ── WD-07 · versus, a shared team, 1080p ──
+console.log('WD-07 three-player versus room at 1920×1080');
+{
+  const p = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: STORAGE, before: (pg) => installFakeGamepads(pg, { atBoot: ['xbox'] }) });
+  const fp = fakePads(p);
+  await until(p, () => !!window.__controllerManager && !!window.__playerLooks);
+  await clickId(p, 'btn-versus');
+  await until(p, () => document.getElementById('lobby-flow').current === 'lobby-versus');
+  const a = await fp.plug('switchpro');
+  await until(p, () => (window._game.lobby._versusCandidates || []).length > 0);
+  await fp.tap(a, 'A');
+  await until(p, () => window._game.lobby._versusPlayers.length === 2);
+  const b = await fp.plug('dualsense');
+  await until(p, () => (window._game.lobby._versusCandidates || []).length > 0);
+  await fp.tap(b, 'A');
+  check(await until(p, () => window._game.lobby._versusPlayers.length === 3), 'WD-07: three players seated');
+  await fp.tap(b, 'Y');
+  check(await until(p, () => window._game.lobby._room && window._game.lobby._room.states()[3] === 'editing'), "WD-07: P3's Y opens the room with their card in Edit");
+  // The layout settles over a couple of frames (the wide/narrow switch is a ResizeObserver).
+  await until(p, () => { const c = document.querySelector('#dr-cards .dr-card[data-n="3"]'); return !!c && c.hasAttribute('data-wide'); }, null, 4000);
+  const lay = await p.evaluate(() => {
+    const sheet = document.querySelector('#dressing-room .uf-sheet__body').getBoundingClientRect();
+    return [...document.querySelectorAll('#dr-cards .dr-card')].map((c) => {
+      const r = c.getBoundingClientRect(), pv = c.querySelector('.dr-preview').getBoundingClientRect();
+      return { n: c.dataset.n, state: c.dataset.state, wide: c.hasAttribute('data-wide'), inside: r.top >= sheet.top - 1 && r.bottom <= sheet.bottom + 1 && r.left >= sheet.left - 1 && r.right <= sheet.right + 1,
+        overflow: c.scrollHeight - c.clientHeight, previewH: Math.round(pv.height), cardH: Math.round(r.height) };
+    });
+  });
+  check(lay.length === 3 && lay.every((c) => c.inside), 'WD-07: every card sits inside the room', lay);
+  const ed = lay.find((c) => c.state === 'editing');
+  check(ed && ed.wide && ed.overflow <= 2, 'WD-07: the editing card has the goose beside the pickers and needs no scrolling', ed);
+  check(lay.filter((c) => c.state === 'ready').every((c) => c.previewH < c.cardH), 'WD-07: no Ready preview grows past its card', lay);
+  await h.shot(p, 'wd07-versus-3p-1080');
   await p.close();
 }
 
