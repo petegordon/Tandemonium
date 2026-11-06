@@ -17,7 +17,8 @@
 // while editing = Ready (picks kept). When nobody is editing, BACK TO SEATS shows: A on it from
 // anyone, or B from anyone, closes the room; while someone is editing, B from the others only
 // nudges that card. A player who disconnects or leaves their seat while editing counts as Ready,
-// so the room can never stick. Phone-seated players get a read-only card ("edit on your phone").
+// so the room can never stick. A phone-seated player drives their card from the phone's menu pad
+// (D-pad, OK = A, Back = B) like any controller (#617); the phone has no wardrobe screen of its own.
 
 import { ManualInput } from '../shared/ui/inputs.js';
 import { RowFocusController as FocusController } from './row-focus.js';
@@ -135,14 +136,14 @@ export class DressingRoom {
     el.className = 'dr-card';
     el.dataset.n = String(p.n);
     const type = p.input && p.input.remoteOnly ? 'phone' : p.type;
-    const c = { n: p.n, player: p, type, el, state: type === 'phone' ? 'readonly' : (editing ? 'editing' : 'ready'), focus: null, manual: null, nudgeTimer: 0 };
+    const c = { n: p.n, player: p, type, el, state: editing ? 'editing' : 'ready', focus: null, manual: null, nudgeTimer: 0 };
     el.addEventListener('click', (e) => {
       const b = e.target instanceof Element ? e.target.closest('button[data-act], button[data-pick]') : null;
       if (!b) return;
       if (b.dataset.pick) this._pick(c, b.dataset.pick, b.dataset.val);
       else this._act(c, b.dataset.act);
     });
-    if (type === 'gamepad' && p.input) {
+    if ((type === 'gamepad' || type === 'phone') && p.input) {
       c.focus = new FocusController({ input: p.input, onConfirm: (x) => x.click(), onBack: () => this._back(c) });
     } else if (type === 'keyboard') {
       c.manual = new ManualInput();
@@ -209,7 +210,7 @@ export class DressingRoom {
       ? `<canvas class="dr-preview" width="220" height="240"></canvas>`
       : `<div class="dr-preview dr-preview--static"><div class="dr-static-body">${esc(BODIES[look.body].label)}</div><div class="dr-static-outfit">${esc(GOOSE_OUTFITS[look.outfit].label)}</div></div>`;
     c.el.innerHTML = `
-      <div class="dr-head"><span class="dr-who">Player <b>${c.n}</b> · ${esc(c.player.label)}</span><span class="dr-badge"></span></div>
+      <div class="dr-head"><span class="dr-who"></span><span class="dr-badge"></span></div>
       ${previewHtml}
       <p class="dr-stick-hint">Right stick: look around · R3: reset</p>
       <p class="dr-summary"></p>
@@ -236,7 +237,7 @@ export class DressingRoom {
     if (!c.el.querySelector('.dr-head')) this._buildCard(c);
     const look = playerLooks.get(c.n);
     const p = c.player;
-    const badge = c.state === 'editing' ? 'EDITING' : c.state === 'readonly' ? 'ON PHONE' : '✓ READY';
+    const badge = c.state === 'editing' ? 'EDITING' : '✓ READY';
     const tone = p.team === 'A' ? 'team-a' : p.team === 'B' ? 'team-b' : (p.seat === 'Stoker' ? 'stoker' : 'captain');
     if (c.el.dataset.state !== c.state) c.transitionUntil = performance.now() + 450;   // the CSS transition runs ~280 ms
     c.el.dataset.state = c.state;
@@ -245,12 +246,11 @@ export class DressingRoom {
     // The camera hint only where a pad drives the card and there is a 3D preview to look around.
     const stickHint = c.el.querySelector('.dr-stick-hint');
     if (stickHint) stickHint.hidden = !(c.type === 'gamepad' && this._preview);
-    c.el.querySelector('.dr-who').innerHTML = `Player <b>${c.n}</b> · ${esc(p.label)}`;
+    // The same P# badge as the seat cards (uf-seat badge), then the player's name (#617).
+    c.el.querySelector('.dr-who').innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(p.label)}`;
     c.el.querySelector('.dr-summary').textContent = this._summary(look);
     c.el.querySelector('.dr-rows-wrap').innerHTML = c.state === 'editing' ? this._rows(c, look) : '';
-    c.el.querySelector('.dr-actions').innerHTML = c.state === 'readonly'
-      ? `<p class="dr-note">Edit on your phone</p>`
-      : c.state === 'editing'
+    c.el.querySelector('.dr-actions').innerHTML = c.state === 'editing'
         ? `<button class="opt-btn dr-done" data-act="done">DONE</button>`
         : `<button class="opt-btn dr-edit" data-act="edit">EDIT</button>`;
     const stat = c.el.querySelector('.dr-preview--static');
@@ -342,7 +342,7 @@ export class DressingRoom {
   }
 
   _setState(c, state) {
-    if (c.state === 'readonly' || c.state === state) return;
+    if (c.state === state) return;
     c.state = state;
     this._renderCard(c);
     this._refreshFoot();
@@ -429,13 +429,14 @@ export class DressingRoom {
     this._lastPoll = now;
     this._sync();
     for (const c of this.cards.values()) {
-      if (c.type === 'gamepad') {
+      if (c.type === 'gamepad' || c.type === 'phone') {
         const connected = !!(c.player.input && c.player.input.gamepadConnected);
         if (!connected) { if (c.state === 'editing') { console.log(`[dressing room] P${c.n} disconnected while editing → ready`); this._setState(c, 'ready'); } continue; }
       }
       if (c.focus) {
         c.focus.refreshSpatial(this._items(c));
         c.focus.poll();
+        this._showFocusedGroup(c);
       }
       // Right stick on THIS player's pad orbits / zooms their own preview (Ready or Editing);
       // R3 resets. The d-pad / left stick stay with the pickers (FocusController above).
@@ -452,6 +453,23 @@ export class DressingRoom {
       if (c.transitionUntil && this._preview) { this._resizePreview(c); if (now > c.transitionUntil) c.transitionUntil = 0; }
     }
     if (this._preview) this._preview.tick(now);
+  }
+
+  /**
+   * #617 · the pickers scroll in their own box (css/lobby-tv.css). The focus controller scrolls
+   * just the focused button into view; also bring its label (the line above it) along, and the
+   * first row all the way back to the top.
+   */
+  _showFocusedGroup(c) {
+    const f = c.focus.focused;
+    if (f === c.lastFocused) return;
+    c.lastFocused = f;
+    const wrap = c.el.querySelector('.dr-rows-wrap');
+    const g = f && wrap && wrap.contains(f) ? f.closest('.dr-group') : null;
+    if (!g || wrap.scrollHeight <= wrap.clientHeight + 1) return;
+    if (g === wrap.querySelector('.dr-group')) { wrap.scrollTop = 0; return; }
+    const gr = g.getBoundingClientRect(), wr = wrap.getBoundingClientRect();
+    if (gr.height && gr.top < wr.top) wrap.scrollTop -= wr.top - gr.top;
   }
 
   /** Tests: {n: state}. */

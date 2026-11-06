@@ -226,6 +226,38 @@ ipcMain.handle('app:display', (e) => {
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
+// #617 · Steam Controller haptics and light. A Steam Controller read over WebHID has no
+// rumble command of the game's own, so the renderer also asks Steam: TriggerVibration on
+// a handle from the XInput-slot map (Steam renders it as the controller's haptics),
+// stopped after ms; SetLEDColor with the player's light colour. Only handles listed in
+// that map are accepted.
+const _vibrateStops = new Map();
+let _diagVibrateOnce = false;
+function _knownSteamHandle(h) {
+  if (!steamInputReady || typeof h !== 'string' || !/^\d+$/.test(h)) return null;
+  return steamXInputMap.some((e) => e.handle === h) ? BigInt(h) : null;
+}
+ipcMain.on('steam:input:vibrate', (_e, m) => {
+  const handle = _knownSteamHandle(m && m.handle);
+  if (handle == null) return;
+  const speed = (v) => Math.max(0, Math.min(65535, Math.round((Number(v) || 0) * 65535)));
+  try {
+    steam.input.triggerVibration(handle, speed(m.strong), speed(m.weak));
+    if (!_diagVibrateOnce) { _diagVibrateOnce = true; _diagLog('[SteamInput] TriggerVibration on ' + m.handle); }
+  } catch (err) { _diagLog('[SteamInput] TriggerVibration failed: ' + err.message); return; }
+  clearTimeout(_vibrateStops.get(m.handle));
+  _vibrateStops.set(m.handle, setTimeout(() => {
+    _vibrateStops.delete(m.handle);
+    try { steam.input.triggerVibration(handle, 0, 0); } catch (e) { /* controller gone */ }
+  }, Math.max(20, Math.min(2000, Number(m.ms) || 100))));
+});
+ipcMain.on('steam:input:led', (_e, m) => {
+  const handle = _knownSteamHandle(m && m.handle);
+  if (handle == null) return;
+  const c = (v) => Math.max(0, Math.min(255, v | 0));
+  try { steam.input.setLEDColor(handle, c(m.r), c(m.g), c(m.b), 0); }
+  catch (err) { _diagLog('[SteamInput] SetLEDColor failed: ' + err.message); }
+});
 // B4c: preload reads this synchronously at load so js/edition.js sees
 // window.tandemoniumSteam.isDemo before the first getEditionRules() call.
 ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
