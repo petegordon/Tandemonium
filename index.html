@@ -4187,6 +4187,70 @@
     width: 100%;
   }
   .opt-btn:hover { background: rgba(255,255,255,0.15); }
+  /* #548 · Dressing Room cards + the seat screens' WARDROBE buttons */
+  /* The room is a whole-screen moment: it covers the art panel too (no stage inset), so four
+     cards fit side by side on a 1280-wide TV. */
+  #dressing-room { --uf-stage-inset: 0px; }
+  #dressing-room[size="lg"] { --_w: min(96vw, 120em); }
+  .dr-cards { display: flex; flex-wrap: nowrap; gap: 14px; align-items: flex-start; justify-content: center; }
+  .dr-team { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: nowrap; gap: 12px; align-items: flex-start; padding: 10px; border-radius: 12px; border: 1.5px solid var(--uf-color-line-soft); }
+  .dr-team[data-team="A"] { border-color: color-mix(in srgb, var(--uf-color-team-a) 55%, transparent); }
+  .dr-team[data-team="B"] { border-color: color-mix(in srgb, var(--uf-color-team-b) 55%, transparent); }
+  .dr-team { flex-wrap: wrap; }
+  .dr-team > .dr-card { flex-basis: 0; }
+  .dr-team-title { flex: 1 0 100%; font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); }
+  .dr-team[data-team="A"] .dr-team-title { color: var(--uf-color-team-a); }
+  .dr-team[data-team="B"] .dr-team-title { color: var(--uf-color-team-b); }
+  .dr-card { --_tone: var(--uf-color-captain); flex: 1 1 0; min-width: 0; max-width: 480px; display: grid; gap: 8px; padding: 10px 12px; border-radius: 12px;
+    background: var(--uf-color-surface-3); border: 2px solid var(--uf-color-line-soft); transition: border-color .15s, box-shadow .15s; }
+  .dr-card[data-tone="stoker"] { --_tone: var(--uf-color-stoker); }
+  .dr-card[data-tone="team-a"] { --_tone: var(--uf-color-team-a); }
+  .dr-card[data-tone="team-b"] { --_tone: var(--uf-color-team-b); }
+  .dr-card[data-state="editing"] { border-color: var(--_tone); box-shadow: 0 0 18px -4px var(--_tone); flex-grow: 1.7; max-width: 560px; }
+  .dr-card[data-state="readonly"] { opacity: .8; }
+  .dr-card.dr-nudge { animation: dr-nudge .6s ease-out; }
+  @keyframes dr-nudge { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-6px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(4px); } }
+  .dr-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-width: 0; }
+  .dr-head .dr-who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dr-who { font: 700 var(--uf-size-md)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); }
+  .dr-who b { color: var(--_tone); }
+  .dr-badge { flex: none; white-space: nowrap; font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.2px; padding: 3px 8px; border-radius: 999px; background: rgba(255,255,255,.08); color: var(--uf-color-fg-muted); }
+  .dr-card[data-state="editing"] .dr-badge { background: color-mix(in srgb, var(--_tone) 25%, transparent); color: var(--_tone); }
+  .dr-card[data-state="ready"] .dr-badge { background: rgba(60,200,80,.18); color: var(--uf-color-accent); }
+  /* Two card states: Ready = the goose-on-tandem preview fills the card (no pickers); Editing = the
+     preview comes down to the small view and the pickers slide in below. The height transitions
+     (dressing-room.js resizes the canvas bitmap each frame while it runs). */
+  .dr-preview { display: block; width: 100%; height: clamp(210px, calc(100dvh - 475px), 560px); border-radius: 10px;
+    background: radial-gradient(ellipse at 50% 70%, rgba(255,255,255,.10), rgba(0,0,0,.25)); transition: height 280ms ease-out; }
+  .dr-card[data-state="editing"] .dr-preview { height: 185px; }
+  @media (prefers-reduced-motion: reduce) { .dr-preview { transition: none; } }
+  .dr-rows { animation: dr-rows-in 260ms ease-out; }
+  @keyframes dr-rows-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .dr-rows { animation: none; } }
+  .dr-preview--static { display: grid; place-content: center; box-sizing: border-box; text-align: center; font: 700 var(--uf-size-xl)/1.3 var(--uf-font-ui); color: var(--uf-color-fg); }
+  .dr-summary { margin: 0; font: var(--uf-size-sm)/1.35 var(--uf-font-ui); color: var(--uf-color-fg-muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .dr-note { margin: 0; text-align: center; color: var(--uf-color-fg-muted); font-style: italic; }
+  .dr-rows { display: grid; gap: 7px; }
+  .dr-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); margin-bottom: 5px; }
+  .dr-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+  .dr-card .opt-btn { min-width: 0; width: auto; padding: 6px 10px; font-size: 12.5px; }
+  .dr-card .opt-btn[data-locked] { opacity: .45; }
+  .dr-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .dr-hint { margin: 0; text-align: center; }
+  .dr-hint:empty { display: none; }
+  .dr-buzz { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+  .dr-buzz-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); }
+  .dr-buzz-p1 { color: var(--uf-color-captain); }   /* Player 1 drives the strip */
+  .dr-stick-hint { margin: -2px 0 0; font: var(--uf-size-xs)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); opacity: .75; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .dr-stick-hint[hidden] { display: none; }
+  .dr-buzz-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .dr-chip { min-width: 0; width: auto; padding: 6px 12px; border-color: color-mix(in srgb, var(--chip) 60%, transparent); }
+  .dr-chip:hover { background: color-mix(in srgb, var(--chip) 20%, transparent); }
+  .dr-foot { display: flex; gap: 12px; align-items: center; justify-content: flex-end; flex-wrap: wrap; width: 100%; }
+  .dr-status { color: var(--uf-color-fg-muted); font: var(--uf-size-sm)/1.3 var(--uf-font-ui); }
+  .led-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.35); }
+  .wardrobe-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
+  .wardrobe-row:empty { display: none; }
   .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: var(--uf-color-accent); }
   .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
@@ -5719,7 +5783,10 @@ ON</button>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
-          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
+          <!-- #548: one WARDROBE button per seated player (lobby._renderWardrobeButtons);
+               a seated pad's △ / Y opens its own. -->
+          <div class="wardrobe-row" id="versus-wardrobe"></div>
+          <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="north" size="sm"></uf-controller-glyph> wardrobe &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
           <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
             <span class="btn-local-join-main">JOIN WITH KEYBOARD</span>
             <span class="btn-local-join-hint">Click or press Enter</span>
@@ -5772,6 +5839,8 @@ ON</button>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller, or scan the code with a phone"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
+            <!-- #548: WARDROBE per seated player; a seated pad's △ / Y opens its own. -->
+            <div class="wardrobe-row" id="host-wardrobe"></div>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>
           <!-- Local multiplayer: join section shown when P2 input is available.
@@ -5985,7 +6054,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.9d04aee | 11-05-2026 20:01</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.06143dd | 11-05-2026 20:04</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6054,6 +6123,19 @@ ON</button>
 <uf-sheet id="achievements-modal" heading="Achievements" size="lg">
   <div class="leaderboard-box">
     <div id="lb-achievements"></div>
+  </div>
+</uf-sheet>
+
+<!-- #548: the Dressing Room — every seated player dresses their goose at once, each card
+     driven by its own controller (js/dressing-room.js builds the cards; the shell is not
+     dismissible: B / BACK TO SEATS close it once nobody is editing). -->
+<uf-sheet id="dressing-room" heading="Dressing room" size="lg" dismissible="false">
+  <div id="dr-cards" class="dr-cards"></div>
+  <!-- Buzz a controller: one chip per seated pad (rumble + flash). Only P1's pad navigates here; any mouse clicks. -->
+  <div id="dr-buzz" class="dr-buzz"><span class="dr-buzz-label"><b class="dr-buzz-p1">P1</b> · Buzz a controller</span><div id="dr-buzz-chips" class="dr-buzz-chips"></div></div>
+  <div slot="actions" class="dr-foot">
+    <span id="dr-status" class="dr-status"></span>
+    <uf-button variant="accent" id="dr-back" style="display:none">BACK TO SEATS</uf-button>
   </div>
 </uf-sheet>
 
@@ -6462,25 +6544,35 @@ ON</button>
       </div>
       <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
     </div>
+    <!-- #548: these three rows are Player 1's look (js/player-look.js). Every other player
+         dresses their own goose in the Wardrobe on the seat screens (co-op room / versus). -->
     <div class="opt-section">
-      <div class="label" id="opt-outfit-label">Goose Outfits</div>
+      <div class="label" id="opt-body-label">Player 1's Goose</div>
+      <div class="options-row" id="opt-body-row">
+        <button class="opt-btn" id="opt-body-m">Gander (he)</button>
+        <button class="opt-btn" id="opt-body-f">Goose (she)</button>
+      </div>
+      <div class="options-note">Your goose's body — other players pick theirs in the Wardrobe on the seat screen</div>
+    </div>
+    <div class="opt-section">
+      <div class="label" id="opt-outfit-label">Player 1's Outfit</div>
       <div class="options-row" id="opt-outfit-row">
         <button class="opt-btn" id="opt-outfit-victorian">Victorian</button>
         <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
         <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
         <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
       </div>
-      <div class="options-note">Which pair of geese rides the tandem — applies immediately</div>
+      <div class="options-note">What your goose wears — applies immediately</div>
     </div>
     <div class="opt-section">
-      <div class="label" id="opt-colour-label">Goose Colours</div>
+      <div class="label" id="opt-colour-label">Player 1's Colours</div>
       <div class="options-row" id="opt-colour-row">
         <button class="opt-btn" id="opt-colour-0">Original</button>
         <button class="opt-btn" id="opt-colour-1">-</button>
         <button class="opt-btn" id="opt-colour-2">-</button>
         <button class="opt-btn" id="opt-colour-3">-</button>
       </div>
-      <div class="options-note">Colour changes for the chosen pair (saved per pair) — applies immediately</div>
+      <div class="options-note">Colour changes for the chosen outfit (saved per outfit) — applies immediately</div>
     </div>
     <div class="opt-section">
       <div class="label" id="opt-fps-label">FPS Display</div>
