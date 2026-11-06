@@ -165,6 +165,9 @@ function isLiveSteamControllerEntry(e, now) {
 export function noteSteamControllerPresses(now = performance.now()) {
   const mgr = _controllerManager;
   if (!mgr) return;
+  const remember = (e) => { if (e && e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0) _lastStateAt.set(e, e.hidActiveSince); };
+  if (mgr._hidPool) for (const e of mgr._hidPool.values()) remember(e);
+  for (const s of (mgr.slots || [])) remember(s._hidEntry);
   const live = new Set();
   if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (isLiveSteamControllerEntry(e, now)) live.add(e);
   for (const s of (mgr.slots || [])) if (isLiveSteamControllerEntry(s._hidEntry, now)) live.add(s._hidEntry);
@@ -185,11 +188,18 @@ export function noteSteamControllerPresses(now = performance.now()) {
  */
 export const PUCK_SILENT_MS = 4000;
 
+// The last STATE report each Steam Controller entry has delivered. The manager
+// zeroes hidActiveSince once a pad has been stale a moment (slot.effectiveGamepad),
+// which reads the same as "never streamed" — so remember the last real value.
+const _lastStateAt = new WeakMap();
+function lastStateAt(e) { return Math.max(e.hidActiveSince || 0, _lastStateAt.get(e) || 0); }
+
 /** Is this claimed slot holding a Steam Controller that has stopped reporting (switched off)? */
 export function isSilentSteamControllerSlot(slot, now = performance.now()) {
   const e = slot && slot.state === 'claimed' ? slot._hidEntry : null;
   if (!e || !e.driver?.constructor?.needsSiblingFanout) return false;
-  return e.hidActiveSince > 0 && now - e.hidActiveSince > PUCK_SILENT_MS;
+  const last = lastStateAt(e);
+  return last > 0 && now - last > PUCK_SILENT_MS;
 }
 
 /**

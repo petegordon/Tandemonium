@@ -408,6 +408,9 @@ console.log('MC-19 DualSense behind a frozen Gamepad twin: a press seats it as P
   const page = await h.gamePage({ storage: STORAGE, before: async (p) => { slowLoad(p); await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p); } });
   const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
   await waitFor(page, streamingAll(['ds']));
+  // The TV case is a DualSense switched on long after launch: wait out the lobby's
+  // startup detection (it claims a lone pad for Player 1 within 2 s, no press needed).
+  await sleep(3500);
   await ctx.pads.plug('dualsense');   // the frozen twin: listed, never pressed
   await sleep(800);
   let s = await snap(page);

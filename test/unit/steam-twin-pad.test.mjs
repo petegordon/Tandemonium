@@ -206,3 +206,15 @@ test('#581: a pressed WebHID pad behind a frozen same-name Gamepad entry is retu
   world([entry(false)]);
   assert.deepEqual(frozenTwinHidEntries(frozen), [], 'no press, no claim');
 });
+
+test('#581: still silent after the manager zeroes hidActiveSince on a stale pad (its last report is remembered)', () => {
+  resetSteamTwinMemory();
+  const t = performance.now();
+  const e = { driver: new SteamControllerDriver(), hidActiveSince: t - 10, synthetic: { buttons: [] } };
+  const slot = { id: 'P1', state: 'claimed', _hidEntry: e, gamepadIndex: null };
+  setControllerManager({ _hidPool: new Map(), slots: [slot] });
+  noteSteamControllerPresses(t);      // the game loop sees it streaming
+  e.hidActiveSince = 0;               // the manager's staleness reset (slot.effectiveGamepad)
+  assert.equal(isSilentSteamControllerSlot(slot, t + PUCK_SILENT_MS + 50), true);
+  assert.equal(isSilentSteamControllerSlot(slot, t + 100), false, 'not yet');
+});
