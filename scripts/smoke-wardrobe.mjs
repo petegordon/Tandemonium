@@ -126,8 +126,12 @@ check(led.some((c) => c.n === 2 && c.lightbar && c.lightbar.r === 255 && c.light
 check(await until(page, () => (window._game.lobby._room.cards.get(2).buzzCount || 0) === 1 && window.__ledCalls.length >= 8), 'WD-03: picking a new light buzzes that pad once', { buzzes: await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount), calls: (await page.evaluate(() => window.__ledCalls.length)) });
 await cardClick(page, 2, 'button[data-pick="led"][data-val="pink"]');
 await cardClick(page, 2, 'button[data-pick="led"][data-val="gold"]');
-await new Promise((r) => setTimeout(r, 700));
-check((await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount)) === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount));
+// Wait for the debounced buzz (a slow headless frame can land it after a fixed
+// 700 ms), then give a second one time to show up: once more, never twice.
+const buzz2 = await until(page, () => (window._game.lobby._room.cards.get(2).buzzCount || 0) >= 2);
+await new Promise((r) => setTimeout(r, 900));
+const buzzN = await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount);
+check(buzz2 && buzzN === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', buzzN);
 const hints = await page.evaluate(() => ({
   shown: [...document.querySelectorAll('#dr-cards .dr-card')].map((el) => [el.dataset.n, !el.querySelector('.dr-stick-hint').hidden, el.querySelector('.dr-stick-hint').textContent]),
   label: document.querySelector('#dr-buzz .dr-buzz-label')?.textContent.replace(/\s+/g, ' ').trim(),
