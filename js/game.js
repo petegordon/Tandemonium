@@ -158,6 +158,9 @@ const TUTORIAL_ITEMS = {
   }
 };
 
+/** Stoker: TOO SLOW with no word from the captain for this long = the link is gone. */
+const STOKER_TOO_SLOW_STUCK_MS = 12000;
+
 class Game {
   constructor() {
     // Renderer — quality tier (js/quality.js): URL param > Options choice >
@@ -8287,12 +8290,24 @@ class Game {
       if (this.raceManager.segmentTimeRemaining <= 0 && !this._stokerTimeoutShown && !this._reconnecting) {
         // Show TOO SLOW visual once — captain sends EVT_RESET to clear it
         this._stokerTimeoutShown = true;
+        this._stokerTimeoutAt = performance.now();
         const flash = document.getElementById('timeout-flash');
         flash.classList.remove('visible');
         void flash.offsetWidth;
         flash.classList.add('visible');
         this._playBeep(200, 0.3);
         setTimeout(() => this._playBeep(150, 0.2), 300);
+      }
+      // The captain answers TOO SLOW within a few seconds (reset to the checkpoint, or game
+      // over). Silence this long means its messages are not reaching us: the link dropped or
+      // the captain left the ride. Show the disconnect sheet (Try again / back) rather than
+      // leaving the stoker on TOO SLOW for good (TV playtest 2026-11-06).
+      if (this._stokerTimeoutShown && this.state === 'playing' && !this._reconnecting && performance.now() - (this._stokerTimeoutAt || 0) > STOKER_TOO_SLOW_STUCK_MS
+          && document.getElementById('disconnect-overlay').style.display !== 'flex') {
+        console.warn('[online] stoker: no word from the captain ' + (STOKER_TOO_SLOW_STUCK_MS / 1000) + ' s after TOO SLOW');
+        this._clearStokerTimeout();
+        this._netLost = true;
+        this._showDisconnect('Lost touch with the captain');
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
       this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);

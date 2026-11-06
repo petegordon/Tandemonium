@@ -4221,20 +4221,24 @@ export class Lobby {
       statusEl.className = 'conn-status error';
     };
 
-    // Auth error: token was rejected by relay — try silent refresh first
-    this.net.onAuthError = async () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
+    // Auth error: token was rejected by relay — try silent refresh first. Acts on
+    // THIS transport (the ride shares it while lobby.net is null), and only until it is
+    // destroyed (2026-11-06 diag: "Cannot set properties of null (_relayToken)").
+    const capNet = this.net;
+    capNet.onAuthError = async () => {
+      const live = () => this._netSession.isCurrent(netEpoch) && !capNet._destroyed;
+      if (!live()) return;
       console.warn('LOBBY: Relay auth failed for captain — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
       const refreshed = await this.auth.ensureValidToken();
-      if (!this._netSession.isCurrent(netEpoch)) return;
+      if (!live()) return;
       if (refreshed) {
         // Token refreshed — retry room creation
         const freshToken = await this.auth.getRelayToken(code, 'captain');
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        if (freshToken) this.net._relayToken = freshToken;
-        this.net.enterRoom(code, 'captain');
+        if (!live()) return;
+        if (freshToken) capNet._relayToken = freshToken;
+        capNet.enterRoom(code, 'captain');
       } else {
         statusEl.textContent = 'Sign-in required...';
         this._pendingCreateRoom = true;
@@ -4307,20 +4311,22 @@ export class Lobby {
     };
 
     // Auth error: token was rejected by relay — try silent refresh first
-    this.net.onAuthError = async () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
+    const stoNet = this.net;
+    stoNet.onAuthError = async () => {
+      const live = () => this._netSession.isCurrent(netEpoch) && !stoNet._destroyed;
+      if (!live()) return;
       console.warn('LOBBY: Relay auth failed for stoker — refreshing token');
       statusEl.textContent = 'Session expired, refreshing...';
       statusEl.className = 'conn-status';
 
       const refreshed = await this.auth.ensureValidToken();
-      if (!this._netSession.isCurrent(netEpoch)) return;
+      if (!live()) return;
       if (refreshed) {
         const freshToken = await this.auth.getRelayToken(code, 'stoker');
-        if (!this._netSession.isCurrent(netEpoch)) return;
+        if (!live()) return;
         if (freshToken) {
           statusEl.textContent = 'Reconnecting...';
-          this.net.retryWithToken(freshToken);
+          stoNet.retryWithToken(freshToken);
         } else {
           statusEl.textContent = 'Sign-in required...';
           this._pendingAutoJoinCode = code;
