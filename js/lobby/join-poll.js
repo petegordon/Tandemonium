@@ -35,3 +35,31 @@ export function mergedPollGp(gp, synthetic) {
   }
   return { buttons, axes };
 }
+
+/**
+ * Gamepad-API candidates minus the twins of pads a manager slot already holds
+ * over WebHID (#581). A seated DualSense is listed through its slot; Chromium
+ * keeps listing the same pad's (frozen, compat-mode) Gamepad entry too, which
+ * showed as a second "DualSense · seats full" in the roster. A slot that
+ * adopted its pad's Gamepad entry (gamepadIndex set) drops that index; a
+ * WebHID-only slot drops the one Gamepad candidate named like its device —
+ * and none when two are (two identical pads: better a phantom than hiding a
+ * real controller). Pure; exported for the unit test.
+ * @template {{ gpIndex: number, gp: { id: string } }} C
+ * @param {C[]} gpCandidates
+ * @param {{ state: string, hidDevice?: { productName?: string } | null, gamepadIndex?: number | null }[]} slots
+ * @returns {C[]}
+ */
+export function withoutHeldTwins(gpCandidates, slots) {
+  const held = (slots || []).filter((s) => s && s.state === 'claimed' && s.hidDevice);
+  const dropIdx = new Set(held.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
+  let out = gpCandidates.filter((c) => !dropIdx.has(c.gpIndex));
+  for (const s of held) {
+    if (s.gamepadIndex != null) continue;
+    const name = String((s.hidDevice && s.hidDevice.productName) || '').trim().toLowerCase();
+    if (!name) continue;
+    const twins = out.filter((c) => String(c.gp && c.gp.id || '').toLowerCase().includes(name));
+    if (twins.length === 1) out = out.filter((c) => c !== twins[0]);
+  }
+  return out;
+}
