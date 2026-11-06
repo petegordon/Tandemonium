@@ -8,7 +8,9 @@
 // end clear of its tyre. Screenshots at the same camera presets go to renders/fit/ (before/after
 // sheets). Lines the assets are known to fail today print KNOWN BUG instead of failing the run;
 // once an asset is fixed they flip to "FIXED (make this a check)".
-//   node scripts/smoke-fit.mjs [--outfits victorian,cyclists] [--steps 12] [--no-shots]
+//   node scripts/smoke-fit.mjs [--outfits victorian,cyclists] [--bodies mf,fm,mm,ff] [--steps 12] [--no-shots]
+// --bodies (#548): the body on each seat, captain then stoker (m = gander, f = goose); 'mf' is
+// today's pairing. Every outfit is swept in every listed pairing.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +20,7 @@ const ROOT = process.cwd();
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
 const OUTFITS = opt('--outfits', 'victorian,cyclists,fancy,georgian').split(',');
+const BODIES = opt('--bodies', 'mf').split(',');
 const STEPS = Number(opt('--steps', 12));
 const SHOTS = !args.includes('--no-shots');
 const PORT = 8964;
@@ -84,10 +87,11 @@ await page.waitForFunction(() => window.__fit && window.__fit.ready, { timeout: 
 check(true, 'fit viewer loads the goose tandem and its riders');
 
 const summary = {};
-for (const outfit of OUTFITS) {
+for (const [outfitKey, bodies] of OUTFITS.flatMap((o) => BODIES.map((b) => [o, b]))) {
+  const outfit = bodies === 'mf' ? outfitKey : `${outfitKey}/${bodies}`;
   console.log(`\n${outfit}`);
-  const got = await page.evaluate((k) => window.__fit.setOutfit(k), outfit);
-  check(got === outfit, `${outfit}: riders seated`, got);
+  const got = await page.evaluate((k, b) => window.__fit.setOutfit(k, b), outfitKey, bodies);
+  check(got === outfitKey, `${outfit}: riders seated`, await page.evaluate(() => window.__fit.riderPaths()));
   await page.evaluate(() => { window.__fit.setSolo(false); window.__fit.setLeans(0, 0); });
   const rep = await page.evaluate((n) => window.__fit.sweep(n), STEPS);
   const j = await page.evaluate(() => window.__fit.judge());
@@ -99,22 +103,22 @@ for (const outfit of OUTFITS) {
   }
   check(rep.riders.Captain && rep.riders.Stoker, `${outfit}: both geese measured`, Object.keys(rep.riders));
   if (SHOTS) {
-    if (outfit === OUTFITS[0]) {
+    if (outfit === OUTFITS[0] && bodies === BODIES[0]) {
       await page.evaluate(() => { window.__fit.showGeese(false); window.__fit.setCrank(60); window.__fit.view('side'); });
       await shot('bike-only-side');
       await page.evaluate(() => { window.__fit.view('rear wheel ¾'); });
       await shot('bike-only-rear_wheel');
       await page.evaluate(() => window.__fit.showGeese(true));
     }
-    if (outfit === OUTFITS[0]) console.log('  render', JSON.stringify(await page.evaluate(() => window.__fit.debug())));
+    if (outfit === OUTFITS[0] && bodies === BODIES[0]) console.log('  render', JSON.stringify(await page.evaluate(() => window.__fit.debug())));
     for (const [view, slug] of Object.entries(SLUG)) {
       await page.evaluate((v) => { window.__fit.setCrank(60); window.__fit.view(v); }, view);
-      await shot(`${outfit}-${slug}`);
+      await shot(`${outfit.replace('/', '-')}-${slug}`);
     }
     await page.evaluate(() => { window.__fit.cut('x', 0.0); window.__fit.view('saddle C'); });
-    await shot(`${outfit}-saddle_C_section`);
+    await shot(`${outfit.replace('/', '-')}-saddle_C_section`);
     await page.evaluate(() => { window.__fit.view('saddle S'); });
-    await shot(`${outfit}-saddle_S_section`);
+    await shot(`${outfit.replace('/', '-')}-saddle_S_section`);
     await page.evaluate(() => window.__fit.cut(null));
   }
 }

@@ -53,6 +53,7 @@
 
     <h2>Cast</h2>
     <label>Outfit</label><select id="outfit"></select>
+    <label>Bodies</label><select id="bodies" title="captain + stoker body (#548): m = gander, f = goose"><option value="mf">gander + goose</option><option value="fm">goose + gander</option><option value="mm">gander + gander</option><option value="ff">goose + goose</option></select>
     <label>Colourway</label><select id="colourway"></select>
     <div class="row"><label class="inline"><input type="checkbox" id="solo"> Show Solo (captain only)</label></div>
 
@@ -115,8 +116,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createStudio } from '../../js/goose-studio/studio-scene.js';
 import { GooseRiders } from '../../js/goose-riders.js';
 import { SEATS, seatOffset, HIP_UP } from '../../js/goose-rider-clips.js';
-import { GOOSE_OUTFITS, gooseOutfitPaths, normalizeGooseOutfit } from '../../js/goose-outfits.js';
-import { colourwaysFor, colourwayParams, applyColourway } from '../../js/goose-colourways.js';
+import { GOOSE_OUTFITS, normalizeGooseOutfit, riderPath } from '../../js/goose-outfits.js';
+import { colourwaysFor, colourwayParamsForBody, applyColourway } from '../../js/goose-colourways.js';
 import { measureFit, sweepCrank, landmarks, listMeshes, rearTyre } from '../../js/fit/fit-measure.js';
 import { judge, nudgePatch, round } from '../../js/fit/fit-rules.js';
 
@@ -145,6 +146,10 @@ const markerGroup = new THREE.Group();
 const loader = new GLTFLoader();
 let riders = null, model = null, tyre = null;
 let outfit = normalizeGooseOutfit(q.get('outfit') || 'victorian');
+// #548 · the body on each seat ('mf' = today's pairing: gander captain, goose stoker).
+const normBodies = (b) => (/^[mf]{2}$/.test(b || '') ? b : 'mf');
+let bodies = normBodies(q.get('bodies'));
+const seatBody = (seat) => (seat === 'Stoker' ? bodies[1] : bodies[0]);
 let playing = false, lastT = 0, crank = 0;
 const nudge = { hipUp: HIP_UP, seats: { Captain: { dy: 0, dz: 0, scale: 1, saddleDy: 0, saddleDz: 0, saddleScale: 1 }, Stoker: { dy: 0, dz: 0, scale: 1, saddleDy: 0, saddleDz: 0, saddleScale: 1 } } };
 const saddleMesh = {};   // seat -> saddle mesh (moved with the socket by the saddle nudge)
@@ -188,8 +193,7 @@ async function loadBike() {
 
 async function loadGeese() {
   window.__fit.ready = false;
-  const paths = gooseOutfitPaths(outfit);
-  const rel = { Captain: ROOT + paths.Captain, Stoker: ROOT + paths.Stoker };
+  const rel = { Captain: ROOT + riderPath('Captain', outfit, seatBody('Captain')), Stoker: ROOT + riderPath('Stoker', outfit, seatBody('Stoker')) };
   if (Object.keys(riders.riders).length) await riders.swapRiders(loader, rel, true);
   else await riders.loadRiders(loader, rel);
   applyNudges();
@@ -205,8 +209,7 @@ async function loadGeese() {
 
 function applyColours() {
   const key = $('colourway').value || 'default';
-  const params = colourwayParams(outfit, key);
-  for (const [seat, r] of Object.entries(riders.riders)) applyColourway(r.root, params[seat] || {});
+  for (const [seat, r] of Object.entries(riders.riders)) applyColourway(r.root, colourwayParamsForBody(outfit, key, seatBody(seat)) || {});
 }
 function applySolo() { const st = riders.riders.Stoker; if (st) st.root.visible = !$('solo').checked; }
 
@@ -402,7 +405,7 @@ function showReport(rep, sweep) {
     t.appendChild(tr);
     if (l.note) { const n = document.createElement('tr'); n.innerHTML = `<td class="n" colspan="2">${l.note}</td>`; t.appendChild(n); }
   }
-  $('hud').textContent = `${outfit} · crank ${Math.round(crank * 180 / Math.PI)}° · ${j.pass ? 'fit OK' : j.lines.filter(l => !l.pass).length + ' out of tolerance'}`;
+  $('hud').textContent = `${outfit} ${bodies} · crank ${Math.round(crank * 180 / Math.PI)}° · ${j.pass ? 'fit OK' : j.lines.filter(l => !l.pass).length + ' out of tolerance'}`;
 }
 $('measure').onclick = () => measure(false);
 $('sweep').onclick = () => measure(true);
@@ -414,6 +417,8 @@ $('outfit').value = outfit;
 function fillColourways() { const s = $('colourway'); s.innerHTML = ''; for (const w of colourwaysFor(outfit)) s.add(new Option(w.label, w.key)); }
 fillColourways();
 $('outfit').onchange = async () => { outfit = $('outfit').value; fillColourways(); await loadGeese(); };
+$('bodies').value = bodies;
+$('bodies').onchange = async () => { bodies = normBodies($('bodies').value); await loadGeese(); };
 $('colourway').onchange = applyColours;
 $('solo').onchange = () => { applySolo(); scheduleMeasure(); };
 $('crank').oninput = () => { crank = $('crank').value * Math.PI / 180; $('crankv').textContent = $('crank').value + '°'; pose(); scheduleMeasure(); };
@@ -439,7 +444,9 @@ $('copy').onclick = () => navigator.clipboard.writeText($('patch').textContent);
 window.__fit = {
   ready: false,
   outfit: () => outfit,
-  setOutfit: async (k) => { $('outfit').value = normalizeGooseOutfit(k); outfit = $('outfit').value; fillColourways(); await loadGeese(); return outfit; },
+  setOutfit: async (k, b) => { $('outfit').value = normalizeGooseOutfit(k); outfit = $('outfit').value; if (b) { bodies = normBodies(b); $('bodies').value = bodies; } fillColourways(); await loadGeese(); return outfit; },
+  setBodies: async (b) => { bodies = normBodies(b); $('bodies').value = bodies; await loadGeese(); return bodies; },
+  riderPaths: () => ({ Captain: riderPath('Captain', outfit, seatBody('Captain')), Stoker: riderPath('Stoker', outfit, seatBody('Stoker')) }),
   setSolo: (on) => { $('solo').checked = !!on; applySolo(); },
   setNudge: (n) => { if (n.hipUp !== undefined) $('hipUp').value = n.hipUp; for (const [seat, s] of Object.entries(n.seats || {})) for (const [k, v] of Object.entries(s)) { const id = NUDGE_IDS[k] && NUDGE_IDS[k][seat === 'Captain' ? 0 : 1]; if (id) $(id).value = v; } readNudges(); },
   showGeese: (on) => { for (const r of Object.values(riders.riders)) r.root.visible = !!on; if (on) applySolo(); drawMarkers(); },

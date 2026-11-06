@@ -2,8 +2,9 @@
 // CONFIG — shared constants
 // ============================================================
 
-import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT } from './goose-outfits.js';
+import { gooseOutfitPaths, normalizeGooseOutfit, DEFAULT_GOOSE_OUTFIT, resolveRider } from './goose-outfits.js';
 import { normalizeColourway, DEFAULT_COLOURWAY } from './goose-colourways.js';
+import { playerLooks, seatLooks } from './player-look.js';
 import { getCurrentTier } from './quality.js';
 
 const _isElectron = navigator.userAgent.includes('Electron');
@@ -55,40 +56,57 @@ export function getShowSolo() {
 }
 
 /**
- * "Goose Outfits" setting — which dressed pair rides the goose tandem: 'victorian'
- * (the default), 'cyclists', 'fancy' or 'georgian' (js/goose-outfits.js).
- * ?outfit=<key> overrides the saved choice (testing). Applies immediately.
+ * Player 1's outfit (#548: the old "Goose Outfits" setting is now Player 1's look, js/player-look.js;
+ * every other player picks theirs in the Wardrobe). ?outfit=<key> overrides it (testing).
  */
 export function getGooseOutfit() {
   try {
     const q = (typeof location !== 'undefined') ? new URLSearchParams(location.search).get('outfit') : null;
     if (q) return normalizeGooseOutfit(q);
-    return normalizeGooseOutfit(localStorage.getItem('tandemonium_goose_outfit'));
+    return playerLooks.get(1).outfit;
   } catch (e) { return DEFAULT_GOOSE_OUTFIT; }
 }
 
-/**
- * "Goose Colours" setting — a colourway per Goose Outfits pair ('default' = the outfit's own
- * colours; js/goose-colourways.js), saved as {outfit: colourway}. Applies immediately.
- */
+/** Player 1's colourway for an outfit ('default' = the outfit's own colours; js/goose-colourways.js). */
 export function getGooseColourway(outfit) {
   try {
-    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}');
-    return normalizeColourway(outfit, all && all[outfit]);
+    const look = playerLooks.get(1);
+    return normalizeColourway(outfit, look.colours && look.colours[outfit]);
   } catch (e) { return DEFAULT_COLOURWAY; }
 }
 
 export function setGooseColourway(outfit, key) {
   try {
-    const all = JSON.parse(localStorage.getItem('tandemonium_goose_colours') || '{}') || {};
-    all[outfit] = normalizeColourway(outfit, key);
-    localStorage.setItem('tandemonium_goose_colours', JSON.stringify(all));
+    const look = playerLooks.get(1);
+    playerLooks.update(1, { colours: { ...look.colours, [outfit]: normalizeColourway(outfit, key) } });
   } catch (e) {}
 }
 
-/** The {Captain, Stoker} rider GLBs of the current Goose Outfits choice. */
+/** Player 1's look, with the ?outfit= override applied. */
+export function getP1Look() {
+  const look = playerLooks.get(1);
+  const outfit = getGooseOutfit();
+  return outfit === look.outfit ? look : { ...look, outfit };
+}
+
+/**
+ * #548 · the look each seat wears: {Captain, Stoker} of {outfit, colourway, body}
+ * (js/player-look.js seatLooks). Solo by default; the game passes its mode and, online, the
+ * partner's look.
+ * @param {string} [mode] 'solo' | 'local' | 'captain' | 'stoker'
+ * @param {object|null} [partner] the partner's look from their profile (online)
+ */
+export function getSeatLooks(mode = 'solo', partner = null) {
+  return seatLooks({ mode, p1: getP1Look(), p2: playerLooks.get(2), partner });
+}
+
+/** The {Captain, Stoker} rider GLBs the seats wear right now (solo looks). */
 export function getGooseRiderPaths() {
-  return gooseOutfitPaths(getGooseOutfit());
+  const l = getSeatLooks();
+  return {
+    Captain: resolveRider('Captain', l.Captain.outfit, l.Captain.body).path,
+    Stoker: resolveRider('Stoker', l.Stoker.outfit, l.Stoker.body).path,
+  };
 }
 
 /**
