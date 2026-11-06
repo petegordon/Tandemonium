@@ -74,6 +74,9 @@ import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
+import { playerLooks, padKeyFor, vidPidFromGamepadId } from './player-look.js';   // #548
+import { DressingRoom } from './dressing-room.js';   // #548
+import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
 const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
@@ -311,6 +314,10 @@ export class Lobby {
     });
     this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | null
     this._modalBack = null;
+    // #548 · the Dressing Room (js/dressing-room.js) while it is open: every seated player's card,
+    // each driven by its own pad. Null when closed.
+    this._room = null;
+    this._gpPrevY = false;
     this._gpPrevUp = false;
     this._gpPrevUp = false;
     this._gpPrevDown = false;
@@ -993,7 +1000,7 @@ export class Lobby {
     this._stopPreviewLoop();
   }
 
-  /** #400 D4 · the Chaos Coin balance on the GARAGE button (js/wallet.js). */
+  /** #400 D4 · the Tandem Token balance on the GARAGE button (js/wallet.js). */
   _refreshWallet() {
     const el = document.getElementById('lobby-wallet');
     if (!el) return;
@@ -1986,7 +1993,7 @@ export class Lobby {
           '<span class="level-card-icon">&#127919;</span>' +
           '<span class="level-card-name">Slingshot</span>' +
         '</div>' +
-        '<div class="level-card-desc">Pull back, aim, let go. Earn Chaos Coins and upgrade.</div>';
+        '<div class="level-card-desc">Pull back, aim, let go. Earn Tandem Tokens and upgrade.</div>';
       card.addEventListener('click', () => {
         container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');
@@ -2426,6 +2433,8 @@ export class Lobby {
     this._achievementsSheet.addEventListener('uf-sheet:close', () => this._onAchievementsClosed());
     this._achDetailSheet = /** @type {any} */ (document.getElementById('ach-detail'));
     this._achDetailSheet.addEventListener('uf-sheet:close', () => this._onAchievementDetailClosed());
+    // #548: the Dressing Room shell (cards are built per open by js/dressing-room.js).
+    this._roomSheet = /** @type {any} */ (document.getElementById('dressing-room'));
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -4877,7 +4886,8 @@ export class Lobby {
     // code button until the online room is open.
     this._syncHostJoinQr();
     const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
-    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
+    // #548: the WARDROBE buttons under the seats join P1's focus set.
+    const items = [online && onBtn, local && locBtn, codeBtn, ...document.querySelectorAll('#host-wardrobe uf-button'), back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5205,10 +5215,14 @@ export class Lobby {
       const candidates = this._detectLocalJoinCandidates();
       this._renderLocalJoinCandidates(candidates);
       this._renderHostSeats(candidates);
+      this._pollSeatedP2Wardrobe();
       // #578 · a seated local Player 2 presses B on their own pad to get up.
       // Primed true on the seat's first frame so the press that joined (if it
-      // was B) doesn't unseat them straight away.
-      if (this._localSeatedOnHost && this._localP2Type === 'gamepad' && this._localP2InputManager) {
+      // was B) doesn't unseat them straight away. #548: while the Dressing Room
+      // is open their B belongs to their card (and the close re-primes this).
+      if (this._room) {
+        this._localP2PrevB = true;
+      } else if (this._localSeatedOnHost && this._localP2Type === 'gamepad' && this._localP2InputManager) {
         const im = this._localP2InputManager;
         if (typeof im.pollGamepad === 'function') im.pollGamepad();
         const p2gp = im.getGamepadState ? im.getGamepadState() : null;
@@ -5413,6 +5427,7 @@ export class Lobby {
   }
 
   _stopLocalJoinMonitor() {
+    if (this._room) this._room.close('left');
     if (this._localJoinMonitorRAF !== null) {
       cancelAnimationFrame(this._localJoinMonitorRAF);
       this._localJoinMonitorRAF = null;
@@ -6178,6 +6193,10 @@ export class Lobby {
       rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
     }
     strip.rows = rows;
+    // #548 · WARDROBE for Player 1 and, once seated locally, Player 2 (an online partner dresses on their own screen).
+    const wardrobePlayers = [{ n: 1, input: this.input, type: this.input && this.input.gamepadConnected ? 'gamepad' : 'keyboard', slotId: 'P1' }];
+    if (p2Im) wardrobePlayers.push({ n: 2, input: p2Im, type: this._localP2Type || 'gamepad', slotId: p2Slot });
+    this._renderWardrobeButtons('host-wardrobe', wardrobePlayers, this.hostStep);
     // A mouse user can still seat someone: clicking the open seat joins the first candidate.
     const sto = document.getElementById('host-seat-stoker');
     if (sto && !sto._wired) {
@@ -6214,6 +6233,7 @@ export class Lobby {
 
   /** Leave versus setup: release joined slots (not P1's) and clear state. */
   _leaveVersus() {
+    if (this._room) this._room.close('left');
     this._stopVersusMonitor();
     for (const p of this._versusPlayers) {
       this._releasePhone(p.input);   // #562
@@ -6307,9 +6327,24 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
+        const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
+        // #548 · the Dressing Room is open: every seated pad belongs to its card; keep the edge
+        // state current so the press that closes it can't fire "leave seat" or a team switch.
+        if (this._room) {
+          const bi = p.input._gpSwapAB ? 0 : 1;
+          this._versusPrevButtons.set(key, { a: !!(gp.buttons[0] && gp.buttons[0].pressed), b: !!(gp.buttons[bi] && gp.buttons[bi].pressed), left, right, y });
+          continue;
+        }
+        if (y && !prev.y && p.slotId !== 'P1' && p.input !== this.input) {
+          prev.y = y; prev.left = left; prev.right = right;
+          this._versusPrevButtons.set(key, prev);
+          this._openDressingRoom(p.n);
+          continue;
+        }
+        prev.y = y;
         // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
         // P1's B is "back" through the step's FocusController. `b` primes true
         // so a B held from before the join can't fire on the first frame.
@@ -6694,6 +6729,7 @@ export class Lobby {
   /** Teams payload for onVersusReady: two entries, A then B. */
   _versusTeams() {
     const member = (p) => ({
+      n: p.n,   // #548: the player number keys their look (js/player-look.js)
       input: p.input,
       type: p.type,
       slotId: p.slotId,
@@ -6766,6 +6802,7 @@ export class Lobby {
       box.append(...seats);
     }
     this._renderVersusControllers(candidates);
+    this._renderWardrobeButtons('versus-wardrobe', this._versusPlayers.filter((p) => p.type !== 'bot'), this.versusStep);
   }
 
   /**
@@ -7269,6 +7306,13 @@ export class Lobby {
     const ranLast = this._stepNavRanLastFrame;
     this._stepNavRanLastFrame = false;
 
+    // #548 · the Dressing Room is open: it polls every seated pad itself (P1's included),
+    // so this runs before the P1 gate below. Step nav re-primes when it returns.
+    if (this._room) { this._room.poll(); return; }
+    // A seated local Player 2's △ / Y opens theirs (polled here, every frame, whether or not
+    // Player 1 is on a pad: the host join monitor does not tick on after the seat fills).
+    if (this._currentStep === this.hostStep) this._pollSeatedP2Wardrobe();
+
     if (!this.input || !this.input.gamepadConnected) return;
 
     // ...or while the phone QR panel is on top (it takes B / Start itself);
@@ -7301,6 +7345,15 @@ export class Lobby {
     // D-pad left/right (buttons 14/15 or left stick axis 0)
     const left = (gp.buttons[14] && gp.buttons[14].pressed) || gp.axes[0] < -0.5;
     const right = (gp.buttons[15] && gp.buttons[15].pressed) || gp.axes[0] > 0.5;
+
+    // #548 · △ / Y on the seat screens: Player 1 opens the Dressing Room (their card in Edit).
+    const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
+    if (y && !this._gpPrevY && !this._activeModal && (this._currentStep === this.hostStep || this._currentStep === this.versusStep)) {
+      this._gpPrevY = y;
+      this._openDressingRoom(1);
+      return;
+    }
+    this._gpPrevY = y;
 
     // LB/RB bumpers (buttons 4/5) — cycle bike color
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
@@ -7550,6 +7603,140 @@ export class Lobby {
     } else {
       this._stepFocus.clear();
     }
+  }
+
+  // ============================================================
+  // DRESSING ROOM (#548) — every seated player dresses their goose at once
+  // ============================================================
+  //
+  // Opened from a WARDROBE button under the seats (mouse / P1's pad) or △ / Y on any seated pad.
+  // The room (js/dressing-room.js) shows one card per seated player and polls every seated pad
+  // itself: each card is driven only by its own controller. While it is open _pollGamepadNav
+  // hands every frame to it, the versus member loop and the host step's #578 stand-up B wait,
+  // and the close re-primes their edge state. Picks save at once (js/player-look.js); the geese
+  // follow on the next frame (game._syncRiderLooks) and the pad light as soon as it is picked.
+
+  /**
+   * The controller-identity key a player's look is saved under (#241): the HID
+   * serial when the host exposes one, else vendor:product + the slot.
+   * @param {{type?: string, input?: any, slotId?: string|null, n?: number}} p
+   */
+  _lookKeyFor(p) {
+    if (!p || p.type === 'keyboard') return 'keyboard';
+    const input = p.input;
+    const slot = input && input._slot;
+    const dev = slot && slot.hidDevice;
+    if (dev) return padKeyFor({ serial: dev.serialNumber || null, vendorId: dev.vendorId, productId: dev.productId, slotId: slot.id });
+    const pads = (navigator.getGamepads ? navigator.getGamepads() : []) || [];
+    const gp = input && input.gamepadIndex != null ? pads[input.gamepadIndex] : null;
+    const vp = gp ? vidPidFromGamepadId(gp.id) : null;
+    if (vp) return padKeyFor({ ...vp, slotId: (slot && slot.id) || p.slotId || null });
+    if (gp) return padKeyFor({ name: gp.id, slotId: (slot && slot.id) || p.slotId || null });   // XInput pads carry no vendor:product
+    if (input && input.steamInputHandle != null) return padKeyFor({ kind: 'steam', slotId: p.slotId || (p.n ? 'P' + p.n : null) });
+    return null;
+  }
+
+  /**
+   * One WARDROBE button per seated player under the seats (dirty-checked), and the players'
+   * pads bound to their looks. Also folds the buttons into the step's pad-focus set.
+   * @param {string} rowId @param {Array<{n: number, input?: any, type?: string, slotId?: string|null}>} players @param {HTMLElement} step
+   */
+  _renderWardrobeButtons(rowId, players, step) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    for (const p of players) playerLooks.bindPad(p.n, this._lookKeyFor(p));
+    const key = players.map((p) => p.n + ':' + (p.type || '')).join('|');
+    if (row._wardrobeKey === key) return;
+    row._wardrobeKey = key;
+    row.innerHTML = '';
+    for (const p of players) {
+      const b = document.createElement('uf-button');
+      b.setAttribute('variant', 'ghost');
+      b.setAttribute('size', 'sm');
+      b.id = `btn-wardrobe-p${p.n}`;
+      b.textContent = `P${p.n} WARDROBE`;
+      b.addEventListener('click', () => this._openDressingRoom(p.n));
+      row.appendChild(b);
+    }
+    if (step === this.versusStep) {
+      const base = (this._stepCenterItems.get(step) || []).filter((el) => el && !(el.id || '').startsWith('btn-wardrobe-'));
+      const items = [...base, ...row.querySelectorAll('uf-button')];
+      this._stepItems.set(step, items);
+      this._stepCenterItems.set(step, items);
+      if (this._currentStep === step && this.input && this.input.gamepadConnected && !this._room) {
+        this._modeColumns[1] = items;
+        this._stepFocus.refreshSpatial(this._stepNavItems());
+      }
+    }
+  }
+
+  /**
+   * The seated players for the Dressing Room, read every frame: {n, input, type, label, team, seat}.
+   * Versus: each team's first member is its captain, the second its stoker. Co-op: P1 captain,
+   * a locally seated P2 stoker (an online partner dresses on their own screen).
+   */
+  _roomPlayers() {
+    const out = [];
+    if (this._currentStep === this.versusStep) {
+      for (const team of ['A', 'B']) {
+        const members = this._versusPlayers.filter((p) => p.team === team && p.type !== 'bot');
+        members.forEach((p, i) => {
+          let label = p.name || `Player ${p.n}`;
+          try { label = this._versusIdentity(p).shortName || label; } catch (e) {}
+          out.push({ n: p.n, input: p.input, type: p.type, slotId: p.slotId || null, label, team, seat: i === 0 ? 'Captain' : 'Stoker' });
+        });
+      }
+      return out.sort((a, b) => a.n - b.n);
+    }
+    const id = this._p1Identity();
+    const onPad = !!(this.input && this.input.gamepadConnected);
+    out.push({ n: 1, input: this.input, type: onPad ? 'gamepad' : 'keyboard', slotId: 'P1', label: id ? id.shortName : (onPad ? 'Controller' : 'Keyboard'), team: null, seat: 'Captain' });
+    if (this._localSeatedOnHost && this._localP2InputManager) {
+      const im = this._localP2InputManager;
+      out.push({ n: 2, input: im, type: this._localP2Type || 'gamepad', slotId: im._slot ? im._slot.id : null, label: this._localP2Name || 'Player 2', team: null, seat: 'Stoker' });
+    }
+    return out;
+  }
+
+  /** Open the Dressing Room with player n's card in Edit (everyone else Ready). */
+  _openDressingRoom(n) {
+    if (!this._roomSheet || this._room) return;
+    if (!this._roomPlayers().some((p) => p.n === n)) return;
+    // Low tier (TV): cards without the 3D preview, so the lobby's polling never stalls.
+    const lowTier = getCurrentTier() === 'low';
+    this._room = new DressingRoom({
+      sheet: this._roomSheet,
+      roster: () => this._roomPlayers(),
+      padKeyFor: (p) => this._lookKeyFor(p),
+      controllerManager: this.controllerManager,
+      makePreview: lowTier ? null : () => new DressingRoomPreview(),
+      onLookChanged: (who, kind, val) => window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n: who, kind, val } })),
+      onClose: () => this._onRoomClosed(),
+    });
+    this._room.show(n);
+  }
+
+  /** The room closed: every seated pad goes back to its screen with its edges primed. */
+  _onRoomClosed() {
+    const room = this._room;
+    this._room = null;
+    // The press that closed it (B, or A on BACK TO SEATS) is still down: the versus member loop,
+    // #578's stand-up B and the Y handlers must see it as already pressed.
+    for (const p of this._versusPlayers) this._versusPrevButtons.set('member:' + p.n, { a: true, b: true, left: true, right: true, y: true });
+    this._p2PrevY = true;
+    this._localP2PrevB = true;
+    this._gpPrevY = true;
+    if (room) for (const n of room.cards.keys()) window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n, closed: true } }));
+  }
+
+  /** Host step: a seated local Player 2's △ / Y opens the Dressing Room with their card in Edit. */
+  _pollSeatedP2Wardrobe() {
+    const im = this._localSeatedOnHost ? this._localP2InputManager : null;
+    if (!im || this._localP2Type === 'keyboard') { this._p2PrevY = true; return; }
+    const gp = im.getGamepadState ? im.getGamepadState() : null;
+    const y = !!(gp && gp.buttons && gp.buttons[3] && gp.buttons[3].pressed);
+    if (y && !this._p2PrevY && !this._room && !this._activeModal) this._openDressingRoom(2);
+    this._p2PrevY = y;
   }
 
   // ============================================================

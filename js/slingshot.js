@@ -8,8 +8,8 @@
 // forks. After that the riders only steer — no pedaling in this mode — and
 // the bike coasts until it rolls to a stop, crashes or reaches the stage goal.
 // There are no checkpoints; a reset puts the bike back in the slingshot. Every
-// run pays Chaos Coins: distance, coins picked up on the road, a record bonus
-// and a stage-goal bonus, all times the coin multiplier. Coins buy garage
+// run pays Tandem Tokens: distance, tokens picked up on the road, a record bonus
+// and a stage-goal bonus, all times the Token multiplier. Coins buy garage
 // upgrades, which make the next launch go further. (After Car Evolve and the
 // Tandem Launch prototype.)
 //
@@ -29,15 +29,15 @@ export const STORAGE_KEY = 'tandemonium_slingshot';
 export const SLING_SYSTEMS_OFF = new Set(['achievements', 'disruptions', 'dda', 'coach', 'cruise', 'rideAnalytics']);
 
 // The garage (#400 D5). The upgrades live in the shared wallet (js/wallet.js)
-// and every mode's payout uses the Coin multiplier, but Slingshot and Tyres &
-// frame only ever change Slingshot physics — never a race. Aero was folded into
+// the Token multiplier (#512: Slingshot pay only — regular rides ignore it), and
+// Slingshot and Tyres & frame only ever change Slingshot physics — never a race. Aero was folded into
 // Tyres & frame: on its own it was a trap pick (+7 m for 50 coins at level 1).
 // Prices are first guesses pending playtest, tuned by the progression sim in
 // test/unit/slingshot.test.mjs.
 export const UPGRADES = [
   { id: 'sling',   name: 'Slingshot',       desc: 'Thicker bands, faster launch',        max: 10, base: 40, icon: '🎯' },
   { id: 'wheels',  name: 'Tyres & frame',   desc: 'Less rolling drag and less wind drag', max: 10, base: 70, icon: '🛞' },
-  { id: 'magnet',  name: 'Coin multiplier', desc: 'Every ride, every mode pays more',    max: 8,  base: 60, icon: '🪙' },
+  { id: 'magnet',  name: 'Token multiplier', desc: 'Slingshot pays more',               max: 8,  base: 60, icon: '🪙' },
 ];
 
 export function getUpgrade(id) {
@@ -361,7 +361,7 @@ export const HAY_CLEAR_H = 1.2;
 // regular ride (js/economy.js · RIDE_PAY, 1 per 5 m) because a launch is a
 // few seconds long and the metres are the whole game here.
 export const PAY = {
-  metresPerCoin: 2,     // 1 Chaos Coin per 2 m
+  metresPerCoin: 2,     // 1 Tandem Token per 2 m
   perCoin: 5,
   recordDivisor: 4,     // 1 coin per 4 m beyond the old best
 };
@@ -450,7 +450,7 @@ export function applyDailyLaunch(save, key, score) {
 
 // ---- Save ---------------------------------------------------
 //
-// v3 (#400): Chaos Coins and the upgrade levels moved to the one wallet every
+// v3 (#400): Tandem Tokens and the upgrade levels moved to the one wallet every
 // mode shares (js/wallet.js). This save keeps only Slingshot's own progress.
 // A v1/v2 save still carries `coins` and `lv`; takeLegacyWallet() hands them
 // over exactly once (the wallet migration calls it).
@@ -574,7 +574,7 @@ export function buyUpgrade(save, id) {
   return { ok: true, save: next, reason: null, price };
 }
 
-/** Metres a full pull gains from the next level of `id` (0 for the Coin multiplier). */
+/** Metres a full pull gains from the next level of `id` (0 for the Token multiplier). */
 export function upgradeGain(lv, id) {
   const u = getUpgrade(id);
   const level = (lv || {})[id] || 0;

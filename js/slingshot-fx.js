@@ -1,5 +1,5 @@
 // ============================================================
-// SLINGSHOT FX — a burst of gold sparkles when a Chaos Coin is grabbed
+// SLINGSHOT FX — a burst of gold sparkles when a Tandem Token is grabbed
 // ============================================================
 
 import * as THREE from 'three';

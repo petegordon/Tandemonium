@@ -32,6 +32,18 @@ export function colourwayParams(outfit, key) {
   return { Captain: (w && w.Captain) || {}, Stoker: (w && w.Stoker) || {} };
 }
 
+/**
+ * #548 · the colourway's per-material params for a goose of `body` in `outfit`. The data is keyed
+ * by today's seats, whose bodies are fixed (Captain = gander, Stoker = goose), so a body picks the
+ * seat whose garments it wears: m → Captain's params, f → Stoker's. A new-contract rider file
+ * (goose_captain_victorian_f.glb) carries the lady's garments, so the Stoker params fit it.
+ * @param {string} outfit @param {string} key @param {'m'|'f'} body
+ */
+export function colourwayParamsForBody(outfit, key, body) {
+  const both = colourwayParams(outfit, key);
+  return body === 'f' ? both.Stoker : both.Captain;
+}
+
 const baseName = (n) => (n || '').replace(/\.\d{3}$/, '');   // Blender's duplicate suffix
 
 // Blender node_hue_sat: h = fract(h + hue + 0.5), s = clamp(s * sat), v *= val (on the linear albedo)

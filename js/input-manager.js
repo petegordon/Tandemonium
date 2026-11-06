@@ -9,6 +9,16 @@ import * as analytics from './analytics.js';
 import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 
+/**
+ * #596 · at-rest yaw return of the WebHID fusion, in seconds of half-life.
+ * Gravity correction anchors pitch and roll but has no reference for yaw, so
+ * yaw gyro bias integrates without bound and the controller overlay's model
+ * slowly turns away from the pad. The fusion bleeds the DISPLAYED heading
+ * back to centre once the pad has been still for 0.75 s (lab issue #88); it
+ * ships disabled (0), and the game never turned it on. Steering is untouched:
+ * it reads the gravity roll, never yaw.
+ */
+export const YAW_RETURN_HALF_LIFE_S = 2;
 /** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
 const CALIB_STILL_DEG = 4;
 /** ...or, after this many samples without a still window, the median is taken. */
@@ -450,6 +460,8 @@ export class InputManager {
   _onSlotChange(slot, reason) {
     const connected = !!slot && slot.state === 'claimed';
     const hidBound = !!slot && !!slot._hidEntry;
+    // The slot's fusion is the lab's SensorFusion with yaw return off (#596).
+    if (slot && slot.fusion && !(slot.fusion.yawReturnHalfLife > 0)) slot.fusion.yawReturnHalfLife = YAW_RETURN_HALF_LIFE_S;
 
     // Update Cyclone A/B quirk from the claimed controller label.
     if (connected && slot.controllerLabel) {

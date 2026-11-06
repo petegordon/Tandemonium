@@ -5,7 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseRiderPaths, getGooseColourway, setGooseColourway, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -30,7 +30,7 @@ const ACTIVE_TEXT = {
 };
 import { makePlacementSalt, dailyKey } from './daily-seed.js';
 import {
-  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
+  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
@@ -54,7 +54,8 @@ import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { isSteamTwinPad } from './input-manager.js';
-import { versusTeamLooks } from './versus/team-looks.js';
+import { playerLooks, lookToWire, lookFromWire, versusSeatLooks } from './player-look.js';   // #548
+import { applyPlayerLed } from './player-led.js';   // #548
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
 import { World } from './world.js';
@@ -126,6 +127,11 @@ const DROP_DEBOUNCE_MS = 300;
 // race-config.js so the world's phase gates come from the same table (#543).
 
 // Per-phase item layouts at absolute sequential distances
+/** #512 · every tutorial present and pylon as { d, offset }, for the token planner. */
+function tutorialLayout() {
+  const flat = key => Object.values(TUTORIAL_ITEMS).flatMap(p => p[key]);
+  return { presents: flat('collectibles'), obstacles: flat('obstacles') };
+}
 const TUTORIAL_ITEMS = {
   1: {
     // Same side first, shallow offsets, wide spacing
@@ -290,6 +296,16 @@ class Game {
     // virtual XInput pads is the twin of a Steam Controller already streaming
     // over WebHID (#362).
     setControllerManager(this.controllerManager);
+    // #548 · each player's saved controller colour (Wardrobe) is what the manager
+    // lights their pad with when it claims it.
+    for (let n = 1; n <= 4; n++) applyPlayerLed(this.controllerManager, n, playerLooks.get(n).led);
+    // The Wardrobe (lobby) changed a look: Settings' Player 1 rows follow, and an
+    // online partner gets the new look. The geese follow on the next frame (_syncRiderLooks).
+    window.addEventListener('tandemonium:look-changed', (e) => {
+      const n = e && e.detail ? e.detail.n : 0;
+      if (n === 1) this._updateOptionsGooseOutfitUI();
+      if (n === 1 && this.net && this.net.connected) this._sendProfile();
+    });
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
     // and listen for hot-plug events.
@@ -753,6 +769,7 @@ class Game {
     this.raceManager = null;
     this.contributionTracker = null;
     this.collectibleManager = null;
+    this.tokenManager = null;        // #512 · the Tandem Token runs (js/token-runs.js)
 
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
@@ -1191,6 +1208,8 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
+    this._partnerLook = null;   // #548: set when the partner's profile carries their look
+    this._partnerLookKey = '';
     this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
     this.bike.applyPreset(this.lobby.selectedPreset);
@@ -1499,6 +1518,9 @@ class Game {
       // D-9: and their anonymous device id, so a guest partner still builds a
       // shared history with a signed-in rider.
       if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
+      // #548 · the partner's goose look (outfit, colourway, body); an older build sends none,
+      // and their goose then mirrors mine (seatLooks).
+      if (profile.look) { this._partnerLook = lookFromWire(profile.look); this._partnerLookKey = JSON.stringify(this._partnerLook); }
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;
@@ -1663,8 +1685,11 @@ class Game {
     // controllers. Bikes stagger ±0.8m laterally so they don't overlap on
     // the start line. Team tint comes from the existing bike presets.
     const presets = this.lobby._presetData || {};
-    // Each team's geese wear their own outfit in the team's colour.
-    const looks = versusTeamLooks(getGooseOutfit());
+    // #548 · each team's geese wear their riders' own looks; a rider who never picked
+    // one gets the team's outfit + colour (js/player-look.js versusSeatLooks, #538).
+    const teamLooks = (t) => versusSeatLooks(t.id,
+      t.members.map((m) => ({ look: playerLooks.get(m.n || 0), picked: !!m.n && playerLooks.isPicked(m.n) })),
+      getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
       const rig = new TeamRig({
         id: t.id,
@@ -1675,7 +1700,7 @@ class Game {
         bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
-      rig.bike.setGooseLook(looks[rig.id]);
+      rig.bike.setGooseLook(teamLooks(t));
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
       rig.resetForRace();
@@ -2330,6 +2355,8 @@ class Game {
     // Roadside geese (#363) — decorative verge scenery, no collision response.
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine, this._placementSalt);
+    // #512 · the Tandem Token runs, laid around the presents, pylons and geese above.
+    this._setupTokens(level, difficultyName, this.camera, level.isTutorial ? tutorialLayout() : null);
     // Optional visual physics (issue #388) — crash tumble, knocked pylons,
     // goose strikes. Starts the WASM fetch here so it overlaps the countdown.
     this._setupPhysicsFx([this.bike]);
@@ -2543,6 +2570,7 @@ class Game {
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, this.audioEngine);
+    this._setupTokens(level, difficultyName, this.versusRigs[0].camera, null);   // #512 · contested: first team through takes a run
     this._setupPhysicsFx(this.versusRigs.map((r) => r.bike));
     for (const rig of this.versusRigs) {
       rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -2815,6 +2843,11 @@ class Game {
         this.raceManager.collectiblesCount = this.collectibleManager.collected;
       }
       this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
+    }
+    // #512 · tokens past the checkpoint go back on the road too.
+    if (this.tokenManager && checkpointD > 0) {
+      this.tokenManager.resetToCheckpoint(checkpointD);
+      this._syncTokenTally();
     }
 
     this.grassParticles.clear();
@@ -3282,6 +3315,7 @@ class Game {
     this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
     this._showRideCoins('gameover', 'crash');
+    this._markSheetScroll('gameover-sheet');   // #512
     // #459 item 15: the sheet's action row in its own order; focus starts on
     // RESTART (the primary — #458 item 10), never on SAVE CLIP.
     const btns = focusResult(this._overlayFocus, document.getElementById('gameover-sheet'), { primary: document.getElementById('btn-restart') });
@@ -3434,7 +3468,13 @@ class Game {
     if (level.isDaily && level.key) {
       const store = browserStore();
       const dailyMode = this._dailyRunMode();
+      // #512 · the daily habit bonus: was this the first Daily Ride finished
+      // today, and how long is the streak once it is written? Read before the
+      // record goes in, consumed by the payout (_payoutRide).
+      const firstToday = !finishedToday(store, level.key);
+      let recorded = false;
       if (this._rankedRunActive) {
+        recorded = true;
         recordRanked(store, level.key, dailyMode, {
           timeMs: summary.timeMs,
           distance: summary.distance,
@@ -3449,7 +3489,9 @@ class Game {
         // #403: a 🛟 finish counts as finishing the road (streaks, Slingshot's
         // gate) but its time is not the practice best; a shortcut is neither.
         recordPractice(store, level.key, help.helped ? null : summary.timeMs);
+        recorded = true;
       }
+      if (recorded) this._dailyBonusInfo = { firstToday, streak: computeStreak(store, level.key).current };
       if (dailyMode === 'pair' && this._partnerKey()) {
         recordPartner(store, level.key, this._partnerKey());
       }
@@ -4527,10 +4569,33 @@ class Game {
     }
   }
 
+  /**
+   * #512 · an end sheet that has to scroll says so: data-scroll="yes" on its
+   * body draws a fade and "▼ more" (css/end-screens.css) until the body is
+   * scrolled to the end. The sheets are laid out to fit a laptop, a Deck and
+   * a TV without scrolling; this is for the phone held sideways.
+   */
+  _markSheetScroll(sheetId) {
+    const body = document.querySelector('#' + sheetId + ' .uf-sheet__body');
+    if (!body) return;
+    const mark = () => {
+      const more = body.scrollHeight - body.clientHeight > 4 && body.scrollTop + body.clientHeight < body.scrollHeight - 4;
+      body.dataset.scroll = more ? 'yes' : 'no';
+    };
+    if (!body._scrollMarked) {
+      body._scrollMarked = true;
+      body.addEventListener('scroll', mark, { passive: true });
+      window.addEventListener('resize', mark);
+    }
+    requestAnimationFrame(mark);
+  }
+
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
-    // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
+    // Slingshot: its coins are money, not a boost; the gates are the boost.
+    // (#512: on a regular road the presents stay the 3 s boost; the Tandem
+    // Tokens pay through _onTokens and never boost.)
     if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
     else {
       this.bike.boostTimer = 3; // 3-second speed boost
@@ -4697,6 +4762,7 @@ class Game {
     // id analytics already uses; it identifies a browser, not a person.
     try { profile.deviceId = analytics.getDeviceId(); } catch {}
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
+    profile.look = lookToWire(getP1Look());   // #548: my goose, for the partner's screen
     if (this.lobby.roomProfileFields) Object.assign(profile, this.lobby.roomProfileFields());   // PR #397 M1
     this.net.sendProfile(profile);
   }
@@ -4861,6 +4927,10 @@ class Game {
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles, label: 'Presents' });
       }
+      // #512 · Tandem Tokens taken of the road's total (the tally below pays them).
+      if (summary.tokensTotal > 0) {
+        right.push({ icon: '\uD83E\uDE99', value: (summary.tokens || 0) + '/' + summary.tokensTotal, label: 'Tokens' });
+      }
       // Top grid shows a single input source for solo / online MP. In local
       // mode we skip it here because the contribution breakdown below shows
       // BOTH players' input sources per-column (no need to duplicate P1's).
@@ -4882,20 +4952,21 @@ class Game {
       }
 
       // A grid of kit <uf-stat>s (#428): icon, value and what it measures.
+      // #512: the geese, crash and restart counts sit in the grid too (each
+      // used to be a full-width row under it, which pushed the tally off a
+      // 1280×800 screen).
       const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"></uf-stat>';
-      let html = '<div class="victory-stats-grid">' + [...left, ...right].map(stat).join('') + '</div>';
-
+      const cells = [...left, ...right];
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
       const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
-      if (geeseScattered > 0) {
-        html += stat({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
-      }
+      if (geeseScattered > 0) cells.push({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
+      if (summary.crashes > 0) cells.push({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
+      if (summary.restarts > 0) cells.push({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
+      let html = '<div class="victory-stats-grid">' + cells.map(stat).join('') + '</div>';
 
-      // Perfect ride / crashes
-      if (summary.crashes > 0) {
-        html += stat({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
-      } else {
+      // Perfect ride
+      if (!(summary.crashes > 0)) {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
       // B-3 \u00B7 the ride you just did, measured against the rides you have done
@@ -4905,9 +4976,6 @@ class Game {
       html += this._buildDailyStripHtml(summary, level);
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
-      if (summary.restarts > 0) {
-        html += stat({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
-      }
 
       statsEl.innerHTML = html;
 
@@ -4976,6 +5044,8 @@ class Game {
         checkpoints_total: summary.checkpointsTotal,
         collectibles: summary.collectibles,
         collectibles_total: summary.collectiblesTotal || 0,
+        tokens: summary.tokens || 0,                   // #512
+        tokens_total: summary.tokensTotal || 0,
         crash_count: summary.crashes,
         timeout_count: summary.timeoutCount || 0,
         restarts: summary.restarts,
@@ -5075,8 +5145,9 @@ class Game {
 
     // B-5: wishlist + send-a-link, after the ride buttons.
     this._updateCtaButtons('victory');
-    // #400 D4: the ride pays Chaos Coins — the tally, and GARAGE → to spend them.
+    // #400 D4: the ride pays Tandem Tokens — the tally, and GARAGE → to spend them.
     this._showRideCoins('victory', 'finish', { summary });
+    this._markSheetScroll('victory-sheet');   // #512
 
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
@@ -5358,10 +5429,12 @@ class Game {
     this.hud.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -5512,10 +5585,12 @@ class Game {
     this.hud.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -5781,6 +5856,10 @@ class Game {
       const b = document.getElementById('opt-colour-' + i);
       if (b) b.addEventListener('click', () => this._setGooseColourway(i));
     }
+    for (const k of ['m', 'f']) {
+      const b = document.getElementById('opt-body-' + k);
+      if (b) b.addEventListener('click', () => this._setGooseBody(k));
+    }
 
     // Display testing: save, then reload (edge smoothing is fixed when the
     // renderer is made) without the URL switches so the saved choice applies.
@@ -5996,11 +6075,31 @@ class Game {
     this._updateOptionsShowSoloUI();
   }
 
-  /** Goose Outfits: saved, then the geese on the bike are swapped in place (live versus rigs keep theirs). */
+  /**
+   * #548 · the seats follow the players' looks (Wardrobe / Settings / an online partner's
+   * profile). Called every frame; only a changed look, mode or partner touches the bike.
+   * Versus rigs dress themselves in _onVersusReady.
+   */
+  _syncRiderLooks(force = false) {
+    if (!this.bike || this.mode === 'versus') return;
+    const key = `${this.mode}|${playerLooks.version}|${this._partnerLook ? this._partnerLookKey : ''}`;
+    if (!force && key === this._riderLooksKey) return;
+    this._riderLooksKey = key;
+    this.bike.setSeatLooks(getSeatLooks(this.mode, this._partnerLook), !this.versusRigs);
+  }
+
+  /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
   _setGooseOutfit(key) {
-    try { localStorage.setItem('tandemonium_goose_outfit', key); } catch (e) {}
+    playerLooks.update(1, { outfit: key });
     this._updateOptionsGooseOutfitUI();
-    if (this.bike) this.bike.setGooseRiders(getGooseRiderPaths(), !this.versusRigs);
+    this._syncRiderLooks(true);
+  }
+
+  /** Player 1's goose body (Settings): gander or goose. */
+  _setGooseBody(body) {
+    playerLooks.update(1, { body });
+    this._updateOptionsGooseOutfitUI();
+    this._syncRiderLooks(true);
   }
 
   _updateOptionsGooseOutfitUI() {
@@ -6008,6 +6107,11 @@ class Game {
     for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.classList.toggle('active', key === cur);
+    }
+    const body = playerLooks.get(1).body;
+    for (const k of ['m', 'f']) {
+      const b = document.getElementById('opt-body-' + k);
+      if (b) b.classList.toggle('active', k === body);
     }
     this._updateOptionsGooseColourUI();
   }
@@ -6019,7 +6123,7 @@ class Game {
     if (!way) return;
     setGooseColourway(outfit, way.key);
     this._updateOptionsGooseColourUI();
-    if (this.bike) this.bike.applyGooseColours();
+    this._syncRiderLooks(true);
   }
 
   _updateOptionsGooseColourUI() {
@@ -6180,6 +6284,8 @@ class Game {
       document.getElementById('opt-riders-off'),
       document.getElementById('opt-solo-on'),
       document.getElementById('opt-solo-off'),
+      document.getElementById('opt-body-m'),
+      document.getElementById('opt-body-f'),
       document.getElementById('opt-outfit-victorian'),
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
@@ -7025,6 +7131,7 @@ class Game {
     // toggle and a mode change both apply on the next frame).
     if (this._showSolo === undefined) this._showSolo = getShowSolo();
     if (this.bike && this.bike.goose) this.bike.setSoloRider(this.mode === 'solo' && this._showSolo);
+    this._syncRiderLooks();
 
     // Front-view PiP — composite a front-facing "selfie cam" of the bike
     // into the lower-right corner, on top of whatever was just rendered.
@@ -7497,6 +7604,7 @@ class Game {
         this._onCollect(collected.length);
       }
     }
+    this._updateTokens(dt);   // #512
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
@@ -7606,6 +7714,12 @@ class Game {
       for (let i = 0; i < counts.length; i++) {
         if (counts[i] > 0) this._onVersusCollect(rigs[i], counts[i]);
       }
+    }
+    if (this.tokenManager) {   // #512 · contested: whichever team rides through first takes them
+      this.tokenManager.updateVersus(dt, rigs.map((r) => ({ d: r.bike.distanceTraveled, position: r.bike.position })));
+      const taken = this.tokenManager.lastCollected;
+      for (let i = 0; i < taken.length; i++) if (taken[i].length) this._onTokens(taken[i], rigs[i]);
+      if (this._tokenFx) this._tokenFx.update(dt);
     }
     if (this.physicsFx) this.physicsFx.update(dt);
     if (this.obstacleManager) {
@@ -7904,6 +8018,8 @@ class Game {
       crash_count: winner.crashCount + loser.crashCount,
       timeout_count: 0,
       restarts: 0,
+      tokens: (winner.tokens || 0) + (loser.tokens || 0),            // #512
+      tokens_total: this.tokenManager ? this.tokenManager.getTotalItems() : 0,
     });
 
     // Full-frame cinematic around the winner's bike. The singleton camera
@@ -8161,6 +8277,9 @@ class Game {
     if (this.collectibleManager) {
       this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
+    // #512 · tokens: the stoker keeps its own tally for the HUD and a crash
+    // payout; the finish takes the captain's numbers from finishStats.
+    this._updateTokens(dt);
 
     // Obstacles
     if (this.obstacleManager) {
@@ -9473,6 +9592,9 @@ class Game {
     }
     const totalPresents = Object.values(TUTORIAL_ITEMS).reduce((n, p) => n + p.collectibles.length, 0);
     html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
+    if (this.tokenManager && this.tokenManager.getTotalItems() > 0) {
+      html += 'Tandem Tokens: ' + this.tokenManager.collected + '/' + this.tokenManager.getTotalItems() + '<br>';   // #512
+    }
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
     this._showRideCoins('tutorial', 'finish', { tutorial: true, pickups: this._tutorialCollected });   // #400 D4
@@ -9689,10 +9811,12 @@ class Game {
     this._hideVictory();
     this._hideAllOverlays();
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this.raceManager = null;
     this.hud.raceManager = null;
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -9746,7 +9870,7 @@ class Game {
 if (isTouristMode()) await resolveTouristOrigin();
 
 installSlingshotMode(Game);   // js/slingshot-mode.js
-installEconomyMode(Game);     // js/economy-mode.js — every ride pays Chaos Coins (#400 D4)
+installEconomyMode(Game);     // js/economy-mode.js — every ride pays Tandem Tokens (#400 D4)
 installHelpingHandMode(Game); // js/helping-hand-mode.js — retries get easier, visibly (#403)
 const game = new Game();
 window._game = game;
