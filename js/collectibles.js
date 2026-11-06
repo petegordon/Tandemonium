@@ -36,7 +36,28 @@ const THEMES = {
       };
     },
   },
-  // Slingshot mode's Chaos Coins: big glossy gold discs stood on edge so the
+  // #512 · Tandem Tokens on a regular road: the Slingshot's gold disc, with a
+  // flat additive halo ring in the disc's plane instead of the sprite
+  // sparkles, so a run of five is two instanced draws however many are out
+  // (a Daily Ride has 40; the TV and phone low tiers stay smooth). Placed by
+  // js/token-runs.js through `opts.items`, never by _placeItems.
+  tokens: {
+    instanced: true, name: 'tokens', scale: 1,
+    build() {
+      const geo = new THREE.CylinderGeometry(0.5, 0.5, 0.09, 24);
+      geo.rotateX(Math.PI / 2);
+      const mat = new THREE.MeshPhongMaterial({
+        color: 0xffd23f, emissive: 0x9a6400, shininess: 220, specular: 0xffffff,
+      });
+      const fxGeo = new THREE.RingGeometry(0.58, 0.95, 24);
+      const fxMat = new THREE.MeshBasicMaterial({
+        color: 0xffd23f, transparent: true, opacity: 0.35, depthWrite: false,
+        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+      });
+      return { geo, mat, fxGeo, fxMat, time: { value: 0 } };
+    },
+  },
+  // Slingshot mode's Tandem Tokens: big glossy gold discs stood on edge so the
   // spin flashes the face, each with a soft halo and twinkling star sparkles
   // that orbit with the spin — they have to read from the chase camera.
   coins: {
@@ -103,7 +124,13 @@ function coinSparkleMaterials() {
 }
 
 export class CollectibleManager {
-  constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0) {
+  /**
+   * @param {object} [opts]
+   * @param {Array<{d:number, offset:number, value?:number}>} [opts.items]
+   *   a fixed layout (#512 · the Tandem Token runs) instead of the seeded
+   *   placement; `value` is what each item pays (collectedValue()).
+   */
+  constructor(scene, roadPath, level, camera, difficulty, placementSalt = 0, opts = {}) {
     this.scene = scene;
     this.roadPath = roadPath;
     this.level = level;
@@ -112,8 +139,11 @@ export class CollectibleManager {
     this.placementSalt = placementSalt || 0;   // B-4, see ObstacleManager
     this.collected = 0;
     this._pool = [];
-    this._items = []; // { roadD, lateralOffset, collected, poolIdx, absoluteD }
+    this._items = []; // { roadD, lateralOffset, collected, poolIdx, absoluteD, value }
     this._loopLen = roadPath.loopLength;
+    /** updateVersus: the item indices each anchor collected on the last call. */
+    this.lastCollected = [];
+    const place = () => (opts.items ? this.replaceItems(opts.items) : this._placeItems());
 
     // Build themed meshes
     const theme = THEMES[level.collectibles] || THEMES.presents;
@@ -129,17 +159,18 @@ export class CollectibleManager {
       const body = new THREE.InstancedMesh(parts.geo, parts.mat, POOL_SIZE);
       const fx = new THREE.InstancedMesh(parts.fxGeo, parts.fxMat, POOL_SIZE);
       for (const m of [body, fx]) { m.count = 0; m.frustumCulled = false; scene.add(m); }
-      body.name = 'presents'; fx.name = 'presents-fx';
+      const name = theme.name || 'presents';
+      body.name = name; fx.name = name + '-fx';
       body.castShadow = true;
       this._instanced = { body, fx, time: parts.time };
       this._variants = [{ geo: parts.geo, mat: parts.mat }, { geo: parts.fxGeo, mat: parts.fxMat }];
       for (let i = 0; i < POOL_SIZE; i++) {
         const mesh = new THREE.Object3D();
-        mesh.scale.setScalar(PRESENT.ROAD_SCALE);
+        mesh.scale.setScalar(theme.scale || PRESENT.ROAD_SCALE);
         mesh.visible = false;
         this._pool.push({ mesh, itemIdx: -1 });
       }
-      this._placeItems();
+      place();
       return;
     }
     this._variants = theme.build(scene);
@@ -156,7 +187,7 @@ export class CollectibleManager {
     }
 
     // Place items deterministically along the entire race distance
-    this._placeItems();
+    place();
   }
 
   _placeItems() {
@@ -222,11 +253,26 @@ export class CollectibleManager {
         absoluteD: p.d,
         roadD: p.d % this._loopLen,
         lateralOffset: p.offset,
+        value: Number.isFinite(p.value) ? p.value : 0,
         collected: false,
         poolIdx: -1
       });
     }
     this.collected = 0;
+  }
+
+  /** #512 · what the collected items pay (items placed with a `value`). */
+  collectedValue() {
+    let v = 0;
+    for (const item of this._items) if (item.collected) v += item.value || 0;
+    return v;
+  }
+
+  /** The sum of every item's value on this road. */
+  totalValue() {
+    let v = 0;
+    for (const item of this._items) v += item.value || 0;
+    return v;
   }
 
   resetCollected() {
@@ -390,6 +436,8 @@ export class CollectibleManager {
    */
   updateVersus(dt, anchors) {
     const counts = anchors.map(() => 0);
+    const taken = anchors.map(() => []);
+    this.lastCollected = taken;
     const nearAny = (absD) => {
       for (const a of anchors) {
         const ahead = absD - a.d;
@@ -431,6 +479,7 @@ export class CollectibleManager {
           item.collected = true;
           this.collected++;
           counts[a]++;
+          taken[a].push(i);
           if (item.poolIdx >= 0) {
             this._pool[item.poolIdx].mesh.visible = false;
             this._pool[item.poolIdx].itemIdx = -1;

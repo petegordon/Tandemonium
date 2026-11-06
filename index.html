@@ -305,6 +305,7 @@
   #sling-hud.visible { display: flex; }
   #sling-hud .sling-coins { color: var(--uf-color-accent-2); font-size: 17px; display: inline-block; }
   #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
+  #token-counter.pop { animation: sling-coin-pop 0.45s ease-out; color: var(--uf-color-accent-2); }
   @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px var(--uf-color-accent-2); } 100% { transform: scale(1); } }
   .sling-coin-float {
     position: fixed; left: 50%; top: 118px; transform: translateX(-50%);
@@ -5030,6 +5031,11 @@
         <span class="hud-stat-icon" id="collectible-icon"></span>
         <span id="collectible-count"></span>
       </div>
+      <!-- #512 · Tandem Tokens taken on this road, n/N. -->
+      <div class="hud-stat" id="token-counter">
+        <span class="hud-stat-icon">&#x1FA99;</span>
+        <span id="token-count">0</span>
+      </div>
       <div class="hud-stat" id="geese-counter">
         <span class="hud-stat-icon">&#x1FABF;</span>
         <span id="geese-count">0</span>
@@ -5979,7 +5985,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d3f5e61 | 11-05-2026 19:56</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.9d04aee | 11-05-2026 20:01</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6356,7 +6362,7 @@ ON</button>
   </uf-sheet>
 </div>
 
-<!-- Slingshot mode · spend Chaos Coins between launches. Filled by js/slingshot-ui.js. -->
+<!-- Slingshot mode · spend Tandem Tokens between launches. Filled by js/slingshot-ui.js. -->
 <!-- #459 item 11: on the modal shell — B / Esc / the scrim / Close all leave it (its BACK / LOBBY). -->
 <div id="sling-garage"><uf-sheet id="sling-garage-sheet" headline tone="gold" heading="Garage" size="md"><div id="sling-garage-body"></div></uf-sheet></div>
 <!-- Slingshot mode · one launch's payout. -->

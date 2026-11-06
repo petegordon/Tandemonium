@@ -25,7 +25,7 @@ the track as the licence asks.
 | **0:23.6** | *band comes in* `weave`: Today's Road, Adventurous | TODAY'S ROAD / A NEW ROAD EVERY DAY |
 | 0:29 | `colours`: a new Goose Colours scheme on every half-bar | PICK YOUR COLOURS |
 | 0:33 | `crash`: both lean the same way, the tumble | FALL TOGETHER |
-| 0:37 | `sling`: drag back, launch, follow cam over the Chaos Coins | SLINGSHOT! / GRAB THE CHAOS COINS |
+| 0:37 | `sling`: drag back, launch, follow cam over the Tandem Tokens | SLINGSHOT! / GRAB THE TANDEM TOKENS |
 | 0:49 | `versus`: split-screen 2v2, four bots | SPLIT-SCREEN 2 v 2 / RACE YOUR FRIENDS |
 | 0:59 | `finish`: Grandma's finish line, YOU BOTH MADE IT! | (the game's own) |
 | **1:10.5** | *quiet break* `endbg`: slow orbit | RIDE ON ONE COUCH / OR ONLINE WITH A FRIEND |

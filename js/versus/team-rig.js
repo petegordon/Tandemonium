@@ -73,6 +73,8 @@ export class TeamRig {
     this.finishMs = 0;
     this.crashCount = 0;
     this.collectibles = 0;
+    this.tokens = 0;         // #512 · Tandem Tokens this team took (contested)
+    this.tokenValue = 0;
     // Per-member steering input (-1..1), pre-merge — written each frame by
     // _stepTeam and rendered by VersusHud's tilt gauge.
     this.hudLeans = [0, 0];
@@ -109,6 +111,8 @@ export class TeamRig {
     this.finishMs = 0;
     this.crashCount = 0;
     this.collectibles = 0;
+    this.tokens = 0;         // #512 · Tandem Tokens this team took (contested)
+    this.tokenValue = 0;
     this.bike.resetToDistance(0);
     this._applyStartOffset();
     this.chaseCamera.initialized = false;

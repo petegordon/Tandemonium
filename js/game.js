@@ -30,7 +30,7 @@ const ACTIVE_TEXT = {
 };
 import { makePlacementSalt, dailyKey } from './daily-seed.js';
 import {
-  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak,
+  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
@@ -126,6 +126,11 @@ const DROP_DEBOUNCE_MS = 300;
 // race-config.js so the world's phase gates come from the same table (#543).
 
 // Per-phase item layouts at absolute sequential distances
+/** #512 · every tutorial present and pylon as { d, offset }, for the token planner. */
+function tutorialLayout() {
+  const flat = key => Object.values(TUTORIAL_ITEMS).flatMap(p => p[key]);
+  return { presents: flat('collectibles'), obstacles: flat('obstacles') };
+}
 const TUTORIAL_ITEMS = {
   1: {
     // Same side first, shallow offsets, wide spacing
@@ -753,6 +758,7 @@ class Game {
     this.raceManager = null;
     this.contributionTracker = null;
     this.collectibleManager = null;
+    this.tokenManager = null;        // #512 · the Tandem Token runs (js/token-runs.js)
 
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
@@ -2330,6 +2336,8 @@ class Game {
     // Roadside geese (#363) — decorative verge scenery, no collision response.
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.camera, this.audioEngine, this._placementSalt);
+    // #512 · the Tandem Token runs, laid around the presents, pylons and geese above.
+    this._setupTokens(level, difficultyName, this.camera, level.isTutorial ? tutorialLayout() : null);
     // Optional visual physics (issue #388) — crash tumble, knocked pylons,
     // goose strikes. Starts the WASM fetch here so it overlaps the countdown.
     this._setupPhysicsFx([this.bike]);
@@ -2543,6 +2551,7 @@ class Game {
     this.obstacleManager = new ObstacleManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, difficultyName);
     if (this.geeseManager) this.geeseManager.dispose();
     this.geeseManager = new GeeseManager(this.scene, this.world.roadPath, level, this.versusRigs[0].camera, this.audioEngine);
+    this._setupTokens(level, difficultyName, this.versusRigs[0].camera, null);   // #512 · contested: first team through takes a run
     this._setupPhysicsFx(this.versusRigs.map((r) => r.bike));
     for (const rig of this.versusRigs) {
       rig.raceManager.setCollectiblesTotal(this.collectibleManager.getTotalItems());
@@ -2815,6 +2824,11 @@ class Game {
         this.raceManager.collectiblesCount = this.collectibleManager.collected;
       }
       this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
+    }
+    // #512 · tokens past the checkpoint go back on the road too.
+    if (this.tokenManager && checkpointD > 0) {
+      this.tokenManager.resetToCheckpoint(checkpointD);
+      this._syncTokenTally();
     }
 
     this.grassParticles.clear();
@@ -3282,6 +3296,7 @@ class Game {
     this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
     this._showRideCoins('gameover', 'crash');
+    this._markSheetScroll('gameover-sheet');   // #512
     // #459 item 15: the sheet's action row in its own order; focus starts on
     // RESTART (the primary — #458 item 10), never on SAVE CLIP.
     const btns = focusResult(this._overlayFocus, document.getElementById('gameover-sheet'), { primary: document.getElementById('btn-restart') });
@@ -3434,7 +3449,13 @@ class Game {
     if (level.isDaily && level.key) {
       const store = browserStore();
       const dailyMode = this._dailyRunMode();
+      // #512 · the daily habit bonus: was this the first Daily Ride finished
+      // today, and how long is the streak once it is written? Read before the
+      // record goes in, consumed by the payout (_payoutRide).
+      const firstToday = !finishedToday(store, level.key);
+      let recorded = false;
       if (this._rankedRunActive) {
+        recorded = true;
         recordRanked(store, level.key, dailyMode, {
           timeMs: summary.timeMs,
           distance: summary.distance,
@@ -3449,7 +3470,9 @@ class Game {
         // #403: a 🛟 finish counts as finishing the road (streaks, Slingshot's
         // gate) but its time is not the practice best; a shortcut is neither.
         recordPractice(store, level.key, help.helped ? null : summary.timeMs);
+        recorded = true;
       }
+      if (recorded) this._dailyBonusInfo = { firstToday, streak: computeStreak(store, level.key).current };
       if (dailyMode === 'pair' && this._partnerKey()) {
         recordPartner(store, level.key, this._partnerKey());
       }
@@ -4527,10 +4550,33 @@ class Game {
     }
   }
 
+  /**
+   * #512 · an end sheet that has to scroll says so: data-scroll="yes" on its
+   * body draws a fade and "▼ more" (css/end-screens.css) until the body is
+   * scrolled to the end. The sheets are laid out to fit a laptop, a Deck and
+   * a TV without scrolling; this is for the phone held sideways.
+   */
+  _markSheetScroll(sheetId) {
+    const body = document.querySelector('#' + sheetId + ' .uf-sheet__body');
+    if (!body) return;
+    const mark = () => {
+      const more = body.scrollHeight - body.clientHeight > 4 && body.scrollTop + body.clientHeight < body.scrollHeight - 4;
+      body.dataset.scroll = more ? 'yes' : 'no';
+    };
+    if (!body._scrollMarked) {
+      body._scrollMarked = true;
+      body.addEventListener('scroll', mark, { passive: true });
+      window.addEventListener('resize', mark);
+    }
+    requestAnimationFrame(mark);
+  }
+
   _onCollect(count) {
     if (this.raceManager) this.raceManager.collectiblesCount += count;
     this.hud.updateCollectibles(this.collectibleManager.collected, this.collectibleManager.getTotalItems());
-    // Slingshot: Chaos Coins are money, not a boost; the gates are the boost.
+    // Slingshot: its coins are money, not a boost; the gates are the boost.
+    // (#512: on a regular road the presents stay the 3 s boost; the Tandem
+    // Tokens pay through _onTokens and never boost.)
     if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
     else {
       this.bike.boostTimer = 3; // 3-second speed boost
@@ -4861,6 +4907,10 @@ class Game {
       if (summary.collectibles > 0) {
         right.push({ icon: collectIcon, value: '' + summary.collectibles, label: 'Presents' });
       }
+      // #512 · Tandem Tokens taken of the road's total (the tally below pays them).
+      if (summary.tokensTotal > 0) {
+        right.push({ icon: '\uD83E\uDE99', value: (summary.tokens || 0) + '/' + summary.tokensTotal, label: 'Tokens' });
+      }
       // Top grid shows a single input source for solo / online MP. In local
       // mode we skip it here because the contribution breakdown below shows
       // BOTH players' input sources per-column (no need to duplicate P1's).
@@ -4882,20 +4932,21 @@ class Game {
       }
 
       // A grid of kit <uf-stat>s (#428): icon, value and what it measures.
+      // #512: the geese, crash and restart counts sit in the grid too (each
+      // used to be a full-width row under it, which pushed the tally off a
+      // 1280×800 screen).
       const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"></uf-stat>';
-      let html = '<div class="victory-stats-grid">' + [...left, ...right].map(stat).join('') + '</div>';
-
+      const cells = [...left, ...right];
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
       const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
-      if (geeseScattered > 0) {
-        html += stat({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
-      }
+      if (geeseScattered > 0) cells.push({ icon: '🪿', value: '' + geeseScattered, label: 'Geese scattered' });
+      if (summary.crashes > 0) cells.push({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
+      if (summary.restarts > 0) cells.push({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
+      let html = '<div class="victory-stats-grid">' + cells.map(stat).join('') + '</div>';
 
-      // Perfect ride / crashes
-      if (summary.crashes > 0) {
-        html += stat({ icon: '\uD83D\uDCA5', value: '' + summary.crashes, label: 'Crashes' });
-      } else {
+      // Perfect ride
+      if (!(summary.crashes > 0)) {
         html += '<div class="victory-stat victory-perfect">\u2B50 No Crashes! \u2B50</div>';
       }
       // B-3 \u00B7 the ride you just did, measured against the rides you have done
@@ -4905,9 +4956,6 @@ class Game {
       html += this._buildDailyStripHtml(summary, level);
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
-      if (summary.restarts > 0) {
-        html += stat({ icon: '\uD83C\uDFC1', value: '' + summary.restarts, label: 'Restarts' });
-      }
 
       statsEl.innerHTML = html;
 
@@ -4976,6 +5024,8 @@ class Game {
         checkpoints_total: summary.checkpointsTotal,
         collectibles: summary.collectibles,
         collectibles_total: summary.collectiblesTotal || 0,
+        tokens: summary.tokens || 0,                   // #512
+        tokens_total: summary.tokensTotal || 0,
         crash_count: summary.crashes,
         timeout_count: summary.timeoutCount || 0,
         restarts: summary.restarts,
@@ -5075,8 +5125,9 @@ class Game {
 
     // B-5: wishlist + send-a-link, after the ride buttons.
     this._updateCtaButtons('victory');
-    // #400 D4: the ride pays Chaos Coins — the tally, and GARAGE → to spend them.
+    // #400 D4: the ride pays Tandem Tokens — the tally, and GARAGE → to spend them.
     this._showRideCoins('victory', 'finish', { summary });
+    this._markSheetScroll('victory-sheet');   // #512
 
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
@@ -5358,10 +5409,12 @@ class Game {
     this.hud.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -5512,10 +5565,12 @@ class Game {
     this.hud.raceManager = null;
     this.contributionTracker = null;
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this._teardownPhysicsFx();
     this._contribBar.style.display = 'none';
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -7497,6 +7552,7 @@ class Game {
         this._onCollect(collected.length);
       }
     }
+    this._updateTokens(dt);   // #512
     if (this.obstacleManager) {
       this.obstacleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
@@ -7606,6 +7662,12 @@ class Game {
       for (let i = 0; i < counts.length; i++) {
         if (counts[i] > 0) this._onVersusCollect(rigs[i], counts[i]);
       }
+    }
+    if (this.tokenManager) {   // #512 · contested: whichever team rides through first takes them
+      this.tokenManager.updateVersus(dt, rigs.map((r) => ({ d: r.bike.distanceTraveled, position: r.bike.position })));
+      const taken = this.tokenManager.lastCollected;
+      for (let i = 0; i < taken.length; i++) if (taken[i].length) this._onTokens(taken[i], rigs[i]);
+      if (this._tokenFx) this._tokenFx.update(dt);
     }
     if (this.physicsFx) this.physicsFx.update(dt);
     if (this.obstacleManager) {
@@ -7904,6 +7966,8 @@ class Game {
       crash_count: winner.crashCount + loser.crashCount,
       timeout_count: 0,
       restarts: 0,
+      tokens: (winner.tokens || 0) + (loser.tokens || 0),            // #512
+      tokens_total: this.tokenManager ? this.tokenManager.getTotalItems() : 0,
     });
 
     // Full-frame cinematic around the winner's bike. The singleton camera
@@ -8161,6 +8225,9 @@ class Game {
     if (this.collectibleManager) {
       this.collectibleManager.update(dt, this.bike.distanceTraveled, this.bike.position);
     }
+    // #512 · tokens: the stoker keeps its own tally for the HUD and a crash
+    // payout; the finish takes the captain's numbers from finishStats.
+    this._updateTokens(dt);
 
     // Obstacles
     if (this.obstacleManager) {
@@ -9473,6 +9540,9 @@ class Game {
     }
     const totalPresents = Object.values(TUTORIAL_ITEMS).reduce((n, p) => n + p.collectibles.length, 0);
     html += 'Presents collected: ' + this._tutorialCollected + '/' + totalPresents + '<br>';
+    if (this.tokenManager && this.tokenManager.getTotalItems() > 0) {
+      html += 'Tandem Tokens: ' + this.tokenManager.collected + '/' + this.tokenManager.getTotalItems() + '<br>';   // #512
+    }
     html += '<span class="calibrated">Steering calibrated to your style!</span>';
     statsEl.innerHTML = html;
     this._showRideCoins('tutorial', 'finish', { tutorial: true, pickups: this._tutorialCollected });   // #400 D4
@@ -9689,10 +9759,12 @@ class Game {
     this._hideVictory();
     this._hideAllOverlays();
     if (this.collectibleManager) { this.collectibleManager.destroy(); this.collectibleManager = null; }
+    if (this.tokenManager) { this.tokenManager.destroy(); this.tokenManager = null; }   // #512
     if (this.obstacleManager) { this.obstacleManager.destroy(); this.obstacleManager = null; }
     this.raceManager = null;
     this.hud.raceManager = null;
     this.hud.hideCollectibles();
+    this.hud.hideTokens();
     this.hud.hideGeese();
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
@@ -9746,7 +9818,7 @@ class Game {
 if (isTouristMode()) await resolveTouristOrigin();
 
 installSlingshotMode(Game);   // js/slingshot-mode.js
-installEconomyMode(Game);     // js/economy-mode.js — every ride pays Chaos Coins (#400 D4)
+installEconomyMode(Game);     // js/economy-mode.js — every ride pays Tandem Tokens (#400 D4)
 installHelpingHandMode(Game); // js/helping-hand-mode.js — retries get easier, visibly (#403)
 const game = new Game();
 window._game = game;
