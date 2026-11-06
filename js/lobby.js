@@ -61,7 +61,7 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { mergedPollGp } from './lobby/join-poll.js';
+import { mergedPollGp, withoutHeldTwins } from './lobby/join-poll.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -6444,10 +6444,11 @@ export class Lobby {
     const ownedSlotIds = owned.slotIds;
     // Gamepad API pads. A controller Steam has captured arrives here too, as
     // Steam's virtual XInput pad (emulation mode, docs/steam-input.md).
+    const gpCands = [];
     for (const gp of pads) {
       if (!gp || ownedIndices.has(gp.index)) continue;
       if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-      out.push({
+      gpCands.push({
         kind: 'gamepad',
         key: 'gp:' + gp.index,
         gpIndex: gp.index,
@@ -6456,6 +6457,9 @@ export class Lobby {
         pollGp: gp,
       });
     }
+    // A pad a slot already holds over WebHID is listed through that slot (or
+    // not at all, when its owner is seated): drop its Gamepad twin (#581).
+    out.push(...withoutHeldTwins(gpCands, mgr ? mgr.slots : []));
 
     if (mgr) {
       // Pool entries (unclaimed HID pads — synthetics live pre-claim).
@@ -6506,7 +6510,8 @@ export class Lobby {
           device: s.hidDevice,
           slotId: s.id,
           name: prettyHidName(s.hidDevice, s.controllerLabel),
-          pollGp: s.synthetic,
+          // Its adopted Gamepad entry too, when it has one: a press on either counts.
+          pollGp: s.gamepadIndex != null ? mergedPollGp(pads[s.gamepadIndex], s.synthetic) : s.synthetic,
         });
       }
     }
