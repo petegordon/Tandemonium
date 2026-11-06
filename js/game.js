@@ -42,7 +42,7 @@ import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { gyroOnlySteer } from './achievement-defs.js';
-import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots } from './input-manager.js';
+import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots, isSilentSteamControllerSlot, frozenTwinHidEntries } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -6972,9 +6972,29 @@ class Game {
     // lobby screens evict a twin that got claimed before it could be recognised.
     noteSteamControllerPresses();
     if (this.state === 'lobby') {
-      for (const id of claimedSteamTwinSlots(pads)) {
-        if (this.lobby && this.lobby._dropTwinSeat) this.lobby._dropTwinSeat(id);
-        this.controllerManager.releaseSlotToPool(id);
+      const mgr = this.controllerManager;
+      const drop = (id, why) => {
+        if (this.lobby && this.lobby._dropSeat) this.lobby._dropSeat(id, why);
+        mgr.releaseSlotToPool(id);
+      };
+      for (const id of claimedSteamTwinSlots(pads)) drop(id, "held a Steam Controller's XInput twin");
+      // A Steam Controller switched off: free its seat (P1's too), so another pad
+      // can take it and the controller lists stop showing it (#581). Mid-ride it
+      // keeps the seat and the disconnect pause shows instead.
+      const now = performance.now();
+      for (const s of mgr.slots) if (isSilentSteamControllerSlot(s, now)) drop(s.id, 'its Steam Controller went quiet (switched off)');
+      // A press on a pad only WebHID can hear, behind a frozen Gamepad twin: seat it
+      // the way the manager would have (first free seat, same cooldown rules).
+      if (!mgr.autoClaimSuspended) {
+        for (const e of frozenTwinHidEntries(pads)) {
+          const empty = mgr.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
+          if (!empty) break;
+          const releasedAt = mgr._recentlyReleasedBySlot && mgr._recentlyReleasedBySlot.get(empty.id);
+          if (releasedAt != null && now - releasedAt < (mgr.opts.reclaimCooldownMs || 0)) break;
+          if (mgr.claimHidDeviceForSlot(empty.id, e.device) && this.lobby && this.lobby._diag) {
+            this.lobby._diag(`[manager] ${empty.id}: claimed ${e.device.productName || 'a pad'} over WebHID (its Gamepad entry is frozen)`, 'frozen-claim:' + empty.id);
+          }
+        }
       }
     }
 

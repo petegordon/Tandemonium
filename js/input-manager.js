@@ -178,6 +178,50 @@ export function noteSteamControllerPresses(now = performance.now()) {
 }
 
 /**
+ * #581 · a Steam Controller switched off stays "connected": the Puck receiver is
+ * still plugged in, so its HID device never disconnects — the body just stops
+ * sending STATE reports. A Steam Controller streams continuously, IMU included,
+ * even lying still, so this much silence means it is off.
+ */
+export const PUCK_SILENT_MS = 4000;
+
+/** Is this claimed slot holding a Steam Controller that has stopped reporting (switched off)? */
+export function isSilentSteamControllerSlot(slot, now = performance.now()) {
+  const e = slot && slot.state === 'claimed' ? slot._hidEntry : null;
+  if (!e || !e.driver?.constructor?.needsSiblingFanout) return false;
+  return e.hidActiveSince > 0 && now - e.hidActiveSince > PUCK_SILENT_MS;
+}
+
+/**
+ * #581 · pooled WebHID pads that a button press should seat but the
+ * ControllerManager will not: it leaves a HID claim to the Gamepad API when an
+ * unclaimed Gamepad pad has the same product name, and a DualSense switched on
+ * after launch has exactly that — its compat-mode Gamepad entry, frozen once
+ * the driver switched it to full reports (#590). That entry never shows a
+ * press, so neither side claimed it ("seen but can't become Player 1").
+ * Returned when every such Gamepad twin shows no press while the HID pad does.
+ * @returns {any[]} HidEntry objects
+ */
+export function frozenTwinHidEntries(pads) {
+  const mgr = _controllerManager;
+  if (!mgr || !mgr._hidPool || typeof mgr._recentPressed !== 'function') return [];
+  const claimedIdx = new Set((mgr.slots || []).filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
+  const out = [];
+  for (const e of mgr._hidPool.values()) {
+    if (typeof e.hasFreshButtonPress !== 'function' || !e.hasFreshButtonPress()) continue;
+    const name = String((e.device && e.device.productName) || '').trim().toLowerCase();
+    if (!name) continue;
+    const twins = (pads || []).filter((gp) => gp && !claimedIdx.has(gp.index) && String(gp.id || '').toLowerCase().includes(name));
+    if (!twins.length) continue;   // the manager claims it itself
+    const pressed = (gp) => mgr._recentPressed(mgr._recentPadBtns && mgr._recentPadBtns.get(gp.index)).size > 0
+      || (gp.buttons || []).some((b) => b && b.pressed);
+    if (twins.some(pressed)) continue;   // a live twin: the manager's Gamepad claim takes it
+    out.push(e);
+  }
+  return out;
+}
+
+/**
  * Slots holding a Steam Controller's XInput twin through the Gamepad API (no
  * WebHID entry of their own): a twin claimed on a press that beat the hardware's
  * own report to us, before it could be recognised. The caller releases them.
@@ -499,7 +543,10 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
     if (this.remoteOnly) return this.remotePresent;
-    if (this._slot?.state === 'claimed') return true;
+    // A switched-off Steam Controller keeps its slot (the Puck stays plugged in)
+    // but is not connected (#581): the ride's disconnect pause and the versus
+    // freeze read this, and its first report back reconnects it.
+    if (this._slot?.state === 'claimed') return !isSilentSteamControllerSlot(this._slot);
     // A phone remote showing its menu pad (#421) is a gamepad to the menus.
     if (this._remoteMenu) return true;
     return false;

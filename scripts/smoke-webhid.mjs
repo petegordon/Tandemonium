@@ -23,6 +23,10 @@
 //          never shows on the seat screen nor takes the seat (#581)
 //   MC-18  quick taps under Steam, twin press late and early: no slot is
 //          left holding a twin; Player 1 stays on its body (#581)
+//   MC-19  a DualSense behind a frozen Gamepad twin: a WebHID press seats it
+//          as Player 1 (#581)
+//   MC-20  a Steam Controller switched off frees its seat and leaves the
+//          controller list; switched on, a press seats it again (#581)
 //
 //   boot   a pad + already-granted HID device present at boot: the controller
 //          is held once and seats once (the core poolDevice race, fixed in
@@ -392,6 +396,46 @@ console.log('MC-18 quick taps under Steam: no XInput twin is ever left holding a
   const p1 = await snap(page);
   check(slot(p1, 'P1').hid === 'body-1', 'MC-18: Player 1 is still body 1, never its twin', { P1: slot(p1, 'P1') });
   await page.close();
+}
+
+// ── MC-19 · a DualSense behind a frozen Gamepad twin takes Player 1 ──
+// TV (#581): every controller off, then the DualSense on: listed, its presses
+// seen, but it never became Player 1. Its compat-mode Gamepad entry (frozen once
+// the driver switched to full reports) made the manager leave the claim to the
+// Gamepad API, where no press ever shows.
+console.log('MC-19 DualSense behind a frozen Gamepad twin: a press seats it as Player 1');
+{
+  const page = await h.gamePage({ storage: STORAGE, before: async (p) => { slowLoad(p); await installFakeWebHid(p, [hidDevice.dualsenseUsb('ds')]); await installFakeGamepads(p); } });
+  const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
+  await waitFor(page, streamingAll(['ds']));
+  await ctx.pads.plug('dualsense');   // the frozen twin: listed, never pressed
+  await sleep(800);
+  let s = await snap(page);
+  check(slot(s, 'P1').state === 'empty', 'MC-19: (setup) nobody holds Player 1', slot(s, 'P1'));
+  await ctx.hid.hold('ds', FACE_A.ds5Usb, true);
+  s = await waitFor(page, (x) => slot(x, 'P1').state === 'claimed');
+  await ctx.hid.hold('ds', FACE_A.ds5Usb, false);
+  check(slot(s, 'P1').state === 'claimed' && slot(s, 'P1').hid === 'ds', 'MC-19: ✕ on the DualSense (WebHID only) seats it as Player 1', slot(s, 'P1'));
+  await page.close();
+}
+
+// ── MC-20 · a Steam Controller switched off leaves its seat (lobby) ──
+// TV (#581): Steam Controllers switched off stayed JOINED forever (the Puck stays
+// plugged in; the body just stops reporting), holding Player 1 from the DualSense.
+console.log('MC-20 Steam Controller switched off: its seat is freed, and it comes back on a press');
+{
+  const ctx = await open([hidDevice.steamPuck('body-1'), hidDevice.puckIdleSibling('puck-idle'), hidDevice.dualsenseUsb('ds')]);
+  await holdUntil(ctx, null, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').hid === 'body-1');
+  check(await ctx.page.evaluate(() => window._game.input.gamepadConnected), 'MC-20: (setup) body 1 is Player 1 and connected');
+  await ctx.hid.silence('body-1', true);
+  const s = await waitFor(ctx.page, (x) => slot(x, 'P1').state === 'empty', 15000);
+  check(slot(s, 'P1').state === 'empty', 'MC-20: switched off (no reports for 4 s), body 1 gives up Player 1', slot(s, 'P1'));
+  const listed = await ctx.page.evaluate(() => window.__controllerManager.controllerRoster(navigator.getGamepads()).map((r) => r.name));
+  check(!listed.some((n) => /steam controller/i.test(n || '')), 'MC-20: and drops out of the controller list', listed);
+  await ctx.hid.silence('body-1', false);
+  const back = await holdUntil(ctx, null, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').hid === 'body-1');
+  check(slot(back, 'P1').hid === 'body-1', 'MC-20: switched back on, a press seats it as Player 1 again', slot(back, 'P1'));
+  await ctx.page.close();
 }
 
 // ── Pad + granted HID both present at boot: the controller is held once ──

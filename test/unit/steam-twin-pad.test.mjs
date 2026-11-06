@@ -171,3 +171,38 @@ test('#581: without a matching hardware press, nothing is released', () => {
   padHist.set(1, new Map([[0, performance.now()]]));
   assert.deepEqual(claimedSteamTwinSlots(pads), []);
 });
+
+// #581 · a Steam Controller switched off stays plugged in (the Puck) and only
+// stops reporting; and a DualSense behind a frozen Gamepad twin.
+import { isSilentSteamControllerSlot, frozenTwinHidEntries, PUCK_SILENT_MS } from '../../js/input-manager.js';
+
+test('#581: a claimed Steam Controller slot is silent after PUCK_SILENT_MS without a report; never an idle sibling or another pad', () => {
+  const now = 100000;
+  const sc = (since) => ({ state: 'claimed', _hidEntry: { driver: new SteamControllerDriver(), hidActiveSince: since } });
+  assert.equal(isSilentSteamControllerSlot(sc(now - PUCK_SILENT_MS - 1), now), true);
+  assert.equal(isSilentSteamControllerSlot(sc(now - 100), now), false);
+  assert.equal(isSilentSteamControllerSlot(sc(0), now), false, 'an interface that never streamed is not "switched off"');
+  assert.equal(isSilentSteamControllerSlot({ state: 'claimed', _hidEntry: { driver: new OtherDriver(), hidActiveSince: 1 } }, now), false);
+  assert.equal(isSilentSteamControllerSlot({ state: 'empty', _hidEntry: null }, now), false);
+});
+
+test('#581: a pressed WebHID pad behind a frozen same-name Gamepad entry is returned; a live twin or no twin is left to the manager', () => {
+  const DS_ID = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
+  const entry = (pressed) => ({ device: { productName: 'DualSense Wireless Controller' }, hasFreshButtonPress: () => pressed });
+  const world = (entries, padPressed = false) => {
+    const now = performance.now();
+    setControllerManager({ _hidPool: new Map(entries.map((e, i) => [i, e])), slots: [], _frameNow: now, opts: { foldWindowMs: 350 },
+      _recentPadBtns: new Map(padPressed ? [[0, new Map([[0, now]])]] : []),
+      _recentPressed(m) { const s = new Set(); if (!m) return s; for (const [i, ts] of m) if (this._frameNow - ts <= 350) s.add(i); return s; } });
+  };
+  const frozen = [{ index: 0, id: DS_ID, buttons: [{ pressed: false }] }];
+  const e = entry(true);
+  world([e]);
+  assert.deepEqual(frozenTwinHidEntries(frozen), [e]);
+  world([e], true);
+  assert.deepEqual(frozenTwinHidEntries(frozen), [], 'the twin shows the press: the manager\'s Gamepad claim takes it');
+  world([e]);
+  assert.deepEqual(frozenTwinHidEntries([]), [], 'no twin: the manager claims it itself');
+  world([entry(false)]);
+  assert.deepEqual(frozenTwinHidEntries(frozen), [], 'no press, no claim');
+});
