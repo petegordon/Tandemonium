@@ -5977,7 +5977,13 @@ export class Lobby {
     // so it still goes straight to level select.
     if (window.matchMedia('(min-width: 1024px)').matches && this._currentStep === this.hostStep) {
       this._localSeatedOnHost = true;
-      this._localP2Name = opts.name || (sourceType === 'keyboard' ? 'Keyboard' : 'Player 2');
+      // The seat card names the pad (#581: a join through the legacy P2 poll
+      // carries no name and the card read "Player 2").
+      const p2Slot = this._localP2InputManager && this._localP2InputManager._slot;
+      const mgr = this.controllerManager;
+      const slotName = (sourceType !== 'keyboard' && p2Slot && p2Slot.state === 'claimed' && mgr && mgr.slotIdentity)
+        ? slotIdentityHidFirst(p2Slot, (sl) => mgr.slotIdentity(sl)).shortName : null;
+      this._localP2Name = opts.name || slotName || (sourceType === 'keyboard' ? 'Keyboard' : 'Player 2');
       this._refreshHostNext();
       return;
     }
