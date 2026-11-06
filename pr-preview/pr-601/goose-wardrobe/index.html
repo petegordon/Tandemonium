@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goose Wardrobe — Tandemonium</title>
+<style>
+  :root {
+    --ink: #2b2118; --muted: #7a6a58; --paper: #f7f1e6; --card: #fffaf1; --line: #e2d5bf;
+    --accent: #8c2f2b; --accent-ink: #fff; --chip-off: #efe6d6;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink);
+    font: 14px/1.4 Georgia, 'Times New Roman', serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 1fr 340px; height: 100%; }
+  #view { position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #panel { border-left: 1px solid var(--line); background: var(--card); overflow-y: auto; padding: 18px 18px 40px; }
+  h1 { font-size: 22px; margin: 0 0 2px; letter-spacing: .5px; }
+  .sub { color: var(--muted); font-style: italic; margin-bottom: 14px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin: 18px 0 8px;
+    border-bottom: 1px solid var(--line); padding-bottom: 4px; font-family: system-ui, sans-serif; }
+  .geese { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .pairlabel { grid-column: 1 / -1; font-size: 12px; color: var(--muted); margin-top: 4px; font-family: system-ui, sans-serif; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--line); background: var(--chip-off); color: var(--ink);
+    border-radius: 8px; padding: 7px 10px; }
+  button:hover { border-color: var(--muted); }
+  button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  select { font: inherit; padding: 5px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--ink); max-width: 100%; }
+  .borrow { display: grid; grid-template-columns: 80px 1fr; gap: 6px; align-items: center; margin-bottom: 6px; }
+  .note { font-size: 12px; color: var(--muted); font-family: system-ui, sans-serif; }
+  #status { position: absolute; left: 16px; bottom: 14px; color: var(--muted); font-family: system-ui, sans-serif; font-size: 12px;
+    background: rgba(255,250,241,.8); padding: 4px 8px; border-radius: 6px; pointer-events: none; }
+  #title { position: absolute; left: 18px; top: 14px; pointer-events: none; }
+  #title .name { font-size: 26px; }
+  #title .tag { color: var(--muted); font-style: italic; }
+  #photoBar { position: absolute; right: 16px; top: 14px; display: flex; gap: 6px; }
+  body.photo #panel, body.photo #status, body.photo #title { display: none; }
+  body.photo #app { grid-template-columns: 1fr; }
+  @media (max-width: 760px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 58vh 1fr; }
+    #panel { border-left: 0; border-top: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="view">
+    <canvas id="c"></canvas>
+    <div id="title"><div class="name" id="gname">Goose Wardrobe</div><div class="tag" id="gtag"></div></div>
+    <div id="photoBar"><button id="photo" title="Hide the panel">Photo mode</button><button id="save">Save PNG</button></div>
+    <div id="status">Loading…</div>
+  </div>
+  <div id="panel">
+    <h1>The Goose Wardrobe</h1>
+    <div class="sub">A lookbook of Tandemonium's riders. Click a goose to make it honk; its eyes follow your cursor.</div>
+    <h2>Goose</h2>
+    <div class="geese" id="geese"></div>
+    <h2>Garments</h2>
+    <div class="chips" id="pieces"></div>
+    <div class="row"><button id="all">Full outfit</button><button id="none">Undress</button></div>
+    <h2>Colourways</h2>
+    <div class="chips" id="ways"></div>
+    <h2>Borrow from another goose</h2>
+    <div id="borrow"></div>
+    <div class="note">Hats and neckwear can swap between geese. Experimental: the fit isn't hand-tuned.</div>
+    <h2>Moves</h2>
+    <div class="chips" id="moves"></div>
+  </div>
+</div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GooseActor, GEESE } from '../js/goose-studio/goose-actor.js';
+import { createStudio, Honker } from '../js/goose-studio/studio-scene.js';
+import { colourwaysFor } from '../js/goose-colourways.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('c');
+const studio = createStudio(canvas, { preserve: true });
+const { renderer, scene, camera } = studio;
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0.95, 0);
+camera.position.set(0.9, 1.25, 4.6);
+controls.enableDamping = true;
+controls.minDistance = 1.2; controls.maxDistance = 9;
+controls.maxPolarAngle = Math.PI * 0.53;
+controls.update();
+
+const loader = new GLTFLoader();
+const honker = new Honker('../assets/goose-honk.mp3');
+const cache = {};            // name -> Promise<GooseActor>
+let actor = null, clock = new THREE.Clock(), busyMove = false;
+
+const PAIR_LABEL = { victorian: 'Victorian', cyclists: 'Cyclists', fancy: 'Fancy', georgian: 'Georgian' };
+const PIECE_LABEL = { hat: 'Hat', coat: 'Coat', jacket: 'Jacket', waistcoat: 'Waistcoat', shirt: 'Shirt',
+  breeches: 'Breeches', boots: 'Boots', gloves: 'Gloves', bowtie: 'Bow tie', necktie: 'Necktie', socks: 'Socks',
+  skirt: 'Skirt', bodice: 'Bodice', collar: 'Collar', cuffs: 'Cuffs', cardigan: 'Cardigan', pancollar: 'Collar',
+  coatskirt: 'Coat skirts', petticoat: 'Petticoat', jabot: 'Jabot', fichu: 'Fichu', lace: 'Lace' };
+// (a goose may rename a piece: the Georgian lady's 'bowtie' is her choker)
+const label = (p, name = actor?.name) => GEESE[name]?.pieceLabels?.[p] || PIECE_LABEL[p] || p[0].toUpperCase() + p.slice(1);
+
+function getActor(name) {
+  if (!cache[name]) cache[name] = GooseActor.load(loader, name);
+  return cache[name];
+}
+
+// ---------------------------------------------------------------- goose picker
+const geeseEl = $('geese');
+let lastPair = null;
+for (const [name, g] of Object.entries(GEESE)) {
+  if (g.pair !== lastPair) {
+    const l = document.createElement('div');
+    l.className = 'pairlabel'; l.textContent = PAIR_LABEL[g.pair];
+    geeseEl.appendChild(l); lastPair = g.pair;
+  }
+  const b = document.createElement('button');
+  b.textContent = g.label; b.dataset.name = name;
+  b.onclick = () => show(name);
+  geeseEl.appendChild(b);
+}
+
+async function show(name) {
+  $('status').textContent = 'Loading ' + GEESE[name].label + '…';
+  const a = await getActor(name);
+  if (actor) scene.remove(actor.root);
+  actor = a;
+  actor.root.position.set(0, 0, 0);
+  actor.setHeading(0);
+  scene.add(actor.root);
+  actor.onHonk = () => honker.honk(actor.time);
+  studio.setBackdrop(actor.info.pair);
+  for (const b of geeseEl.querySelectorAll('button')) b.classList.toggle('on', b.dataset.name === name);
+  $('gname').textContent = actor.info.label;
+  $('gtag').textContent = PAIR_LABEL[actor.info.pair] + ' pair · ' + (actor.info.seat === 'Captain' ? 'captain' : 'stoker');
+  buildPieces(); buildWays(); buildBorrow(); buildMoves();
+  $('status').textContent = 'Drag to orbit · scroll to zoom · click the goose to honk';
+}
+
+// ---------------------------------------------------------------- garments
+function buildPieces() {
+  const el = $('pieces'); el.innerHTML = '';
+  for (const p of actor.pieces) {
+    const b = document.createElement('button');
+    b.textContent = label(p);
+    b.classList.toggle('on', actor.worn.has(p));
+    b.onclick = () => {
+      const on = !actor.worn.has(p);
+      actor.setWorn(p, on);
+      b.classList.toggle('on', on);
+      if (on && !busyMove && !actor.cur && !actor.queue.length) actor.play('admire');
+    };
+    el.appendChild(b);
+  }
+}
+$('all').onclick = () => { actor.wearAll(true); buildPieces(); };
+$('none').onclick = () => { actor.wearAll(false); buildPieces(); };
+
+function buildWays() {
+  const el = $('ways'); el.innerHTML = '';
+  for (const w of colourwaysFor(actor.info.pair)) {
+    const b = document.createElement('button');
+    b.textContent = w.label;
+    b.classList.toggle('on', (actor.colourway || 'default') === w.key);
+    b.onclick = () => { actor.setColourway(w.key); buildWays(); };
+    el.appendChild(b);
+  }
+}
+
+// ---------------------------------------------------------------- borrowing
+const BORROW_SLOTS = ['hat', 'bowtie', 'necktie', 'jabot'];
+function buildBorrow() {
+  const el = $('borrow'); el.innerHTML = '';
+  for (const slot of BORROW_SLOTS) {
+    const row = document.createElement('div'); row.className = 'borrow';
+    const l = document.createElement('span'); l.textContent = label(slot);
+    const sel = document.createElement('select');
+    sel.innerHTML = `<option value="">${actor.parts[slot] ? 'Own' : 'None'}</option>` +
+      Object.entries(GEESE).filter(([n]) => n !== actor.name).map(([n, g]) => `<option value="${n}">${g.label}'s</option>`).join('');
+    const cur = actor.borrowed[slot];
+    sel.value = cur ? cur.from : '';
+    sel.onchange = async () => {
+      if (!sel.value) { actor.borrow(slot, null); buildPieces(); return; }
+      $('status').textContent = 'Fetching ' + GEESE[sel.value].label + '’s ' + label(slot).toLowerCase() + '…';
+      const other = await getActor(sel.value);
+      if (!other.parts[slot]) { $('status').textContent = GEESE[sel.value].label + ' has no ' + label(slot).toLowerCase(); sel.value = ''; return; }
+      if (slot !== 'hat') for (const s of BORROW_SLOTS) if (s !== 'hat' && s !== slot) { actor.setWorn(s, false); }
+      actor.borrow(slot, other);
+      buildPieces();
+      $('status').textContent = 'Wearing ' + GEESE[sel.value].label + '’s ' + label(slot).toLowerCase();
+      if (!actor.cur) actor.play('admire');
+    };
+    row.append(l, sel); el.appendChild(row);
+  }
+}
+
+// ---------------------------------------------------------------- moves
+function buildMoves() {
+  const el = $('moves'); el.innerHTML = '';
+  const greet = actor.info.sex === 'f' ? ['Curtsy', () => actor.play('curtsy')] : ['Hat tip', () => actor.play('hat_tip')];
+  const moves = [
+    ['Honk', () => actor.honk()],
+    ['Twirl', () => actor.play('twirl')],
+    ['Turn around', async () => { actor.play('turn_L90'); await actor.play('turn_L90'); actor.play('turn_L90'); return actor.play('turn_L90'); }],
+    greet,
+    ['Bow', () => actor.play('bow')],
+    ['Wave', () => actor.play('wave')],
+    ['Admire', () => actor.play('admire')],
+    ['Celebrate', async () => { const p = actor.play('celebrate'); setTimeout(() => actor.honk(), 450); return p; }],
+    ['Startle', async () => { actor.honk(); return actor.play('flap_startle'); }],
+    ['Runway walk', runway],
+  ];
+  for (const [name, fn] of moves) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.onclick = async () => {
+      if (busyMove) return;
+      busyMove = true; b.classList.add('on');
+      try { await fn(); } finally { busyMove = false; b.classList.remove('on'); }
+    };
+    el.appendChild(b);
+  }
+}
+
+async function runway() {
+  const w = actor.walk(1.2);
+  await w.done;
+  await actor.play('turn_L90'); await actor.play('turn_L90');
+  actor.honk();
+  const back = actor.walk(w.distance);
+  await back.done;
+  await actor.play('turn_L90'); await actor.play('turn_L90');
+  actor.root.position.set(0, 0, 0);          // land exactly on the mark (sub-mm drift)
+}
+
+// ---------------------------------------------------------------- eyes + honk on click
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+const lookPoint = new THREE.Vector3();
+let pointerIn = false;
+canvas.addEventListener('pointermove', (e) => {
+  const r = canvas.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  pointerIn = true;
+});
+canvas.addEventListener('pointerleave', () => { pointerIn = false; });
+let downAt = null;
+canvas.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener('pointerup', (e) => {
+  if (!actor || !downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5) return;
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(actor.root, true).find(h => h.object.visible);
+  if (hit) {
+    actor.honk();
+    if (!actor.cur && !actor.queue.length && Math.random() < 0.3) actor.play('flap_startle');
+  }
+});
+canvas.addEventListener('dblclick', () => { if (actor && !busyMove) actor.play('twirl'); });
+
+function updateLook() {
+  if (!actor) return;
+  if (pointerIn) {
+    ray.setFromCamera(ndc, camera);
+    // a point in front of the goose, at the depth of the camera's view of its head
+    const head = actor.headPosition(new THREE.Vector3());
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      camera.getWorldDirection(new THREE.Vector3()).negate(), head.clone().lerp(camera.position, 0.5));
+    if (ray.ray.intersectPlane(plane, lookPoint)) { actor.lookAt(lookPoint); return; }
+  }
+  actor.lookAt(camera.position);
+}
+
+// ---------------------------------------------------------------- photo mode
+$('photo').onclick = () => { document.body.classList.toggle('photo'); $('photo').classList.toggle('on'); resize(); };
+$('save').onclick = () => {
+  const a = document.createElement('a');
+  a.download = `goose-${actor ? actor.name : 'wardrobe'}.png`;
+  a.href = renderer.domElement.toDataURL('image/png');
+  a.click();
+};
+
+// ---------------------------------------------------------------- loop
+function resize() {
+  const v = $('view');
+  studio.resize(v.clientWidth, v.clientHeight);
+}
+window.addEventListener('resize', resize);
+resize();
+
+function frame() {
+  const dt = Math.min(0.05, clock.getDelta());
+  if (actor) {
+    updateLook();
+    actor.update(dt);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+honker.load();
+window.addEventListener('pointerdown', () => { if (honker.ctx && honker.ctx.state === 'suspended') honker.ctx.resume(); }, { once: true });
+const q = new URLSearchParams(location.search);
+show(GEESE[q.get('goose')] ? q.get('goose') : 'goose_captain_fancy');
+frame();
+window.__wardrobe = { get actor() { return actor; }, show, getActor, scene, camera };
+</script>
+</body>
+</html>
