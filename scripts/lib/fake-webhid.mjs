@@ -10,6 +10,7 @@
 //   const hid = fakeHid(page);
 //   await hid.press('ds-a', PS_CROSS.ds5, 200);   // OR a bit into every report for 200 ms
 //   await hid.disconnect('ds-a');                 // fires navigator.hid 'disconnect'
+//   await hid.silence('body-2', true);            // stays connected, stops reporting (body switched off)
 //   await hid.connect('ds-a');                    // a NEW HIDDevice object, as Chrome does
 //   await hid.stats('ds-a');                      // { opened, connected, emitted, featureReads, featureSends }
 //
@@ -113,7 +114,7 @@ function browserFakeHid(specs) {
   }
   function emit(rec) {
     const d = rec.device;
-    if (!d || !d.opened || !rec.connected || !rec.reports.length) return;
+    if (!d || !d.opened || !rec.connected || rec.silent || !rec.reports.length) return;
     const { reportId, data } = reportFor(rec);
     rec.stats.emitted++;
     const ev = new Event('inputreport');
@@ -172,6 +173,8 @@ function browserFakeHid(specs) {
       emit(r);
       return true;
     },
+    /** The device stays connected but stops reporting (a Steam Controller body switched off on its Puck). */
+    silence(key, on) { const r = recs.get(key); if (!r) return false; r.silent = !!on; return true; },
     press(key, offset, mask, ms = 200) {
       if (!window.__fakeHid.hold(key, offset, mask, true)) return false;
       setTimeout(() => window.__fakeHid.hold(key, offset, mask, false), ms);
@@ -197,6 +200,7 @@ export function fakeHid(page) {
     connect: (key) => call('connect', key),
     hold: (key, bit, on) => call('hold', key, bit.offset, bit.mask, on),
     press: (key, bit, ms = 200) => call('press', key, bit.offset, bit.mask, ms),
+    silence: (key, on) => call('silence', key, on),
     stats: (key) => call('stats', key),
     keys: () => call('keys'),
   };
