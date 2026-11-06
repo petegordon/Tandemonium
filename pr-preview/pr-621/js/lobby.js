@@ -915,6 +915,38 @@ export class Lobby {
     if (which === 'partner' && v.who !== undefined) this._roomPartnerName = v.who;
     this._renderRoomPlayers();
     if (this._roomRole === 'captain') this._refreshHostNext();
+    this._syncLevelRoomBar();
+  }
+
+  /**
+   * The Level screen is part of the online room (2026-11-06): while a session is on, its room bar
+   * shows both seats, who is in them and whether the partner is connected, under the room code.
+   * Cheap to call every frame: it only writes when something changed.
+   */
+  _syncLevelRoomBar() {
+    const team = /** @type {any} */ (document.getElementById('level-room-team'));
+    if (!team) return;
+    const role = this._roomRole;
+    const on = !!(this.net && this._pendingMode === 'multiplayer' && role && this._currentStep === this.levelStep);
+    const connected = on && !!this.net.connected;
+    const partner = this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : '';
+    const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
+    const me = { who: (user && user.name) || 'You', dev: 'This screen', state: 'joined' };
+    const them = connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined' }
+      : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
+        : { who: 'Waiting for partner…', dev: '', state: 'open' };
+    const code = on ? (this.net.roomCode || '') : '';
+    const key = on ? [role, code, me.who, them.who, them.dev, them.state].join('|') : 'off';
+    if (key === this._levelRoomKey) return;
+    this._levelRoomKey = key;
+    team.hidden = !on;
+    if (!on) return;
+    team.heading = code ? 'Online room ' + code : 'Online room';
+    const cap = /** @type {any} */ (document.getElementById('level-room-captain'));
+    const sto = /** @type {any} */ (document.getElementById('level-room-stoker'));
+    const [mine, theirs] = role === 'captain' ? [cap, sto] : [sto, cap];
+    if (mine) Object.assign(mine, me);
+    if (theirs) Object.assign(theirs, them);
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
@@ -7374,6 +7406,7 @@ export class Lobby {
       if (this.joystickActive && this.input && this.input.gyroConnected) this._joystickOffForGyro();
     }
     this._pollRafId = requestAnimationFrame(() => this._pollGamepadNav());
+    this._syncLevelRoomBar();
 
     // Whether the step-nav section ran last frame. Reset each frame; set true
     // only when we reach it, so a modal frame (early return) flips it false and
