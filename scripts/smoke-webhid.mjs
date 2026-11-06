@@ -21,6 +21,8 @@
 //          seats it again on its own body (#581)
 //   MC-17  MC-16 under Steam, each body also a virtual XInput pad: the twin
 //          never shows on the seat screen nor takes the seat (#581)
+//   MC-18  quick taps under Steam, twin press late and early: no slot is
+//          left holding a twin; Player 1 stays on its body (#581)
 //
 //   boot   a pad + already-granted HID device present at boot: the controller
 //          is held once and seats once (the core poolDevice race, fixed in
@@ -354,6 +356,41 @@ console.log('MC-17 co-op under Steam: the stoker\'s XInput twin never takes the 
   check(!c.rows.some((n) => /xbox/i.test(n || '')), 'MC-17: no "Xbox" twin on the seat screen after standing up', c.rows);
   c = await hold('body-2', FACE_A.steam, twin2, 'A', (x) => x.seated);
   check(c.seated && c.p2Hid === 'body-2' && c.p2Pad == null, 'MC-17: A seats body 2 again, on its own body (the twin claimed nothing)', c);
+  await page.close();
+}
+
+// ── MC-18 · quick taps under Steam: the twin's press lands late (or early) ──
+// TV (#581): quick clicks left "Xbox Wireless (BT) · JOINED" in the Controls
+// list and once made it Player 1. Steam's virtual press lags the hardware's, so
+// a seated Steam Controller had already released when its twin pressed.
+console.log('MC-18 quick taps under Steam: no XInput twin is ever left holding a slot');
+{
+  const page = await h.gamePage({ storage: STORAGE, before: async (p) => {
+    slowLoad(p);
+    await installFakeWebHid(p, [hidDevice.steamPuck('body-1'), hidDevice.steamPuck('body-2'), hidDevice.puckIdleSibling('puck-idle')]);
+    await installFakeGamepads(p);
+    await installFakeSteam(p, { xinput: [{ index: 0, handle: '100', type: '14' }] });
+  } });
+  const ctx = { page, pads: fakePads(page), hid: fakeHid(page) };
+  await waitFor(page, streamingAll(['body-1', 'body-2']));
+  const twin1 = await ctx.pads.plug('xbox');
+  const twin2 = await ctx.pads.plug('xbox');
+  await holdUntil(ctx, twin1, 'body-1', FACE_A.steam, (x) => slot(x, 'P1').state === 'claimed' && slot(x, 'P1').hid === 'body-1');
+  const tap = (key, padIdx, padFirst) => page.evaluate(async (k, o, m, pi, first) => {
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const hid = (d) => window.__fakeHid.hold(k, o, m, d), pad = (d) => window.__fakePads.hold(pi, 'A', d);
+    if (first) { pad(true); await wait(70); pad(false); await wait(40); hid(true); await wait(70); hid(false); }
+    else { hid(true); await wait(70); hid(false); await wait(90); pad(true); await wait(70); pad(false); }
+  }, key, FACE_A.steam.offset, FACE_A.steam.mask, padIdx, padFirst);
+  const twinSlots = () => page.evaluate((a, b) => window.__controllerManager.slots.filter((s) => s.state === 'claimed' && (s.gamepadIndex === a || s.gamepadIndex === b) && !s._hidEntry).map((s) => s.id), twin1, twin2);
+  for (let i = 0; i < 4; i++) { await tap('body-1', twin1, false); await sleep(250); }       // P1 taps; twin lags
+  for (let i = 0; i < 3; i++) { await tap('body-2', twin2, false); await sleep(250); }       // body 2 taps; twin lags
+  await tap('body-2', twin2, true); await sleep(250);                                        // twin first, hardware after
+  let held = [];
+  for (let t0 = Date.now(); Date.now() - t0 < 8000; await sleep(250)) { held = await twinSlots(); if (!held.length) break; }
+  check(held.length === 0, 'MC-18: after quick taps (twin late and twin early), no slot holds an XInput twin', held);
+  const p1 = await snap(page);
+  check(slot(p1, 'P1').hid === 'body-1', 'MC-18: Player 1 is still body 1, never its twin', { P1: slot(p1, 'P1') });
   await page.close();
 }
 

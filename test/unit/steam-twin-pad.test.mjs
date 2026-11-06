@@ -121,3 +121,53 @@ test('#581: never more press-twins than Steam Controllers; a new pad at a freed 
   pressWorld({ padBtns: {}, scBtns: [[]] });
   assert.equal(isSteamTwinPad(realXbox, [realXbox, pads[1]]), false, 'another pad at index 0 is not remembered as the twin');
 });
+
+// #581 · quick taps: Steam's virtual press lands after the hardware's, so on a
+// quick tap a SEATED Steam Controller's synthetic already reads released when
+// the twin reads pressed. A short press history covers seated pads too, and a
+// twin claimed before it was recognised is reported for release.
+import { noteSteamControllerPresses, claimedSteamTwinSlots } from '../../js/input-manager.js';
+
+function seatedWorld() {
+  globalThis.window = { steam: { input: { getXInputMap: () => [] } } };
+  const now = performance.now();
+  const btns = () => Array.from({ length: 22 }, () => ({ pressed: false }));
+  const sc = { driver: new SteamControllerDriver(), hidActiveSince: now - 10, synthetic: { buttons: btns() } };
+  const padHist = new Map();
+  const mgr = {
+    _hidPool: new Map(), _frameNow: now, opts: { foldWindowMs: 350 }, _recentPadBtns: padHist,
+    slots: [{ id: 'P1', state: 'claimed', _hidEntry: sc, gamepadIndex: null }, { id: 'P3', state: 'claimed', _hidEntry: null, gamepadIndex: 1 }],
+    _recentPressed(m) { const s = new Set(); if (!m) return s; for (const [i, ts] of m) if (this._frameNow - ts <= 350) s.add(i); return s; },
+  };
+  setControllerManager(mgr);
+  return { sc, mgr, padHist, now };
+}
+
+test('#581: a quick tap on a seated Steam Controller still identifies its late twin', () => {
+  resetSteamTwinMemory();
+  const { sc, padHist, now } = seatedWorld();
+  const pads = [null, pad(1)];
+  sc.synthetic.buttons[0].pressed = true;
+  noteSteamControllerPresses(now);            // the hardware's press, one frame
+  sc.synthetic.buttons[0].pressed = false;    // released before Steam's twin shows it
+  padHist.set(1, new Map([[0, now]]));         // the twin's A, a moment later
+  assert.equal(isSteamTwinPad(pads[1], pads), true);
+});
+
+test('#581: a slot holding that twin is reported for release; a WebHID slot never is', () => {
+  resetSteamTwinMemory();
+  const { sc, padHist, now } = seatedWorld();
+  const pads = [null, pad(1)];
+  sc.synthetic.buttons[0].pressed = true;
+  noteSteamControllerPresses(now);
+  padHist.set(1, new Map([[0, now]]));
+  assert.deepEqual(claimedSteamTwinSlots(pads), ['P3']);
+});
+
+test('#581: without a matching hardware press, nothing is released', () => {
+  resetSteamTwinMemory();
+  const { padHist } = seatedWorld();
+  const pads = [null, pad(1)];
+  padHist.set(1, new Map([[0, performance.now()]]));
+  assert.deepEqual(claimedSteamTwinSlots(pads), []);
+});
