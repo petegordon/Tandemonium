@@ -30,7 +30,7 @@ const T = [
   ['weave', 1.0, 3 * BAR, { captions: [["TODAY'S ROAD", 0.3, 2.6, { size: 84 }], ['A NEW ROAD EVERY DAY', 2.8, 5.7, { size: 84 }]] }],
   ['colours', 0.0, 2 * BAR, { captions: [['PICK YOUR COLOURS', 0.3, 3.8]] }],
   ['crash', 0.6, 2 * BAR, { captions: [['FALL TOGETHER', 1.4, 3.85]] }],
-  ['sling', 0.2, 6 * BAR, { captions: [['SLINGSHOT!', 0.3, 3.4], ['GRAB THE CHAOS COINS', 5.4, 11.5]] }],
+  ['sling', 0.2, 6 * BAR, { captions: [['SLINGSHOT!', 0.3, 3.4], ['GRAB THE TANDEM TOKENS', 5.4, 11.5]] }],
   ['versus', 0.5, 5 * BAR, { captions: [['SPLIT-SCREEN  2 v 2', 0.4, 4.5], ['RACE YOUR FRIENDS', 5.0, 9.5]] }],
   ['finish', 0.0, 6 * BAR - 0.1],
   // quiet break

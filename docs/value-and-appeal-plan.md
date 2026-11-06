@@ -199,7 +199,7 @@ session.
 
 ### Non-goals (for this plan)
 
-- Real-money monetization, Chaos Coin economy, new cosmetics.
+- Real-money monetization, Tandem Token economy, new cosmetics.
 - New authored levels or biomes. The whole point is value without authored content.
 - A global daily leaderboard. Boards are pair/partners-scoped (§3 decision 5).
 - Controller / Steam Input / overlay work. Separate track; the evidence says it has had

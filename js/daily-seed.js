@@ -85,7 +85,8 @@ export const SALT = {
   obstacles: 6,
   collectibles: 7,
   geese: 8,
-  disruptions: 9      // reserved for E-2
+  disruptions: 9,     // reserved for E-2
+  tokens: 10          // #512 · the Tandem Token runs (js/token-runs.js)
 };
 
 /**

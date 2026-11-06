@@ -64,7 +64,7 @@ test('M2: a retry of segment 1 does not re-pay re-ridden metres or pickups, and 
   assert.equal(coins(g), after1, 'the same metres and pickups pay nothing twice');
   g.bike.distanceTraveled = 160;
   g._payoutAbandon();
-  assert.equal(coins(g) - after1, Math.floor(160 / 5) - Math.floor(110 / 5), 'only the new metres pay');
+  assert.equal(coins(g) - after1, Math.floor(160 / 10) - Math.floor(110 / 10), 'only the new metres pay (#512: 1 per 10 m)');
   const rides = g.events.filter(e => e.type === 'ride' && e.newRide).length;
   assert.equal(rides, 1, 'one ride, not one per attempt');
   // Restart from the beginning (or a new level): a new ride.

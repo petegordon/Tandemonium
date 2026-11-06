@@ -993,7 +993,7 @@ export class Lobby {
     this._stopPreviewLoop();
   }
 
-  /** #400 D4 · the Chaos Coin balance on the GARAGE button (js/wallet.js). */
+  /** #400 D4 · the Tandem Token balance on the GARAGE button (js/wallet.js). */
   _refreshWallet() {
     const el = document.getElementById('lobby-wallet');
     if (!el) return;
@@ -1986,7 +1986,7 @@ export class Lobby {
           '<span class="level-card-icon">&#127919;</span>' +
           '<span class="level-card-name">Slingshot</span>' +
         '</div>' +
-        '<div class="level-card-desc">Pull back, aim, let go. Earn Chaos Coins and upgrade.</div>';
+        '<div class="level-card-desc">Pull back, aim, let go. Earn Tandem Tokens and upgrade.</div>';
       card.addEventListener('click', () => {
         container.querySelectorAll('.level-card').forEach(c => c.classList.remove('selected'));
         card.classList.add('selected');

@@ -107,7 +107,7 @@ const aim = await page.evaluate(() => {
     checkpoints: g.raceManager.checkpoints.length, flavor: document.getElementById('countdown-flavor-num').textContent,
   };
 });
-check(aim.pullVisible && aim.rig && aim.coast && aim.coins > 0, `the slingshot is built, hint up, ${aim.coins} Chaos Coins placed`);
+check(aim.pullVisible && aim.rig && aim.coast && aim.coins > 0, `the slingshot is built, hint up, ${aim.coins} Tandem Tokens placed`);
 check(aim.pedalsHidden, 'no pedal pads in this mode');
 check(aim.checkpoints === 0 && aim.flavor === '', 'no checkpoints and no countdown');
 const rest = await pose();

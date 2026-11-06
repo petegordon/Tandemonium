@@ -98,6 +98,9 @@ export class HUD {
     this.collectibleCount = document.getElementById('collectible-count');
     this.geeseWrap = document.getElementById('geese-counter');
     this.geeseCount = document.getElementById('geese-count');
+    // #512 · Tandem Tokens picked up on the road: "n/N" with a pop per pickup.
+    this.tokenWrap = document.getElementById('token-counter');
+    this.tokenCount = document.getElementById('token-count');
     this.collectibleIconChar = '';
     this._prevGeese = -1;
 
@@ -632,6 +635,33 @@ export class HUD {
 
   hideCollectibles() {
     this.collectibleWrap.classList.remove('visible');
+  }
+
+  /** #512 · start the token tally at 0/N and reveal it; hidden when the road has none. */
+  showTokens(total) {
+    if (!this.tokenWrap) return;
+    if (!(total > 0)) { this.hideTokens(); return; }
+    this.tokenCount.textContent = '0/' + total;
+    this.tokenWrap.classList.add('visible');
+  }
+
+  /** The tally after a pickup (or a checkpoint rewind). `gained` > 0 pops the stat and floats the pay. */
+  updateTokens(collected, total, gained = 0) {
+    if (!this.tokenWrap) return;
+    this.tokenCount.textContent = collected + '/' + total;
+    if (!(gained > 0)) return;
+    this.tokenWrap.classList.remove('pop');
+    void this.tokenWrap.offsetWidth;
+    this.tokenWrap.classList.add('pop');
+    const f = document.createElement('div');
+    f.className = 'sling-coin-float';
+    f.textContent = '+' + gained + ' 🪙';
+    document.body.appendChild(f);
+    setTimeout(() => f.remove(), 900);
+  }
+
+  hideTokens() {
+    if (this.tokenWrap) this.tokenWrap.classList.remove('visible');
   }
 
   /** Start the geese tally at zero and reveal it in the top strip. */

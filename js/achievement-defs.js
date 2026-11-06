@@ -39,7 +39,7 @@ export const SECTIONS = [
   { id: 'speed',    title: 'Speed and boost' },
   { id: 'collect',  title: 'Collecting' },
   { id: 'sling',    title: 'Slingshot' },
-  { id: 'coins',    title: 'Chaos Coins' },
+  { id: 'coins',    title: 'Tandem Tokens' },
   { id: 'daily',    title: 'Daily Ride' },
   { id: 'together', title: 'Riding together' },
   { id: 'versus',   title: 'Versus' },
@@ -189,15 +189,15 @@ export const ACHIEVEMENTS = [
   { id: 'daily_launch',   section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1), demo: false, full: 'dailyLaunch' },
   { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'dailyLaunch' },
 
-  // ── 9. Chaos Coins ───────────────────────────────────────
-  { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Earn your first Chaos Coin',          ...count('coinsEarned', 1) },
-  { id: 'coins_1000',     section: 'coins', name: 'Coin Purse',          icon: '👛', desc: 'Earn 1,000 Chaos Coins in total',     ...count('coinsEarned', 1000) },
-  { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Chaos Coins in total',    ...count('coinsEarned', 10000), demo: false, full: 'scope' },
-  { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 200 coins from one regular (non-Slingshot) ride', ...count('bestRideCoins', 200) },
+  // ── 9. Tandem Tokens ───────────────────────────────────────
+  { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Collect your first Tandem Token',          ...count('coinsEarned', 1) },
+  { id: 'coins_1000',     section: 'coins', name: 'Token Purse',         icon: '👛', desc: 'Earn 1,000 Tandem Tokens in total',     ...count('coinsEarned', 1000) },
+  { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Tandem Tokens in total',    ...count('coinsEarned', 10000), demo: false, full: 'scope' },
+  { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 200 Tandem Tokens from one regular (non-Slingshot) ride', ...count('bestRideCoins', 200) },
   { id: 'first_upgrade',  section: 'coins', name: 'Tinkerer',            icon: '🔧', desc: 'Buy your first garage upgrade',       ...count('upgrades', 1) },
   { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny, demo: false, full: 'scope' },
   { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll, demo: false, full: 'scope' },
-  { id: 'big_spender',    section: 'coins', name: 'Big Spender',         icon: '💸', desc: 'Spend 1,000 coins in the garage',     ...count('coinsSpent', 1000) },
+  { id: 'big_spender',    section: 'coins', name: 'Big Spender',         icon: '💸', desc: 'Spend 1,000 Tandem Tokens in the garage',     ...count('coinsSpent', 1000) },
   { id: 'rebuilt',        section: 'coins', name: 'Rebuilt',             icon: '♻️', desc: 'Rebuild the bike (prestige) for the first time', ...count('rebuilds', 1), demo: false, full: 'scope' },
   { id: 'ship_of_theseus', section: 'coins', name: 'Ship of Theseus',    icon: '⛵', desc: 'Rebuild the bike 5 times',            ...count('rebuilds', 5), demo: false, full: 'scope' },
 

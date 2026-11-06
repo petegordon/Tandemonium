@@ -31,7 +31,7 @@ const SLING_MAX_SPEED = 34;
 class SlingshotMode {
   //
   // A solo pseudo-level, like Tourist: the stage goal is the finish line and
-  // the Chaos Coins are collectibles, so the race manager, HUD and finish
+  // the Tandem Tokens are collectibles, so the race manager, HUD and finish
   // cinematic run unchanged. There are no checkpoints. What differs:
   // - a real slingshot (js/slingshot-rig.js) holds the bike on the start line
   //   instead of a countdown, in its own 'slingAim' state with a fixed camera:
@@ -44,7 +44,7 @@ class SlingshotMode {
   // - any reset puts the bike back in the slingshot for a fresh launch.
   // Scoring and the economy live in js/slingshot.js, the DOM in js/slingshot-ui.js.
 
-  /** A Chaos Coin grabbed: count it, burst sparkles, pop the HUD. */
+  /** A Tandem Token grabbed: count it, burst sparkles, pop the HUD. */
   _onSlingCoin(count) {
     this._slingRun.coins += count;
     if (!this._slingFx) this._slingFx = new SparkleBurst(this.scene);
