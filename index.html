@@ -4251,6 +4251,7 @@
   .led-swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 7px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.35); }
   .wardrobe-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
   .wardrobe-row:empty { display: none; }
+  .wardrobe-hint { cursor: pointer; margin: 0; }
   .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: var(--uf-color-accent); }
   .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
@@ -5783,8 +5784,7 @@ ON</button>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
-          <!-- #548: one WARDROBE button per seated player (lobby._renderWardrobeButtons);
-               a seated pad's △ / Y opens its own. -->
+          <!-- #548: a seated pad's △ / Y opens its own wardrobe (said in the join hint below). -->
           <div class="wardrobe-row" id="versus-wardrobe"></div>
           <p class="versus-join-hint" id="versus-join-hint"><uf-controller-glyph button="confirm" size="sm"></uf-controller-glyph> on a controller to join &middot; <uf-controller-glyph button="dpad-h" size="sm"></uf-controller-glyph> switch team &middot; <uf-controller-glyph button="north" size="sm"></uf-controller-glyph> wardrobe &middot; <uf-controller-glyph button="back" size="sm"></uf-controller-glyph> leave your seat</p>
           <uf-button class="lobby-btn-p2-kb" id="btn-versus-join-kb" style="display:none;">
@@ -5839,7 +5839,7 @@ ON</button>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller, or scan the code with a phone"></uf-seat>
             </uf-team>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
-            <!-- #548: WARDROBE per seated player; a seated pad's △ / Y opens its own. -->
+            <!-- #548: "Press Y for wardrobe" (lobby._renderWardrobeButtons); a seated pad's △ / Y opens its own. -->
             <div class="wardrobe-row" id="host-wardrobe"></div>
             <uf-button variant="accent" id="btn-host-local-next" disabled>CHOOSE LEVEL</uf-button>
           </div>

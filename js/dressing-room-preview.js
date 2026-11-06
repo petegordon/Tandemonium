@@ -33,6 +33,7 @@ const DEADZONE = 0.2;
 const curve = (a) => { const m = Math.abs(a); if (m < DEADZONE) return 0; const t = (m - DEADZONE) / (1 - DEADZONE); return Math.sign(a) * t * t * t; };
 const CRANK_RATE = 1.5;        // rad/s pedalling
 const ROLL_SPEED = 1.2;        // m/s the wheels roll at
+const NARROW_ASPECT = 0.8;     // a card narrower than this (w/h) backs the camera off to fit the width
 const BIKE_DIM = 0.45;         // the bike's colours × this, so the goose stays the subject
 
 let _bikePromise = null;       // the goose tandem, fetched once per page
@@ -204,7 +205,10 @@ export class DressingRoomPreview {
   _applyCamera(s) {
     if (!s.far) return;
     const z = Math.max(0, Math.min(1, s.zoom));
-    const dist = s.far.dist + (s.near.dist - s.far.dist) * z;
+    // The framing fits the goose's height; a card narrower than it is tall cut the bike off at
+    // the sides and showed a giant torso (TV playtest 2026-11-06). Back off to fit the width too.
+    const narrow = Math.max(1, NARROW_ASPECT / (s.camera.aspect || NARROW_ASPECT));
+    const dist = (s.far.dist + (s.near.dist - s.far.dist) * z) * narrow;
     const ty = s.far.ty + (s.near.ty - s.far.ty) * z;
     const up = s.far.up + (s.near.up - s.far.up) * z;
     s.turntable.rotation.y = s.yaw;
@@ -279,6 +283,7 @@ export class DressingRoomPreview {
       if (s.riders) { s.riders.setCrank(s.crank); s.riders.setDistance(s.dist); s.riders.update(); }
       if (!s.framed && s.riders && s.riders.riders[s.seat]) this._frame(s);
       if (!s.framed) continue;   // nothing to show until the rider is seated
+      if (s.camera.aspect !== w / h) { s.camera.aspect = w / h; s.dirty = true; }   // narrow cards back the camera off
       if (s.dirty) { this._applyCamera(s); s.dirty = false; }
       const r = this._getRenderer();
       if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false);
@@ -302,6 +307,8 @@ export class DressingRoomPreview {
     const r = this._getRenderer();
     if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false);
     s.camera.aspect = w / h;
+    this._applyCamera(s);
+    s.dirty = false;
     s.camera.updateProjectionMatrix();
     r.render(s.scene, s.camera);
     s.ctx.clearRect(0, 0, w, h);

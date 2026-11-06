@@ -61,7 +61,7 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { mergedPollGp, withoutHeldTwins } from './lobby/join-poll.js';
+import { mergedPollGp, withoutHeldTwins, isJoinPress } from './lobby/join-poll.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -4877,6 +4877,8 @@ export class Lobby {
       if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: '' });
       else if (local) Object.assign(sto, { who: this._localP2Name || 'Player 2', dev: '', state: 'joined', hint: '' });
       else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '' });
+      // P2 in the corner once someone sits there, like the captain's P1.
+      sto.badge = online || local ? 'P2' : '';
     }
     const cands = this._currentStep === step && this._detectLocalJoinCandidates ? (this._detectLocalJoinCandidates() || []) : [];
     this._renderHostSeats(cands);
@@ -4886,8 +4888,7 @@ export class Lobby {
     // code button until the online room is open.
     this._syncHostJoinQr();
     const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
-    // #548: the WARDROBE buttons under the seats join P1's focus set.
-    const items = [online && onBtn, local && locBtn, codeBtn, ...document.querySelectorAll('#host-wardrobe uf-button'), back].filter(Boolean);
+    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5260,7 +5261,10 @@ export class Lobby {
         const prev = this._versusPrevButtons.get(key) || { any: true };
         let any = false;
         for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) { any = true; break; }
-        if (seatOpen && any && !prev.any) {
+        // Any button joins except B (stand up). Edge on "any" so a held B
+        // followed by A still needs a fresh press.
+        const joins = isJoinPress(gp, this._padSwapsAB(gp, c.name));
+        if (seatOpen && joins && !prev.any) {
           this._versusPrevButtons.set(key, { any });
           this._diag(`[local] join press on ${c.name} (${c.kind})`, 'join-press');
           this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry });
@@ -5405,13 +5409,12 @@ export class Lobby {
           }
           this._localP2AnyPrev = anyPressed;
 
-          // Commit on ANY button. ✕ is index 0 only under Chromium's standard
-          // mapping; a pad it doesn't recognise reports raw HID order, where
-          // ✕ can be index 1 — and then the button the UI told the player to
-          // press did nothing. Anyone pressing a button on the join screen
-          // means to join, so take any of them.
-          const aPressed = anyPressed;
-          if (anyPressed) {
+          // Commit on any button but B. ✕ is index 0 only under Chromium's
+          // standard mapping; a pad it doesn't recognise reports raw HID
+          // order, where ✕ can be index 1, so there any button joins. On a
+          // standard pad B is "stand up" and never seats (isJoinPress).
+          const aPressed = isJoinPress(gp, this._padSwapsAB(gp, state.gpName));
+          if (aPressed) {
             const pressed = [];
             for (let i = 0; i < gp.buttons.length; i++) if (gp.buttons[i] && gp.buttons[i].pressed) pressed.push(i);
             this._diag(`[local] P2 poll: pressed=[${pressed.join(',')}] mapping=${gp.mapping || '(non-standard)'} → joining`, 'poll');
@@ -5426,12 +5429,22 @@ export class Lobby {
             if (this._currentStep === this.hostStep) this._localJoinMonitorRAF = requestAnimationFrame(tick);
             return;
           }
-          if (!aPressed) this._localP2APrev = false;
+          if (!anyPressed) this._localP2APrev = false;
       }
 
       this._localJoinMonitorRAF = requestAnimationFrame(tick);
     };
     this._localJoinMonitorRAF = requestAnimationFrame(tick);
+  }
+
+  /**
+   * Does this pad report Nintendo-order A/B (the Cyclone quirk)? Looked up by
+   * its Gamepad id, else its display name, the way InputManager sets _gpSwapAB.
+   * @param {{ id?: string }|null|undefined} gp @param {string} [name]
+   */
+  _padSwapsAB(gp, name) {
+    const key = (gp && gp.id) || name || '';
+    return !!(key && ControllerRegistry.getGamepadQuirks(key).swapAB);
   }
 
   /**
@@ -7693,37 +7706,24 @@ export class Lobby {
   }
 
   /**
-   * One WARDROBE button per seated player under the seats (dirty-checked), and the players'
-   * pads bound to their looks. Also folds the buttons into the step's pad-focus set.
+   * Binds the seated players' pads to their looks, and under the co-op seats says
+   * "Press Y for wardrobe" (each seated pad's △ / Y opens its own card). No buttons
+   * (TV playtest 2026-11-06): versus says it in its join hint already. A mouse can
+   * still click the line to open Player 1's card.
    * @param {string} rowId @param {Array<{n: number, input?: any, type?: string, slotId?: string|null}>} players @param {HTMLElement} step
    */
   _renderWardrobeButtons(rowId, players, step) {
     const row = document.getElementById(rowId);
     if (!row) return;
     for (const p of players) playerLooks.bindPad(p.n, this._lookKeyFor(p));
-    const key = players.map((p) => p.n + ':' + (p.type || '')).join('|');
-    if (row._wardrobeKey === key) return;
-    row._wardrobeKey = key;
-    row.innerHTML = '';
-    for (const p of players) {
-      const b = document.createElement('uf-button');
-      b.setAttribute('variant', 'ghost');
-      b.setAttribute('size', 'sm');
-      b.id = `btn-wardrobe-p${p.n}`;
-      b.textContent = `P${p.n} WARDROBE`;
-      b.addEventListener('click', () => this._openDressingRoom(p.n));
-      row.appendChild(b);
-    }
-    if (step === this.versusStep) {
-      const base = (this._stepCenterItems.get(step) || []).filter((el) => el && !(el.id || '').startsWith('btn-wardrobe-'));
-      const items = [...base, ...row.querySelectorAll('uf-button')];
-      this._stepItems.set(step, items);
-      this._stepCenterItems.set(step, items);
-      if (this._currentStep === step && this.input && this.input.gamepadConnected && !this._room) {
-        this._modeColumns[1] = items;
-        this._stepFocus.refreshSpatial(this._stepNavItems());
-      }
-    }
+    if (step === this.versusStep || row._wardrobeHint) return;
+    row._wardrobeHint = true;
+    const hint = document.createElement('p');
+    hint.className = 'versus-join-hint wardrobe-hint';
+    hint.id = rowId + '-hint';
+    hint.innerHTML = 'Press <uf-controller-glyph button="north" size="sm"></uf-controller-glyph> for wardrobe';
+    hint.addEventListener('click', () => this._openDressingRoom(1));
+    row.appendChild(hint);
   }
 
   /**
