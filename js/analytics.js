@@ -93,7 +93,7 @@ export function initSession(opts) {
 
   sessionStartTime = performance.now();
 
-  beacon(`${API_BASE}/session`, {
+  createSession({
     id: sessionId,
     started_at: new Date().toISOString(),
     ...opts,
@@ -160,18 +160,33 @@ export function trackFirstInput(action) {
   trackEvent('first_input', { action, time_to_first_input_ms: ms });
 }
 
+let controllerPutTimer = null;
+let controllerSent = null;   // "name|connection" last written to the session
+
 export function setController(name, connection) {
+  // Every seated controller's InputManager reports here, so seating a player
+  // over and over repeats the same names. Only a change is news.
+  const key = `${name || ''}|${connection || ''}`;
+  if (key === `${currentControllerName || ''}|${currentControllerConnection || ''}`) return;
   currentControllerName = name || null;
   currentControllerConnection = connection || null;
   trackEvent('controller_connect', { name, connection });
 
-  // Update session with controller info
-  if (sessionId) {
+  // Update the session with the controller, at most once every 10 s (the
+  // latest wins). One PUT per change used to burn the API's per-IP session
+  // budget during a burst of seat changes, and the next session's create was
+  // then refused (429), which lost that whole session's events.
+  if (!sessionId || controllerPutTimer) return;
+  controllerPutTimer = setTimeout(() => {
+    controllerPutTimer = null;
+    const now = `${currentControllerName || ''}|${currentControllerConnection || ''}`;
+    if (now === controllerSent) return;
+    controllerSent = now;
     beacon(`${API_BASE}/session/${sessionId}`, {
       controller_name: currentControllerName,
       controller_connection: currentControllerConnection,
     }, 'PUT');
-  }
+  }, 10000);
 }
 
 // ---- Ride Tracking ----
@@ -274,9 +289,33 @@ export function trackConversion(action, context, url = null) {
 
 // ---- Internal Helpers ----
 
+/**
+ * Create the session row, retrying if the API refuses it for now (429 or a
+ * 5xx). Events no longer depend on it (the API makes a placeholder session
+ * for them), but the row carries the device, platform and user agent.
+ */
+function createSession(data, attempt = 0) {
+  if (DISABLED) return;
+  fetch(`${API_BASE}/session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify(data),
+    keepalive: true,
+    credentials: 'omit',
+  }).then((res) => {
+    if ((res.status === 429 || res.status >= 500) && attempt < 3) {
+      const wait = (parseInt(res.headers.get('Retry-After') || '', 10) || 60) * 1000;
+      setTimeout(() => createSession(data, attempt + 1), wait + Math.random() * 5000);
+    }
+  }).catch(e => console.warn('Analytics session failed:', e));
+}
+
 function flushUIEvents() {
   if (eventBuffer.length === 0) return;
   const batch = eventBuffer.splice(0);
+  // Events tracked before initSession() have no session yet; give them this one.
+  const sid = getSessionId();
+  if (sid) for (const e of batch) if (!e.session_id) e.session_id = sid;
   beacon(`${API_BASE}/event/batch`, { events: batch });
 }
 

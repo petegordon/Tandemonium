@@ -70,6 +70,7 @@
     "smoke:ach-detail": "node scripts/smoke-achievement-detail.mjs",
     "smoke:tv-playtest": "node scripts/smoke-tv-playtest.mjs",
     "smoke:rejoin": "node scripts/smoke-rejoin.mjs",
+    "smoke:seat-churn": "node scripts/smoke-seat-churn.mjs",
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
     "smoke:phone-multi": "node scripts/smoke-phone-multi.mjs",

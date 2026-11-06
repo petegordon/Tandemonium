@@ -491,6 +491,17 @@ export class ControllerOverlayHud {
 
 // ── One tile: a player label + the visualizer canvas (or a keyboard glyph) ──
 
+// Dispose an overlay AND free its WebGL context now. renderer.dispose() alone
+// leaves the context alive until garbage collection; each seat tile has its
+// own canvas, so standing up and sitting down repeatedly piled contexts up
+// until Chromium (16 max) dropped the oldest one, the game's renderer, and
+// the game reloaded to the lobby (TV playtest 2026-11-06, smoke:seat-churn).
+function releaseOverlay(overlay) {
+  if (!overlay) return;
+  try { overlay.dispose(); } catch (e) {}
+  try { if (overlay.renderer) overlay.renderer.forceContextLoss(); } catch (e) {}
+}
+
 class Tile {
   constructor(hud, entry) {
     this.hud = hud;
@@ -585,10 +596,11 @@ class Tile {
       await overlay.init();
     } catch (err) {
       console.warn('[controller-overlay] tile init failed:', err);
+      releaseOverlay(overlay);
       this._creating = false;
       return;
     }
-    if (seq !== this._seq || this._disposed || !this._hasSource()) { overlay.dispose(); this._creating = false; return; }
+    if (seq !== this._seq || this._disposed || !this._hasSource()) { releaseOverlay(overlay); this._creating = false; return; }
     overlay.setCameraPreset('player');
     overlay.setPressColor(this.entry.color);
     this.overlay = overlay;
@@ -599,7 +611,7 @@ class Tile {
 
   _destroyOverlay() {
     this._seq++; // cancels an in-flight init
-    if (this.overlay) { try { this.overlay.dispose(); } catch (e) {} }
+    releaseOverlay(this.overlay);
     this.overlay = null;
     this.profile = null;
     this._creating = false;

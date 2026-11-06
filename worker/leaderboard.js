@@ -75,7 +75,10 @@ export default {
         return handleAnalyticsSession(request, env, corsOrigin, clientIP);
       }
       if (path.match(/^\/api\/analytics\/session\/[^/]+$/) && request.method === 'PUT') {
-        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
+        // Its own budget: updates used to share the create limit, so a burst of
+        // them (a controller seated over and over) made the NEXT session's
+        // create 429, and every event of that session then failed.
+        const limited = await checkRateLimit(env.ANALYTICS_SESSION_UPDATE_LIMITER || env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         const sessId = path.split('/')[4];
         return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId, clientIP);
@@ -1066,12 +1069,21 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
   const deviceId = typeof body.device_id === 'string' && body.device_id.length <= 64 ? body.device_id : null;
 
+  // Upsert: the session may already exist as a placeholder that its events
+  // created (see ensureSessions) when this create was late or rate-limited.
+  // Fill it in; keep the earlier start time.
+  const fill = (cols) => cols.map((c) => `${c} = COALESCE(excluded.${c}, sessions.${c})`).join(', ');
+  const FILL = ['device_type', 'input_method', 'referrer', 'user_agent', 'room_code', 'google_uid',
+    'platform', 'screen_width', 'screen_height', 'ip_address'];
   try {
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+      `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
        device_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
+       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ${fill([...FILL, 'device_id'])}`
     ).bind(...baseValues, deviceId).run();
   } catch (e) {
     // Worker deploys on push; migration 0008 is applied by hand. Until it is,
@@ -1079,9 +1091,12 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     // losing every session (the pre-A-9 behaviour).
     if (!/device_id/.test(String(e && e.message))) throw e;
     await env.DB.prepare(
-      `INSERT OR IGNORE INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
+      `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
+       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ${fill(FILL)}`
     ).bind(...baseValues).run();
   }
 
@@ -1123,12 +1138,39 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   return jsonResponse({ success: true }, 200, corsOrigin);
 }
 
+/**
+ * Placeholder session rows for events whose session was never created. The
+ * create is fire-and-forget: rate-limited (429), dropped, or simply later than
+ * the first events. events.session_id REFERENCES sessions(id) and D1 enforces
+ * foreign keys, so one missing session used to fail the whole batch (500) and
+ * every event of that session after it, js_error reports included. A later
+ * create fills the placeholder in (handleAnalyticsSession upserts).
+ */
+function ensureSessions(env, events) {
+  const first = new Map();
+  for (const e of events) {
+    const at = e.created_at || new Date().toISOString();
+    if (!first.has(e.session_id) || at < first.get(e.session_id)) first.set(e.session_id, at);
+  }
+  const stmt = env.DB.prepare('INSERT OR IGNORE INTO sessions (id, started_at) VALUES (?, ?)');
+  return [...first].map(([id, at]) => stmt.bind(id, at));
+}
+
+/** Events the database can hold: a real session id and an event type. */
+function storableEvents(list, max = 200) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((e) => e && isValidUUID(e.session_id) && typeof e.event_type === 'string' && e.event_type).slice(0, max);
+}
+
 async function handleAnalyticsEventBatch(request, env, corsOrigin) {
   const body = await request.json();
-  const events = body.events;
-  if (!Array.isArray(events) || events.length === 0) {
+  if (!Array.isArray(body.events) || body.events.length === 0) {
     return jsonResponse({ error: 'No events' }, 400, corsOrigin);
   }
+  // An event tracked before the session existed has no session id; a NULL in
+  // the batch used to fail all of it (session_id is NOT NULL).
+  const events = storableEvents(body.events);
+  if (events.length === 0) return jsonResponse({ success: true, stored: 0 }, 200, corsOrigin);
 
   const stmt = env.DB.prepare(
     'INSERT INTO events (session_id, event_type, event_data, created_at, page, input_method) VALUES (?, ?, ?, ?, ?, ?)'
@@ -1143,10 +1185,10 @@ async function handleAnalyticsEventBatch(request, env, corsOrigin) {
       e.input_method || null
     )
   );
-  await env.DB.batch(batch);
+  await env.DB.batch([...ensureSessions(env, events), ...batch]);
 
   writeMetric(env, 'analytics_events', String(events.length));
-  return jsonResponse({ success: true }, 200, corsOrigin);
+  return jsonResponse({ success: true, stored: events.length }, 200, corsOrigin);
 }
 
 async function handleAnalyticsRideCreate(request, env, corsOrigin) {
@@ -1157,6 +1199,7 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
   if (!body.session_id || !isValidUUID(body.session_id)) {
     return jsonResponse({ error: 'Invalid session_id' }, 400, corsOrigin);
   }
+  await ensureSessions(env, [{ session_id: body.session_id, created_at: body.started_at }])[0].run();
 
   await env.DB.prepare(
     `INSERT OR IGNORE INTO rides (id, session_id, room_code, level, role, difficulty,
@@ -1320,9 +1363,10 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
 
 async function handleAnalyticsConversion(request, env, corsOrigin) {
   const body = await request.json();
-  if (!body.session_id || !body.action) {
+  if (!isValidUUID(body.session_id) || !body.action) {
     return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
   }
+  await ensureSessions(env, [{ session_id: body.session_id, created_at: body.created_at }])[0].run();
 
   await env.DB.prepare(
     'INSERT INTO conversions (session_id, action, context, url, created_at) VALUES (?, ?, ?, ?, ?)'
