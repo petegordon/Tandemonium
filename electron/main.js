@@ -3,17 +3,38 @@ const path = require('path');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
 
-// Diagnostic file logger for Steam Input troubleshooting.
-// Writes to %USERPROFILE%\tandemonium-diag.log so we can see main-
-// process diagnostics from Steam-launched runs (which swallow stdout).
-// Reset on each launch. Remove this whole block once Steam Input is
-// confirmed working end-to-end.
-const _diagLogPath = path.join(process.env.USERPROFILE || process.env.HOME || __dirname, 'tandemonium-diag.log');
-try { fs.writeFileSync(_diagLogPath, `--- launch ${new Date().toISOString()} ---\n`); } catch (e) {}
+// Local diagnostic log: %USERPROFILE%\tandemonium-diag.log. Steam-launched
+// runs swallow stdout, so the main process, the renderer (errors, warnings,
+// window.electronApp.diag()) and the window's own lifecycle (page crashed,
+// hung, reloaded) all land here.
+//
+// Each launch starts a fresh file but keeps the last one as
+// tandemonium-diag.previous.log: after a crash the player relaunches, and the
+// session that crashed is the one we need (TV playtest 2026-11-06). A file
+// that passes _DIAG_MAX_BYTES is rolled the same way mid-session.
+const _diagDir = process.env.USERPROFILE || process.env.HOME || __dirname;
+const _diagLogPath = path.join(_diagDir, 'tandemonium-diag.log');
+const _diagPrevPath = path.join(_diagDir, 'tandemonium-diag.previous.log');
+const _DIAG_MAX_BYTES = 8 * 1024 * 1024;
+let _diagBytes = 0;
+function _diagRoll() {
+  try { if (fs.existsSync(_diagLogPath)) fs.renameSync(_diagLogPath, _diagPrevPath); } catch (e) {}
+  _diagBytes = 0;
+}
 function _diagLog(msg) {
   console.log(msg);
-  try { fs.appendFileSync(_diagLogPath, `[${new Date().toISOString()}] ${msg}\n`); } catch (e) {}
+  const line = `[${new Date().toISOString()}] ${msg}\n`;
+  try {
+    if (_diagBytes + line.length > _DIAG_MAX_BYTES) {
+      _diagRoll();
+      fs.appendFileSync(_diagLogPath, '--- continued (earlier part in tandemonium-diag.previous.log) ---\n');
+    }
+    fs.appendFileSync(_diagLogPath, line);
+    _diagBytes += line.length;
+  } catch (e) {}
 }
+process.on('uncaughtException', (err) => { _diagLog('[main] uncaught exception: ' + ((err && err.stack) || err)); });
+process.on('unhandledRejection', (err) => { _diagLog('[main] unhandled rejection: ' + ((err && err.stack) || err)); });
 
 // Group all Electron processes under one taskbar/alt-tab entry on Windows.
 if (process.platform === 'win32') {
@@ -28,6 +49,9 @@ app.commandLine.appendSwitch('disable-background-networking');
 // --- Single instance lock ---
 // Prevent multiple app instances (common with Steam launching or double-clicks).
 const gotTheLock = app.requestSingleInstanceLock();
+// Roll the diag log only in the instance that runs: a second launch quits
+// straight away and must not move the running game's log aside.
+if (gotTheLock) { _diagRoll(); _diagLog(`--- launch ${app.getVersion()} pid=${process.pid} electron=${process.versions.electron} ${process.platform} ---`); }
 if (!gotTheLock) {
   app.quit();
 } else {
@@ -357,11 +381,51 @@ function createWindow() {
   if (_resolveIsDemo()) _params.set('demo', '1');
   const _query = _params.toString() ? '?' + _params.toString() : '';
   mainWindow.loadURL('tandemonium://app/index.html' + _query);
+  _watchWindow(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
+
+// Window lifecycle + renderer console → the diag log. The game's own recovery
+// paths (WebGL context lost → reload) only ever said so in the DevTools
+// console, so a reload on the TV left no trace anywhere.
+const _CONSOLE_LEVELS = ['verbose', 'info', 'warning', 'error'];
+function _watchWindow(win) {
+  const wc = win.webContents;
+  let loads = 0;
+  let lastConsole = '';
+  let repeats = 0;
+  wc.on('console-message', (_e, level, message, line, sourceId) => {
+    if (level < 2) return;   // warnings and errors only
+    const src = sourceId ? ` (${String(sourceId).split('/').pop()}:${line})` : '';
+    const text = `[console:${_CONSOLE_LEVELS[level] || level}] ${String(message).slice(0, 2000)}${src}`;
+    // A warning fired every frame would bury everything else: log it once,
+    // then how many times it repeated.
+    if (text === lastConsole) {
+      repeats++;
+      if (repeats === 10 || repeats === 100 || repeats % 1000 === 0) _diagLog(`[console] (last message repeated ${repeats}x)`);
+      return;
+    }
+    if (repeats > 0) _diagLog(`[console] (last message repeated ${repeats}x)`);
+    lastConsole = text;
+    repeats = 0;
+    _diagLog(text);
+  });
+  wc.on('did-start-navigation', (details) => {
+    if (details && details.isMainFrame && !details.isSameDocument) _diagLog(`[window] navigating: ${details.url}`);
+  });
+  wc.on('did-finish-load', () => { loads++; _diagLog(`[window] page loaded (#${loads}${loads > 1 ? ', a RELOAD' : ''})`); });
+  wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => { if (isMainFrame) _diagLog(`[window] page failed to load: ${code} ${desc} ${url}`); });
+  wc.on('render-process-gone', (_e, details) => { _diagLog(`[window] PAGE CRASHED: reason=${details.reason} exitCode=${details.exitCode}`); });
+  wc.on('unresponsive', () => _diagLog('[window] page not responding'));
+  wc.on('responsive', () => _diagLog('[window] page responding again'));
+}
+app.on('child-process-gone', (_e, details) => {
+  _diagLog(`[app] child process gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}${details.name ? ' name=' + details.name : ''}`);
+});
+app.on('will-quit', () => _diagLog('[app] quitting'));
 
 app.whenReady().then(async () => {
   // Dev: purge any previously-cached tandemonium:// responses so source

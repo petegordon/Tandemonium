@@ -39,7 +39,7 @@ jobs:
           - group: controllers
             smokes: disconnect local-coop versus wardrobe
           - group: controllers-2
-            smokes: webhid steam-input
+            smokes: webhid steam-input seat-churn
           - group: input
             smokes: input solo-extras
           - group: ui

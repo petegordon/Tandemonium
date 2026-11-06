@@ -41,6 +41,14 @@ type = "ratelimit"
 namespace_id = "1004"
 simple = { limit = 10, period = 60 }
 
+# Session updates (controller changes, session end) get their own budget so
+# they can never use up the creates.
+[[unsafe.bindings]]
+name = "ANALYTICS_SESSION_UPDATE_LIMITER"
+type = "ratelimit"
+namespace_id = "1007"
+simple = { limit = 30, period = 60 }
+
 [[unsafe.bindings]]
 name = "ANALYTICS_EVENT_LIMITER"
 type = "ratelimit"
