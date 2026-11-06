@@ -30,3 +30,33 @@ test('missing or partial sources are tolerated', () => {
   assert.equal(mergedPollGp({ buttons: btns(2, [1]) }, undefined).buttons[1].pressed, true);
   assert.equal(mergedPollGp(undefined, { axes: [0, 0.2] }).axes[1], 0.2);
 });
+
+// #581 · a seated pad showed twice in the co-op roster: once through its slot,
+// once as its own (frozen) Gamepad entry, "DualSense · seats full".
+import { withoutHeldTwins } from '../../js/lobby/join-poll.js';
+const DS = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
+const gpc = (gpIndex, id = DS) => ({ gpIndex, gp: { id } });
+const dsDevice = { productName: 'DualSense Wireless Controller' };
+
+test('a slot that adopted its pad\'s Gamepad entry drops that index', () => {
+  const kept = withoutHeldTwins([gpc(0), gpc(1, 'Xbox Wireless Controller')], [{ state: 'claimed', hidDevice: dsDevice, gamepadIndex: 0 }]);
+  assert.deepEqual(kept.map((c) => c.gpIndex), [1]);
+});
+
+test('a WebHID-only slot drops the one Gamepad candidate named like its device (the reported bug)', () => {
+  const kept = withoutHeldTwins([gpc(2), gpc(3, 'Xbox Wireless Controller')], [{ state: 'claimed', hidDevice: dsDevice, gamepadIndex: null }]);
+  assert.deepEqual(kept.map((c) => c.gpIndex), [3]);
+});
+
+test('two identical pads and one WebHID-only slot: nothing dropped (never hide a real controller)', () => {
+  const kept = withoutHeldTwins([gpc(0), gpc(1)], [{ state: 'claimed', hidDevice: dsDevice, gamepadIndex: null }]);
+  assert.deepEqual(kept.map((c) => c.gpIndex), [0, 1]);
+});
+
+test('empty slots and Gamepad-only claims hide nothing', () => {
+  const kept = withoutHeldTwins([gpc(0), gpc(1)], [
+    { state: 'empty', hidDevice: dsDevice, gamepadIndex: 0 },
+    { state: 'claimed', hidDevice: null, gamepadIndex: 1 },
+  ]);
+  assert.deepEqual(kept.map((c) => c.gpIndex), [0, 1]);
+});
