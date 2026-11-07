@@ -61,7 +61,7 @@ jobs:
   # unsigned code; Steam downloads aren't quarantined, so no notarization yet).
   # Only runs when a Steam upload is wanted: macOS minutes are the slow ones.
   build-macos:
-    runs-on: macos-14
+    runs-on: macos-15
     if: (github.event_name == 'workflow_dispatch' && inputs.macos) || github.ref == 'refs/heads/steam-publishing'
     steps:
       - uses: actions/checkout@v4
