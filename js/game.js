@@ -42,6 +42,8 @@ import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { GOOSE_OUTFITS } from './goose-outfits.js';
+import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots, isSilentSteamControllerSlot, frozenTwinHidEntries } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
@@ -4468,7 +4470,7 @@ class Game {
         crashes: summary.crashes,
         safetyUsed: this.safetyMode,
         syncPct: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : null,
-        partnerUserId: this._partnerServerId || null
+        partnerUserId: this._partnerServerId || (this._seatAccount() ? this._seatAccount().user.id : null)
       });
       if (res && res.alreadyRidden) {
         analytics.trackEvent('daily_submit_duplicate', { key: level.key });
@@ -4489,7 +4491,11 @@ class Game {
   _partnerKey() {
     if (this._partnerServerId) return String(this._partnerServerId);
     if (this._partnerName) return 'name:' + this._partnerName;
-    if (this.mode === 'local') return 'local:p2';
+    if (this.mode === 'local') {
+      // #612: a signed-in Player 2 is their account, not the anonymous 'local:p2' (#609).
+      const acc = this._seatAccount();
+      return acc ? String(acc.user.id) : 'local:p2';
+    }
     return null;
   }
 
@@ -4786,6 +4792,34 @@ class Game {
     state.gyroOnly = [this.balanceCtrl, this.mode === 'local' ? this.balanceCtrlP2 : null]
       .some(bc => !!bc && gyroOnlySteer(bc.steerFrames));
     this.achievements.finish(state);
+    this._seatFinish();
+    if (this.lobby) this.lobby._linkPromptDue = true;   // #612: back in the lobby, maybe "Link Discord"
+  }
+
+  /** #612 · the account signed in on local seat 2 (Player 2), or null. */
+  _seatAccount() {
+    if (this.mode !== 'local' || !this.lobby || !this.lobby.seatAccounts) return null;
+    try { return this.lobby.seatAccounts.get(2); } catch (e) { return null; }
+  }
+
+  /**
+   * #612 · a signed-in Player 2 earns their own achievements from this ride
+   * (js/seat-achievements.js): the same finish, their own lifetime stats, their
+   * partner is Player 1. They go up with the score submit under P2's sign-in.
+   */
+  _seatFinish() {
+    this._seatNewAchievements = {};
+    const acc = this._seatAccount();
+    if (!acc || !this.lobby.seatAchievements) return;
+    const me = this.lobby.auth && this.lobby.auth.user;
+    const s = {
+      ...(this.achievements.lastFinishState || {}),
+      partnerKey: me && me.serverId ? String(me.serverId) : 'local:p1',
+      gyroOnly: !!this.balanceCtrlP2 && gyroOnlySteer(this.balanceCtrlP2.steerFrames),
+    };
+    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: dailyKey(), demo: !!this.achievements.demo });
+    this._seatNewAchievements[2] = fresh.map((a) => a.id);
+    for (const a of fresh) showInfoToast(a.icon, `${acc.user.name} · ${a.name}`, a.desc);
   }
 
   _updateBadges() {
@@ -5301,15 +5335,27 @@ class Game {
           contrib[myRole].guestDeviceId = analytics.getDeviceId();
         }
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
+      } else if (this.mode === 'local') {
+        // #612 · couch co-op: Player 1 is the captain; Player 2 the stoker. A
+        // signed-in Player 2 rides on their own account: the server checks their
+        // own sign-in (seats[].token), never an id Player 1's game claims.
+        const cap = contrib.captain || contrib.solo || null;
+        const sto = contrib.stoker || null;
+        data.contributions = {};
+        if (cap) data.contributions.captain = { ...cap, userId: myServerId };
+        if (sto) data.contributions.stoker = { ...sto, userId: null };
       } else {
-        // Solo OR local MP — attribute to the local user. contribution-tracker
-        // returns a captain shape in local MP; treat it as solo for submission.
+        // Solo — attribute to the local user.
         const contribToSubmit = contrib.solo || contrib.captain || contrib.stoker;
         if (contribToSubmit) {
           contribToSubmit.userId = myServerId;
           data.contributions = { solo: contribToSubmit };
         }
       }
+    }
+    if (this.mode === 'local') {
+      const acc = this._seatAccount();
+      if (acc) data.seats = [{ role: 'stoker', token: acc.token, newAchievements: (this._seatNewAchievements && this._seatNewAchievements[2]) || [] }];
     }
 
     try {
@@ -5562,6 +5608,8 @@ class Game {
     this.state = 'lobby';
     this.lobby.show();
     analytics.setPage('lobby');
+    // #612: after a finished ride, a Steam Player 1 without Discord may get the link prompt.
+    if (this.lobby.maybePromptLinkDiscord) setTimeout(() => { if (this.state === 'lobby') this.lobby.maybePromptLinkDiscord(); }, 700);
   }
 
 
@@ -5930,7 +5978,7 @@ class Game {
     const soloOffBtn = document.getElementById('opt-solo-off');
     if (soloOnBtn)  soloOnBtn.addEventListener('click',  () => this._setShowSolo(true));
     if (soloOffBtn) soloOffBtn.addEventListener('click', () => this._setShowSolo(false));
-    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
+    for (const key of Object.keys(GOOSE_OUTFITS)) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.addEventListener('click', () => this._setGooseOutfit(key));
     }
@@ -6171,7 +6219,17 @@ class Game {
   }
 
   /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
+  /** #611 · reward outfits this device has not earned yet (the robot: player bots). */
+  _lockedOutfits() {
+    return lockedOutfits(GOOSE_OUTFITS, this.achievements ? this.achievements.getEarnedIds() : []);
+  }
+
   _setGooseOutfit(key) {
+    if (this._lockedOutfits().has(key)) {
+      const note = document.getElementById('opt-outfit-note');
+      if (note) note.textContent = 'Locked: ' + outfitLockHint(GOOSE_OUTFITS[key], this.achievements ? this.achievements.getEarnedIds() : []);
+      return;
+    }
     playerLooks.update(1, { outfit: key });
     this._updateOptionsGooseOutfitUI();
     this._syncRiderLooks(true);
@@ -6186,9 +6244,14 @@ class Game {
 
   _updateOptionsGooseOutfitUI() {
     const cur = getGooseOutfit();
-    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
+    const locked = this._lockedOutfits();
+    const earned = this.achievements ? this.achievements.getEarnedIds() : [];
+    for (const key of Object.keys(GOOSE_OUTFITS)) {
       const b = document.getElementById('opt-outfit-' + key);
-      if (b) b.classList.toggle('active', key === cur);
+      if (!b) continue;
+      b.classList.toggle('active', key === cur);
+      if (locked.has(key)) { b.dataset.locked = '1'; b.title = outfitLockHint(GOOSE_OUTFITS[key], earned); }
+      else { delete b.dataset.locked; b.removeAttribute('title'); }
     }
     const body = playerLooks.get(1).body;
     for (const k of ['m', 'f']) {
@@ -6372,6 +6435,7 @@ class Game {
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
       document.getElementById('opt-outfit-georgian'),
+      document.getElementById('opt-outfit-robot'),
       document.getElementById('opt-colour-0'),
       document.getElementById('opt-colour-1'),
       document.getElementById('opt-colour-2'),

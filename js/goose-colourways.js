@@ -14,6 +14,9 @@ import DATA from './goose-colourways-data.js';
 
 export const DEFAULT_COLOURWAY = 'default';
 
+/** Outfits with no colourways yet (just their own colours): the robot (#611). */
+const ONE_LOOK = ['robot'];
+
 /**
  * #617 · one word per colourway on the buttons ("Navy", not "Navy + mustard"). The generated data
  * keeps the review sheet's full names (regenerated from tandemonium-claude-3d), so the short name
@@ -35,7 +38,8 @@ export function colourwayName(key, label = '') {
 /** [{key, label}] for an outfit pair ('default' first); [] for an unknown pair. Labels are one word (#617). */
 export function colourwaysFor(outfit) {
   const p = DATA[outfit];
-  return p ? p.ways.map(w => ({ key: w.key, label: colourwayName(w.key, w.label) })) : [];
+  if (!p) return ONE_LOOK.includes(outfit) ? [{ key: DEFAULT_COLOURWAY, label: 'Original' }] : [];
+  return p.ways.map(w => ({ key: w.key, label: colourwayName(w.key, w.label) }));
 }
 
 /** A known colourway of the pair, else the default. */

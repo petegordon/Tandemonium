@@ -1,19 +1,62 @@
 // ============================================================
-// AUTH — Google Identity Services (GSI) client-side auth
+// AUTH — House Tandem account: Discord + Steam (#612)
 // ============================================================
+//
+// One account, several sign-ins. The Steam build signs in by Steam ticket on
+// its own; anyone can sign in (or a Steam player can link) with Discord.
+// Google is no longer offered (2026-11-06); a stored Google session keeps
+// working until it expires.
+//
+// Discord sign-in:
+//   - same device (a browser with a mouse or touch): a full-page redirect to
+//     Discord and back; the session comes back in the URL fragment.
+//   - device code (TV, Steam build, or linking): the game shows a QR + a
+//     4-letter code; the player finishes in a browser (their phone, or the
+//     system browser the Steam build opens) and confirms the code. The game
+//     polls the API with a secret only it holds.
 
 import { API_BASE } from './config.js';
 
 const STORAGE_USER = 'tandemonium_auth_user';
 const STORAGE_TOKEN = 'tandemonium_auth_token';
-const GOOGLE_CLIENT_ID = '640682648249-dp1dou0mmpkm6m697oakbe9odabt1dui.apps.googleusercontent.com';
+const POLL_MS = 2000;
+
+/** Pull `#ht_auth=<jwt>` off the URL (a Discord redirect coming back). */
+export function takeRedirectToken(loc = globalThis.location, hist = globalThis.history) {
+  if (!loc || !loc.hash || !loc.hash.includes('ht_auth=')) return null;
+  const params = new URLSearchParams(loc.hash.slice(1));
+  const token = params.get('ht_auth');
+  params.delete('ht_auth');
+  const rest = params.toString();
+  try { hist.replaceState(null, '', loc.pathname + loc.search + (rest ? '#' + rest : '')); } catch (e) {}
+  return token || null;
+}
+
+/** The sign-ins to picture, left to right: Discord, then Steam (then anything else). */
+export function identityPictures(user) {
+  if (!user) return [];
+  const ids = user.identities || {};
+  const out = [];
+  for (const p of ['discord', 'steam']) {
+    if (ids[p] && ids[p].avatar) out.push({ provider: p, avatar: ids[p].avatar, name: ids[p].name });
+  }
+  if (!out.length && user.avatar) out.push({ provider: user.provider || 'account', avatar: user.avatar, name: user.name });
+  return out;
+}
+
+function decodeJwt(token) {
+  try {
+    return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+  } catch { return null; }
+}
 
 export class AuthManager {
   constructor() {
     this.user = null;
     this.token = null;
+    this.lastAuthError = null;
     this._onLoginCallback = null;
-    this._gsiInitialized = false;
+    this._device = null;   // the device-code sign-in in progress
     this._load();
   }
 
@@ -46,137 +89,174 @@ export class AuthManager {
     return this.token;
   }
 
+  /** Is this sign-in linked to the account? ('discord' | 'steam' | 'google') */
+  hasIdentity(provider) {
+    return !!(this.user && this.user.identities && this.user.identities[provider]);
+  }
+
   onLogin(callback) {
     this._onLoginCallback = callback;
   }
 
-  initGSI() {
-    if (this._gsiInitialized) return;
-    this._gsiInitialized = true;
-
-    const tryInit = () => {
-      if (typeof google === 'undefined' || !google.accounts) {
-        setTimeout(tryInit, 200);
-        return;
-      }
-      google.accounts.id.initialize({
-        client_id: GOOGLE_CLIENT_ID,
-        callback: (response) => this._handleCredential(response),
-        auto_select: true,
-      });
-      // Render a persistent Sign-In button (immune to One Tap cooldown)
-      const btnContainer = document.getElementById('gsi-button-container');
-      if (btnContainer) {
-        google.accounts.id.renderButton(btnContainer, {
-          type: 'standard',
-          theme: 'filled_black',
-          size: 'medium',
-          text: 'signin_with',
-          shape: 'pill',
-        });
-      }
+  /**
+   * Take a server answer ({ token, user }) as the signed-in state. Only a link
+   * (`extra.keep`) carries anything over from the previous user; a fresh
+   * sign-in starts clean, so one player's id never sticks to the next.
+   */
+  _applySession(token, serverUser, extra = {}) {
+    this.token = token;
+    const prev = (extra.keep && this.user) || {};
+    delete extra.keep;
+    this.user = {
+      ...extra,
+      id: extra.id || prev.id || (serverUser && serverUser.id),
+      name: (serverUser && serverUser.name) || prev.name || 'Player',
+      avatar: (serverUser && serverUser.avatar) || prev.avatar || null,
+      serverId: serverUser && serverUser.id,
+      identities: (serverUser && serverUser.identities) || prev.identities || {},
     };
-    tryInit();
-  }
-
-  async _handleCredential(response) {
-    try {
-      const payload = JSON.parse(atob(response.credential.split('.')[1]));
-      this.user = {
-        id: payload.sub,
-        name: payload.name,
-        email: payload.email,
-        avatar: payload.picture,
-      };
-      this._gsiCredential = response.credential; // keep for retry
-      this._save();
-
-      await this._exchangeToken(response.credential);
-
-      if (this._onLoginCallback) this._onLoginCallback(this.user);
-    } catch (e) {
-      console.error('Auth error', e);
-      this.lastAuthError = 'Sign-in error: ' + (e.message || 'unknown');
-      if (this._onLoginCallback) this._onLoginCallback(this.user);
-    }
-  }
-
-  // Exchange GSI credential for server JWT — can be retried
-  async _exchangeToken(credential) {
+    if (extra.provider) this.user.provider = extra.provider;
+    else if (prev.provider) this.user.provider = prev.provider;
     this.lastAuthError = null;
+    this._save();
+  }
+
+  /**
+   * Back from a Discord redirect? Then sign in with the token it carried.
+   * Called once the lobby has registered onLogin. Returns true when it did.
+   */
+  async resumeFromRedirect() {
+    const token = takeRedirectToken();
+    if (!token) return false;
+    const claims = decodeJwt(token);
+    if (!claims) return false;
+    this.token = token;
+    const me = await this.getMe().catch(() => null);
+    const u = me && me.user;
+    this._applySession(token, u ? { id: u.id, name: u.display_name, avatar: u.avatar_url, identities: u.identities } : { id: claims.sub, name: claims.name, avatar: claims.picture }, { provider: 'discord' });
+    if (this._onLoginCallback) this._onLoginCallback(this.user);
+    return true;
+  }
+
+  /** Re-read the account (its linked sign-ins) from the server. */
+  async refreshProfile() {
+    const me = await this.getMe().catch(() => null);
+    if (!me || !me.user || !this.user) return null;
+    this.user.identities = me.user.identities || this.user.identities || {};
+    if (me.user.display_name) this.user.name = me.user.display_name;
+    if (me.user.avatar_url) this.user.avatar = me.user.avatar_url;
+    this._save();
+    return this.user;
+  }
+
+  async _beginDiscord(body) {
+    const headers = { 'Content-Type': 'application/json' };
+    // Signed in already: the Discord sign-in is linked to this account.
+    if (this.token && !this.isTokenExpired()) headers.Authorization = `Bearer ${this.token}`;
+    const res = await fetch(`${API_BASE}/auth/discord/begin`, { method: 'POST', headers, body: JSON.stringify(body) });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || ('Discord sign-in unavailable (' + res.status + ')'));
+    }
+    return res.json();
+  }
+
+  /** Same device: go to Discord and come back here signed in. */
+  async signInWithDiscordRedirect() {
     try {
-      const res = await fetch(`${API_BASE}/auth/google`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credential }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        this.token = data.token;
-        if (data.user && data.user.id) this.user.serverId = data.user.id;
-        this._save();
-        return true;
-      } else {
-        const errBody = await res.text().catch(() => '');
-        this.lastAuthError = 'Server auth failed (' + res.status + ')';
-        console.error('AUTH: Server JWT exchange failed:', res.status, errBody);
-        return false;
-      }
+      const returnTo = location.origin + location.pathname + location.search;
+      const req = await this._beginDiscord({ mode: 'redirect', return_to: returnTo });
+      location.assign(req.url);
+      return true;
     } catch (e) {
-      this.lastAuthError = 'Server unreachable';
-      console.error('AUTH: Server JWT exchange error:', e);
+      this.lastAuthError = e.message;
       return false;
     }
   }
 
-  // Retry the token exchange using the last GSI credential
-  async retryTokenExchange() {
-    if (this._gsiCredential) {
-      return this._exchangeToken(this._gsiCredential);
+  /**
+   * Device code: start (or reuse) a sign-in finished in another browser.
+   * Resolves { url, code, expiresAt } for the QR, then keeps polling; `onDone`
+   * gets (user, { linked, merged }) or (null, { error }). One at a time.
+   */
+  async startDiscordDevice({ onDone, onStatus } = {}) {
+    if (this._device && this._device.expiresAt > Date.now() + 30000) {
+      this._device.onDone = onDone;
+      this._device.onStatus = onStatus;
+      return this._device;
     }
-    return false;
+    this.cancelDiscordDevice();
+    const req = await this._beginDiscord({ mode: 'device' });
+    const dev = {
+      id: req.id, secret: req.secret, url: req.url, code: req.code,
+      expiresAt: Date.now() + (req.expires_in || 600) * 1000,
+      onDone, onStatus, timer: null, stopped: false,
+    };
+    this._device = dev;
+    const tick = async () => {
+      if (dev.stopped) return;
+      if (Date.now() > dev.expiresAt) { this._finishDevice(dev, null, { error: 'expired' }); return; }
+      try {
+        const res = await fetch(`${API_BASE}/auth/poll`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: dev.id, secret: dev.secret }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (dev.stopped) return;
+        if (data.status === 'done') {
+          this._applySession(data.token, data.user, this.user && data.linked ? { keep: true } : { provider: 'discord' });
+          this._finishDevice(dev, this.user, { linked: !!data.linked, merged: !!data.merged });
+          if (this._onLoginCallback) this._onLoginCallback(this.user);
+          return;
+        }
+        if (data.status === 'error' || data.status === 'expired') {
+          this._finishDevice(dev, null, { error: data.error || data.status });
+          return;
+        }
+        if (dev.onStatus) dev.onStatus(data.status);
+      } catch (e) { /* offline for a moment: keep polling */ }
+      dev.timer = setTimeout(tick, POLL_MS);
+    };
+    dev.timer = setTimeout(tick, POLL_MS);
+    return dev;
+  }
+
+  _finishDevice(dev, user, info) {
+    dev.stopped = true;
+    if (dev.timer) clearTimeout(dev.timer);
+    if (this._device === dev) this._device = null;
+    if (dev.onDone) dev.onDone(user, info);
+  }
+
+  /** Stop polling (the popup closed). The browser side simply expires. */
+  cancelDiscordDevice() {
+    const dev = this._device;
+    if (!dev) return;
+    dev.stopped = true;
+    if (dev.timer) clearTimeout(dev.timer);
+    this._device = null;
   }
 
   /** Check if the stored server JWT is expired (or will expire within marginSec). */
   isTokenExpired(marginSec = 60) {
     if (!this.token) return true;
-    try {
-      const payload = JSON.parse(atob(this.token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-      return !payload.exp || payload.exp < Math.floor(Date.now() / 1000) + marginSec;
-    } catch {
-      return true;
-    }
+    const payload = decodeJwt(this.token);
+    return !payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000) + marginSec;
   }
 
   /**
-   * Ensure the server JWT is valid. If expired, attempt refresh via stored
-   * GSI credential first, then fall back to prompting a new Google sign-in.
+   * Ensure the server JWT is valid. The Steam build signs in again by ticket;
+   * a Discord session lasts 30 days, then the player signs in again.
    * Returns true if a valid token is available afterward.
    */
   async ensureValidToken() {
     if (!this.isTokenExpired()) return true;
-
-    // Try re-exchanging the stored GSI credential (may still be valid)
-    if (await this.retryTokenExchange()) return true;
-
-    // GSI credential also expired — need a fresh Google sign-in.
-    // Trigger the prompt and wait briefly for the callback.
-    return new Promise((resolve) => {
-      const prevCallback = this._onLoginCallback;
-      const timeout = setTimeout(() => {
-        this._onLoginCallback = prevCallback;
-        resolve(false);
-      }, 5000);
-
-      this._onLoginCallback = (user) => {
-        clearTimeout(timeout);
-        this._onLoginCallback = prevCallback;
-        if (prevCallback) prevCallback(user);
-        resolve(!!this.token && !this.isTokenExpired());
-      };
-
-      this.login();
-    });
+    if (typeof window !== 'undefined' && window.steam) {
+      try {
+        if (await window.steam.isAvailable()) return await this.loginWithSteam();
+      } catch (e) {}
+    }
+    return false;
   }
 
   async loginWithSteam() {
@@ -202,14 +282,8 @@ export class AuthManager {
       }
 
       const data = await res.json();
-      this.user = {
-        id: steamId,
-        name: personaName,
-        avatar: data.user.avatar,
-        serverId: data.user.id,
-      };
-      this.token = data.token;
-      this._save();
+      // #612: the account's name and picture; the Steam picture comes along in identities.
+      this._applySession(data.token, { ...data.user, name: personaName || data.user.name }, { id: steamId, provider: 'steam' });
 
       if (this._onLoginCallback) this._onLoginCallback(this.user);
       return true;
@@ -220,51 +294,37 @@ export class AuthManager {
     }
   }
 
-  /**
-   * Trigger Google One Tap. Pass `onMoment` to learn whether the prompt
-   * actually displayed — it receives the GSI PromptMomentNotification (or null
-   * if GSI isn't loaded), so callers can surface a fallback when One Tap is
-   * suppressed by FedCM cooldown / browser policy. (#325)
-   */
-  login(onMoment = null) {
-    if (typeof google === 'undefined' || !google.accounts) {
-      if (onMoment) onMoment(null);
-      return;
-    }
-    if (onMoment) google.accounts.id.prompt((n) => onMoment(n));
-    else google.accounts.id.prompt();
-  }
-
   // Clear server JWT token only (keeps user profile for re-auth)
   clearToken() {
     this.token = null;
     try { localStorage.removeItem(STORAGE_TOKEN); } catch (e) {}
   }
 
-  // Force a fresh Google sign-in to get a new server JWT
-  refreshLogin() {
-    this.clearToken();
-    if (typeof google !== 'undefined' && google.accounts) {
-      google.accounts.id.disableAutoSelect();
-      google.accounts.id.prompt();
-    }
-  }
-
   logout() {
+    this.cancelDiscordDevice();
     this.user = null;
     this.token = null;
     try {
       localStorage.removeItem(STORAGE_USER);
       localStorage.removeItem(STORAGE_TOKEN);
     } catch (e) {}
-    if (typeof google !== 'undefined' && google.accounts) {
-      google.accounts.id.disableAutoSelect();
-    }
+  }
+
+  /**
+   * #612 · the account behind this session is gone (deleted on housetandem.com):
+   * drop the session; the Steam build signs in again by ticket (a fresh account).
+   */
+  async _recoverGoneAccount(res) {
+    if (res.status !== 401) return false;
+    const body = await res.clone().json().catch(() => ({}));
+    if (body.code !== 'account_gone') return false;
+    this.clearToken();
+    return this.ensureValidToken();
   }
 
   async submitScore(data) {
     if (!this.token) return null;
-    const res = await fetch(`${API_BASE}/score`, {
+    const send = () => fetch(`${API_BASE}/score`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -272,6 +332,8 @@ export class AuthManager {
       },
       body: JSON.stringify(data),
     });
+    let res = await send();
+    if (!res.ok && (await this._recoverGoneAccount(res))) res = await send();
     return res.ok ? res.json() : null;
   }
 
@@ -291,9 +353,11 @@ export class AuthManager {
 
   async getMe() {
     if (!this.token) return null;
-    const res = await fetch(`${API_BASE}/me`, {
+    const send = () => fetch(`${API_BASE}/me`, {
       headers: { 'Authorization': `Bearer ${this.token}` },
     });
+    let res = await send();
+    if (!res.ok && (await this._recoverGoneAccount(res))) res = await send();
     return res.ok ? res.json() : null;
   }
 

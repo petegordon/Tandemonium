@@ -8,7 +8,7 @@
 // end clear of its tyre. Screenshots at the same camera presets go to renders/fit/ (before/after
 // sheets). Lines the assets are known to fail today print KNOWN BUG instead of failing the run;
 // once an asset is fixed they flip to "FIXED (make this a check)".
-//   node scripts/smoke-fit.mjs [--outfits victorian,cyclists] [--bodies mf,fm,mm,ff] [--steps 12] [--no-shots]
+//   node scripts/smoke-fit.mjs [--outfits victorian,cyclists]   (default: all five, robot included) [--bodies mf,fm,mm,ff] [--steps 12] [--no-shots]
 // --bodies (#548): the body on each seat, captain then stoker (m = gander, f = goose); 'mf' is
 // today's pairing. Every outfit is swept in every listed pairing.
 import http from 'node:http';
@@ -19,7 +19,7 @@ import puppeteer from 'puppeteer';
 const ROOT = process.cwd();
 const args = process.argv.slice(2);
 const opt = (k, d) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : d; };
-const OUTFITS = opt('--outfits', 'victorian,cyclists,fancy,georgian').split(',');
+const OUTFITS = opt('--outfits', 'victorian,cyclists,fancy,georgian,robot').split(',');
 const BODIES = opt('--bodies', 'mf').split(',');
 const STEPS = Number(opt('--steps', 12));
 const SHOTS = !args.includes('--no-shots');

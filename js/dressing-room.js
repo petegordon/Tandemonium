@@ -19,6 +19,11 @@
 // nudges that card. A player who disconnects or leaves their seat while editing counts as Ready,
 // so the room can never stick. A phone-seated player drives their card from the phone's menu pad
 // (D-pad, OK = A, Back = B) like any controller (#617); the phone has no wardrobe screen of its own.
+//
+// #612 · each card has an account row: Sign in with Discord (its own QR + 4-letter code, so a
+// phone can't sign into the wrong seat), or the player's picture and name with Not me. Player 1's
+// row is the game's own account (Link Discord on Steam); seats 2–4 sign in to their own
+// (js/seat-accounts.js). The lobby supplies the row's state through `accounts`.
 
 import { ManualInput } from '../shared/ui/inputs.js';
 import { RowFocusController as FocusController } from './row-focus.js';
@@ -26,6 +31,7 @@ import { playerLooks, BODIES, LED_COLOURS, lookColourway, withColourway, seatLoo
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { applyPlayerLed, findMe } from './player-led.js';
+import qrcode from '../shared/ui/third_party/qrcode-generator.js';
 
 const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
 
@@ -50,8 +56,10 @@ export class DressingRoom {
    * @param {() => void} [o.onClose]
    * @param {() => (import('./dressing-room-preview.js').DressingRoomPreview | null)} [o.makePreview] null = static cards (Low tier)
    * @param {() => Set<string>} [o.lockedOutfits] outfits the store has not unlocked (#574)
+   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Player Bots reward: 63 of 79 …")
+   * @param {{ view: (n: number) => any, bind?: (n: number, padKey: string|null) => void, signIn: (n: number) => any, signOut: (n: number) => void, cancel: (n: number) => void, onChange?: (fn: (n: number) => void) => void }|null} [o.accounts] #612 the account row
    */
-  constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null }) {
+  constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null, lockHint = null, accounts = null }) {
     this._sheet = sheet;
     this._roster = roster;
     this._padKeyFor = padKeyFor;
@@ -60,6 +68,9 @@ export class DressingRoom {
     this._onClose = onClose;
     this._makePreview = makePreview;
     this._lockedOutfits = lockedOutfits || (() => new Set());
+    this._lockHint = lockHint || (() => 'Coming to the store');
+    this._accounts = accounts;
+    this._offAccounts = null;
     /** @type {Map<number, any>} */ this.cards = new Map();   // n → card
     this.open = false;
     this._preview = null;
@@ -94,6 +105,8 @@ export class DressingRoom {
     this._onKey = (e) => this._keyboard(e);
     document.addEventListener('keydown', this._onKey, true);
     document.addEventListener('keyup', this._onKey, true);
+    // #612: an account change (signed in on the phone, Not me) redraws that card's row.
+    if (this._accounts && this._accounts.onChange) this._offAccounts = this._accounts.onChange((n) => { if (!this.open) return; for (const c of this.cards.values()) this._renderAccount(c, c.n === n); });
     this._sheet.show();
     this._sync(openerN);
     console.log(`[dressing room] open by P${openerN}: ${[...this.cards.keys()].map((n) => 'P' + n).join(' ')}`);
@@ -102,6 +115,7 @@ export class DressingRoom {
   close(reason = 'api') {
     if (!this.open) return;
     this.open = false;
+    if (this._offAccounts) { this._offAccounts(); this._offAccounts = null; }
     for (const c of this.cards.values()) this._dropCard(c);
     this.cards.clear();
     if (this._preview) { this._preview.dispose(); this._preview = null; }
@@ -134,7 +148,9 @@ export class DressingRoom {
   }
 
   _addCard(p, editing) {
-    playerLooks.bindPad(p.n, this._padKeyFor(p));
+    const padKey = this._padKeyFor(p);
+    playerLooks.bindPad(p.n, padKey);
+    if (this._accounts && this._accounts.bind) this._accounts.bind(p.n, padKey);
     const el = document.createElement('div');
     el.className = 'dr-card';
     el.dataset.n = String(p.n);
@@ -218,6 +234,7 @@ export class DressingRoom {
       ${previewHtml}
       <p class="dr-stick-hint">Right stick: look around · R3: reset</p>
       <p class="dr-summary"></p>
+      <div class="dr-account"></div>
       <div class="dr-rows-wrap"></div>
       <div class="dr-actions"></div>
       <p class="options-note dr-hint"></p>`;
@@ -251,7 +268,8 @@ export class DressingRoom {
     const stickHint = c.el.querySelector('.dr-stick-hint');
     if (stickHint) stickHint.hidden = !(c.type === 'gamepad' && this._preview);
     // The same P# badge as the seat cards (uf-seat badge), then the player's name (#617).
-    c.el.querySelector('.dr-who').innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(p.label)}`;
+    c.el.querySelector('.dr-who').innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(this._name(c))}`;
+    this._renderAccount(c, false);
     c.el.querySelector('.dr-summary').textContent = this._summary(look);
     c.el.querySelector('.dr-rows-wrap').innerHTML = c.state === 'editing' ? this._rows(c, look) : '';
     c.el.querySelector('.dr-actions').innerHTML = c.state === 'editing'
@@ -264,6 +282,58 @@ export class DressingRoom {
     this._refocus(c, c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
   }
 
+  /** The card's name: the signed-in account's, else the seat's label. */
+  _name(c) {
+    const v = this._accounts ? this._accounts.view(c.n) : null;
+    if (v && v.state === 'signed-in' && v.name) return v.name;
+    // The roster's label right now (a sign-out renames the seat before the next frame's sync).
+    const p = (this._roster() || []).find((x) => x.n === c.n);
+    return (p && p.label) || c.player.label;
+  }
+
+  /**
+   * #612 · the account row. `refocus` (an account change, not a full render) puts the pad on
+   * the row's new button so a sign-in or Not me never strands the focus.
+   */
+  _renderAccount(c, refocus) {
+    const box = c.el.querySelector('.dr-account');
+    if (!box) return;
+    const v = this._accounts ? this._accounts.view(c.n) : null;
+    if (!v) { box.innerHTML = ''; box.hidden = true; return; }
+    box.hidden = false;
+    box.dataset.state = v.state;
+    const pics = (v.pics || []).map((x) => `<img class="dr-acc-pic" data-provider="${esc(x.provider)}" src="${esc(x.avatar)}" alt="" referrerpolicy="no-referrer">`).join('');
+    let html = '';
+    if (v.state === 'pending') {
+      let qr = '';
+      try { const q = qrcode(0, 'M'); q.addData(v.url); q.make(); qr = q.createSvgTag({ cellSize: 3, margin: 1 }); } catch (e) {}
+      html = `<div class="dr-acc-qr">${qr}</div>
+        <ol class="dr-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Check the code <b class="dr-acc-code">${esc(v.code || '')}</b></li></ol>
+        <p class="dr-acc-status">${v.status === 'confirming' ? 'Confirm the code on your phone…' : 'Waiting for Discord…'}</p>
+        <button class="opt-btn dr-acc-btn" data-act="acc-cancel">Hide</button>`;
+    } else {
+      // One QR at a time: while another seat's is open, this Sign in waits (greyed, skipped by the pad).
+      const wait = v.blockedBy ? ' disabled' : '';
+      const note = v.blockedBy ? `<p class="dr-acc-status dr-acc-wait">Waiting for P${v.blockedBy} to sign in…</p>` : '';
+      if (v.state === 'signed-in') {
+        html = `<div class="dr-acc-who">${pics}<span class="dr-acc-name">${esc(v.name || '')}</span></div>`
+          + (v.linkable ? `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin"${wait}>Link Discord</button>` : '')
+          + (v.canSignOut ? `<button class="opt-btn dr-acc-btn" data-act="acc-signout">Not me</button>` : '')
+          + (v.linkable ? note : '');
+      } else {
+        html = `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin"${wait}>Sign in with Discord</button>`
+          + (note || (v.error ? `<p class="dr-acc-status">${esc(v.error)}</p>` : ''));
+      }
+    }
+    if (box.innerHTML !== html) box.innerHTML = html;
+    const who = c.el.querySelector('.dr-who');
+    if (who) who.innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(this._name(c))}`;
+    if (refocus && c.focus) {
+      const next = box.querySelector('button:not([disabled])') || (c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
+      c.focus.setSpatial(this._items(c), next || null);
+    }
+  }
+
   /** Size the card's canvas bitmap to its CSS box and redraw it now (mid-transition frames). */
   _resizePreview(c) {
     if (this._preview) this._preview.resizeNow('p' + c.n);
@@ -274,7 +344,7 @@ export class DressingRoom {
     const btn = (kind, val, html, active, extra = '') => `<button class="opt-btn${active ? ' active' : ''}" data-pick="${kind}" data-val="${esc(val)}"${extra}>${html}</button>`;
     const row = (label, kind, opts) => `<div class="dr-group" data-group="${kind}"><div class="dr-label">${label}</div><div class="dr-opts" data-pick="${kind}">${opts}</div></div>`;
     const bodies = Object.entries(BODIES).map(([k, b]) => btn('body', k, `${esc(b.label)} <span class="dr-sub">(${esc(b.hint)})</span>`, look.body === k)).join('');
-    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ' data-locked="1" title="Coming to the store"' : '')).join('');
+    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ` data-locked="1" title="${esc(this._lockHint(k))}"` : '')).join('');
     const leds = LED_COLOURS.map((x) => btn('led', x.key, `<span class="led-swatch" style="background: rgb(${x.rgb.r},${x.rgb.g},${x.rgb.b})"></span>${esc(x.label)}`, look.led === x.key)).join('');
     return `<div class="dr-rows">`
       + row('Gander or goose', 'body', bodies)
@@ -305,7 +375,7 @@ export class DressingRoom {
 
   /** The card's own focusables (+ BACK TO SEATS when it shows), focus on `initial`. */
   _items(c) {
-    const shown = (b) => b.getBoundingClientRect().width > 0;
+    const shown = (b) => b.getBoundingClientRect().width > 0 && !b.disabled;
     const own = [...c.el.querySelectorAll('button')].filter(shown);
     // Only Player 1's pad navigates into the Buzz strip (down past the card's last row lands on
     // P1's chip, up returns to the card); every other pad's scope never includes it.
@@ -356,6 +426,11 @@ export class DressingRoom {
   _act(c, act) {
     if (act === 'edit' && c.state === 'ready') this._setState(c, 'editing');
     else if (act === 'done' && c.state === 'editing') this._setState(c, 'ready');
+    else if (this._accounts && act === 'acc-signin') {
+      Promise.resolve(this._accounts.signIn(c.n)).catch(() => {}).then(() => { if (this.open && this.cards.get(c.n) === c) this._renderAccount(c, true); });
+    }
+    else if (this._accounts && act === 'acc-signout') this._accounts.signOut(c.n);
+    else if (this._accounts && act === 'acc-cancel') this._accounts.cancel(c.n);
 
   }
 
@@ -387,7 +462,7 @@ export class DressingRoom {
     const hint = c.el.querySelector('.dr-hint');
     let look = playerLooks.get(c.n);
     if (kind === 'outfit') {
-      if (this._lockedOutfits(c.n).has(val)) { if (hint) hint.textContent = 'That outfit is coming to the store.'; return; }
+      if (this._lockedOutfits(c.n).has(val)) { if (hint) hint.textContent = `Locked: ${this._lockHint(val)}.`; return; }
       look = playerLooks.update(c.n, { outfit: val });
       const colours = c.el.querySelector('.dr-opts[data-pick="colourway"]');
       if (colours) colours.innerHTML = this._colourButtons(look);

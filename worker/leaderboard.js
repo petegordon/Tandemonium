@@ -13,6 +13,48 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
   return allowed[0];
 }
 
+import {
+  upsertIdentity, listIdentities,
+  handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
+  handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
+  handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl,
+} from './identity.js';
+import { gameProfile, recordGame, handleMeGames } from './games.js';
+
+/**
+ * #612 · what other House Tandem game Workers may do, through the private
+ * HouseTandemGames RPC entrypoint (worker/index.js). Each takes env first.
+ */
+export const houseTandemGames = {
+  async resolveDiscord(env, profile) {
+    const discordId = String((profile && profile.discordId) || '');
+    if (!/^\d{5,25}$/.test(discordId)) throw new Error('bad Discord id');
+    const name = String((profile && profile.name) || 'Discord player').slice(0, 64);
+    const avatar = typeof (profile && profile.avatar) === 'string' && /^https:\/\/cdn\.discordapp\.com\//.test(profile.avatar)
+      ? profile.avatar : discordAvatarUrl({ id: discordId });
+    const { userId } = await upsertIdentity(env, { provider: 'discord', providerId: discordId, name, avatar }, null, identityDeps());
+    const user = await env.DB.prepare('SELECT display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
+    return { userId, name: user ? user.display_name : name, avatar: user ? user.avatar_url : avatar };
+  },
+  async verifySession(env, token) {
+    if (typeof token !== 'string' || token.length > 4096) return null;
+    let payload;
+    try { payload = await verifyJWT(token, env.JWT_SECRET); } catch { return null; }
+    const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(payload.sub).first();
+    if (!user) return null;
+    const ids = await listIdentities(env, user.id);
+    const avatar = (ids.discord && ids.discord.avatar) || user.avatar_url;
+    return { userId: user.id, name: user.display_name, avatar };
+  },
+  gameProfile: (env, userId, game) => gameProfile(env, userId, game),
+  recordGame: (env, userId, game, delta, earned) => recordGame(env, userId, game, delta, earned),
+};
+
+/** What the identity module needs from this worker. */
+const identityDeps = () => ({
+  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey,
+});
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -40,9 +82,79 @@ export default {
         return handleSteamAuth(request, env, corsOrigin);
       }
 
+      // #612 · Discord sign-in (redirect on the same device, or a device code for TV / Steam)
+      if (path === '/auth/discord/begin' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordBegin(request, env, url, corsOrigin, identityDeps());
+      }
+      if (path === '/auth/discord/go' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordGo(request, env, url);
+      }
+      if (path === '/auth/discord/callback' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordCallback(request, env, url, identityDeps());
+      }
+      if (path === '/auth/discord/confirm' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordConfirm(request, env, url, identityDeps());
+      }
+      // #612 · Steam on the web ("Sign in through Steam"); the Steam build uses /auth/steam with a ticket.
+      if (path === '/auth/steam/begin' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebBegin(request, env, url, corsOrigin, identityDeps());
+      }
+      if (path === '/auth/steam/go' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebGo(request, env, url);
+      }
+      if (path === '/auth/steam/callback' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebCallback(request, env, url, identityDeps());
+      }
+      if (path === '/auth/poll' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAuthPoll(request, env, corsOrigin, identityDeps());
+      }
+
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
+      if (path === '/me/games') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleMeGames(req, e, c, uid, identityDeps()));
+      }
+      // #612 · open another House Tandem site (dice) already signed in.
+      if (path === '/auth/handoff' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleHandoffCreate(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/auth/handoff/redeem' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
+      }
+      if (path === '/me/discord') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
+      }
+      // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
+      if (path === '/me/delete' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, handleDeleteAccount);
+      }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
       // D-6 / D-7 · the pair, and the day's ranked results of people you have
@@ -171,28 +283,14 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const picture = payload.picture || null;
   const email = payload.email || null;
 
-  // Upsert user
-  const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
-  ).bind('google', googleId).first();
-
-  let userId;
-  if (existing) {
-    userId = existing.id;
-    await env.DB.prepare(
-      'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
-    ).bind(name, picture, userId).run();
-  } else {
-    const ins = await env.DB.prepare(
-      'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind('google', googleId, name, picture).run();
-    userId = ins.meta.last_row_id;
-  }
+  // #612: Google is a legacy sign-in; its users keep their account.
+  const { userId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
 
   // Create server JWT (include email for dashboard access control)
   const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
 
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
+  const identities = await listIdentities(env, userId);
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
 async function handleSteamAuth(request, env, corsOrigin) {
@@ -259,27 +357,13 @@ async function handleSteamAuth(request, env, corsOrigin) {
     // Non-fatal — proceed with default avatar
   }
 
-  // Upsert user
-  const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
-  ).bind('steam', steamId).first();
-
-  let userId;
-  if (existing) {
-    userId = existing.id;
-    await env.DB.prepare(
-      'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
-    ).bind(name, avatarUrl, userId).run();
-  } else {
-    const ins = await env.DB.prepare(
-      'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind('steam', steamId, name, avatarUrl).run();
-    userId = ins.meta.last_row_id;
-  }
+  // #612: Steam is one sign-in on the account; a linked Discord rides along.
+  const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
 
   const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
 
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl } }, 200, corsOrigin);
+  const identities = await listIdentities(env, userId);
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -288,8 +372,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
 async function submitScore(request, env, corsOrigin, userId) {
   const body = await request.json();
-  const { levelId, distance, timeMs, mode, collectiblesCount, inputSource, contributions, newAchievements,
+  const { levelId, distance, timeMs, collectiblesCount, inputSource, contributions, newAchievements,
           difficulty, safetyUsed, scoreMultiplier } = body;
+  let { mode } = body;
 
   if (!levelId || !distance || !timeMs) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
@@ -301,10 +386,27 @@ async function submitScore(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Invalid level' }, 400, corsOrigin);
   }
 
-  // Validate mode
-  const VALID_MODES = ['solo', 'captain', 'stoker'];
+  // Validate mode. #612: 'local' (couch co-op) is stored as Player 1's captain ride; a
+  // signed-in Player 2 gets their own stoker row from their own sign-in (body.seats).
+  const VALID_MODES = ['solo', 'captain', 'stoker', 'local'];
   if (mode && !VALID_MODES.includes(mode)) {
     return jsonResponse({ error: 'Invalid mode' }, 400, corsOrigin);
+  }
+  const isLocal = mode === 'local';
+  if (isLocal) mode = 'captain';
+
+  // #612 · the seats on this couch who signed in themselves: each token is checked
+  // here, so Player 1's game can't put a ride on anyone else's account.
+  const seatRiders = [];
+  if (isLocal && Array.isArray(body.seats)) {
+    for (const seat of body.seats.slice(0, 3)) {
+      if (!seat || typeof seat.token !== 'string' || !['captain', 'stoker'].includes(seat.role)) continue;
+      let p;
+      try { p = await verifyJWT(seat.token, env.JWT_SECRET); } catch { continue; }
+      const sid = p && p.sub;
+      if (!sid || String(sid) === String(userId) || seatRiders.some((r) => String(r.userId) === String(sid))) continue;
+      seatRiders.push({ userId: sid, role: seat.role, newAchievements: Array.isArray(seat.newAchievements) ? seat.newAchievements.slice(0, 100) : [] });
+    }
   }
 
   // Plausibility checks
@@ -339,6 +441,16 @@ async function submitScore(request, env, corsOrigin, userId) {
   // Batch insert contributions and achievements in a single round-trip
   const batchStmts = [];
 
+  // A local ride's contribution ids come from the checked sign-ins, never the body.
+  if (contributions && isLocal) {
+    for (const [role, stats] of Object.entries(contributions)) {
+      if (!stats || typeof stats !== 'object') continue;
+      const seat = seatRiders.find((r) => r.role === role);
+      stats.userId = role === 'captain' ? userId : (seat ? seat.userId : null);
+      delete stats.guestDeviceId;
+    }
+  }
+
   if (contributions) {
     for (const [role, stats] of Object.entries(contributions)) {
       batchStmts.push(
@@ -369,6 +481,21 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   if (batchStmts.length > 0) {
     await env.DB.batch(batchStmts);
+  }
+
+  // #612 · each signed-in seat's own copy of the ride, and the achievements it earned them.
+  for (const seat of seatRiders) {
+    try {
+      await env.DB.prepare(
+        'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(seat.userId, levelId, distance, timeMs, seat.role, collectiblesCount || 0, inputSource || 'none',
+             difficulty || 'adventurous', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
+      const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
+        env.DB.prepare('INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)').bind(seat.userId, achId, scoreId));
+      if (achStmts.length) await env.DB.batch(achStmts);
+    } catch (err) {
+      console.error('seat ride failed', err);   // Player 1's ride is saved either way
+    }
   }
 
   // D-7 · fold this ride into the pair's history when two riders can be
@@ -619,8 +746,17 @@ function dailyKeyUTC(now = Date.now()) {
  */
 async function mergeGuestPairs(env, deviceId, userId) {
   if (!deviceId || !userId) return;
-  const guestKey = 'guest:' + deviceId;
-  const real = String(userId);
+  return mergePairKey(env, 'guest:' + deviceId, String(userId));
+}
+
+/**
+ * Fold every pair row keyed by `fromKey` into `toKey`: a guest who signed in,
+ * or (#612) an account merged into another when a sign-in was linked.
+ */
+async function mergePairKey(env, fromKey, toKey) {
+  const guestKey = String(fromKey);
+  const real = String(toKey);
+  if (!guestKey || !real || guestKey === real) return;
 
   const rows = await env.DB.prepare(
     'SELECT * FROM pairs WHERE user_lo = ? OR user_hi = ?'
@@ -856,6 +992,9 @@ async function getMe(request, env, corsOrigin, userId) {
     `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
      FROM scores WHERE user_id = ? GROUP BY level_id`
   ).bind(userId).all();
+
+  // #612: every sign-in linked to the account (the TV's Profile pill shows Discord + Steam).
+  if (user) user.identities = await listIdentities(env, userId);
 
   return jsonResponse({
     user,
@@ -2073,7 +2212,52 @@ function jsonResponse(data, status, corsOrigin) {
 async function withAuth(request, env, corsOrigin, handler) {
   const userId = await getUserFromRequest(request, env);
   if (!userId) return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
+  // #612: a session can outlive its account (deleted, or merged into another).
+  const exists = await env.DB.prepare('SELECT 1 AS ok FROM users WHERE id = ?').bind(userId).first();
+  if (!exists) return jsonResponse({ error: 'Account not found', code: 'account_gone' }, 401, corsOrigin);
   return handler(request, env, corsOrigin, userId);
+}
+
+/**
+ * POST /me/delete { confirm: 'DELETE' } — remove the House Tandem account and
+ * every record on it, in one transaction: sign-ins, rides, achievements, daily
+ * results, friends and pair records. A partner's own rides stay, with this
+ * player taken off them. Anonymous analytics carry no account and stay.
+ */
+async function handleDeleteAccount(request, env, corsOrigin, userId) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
+  const key = String(userId);
+  const counts = {};
+  for (const [name, sql, arg] of [
+    ['rides', 'SELECT COUNT(*) AS n FROM scores WHERE user_id = ?', userId],
+    ['achievements', 'SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?', userId],
+    ['pairs', 'SELECT COUNT(*) AS n FROM pairs WHERE user_lo = ? OR user_hi = ?', key],
+  ]) {
+    const r = await env.DB.prepare(sql).bind(...(name === 'pairs' ? [arg, arg] : [arg])).first();
+    counts[name] = (r && r.n) || 0;
+  }
+  const mine = 'SELECT id FROM scores WHERE user_id = ?';
+  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args);
+  await env.DB.batch([
+    q(`UPDATE user_achievements SET score_id = NULL WHERE score_id IN (${mine})`, userId),
+    q(`DELETE FROM score_contributions WHERE score_id IN (${mine})`, userId),
+    q('UPDATE score_contributions SET player_user_id = NULL WHERE player_user_id = ?', userId),
+    q('DELETE FROM scores WHERE user_id = ?', userId),
+    q('DELETE FROM user_achievements WHERE user_id = ?', userId),
+    q('DELETE FROM daily_results WHERE user_id = ?', userId),
+    q('UPDATE daily_results SET partner_user_id = NULL WHERE partner_user_id = ?', userId),
+    q('DELETE FROM friends WHERE user_id = ? OR friend_id = ?', userId, userId),
+    q('DELETE FROM pairs WHERE user_lo = ? OR user_hi = ?', key, key),
+    q('DELETE FROM auth_requests WHERE link_user_id = ?', userId),
+    q('DELETE FROM game_achievements WHERE user_id = ?', userId),
+    q('DELETE FROM game_stats WHERE user_id = ?', userId),
+    q('DELETE FROM user_identities WHERE user_id = ?', userId),
+    q('DELETE FROM users WHERE id = ?', userId),
+  ]);
+  writeMetric(env, 'account_deleted');
+  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
 
 // Dashboard auth: verify JWT + check email against allow-list

@@ -277,6 +277,19 @@ uf-button[size="pill"] > img.bar-avatar {
   width: 1.5em; height: 1.5em; flex: none; margin: -0.2em 0;
   border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px currentColor;
 }
+/* #612 · Discord's picture on the left of "Profile", Steam's on the right. */
+uf-button[size="pill"] > img.bar-avatar[data-provider="discord"] { box-shadow: 0 0 0 2px #5865f2; }
+uf-button[size="pill"] > img.bar-avatar[data-provider="steam"] { box-shadow: 0 0 0 2px #66c0f4; }
+/* The QR steps in the popup, at the kit's sizes on a TV. */
+@media (min-width: 1024px) {
+  body > #profile-popup.bar-popup { width: min(24em, 40vw); }
+  body > #profile-popup.bar-popup .profile-popup-title { font-size: var(--uf-size-md); }
+  body > #profile-popup.bar-popup .profile-popup-sub,
+  body > #profile-popup.bar-popup .profile-popup-steps { font-size: var(--uf-size-xs); }
+  body > #profile-popup.bar-popup .profile-popup-qr svg { width: 9em; height: 9em; }
+  body > #profile-popup.bar-popup .profile-popup-code { font-size: var(--uf-size-md); }
+  body > #profile-popup.bar-popup .profile-popup-avatars img { width: 3.2em; height: 3.2em; }
+}
 
 /* #517 · Settings (the Options overlay) owns the pad while it is open: the
    lobby's highlight under it would look like a second focus. */
@@ -443,6 +456,8 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   #dressing-room .dr-card > * { flex-shrink: 0; }
   #dressing-room .dr-preview { flex: 1 1 0; height: auto; min-height: 9em; }
   #dressing-room .dr-card[data-state="editing"] .dr-preview { min-height: 5em; }
+  /* #612 · a sign-in QR on the card: the goose gives up height so EDIT / DONE stay on the card. */
+  #dressing-room .dr-card:has(.dr-account[data-state="pending"]) .dr-preview { min-height: 3em; }
   #dressing-room .dr-preview--static { font-size: var(--uf-size-2xl); }
   #dressing-room .dr-who { font-size: var(--uf-size-lg); }
   #dressing-room .dr-pnum { font-size: var(--uf-size-sm); }
