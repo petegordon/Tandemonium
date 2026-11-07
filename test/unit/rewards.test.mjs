@@ -1,11 +1,11 @@
-// #611 · rewards: the player-bots unlock (all solo achievements but one) and the robot outfit lock.
+// #611 · rewards: the player-bots unlock (all solo achievements but one) and the robot outfit lock (Time Warp, #644).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ACHIEVEMENTS } from '../../js/achievement-defs.js';
 import { GOOSE_OUTFITS } from '../../js/goose-outfits.js';
 import {
   isCalendarAchievement, isMultiplayerAchievement, isSoloAchievement, soloAchievementIds,
-  playerBotsProgress, lockedOutfits, outfitLockHint,
+  playerBotsProgress, lockedOutfits, outfitLockHint, timeWarpProgress, rewardProgress,
 } from '../../js/rewards.js';
 
 const byId = (id) => ACHIEVEMENTS.find(a => a.id === id);
@@ -37,10 +37,22 @@ test('player bots: all solo but one', () => {
   assert.equal(playerBotsProgress([...allButOne, ...allButOne]).have, solo.length - 1, 'duplicates count once');
 });
 
-test('the robot outfit is locked until player bots, with a progress hint', () => {
-  const solo = soloAchievementIds();
+test('the robot outfit is locked until the Time Warp reward (any non-calendar achievements but 5), with a progress hint', () => {
+  const nonCal = ACHIEVEMENTS.filter(a => !isCalendarAchievement(a)).map(a => a.id);
+  const need = timeWarpProgress([]).need;
   assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, [])], ['robot']);
-  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, solo.slice(1))], []);
-  assert.equal(outfitLockHint(GOOSE_OUTFITS.robot, solo.slice(0, 5)), 'Player Bots reward: 5 of ' + (solo.length - 1) + ' solo achievements');
+  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, soloAchievementIds().slice(1))], ['robot'], 'player bots alone no longer unlocks it');
+  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, nonCal.slice(6))], ['robot']);
+  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, nonCal.slice(5))], []);
+  assert.equal(outfitLockHint(GOOSE_OUTFITS.robot, nonCal.slice(0, 5)), `Time Warp reward: 5 of ${need} achievements`);
   assert.equal(outfitLockHint(GOOSE_OUTFITS.victorian, []), 'Coming to the store');
+  assert.equal(rewardProgress('nope', []), null);
+});
+
+test('a player-bots reward outfit (none today) still reads its own progress', () => {
+  const solo = soloAchievementIds();
+  const bots = { bot: { reward: 'playerBots' } };
+  assert.deepEqual([...lockedOutfits(bots, [])], ['bot']);
+  assert.deepEqual([...lockedOutfits(bots, solo.slice(1))], []);
+  assert.equal(outfitLockHint(bots.bot, solo.slice(0, 5)), 'Player Bots reward: 5 of ' + (solo.length - 1) + ' solo achievements');
 });

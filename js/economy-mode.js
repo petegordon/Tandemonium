@@ -190,7 +190,7 @@ class EconomyMode {
     const outcome = finished ? this._lastRecordOutcome : null;
     const mode = this._touristRoute ? 'tourist'
       : level.isTutorial ? 'tutorial'
-      : level.isDaily ? (this._rankedRunActive ? 'daily-ranked' : 'daily')
+      : level.isDaily ? 'daily'
       : this.mode;
     // M2: one ledger per ride (Game._rideRef), not per RaceManager — a retry of
     // segment 1 builds a new RaceManager but is the same ride.

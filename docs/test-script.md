@@ -113,7 +113,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-09i | iPhone: SHARE in the clip preview offers FULL CLIP (20 s) and SHORT CLIP (10 s, FOR MESSAGES); the short one is cut from the same buffer on a keyframe; after the sheet closes a "Save Video, then send it from Photos" hint shows once; pad B steps back out of the choice; desktop unchanged (#408) | A | `smoke:clip-share` |
 | SR-10 | Victory buttons: NEXT LEVEL, PLAY AGAIN, END RIDE | A | `smoke:flows` |
 | SR-11 | Daily Ride: same road for two players on the same day; difficulty locked | A | `smoke:daily` |
-| SR-12 | Daily Ride ranked: chooser on web, never in demo; share strip has no road spoilers | A | `smoke:ranked` |
+| SR-12 | Daily Ride (#641): no chooser; every ride counts, best kept; help keeps a ride off the board; share strip has the first try and no road spoilers | A | `smoke:daily-best` |
 | SR-13 | Expired `?daily=` link lands on today | A | `smoke:daily` |
 | SR-14 | Slingshot: garage → buy upgrade → aim → launch → tally | A | `smoke:slingshot` |
 | SR-15 | Slingshot aim on phone (portrait and landscape, real touch) | A | `smoke:slingshot-aim` |
@@ -136,6 +136,8 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-27 | Every end screen (game over, victory, tutorial complete, demo end, partner left, versus results) is the result-screen shell: a headline kit sheet, one action row in the shared order, the primary first and focused (#459) | A | `smoke:flows`, `smoke:versus`, `smoke:solo-extras`, `smoke:tutorial`, `smoke:layout` (fits at phone, desktop, TV; screenshots) |
 | SR-28 | First-time SOLO shows the tutorial intro before the countdown: START begins the tutorial (SKIP TUTORIAL on screen, Y / △ on a pad), SKIP / B / Esc skip to the level list (#459) | A | `smoke:tutorial`, `smoke:solo-extras` |
 | SR-29 | Pause menu (#459): Start / Esc / the quick menu's PAUSE mid-ride opens it and the ride (physics + race clock) stops; B / Start / Esc / RESUME continue; SETTINGS opens Options over it and B returns to the menu; View opens Help over it and B returns; RESTART rides again; END RIDE returns to the lobby; in versus P1's Start freezes both teams | A | `smoke:flows`, `smoke:versus`, `test/unit/race-manager` |
+| SR-30 | Reward bikes (#611): Solo Flight (Penny-Farthing, player bots) then Time Warp close the chooser. Solo Flight: a locked silhouette with "n of N solo achievements"; earned = in colour, "Coming soon", not ridden yet. Time Warp: locked it is a dark silhouette with "n of N" over it (N = non-calendar achievements less 5) and the ride stays on the default bike; unlocked it shows in colour with its clock and flames running and is the pick; a solo ride loads `time_warp_tandem.glb` with both geese seated, the TimeWarpFX loop playing and the tandem's size; Show Riders off rides the plain frame; a paint preset rides the goose tandem again | A | `smoke:time-warp`, `test/unit/special-bikes` |
+| SR-30h | SR-30 looks right: the silhouette reads as "something to earn", the flames are blue with orange pops now and then, the clock spins fast, the geese sit as on the tandem | M | — |
 
 ## 3. Ride feel (manual only)
 
@@ -301,9 +303,9 @@ Two devices on different networks for the M rows.
 
 | ID | Check | Tag | Covered by |
 |---|---|---|---|
-| ED-01 | Demo shows Tutorial, Grandma's, Weekly Ride, Slingshot; no Tourist | A | `smoke:edition` |
+| ED-01 | Demo shows Tutorial, Grandma's, Daily Ride, Slingshot; no Tourist; VERSUS and five bike colours shut (#641) | A | `smoke:edition` |
 | ED-02 | Demo-gated items show a wishlist hint, not a dead lock | A | `smoke:edition`, `smoke:ctas` |
-| ED-03 | No ranked runs, streaks or share strip in the demo | A | `smoke:ranked` |
+| ED-03 | Demo Daily Ride: shut until the Tutorial and Grandma's are done, then 3 rides a day, no 4th (#641) | A | `smoke:edition`, `smoke:daily-best` |
 | ED-04 | Wishlist and invite buttons fit at 390 px | A | `smoke:ctas` |
 | ED-05 | The real demo build on Steam matches ED-01 to ED-03 | M | — |
 
@@ -341,7 +343,7 @@ Two devices on different networks for the M rows.
 |---|---|---|---|
 | DB-01 | Dashboard SQL valid against the schema | A | `check:dashboard-sql` |
 | DB-02 | A ride's analytics events (`ride_start`, `crash_recover`, `ride_takeover`, …) reach the dashboard | M | — |
-| DB-03 | Daily Ride leaderboard records a ranked run | M | — |
+| DB-03 | Daily Ride board keeps each player's best clean time of the day (needs DAILY_BOARD_ENABLED) | M | — |
 | DB-04 | Pad relay rate limit refuses a scripted room flood (30/min per IP; refused requests never reach a room) | A | `test/unit/pad-relay-ratelimit` |
 
 ---

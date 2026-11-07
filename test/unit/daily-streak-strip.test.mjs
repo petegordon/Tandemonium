@@ -1,8 +1,8 @@
-// D-2 / D-3 / D-5 · ranked runs, the share strip, and streaks that forgive.
+// D-3 / D-5 / #641 · the share strip (with the first try), and streaks that forgive.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  rankedDone, rankedResult, recordRanked, recordPractice,
+  recordDailyFinish,
   computeStreak, computePairStreak, recordPartner,
   buildShareStrip, isoWeek, daysBetween, MAX_BRIDGED_GAPS
 } from '../../js/daily-ride.js';
@@ -12,58 +12,8 @@ function memStore() {
   return { get: k => m.get(k) ?? null, set: (k, v) => m.set(k, v) };
 }
 
-// ── D-2 · ranked runs ─────────────────────────────────────────────────────
-
-test('one ranked run per day per mode', () => {
-  const s = memStore();
-  assert.equal(rankedDone(s, '2026-09-08', 'solo'), false);
-
-  const first = recordRanked(s, '2026-09-08', 'solo', { timeMs: 161000, distance: 500 });
-  assert.equal(first.recorded, true);
-  assert.equal(rankedDone(s, '2026-09-08', 'solo'), true);
-
-  const second = recordRanked(s, '2026-09-08', 'solo', { timeMs: 120000, distance: 500 });
-  assert.equal(second.recorded, false, 'a faster second attempt must not overwrite it');
-  assert.equal(rankedResult(s, '2026-09-08', 'solo').timeMs, 161000);
-});
-
-test('solo and pair runs are independent', () => {
-  const s = memStore();
-  recordRanked(s, '2026-09-08', 'solo', { timeMs: 161000, distance: 500 });
-  assert.equal(rankedDone(s, '2026-09-08', 'pair'), false,
-    'riding alone at lunch must not use up the evening ride with a partner');
-  assert.equal(recordRanked(s, '2026-09-08', 'pair', { timeMs: 150000 }).recorded, true);
-});
-
-test('a new day gives the run back', () => {
-  const s = memStore();
-  recordRanked(s, '2026-09-08', 'solo', { timeMs: 161000 });
-  assert.equal(rankedDone(s, '2026-09-09', 'solo'), false);
-});
-
-test('END RIDE consumes the run as a DNF', () => {
-  const s = memStore();
-  const r = recordRanked(s, '2026-09-08', 'solo', { dnf: true, distance: 320 });
-  assert.equal(r.recorded, true);
-  assert.equal(r.result.dnf, true);
-  assert.equal(r.result.timeMs, null);
-  assert.equal(rankedDone(s, '2026-09-08', 'solo'), true,
-    'a bad start must not be abandonable for a re-roll');
-});
-
-test('safety and sync are recorded, not forbidden', () => {
-  const s = memStore();
-  const r = recordRanked(s, '2026-09-08', 'pair',
-    { timeMs: 150000, safety: true, sync: 0.82, partner: 'sam' });
-  assert.equal(r.result.safety, true);
-  assert.equal(r.result.sync, 82);
-  assert.equal(r.result.partner, 'sam');
-});
-
-test('an unknown mode is refused', () => {
-  const s = memStore();
-  assert.equal(recordRanked(s, '2026-09-08', 'versus', { timeMs: 1 }).recorded, false);
-});
+/** A finished Daily Ride on day `key` (the streak only reads finishes). */
+const recordPractice = (s, key, timeMs) => recordDailyFinish(s, key, { timeMs });
 
 // ── D-5 · streaks ─────────────────────────────────────────────────────────
 
@@ -171,7 +121,7 @@ const RUN = {
   medal: 'silver', collectibles: 9, collectiblesTotal: 12, crashes: 1
 };
 
-test('a ranked solo finish reads exactly as specified', () => {
+test('a solo finish reads exactly as specified', () => {
   assert.equal(buildShareStrip(RUN), [
     "Tandemonium · Daily Ride · Sep 8",
     '2:41 · 🥈 · 🎁 9/12 · 💥 1',
@@ -194,10 +144,27 @@ test('a DNF says how far, not how long', () => {
   assert.match(strip, /▰▰▰▰▰▰▰▰▱▱▱▱ 500m/, 'the bar shows how far they got: 320/500 -> 8 of 12');
 });
 
-test('practice and safety are flagged honestly', () => {
+test('safety is flagged honestly; there is no practice flag any more (#641)', () => {
   const strip = buildShareStrip({ ...RUN, safety: true, practice: true });
   assert.match(strip, /🛡️/);
-  assert.match(strip, /🏋️/);
+  assert.doesNotMatch(strip, /🏋️/);
+});
+
+test('#641 the strip shows the day\'s best, and the first try once there were two rides', () => {
+  // Third ride of the day was slower than the best: the best leads.
+  const strip = buildShareStrip({ ...RUN, timeMs: 170000, bestMs: 150000, rides: 3, first: { timeMs: 175000 } });
+  assert.match(strip, /^2:30 · 🥈/m);
+  assert.match(strip, /1st try 2:55/);
+  // This ride is the best: its own time leads.
+  assert.match(buildShareStrip({ ...RUN, bestMs: 161000, rides: 2, first: { timeMs: 170000 } }), /^2:41 ·.*1st try 2:50/m);
+  // One ride only: the first try IS the time, so it is not repeated.
+  assert.doesNotMatch(buildShareStrip({ ...RUN, bestMs: 161000, rides: 1, first: { timeMs: 161000 } }), /1st try/);
+  // A first ride that ended early, a helped one, a shortcut.
+  assert.match(buildShareStrip({ ...RUN, rides: 2, first: { dnf: true } }), /1st try DNF/);
+  assert.match(buildShareStrip({ ...RUN, rides: 2, first: { timeMs: 180000, helped: true } }), /1st try 3:00🛟/);
+  assert.match(buildShareStrip({ ...RUN, rides: 2, first: { skipped: true } }), /1st try 👑/);
+  // A DNF today with a best from earlier: the best leads.
+  assert.match(buildShareStrip({ ...RUN, dnf: true, distance: 320, bestMs: 150000, rides: 2, first: { timeMs: 150000 } }), /^2:30/m);
 });
 
 test('a streak of two or more is worth showing; one is not', () => {

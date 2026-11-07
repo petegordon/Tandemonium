@@ -584,10 +584,8 @@ export function stickResponse(x, deadzone = TUNE.stickDeadzone, curve = TUNE.sti
 // D-6 · Feature flag: the partners board
 // ============================================================
 //
-// The server-side daily board (worker /daily) ships dark. It only ever shows
-// the caller and people they have ridden with, so it cannot look like an empty
-// global leaderboard — but it still has nothing useful to say until enough
-// people are riding Today's Road, and a feature that says nothing teaches
-// players to stop looking. Turn this on after two weeks of daily_* data show
-// real players, and after the migration has been applied.
-export const DAILY_BOARD_ENABLED = false;
+// The server-side daily board (worker /daily). It only ever shows the caller
+// and people they have ridden with, so it cannot look like an empty global
+// leaderboard. #641 (Pete, 2026-11-07): on — every clean Daily finish posts and
+// the server keeps each player's best of the day (demo and full game alike).
+export const DAILY_BOARD_ENABLED = true;

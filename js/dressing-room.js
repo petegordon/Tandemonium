@@ -57,7 +57,7 @@ export class DressingRoom {
    * @param {() => void} [o.onClose]
    * @param {() => (import('./dressing-room-preview.js').DressingRoomPreview | null)} [o.makePreview] null = static cards (Low tier)
    * @param {() => Set<string>} [o.lockedOutfits] outfits the store has not unlocked (#574)
-   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Player Bots reward: 63 of 79 …")
+   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Time Warp reward: 63 of 88 …")
    * @param {{ view: (n: number) => any, bind?: (n: number, padKey: string|null) => void, signIn: (n: number) => any, signOut: (n: number) => void, cancel: (n: number) => void, onChange?: (fn: (n: number) => void) => void }|null} [o.accounts] #612 the account row
    */
   constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null, lockHint = null, accounts = null }) {

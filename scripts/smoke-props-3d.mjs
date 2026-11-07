@@ -26,9 +26,7 @@ async function ride(levelId, difficulty = 'daredevil') {
   await page.evaluate((id) => document.querySelector(`#level-cards .level-card[data-level-id="${id}"]`).click(), levelId);
   await page.evaluate((d) => { window._game.lobby.selectedDifficulty = d; }, difficulty);
   await sleep(300);
-  await clickId(page, 'btn-start-ride');
-  await sleep(500);
-  await clickId(page, 'btn-daily-practice');   // Today's Road asks practice or ranked first (web build)
+  await clickId(page, 'btn-start-ride');   // #641: START RIDE starts the Daily Ride too (no chooser)
   await waitState(page, 'playing');
   return page;
 }

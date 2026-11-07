@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
+import { bikeModelPathFor, isRigTwin, isSpecialBike } from './special-bikes.js';
 import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -31,7 +32,7 @@ const ACTIVE_TEXT = {
 };
 import { makePlacementSalt, dailyKey } from './daily-seed.js';
 import {
-  recordPractice, recordRanked, recordPartner, computeStreak, computePairStreak, finishedToday,
+  recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
@@ -100,7 +101,7 @@ import { TeamRig } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
-import { isDemoEdition, getEditionRules, nextAllowedLevel } from './edition.js';
+import { isDemoEdition, getEditionRules, nextAllowedLevel, dailyRideGate } from './edition.js';
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
@@ -590,14 +591,6 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
-      // D-2: leaving a ranked run mid-ride spends it, as a DNF. Otherwise a bad
-      // start could be abandoned for a re-roll, and "one run per day" would
-      // mean "as many runs as it takes to like the first checkpoint".
-      if (this._rankedRunActive && this.state === 'playing') {
-        const ok = confirm('End your ranked run? It counts as unfinished for today.');
-        if (!ok) return;
-        this._recordRankedDnf();
-      }
       if (analytics.getCurrentRideId()) {
         analytics.endRide({
           completed: false,
@@ -726,17 +719,6 @@ class Game {
         this._showCheckpointFlash();
       }
       this._resumeCountdown();
-    });
-
-    // #403 · a failed ranked run: the attempt is spent (as a DNF), so ride the
-    // same road again as practice, where the helping hand is on.
-    this._onTap('btn-practice-help', () => {
-      this._hideGameOver();
-      try { analytics.trackEvent('ranked_to_practice', { distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0 }); } catch {}
-      if (this._rankedRunActive) this._recordRankedDnf();
-      if (this.mode === 'captain' && this.net) this.net.sendProfile({ type: 'dailyMode', mode: 'practice' });
-      if (this.lobby) this.lobby._dailyMode = 'practice';
-      this._resetGame(false, true);
     });
 
     // Game Over: restart
@@ -1100,8 +1082,11 @@ class Game {
     const cur = this.lobby.selectedLevel;
     if (!cur) return null;
     const locked = this.lobby._lockedLevelIds;
+    // #641: the Daily Ride's gate is read live — finishing Grandma's (the ride
+    // this NEXT LEVEL follows) is what opens it in the demo, after the lobby's
+    // cards last looked.
     const next = nextAllowedLevel(LEVELS, cur.id, this._roomRules(),   // M1: a room's rules
-      (l) => !!(locked && locked.has(l.id)));
+      (l) => (l.isDaily && this.lobby._dailyGate) ? !this.lobby._dailyGate().ok : !!(locked && locked.has(l.id)));
     return next ? this.lobby.resolveRoadLevel(next) : null;
   }
 
@@ -1189,7 +1174,7 @@ class Game {
     this._restoreProceduralWorld();       // #400: never on a leftover tiles world
     this._hideTouristGoal();
     this._leaveSlingMode();
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
     this._lobbyBtn.textContent = 'LOBBY';
 
     // Load saved tuning on every solo start
@@ -1215,6 +1200,17 @@ class Game {
     this._setupStartHandler();
   }
 
+  /**
+   * #611 · the chooser's pick for this ride: a paint preset on the goose tandem, or a special bike
+   * (its own GLB on the same rig, js/special-bikes.js) swapped in. Swapping is a no-op when it is
+   * already loaded; a locked pick never reaches here (the chooser falls back to the default).
+   */
+  _applyBikeChoice() {
+    const key = this.lobby && this.lobby.selectedPresetKey;
+    if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key), !this.versusRigs);
+    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.selectedPreset);
+  }
+
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
@@ -1222,7 +1218,7 @@ class Game {
     this._partnerLookKey = '';
     this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
 
     // The lobby's InputManager may already hold motion permission (granted via
     // a user gesture in the lobby). Our game InputManager is a separate
@@ -1468,23 +1464,14 @@ class Game {
       }
       // Handle tilt status from partner (motion availability only — NOT a
       // steering-capability signal; a desktop partner steers without tilt).
-      // D-2: the captain chose practice or ranked for the pair. The countdown
-      // event is a bare byte, so the mode needs its own message; the stoker
-      // stores the pair result too, so it has to know.
       // #403: the captain's helping-hand tier and flags.
       if (profile && profile.type === HELP_PROFILE_TYPE) {
         this._onHelpProfile(profile);
         return;
       }
-      if (profile && profile.type === 'dailyMode') {
-        // #403: the captain turned a failed ranked run into practice — it is
-        // spent on this side too.
-        if (this._rankedRunActive && profile.mode !== 'ranked' && this.state !== 'lobby') this._recordRankedDnf();
-        // PR #397 M1: never ranked when this side's (or the room's) rules say no.
-        this._rankedRunActive = profile.mode === 'ranked' && this._roomRules().ranked;
-        if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
-        return;
-      }
+      // #641: no ranked runs any more. A pre-#641 captain still sends its
+      // practice/ranked choice; there is nothing to do with it.
+      if (profile && profile.type === 'dailyMode') return;
       // #400: the partner's side of the co-op Tourist ready barrier.
       if (profile && profile.type === ROOM_MSG.TOURIST_READY) {
         this._partnerTouristReady = !!profile.ok;
@@ -1639,7 +1626,7 @@ class Game {
     this._localP2Type = sourceType;
     this.balanceCtrlP2 = new BalanceController(inputP2);
     this._lobbyBtn.textContent = 'LOBBY';
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
     this._loadSavedTuning();
 
     // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
@@ -1739,7 +1726,9 @@ class Game {
         scene: this.scene,
         world: this.world,
         lateralOffset: i === 0 ? -0.8 : 0.8,
-        bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
+        // boot bike's GLB is loaded — clone, don't re-fetch; a special bike (#611) has no team paint, so
+        // versus loads the goose tandem fresh instead
+        bikeCloneSource: isRigTwin(this.bike._modelPath) ? null : this.bike,
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
       rig.bike.setGooseLook(teamLooks(t));
@@ -2207,9 +2196,16 @@ class Game {
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
 
     // #400 D4 / M2: a ride left for a new one still pays its distance. First,
-    // before the bike or world is reset and before _rankedRunActive is
-    // recomputed for the next ride (m14). Idempotent through the ledger.
+    // before the bike or world is reset (m14). Idempotent through the ledger.
     this._payoutAbandon();
+
+    // #641 · the demo's three Daily Rides a day: a NEW ride (not a retry of
+    // segment 1) on the road can't start once they are used. Every way in —
+    // RESTART, PLAY AGAIN, the quick menu — comes through here.
+    if (this._dailyRideBlocked()) {
+      this._leaveForDailyCap();
+      return;
+    }
 
     this.state = 'countdown';
     this.countdownTimer = 3.0;
@@ -2226,15 +2222,15 @@ class Game {
     // Apply difficulty preset and create DDA manager
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
-    // D-2: no dynamic difficulty on a ranked run. Everyone rides the same road
-    // under the same rules, or the times mean nothing. Every ddaManager call
-    // site is already null-guarded (grep: `this.ddaManager &&`).
+    // Every ddaManager call site is null-guarded (grep: `this.ddaManager &&`).
+    // #641: the Daily Ride keeps the DDA and the helping hand; a ride that used
+    // either posts no board time (_dailyRideClean).
     // #403: a retry of the first segment comes through here too (the bike goes
     // back to the start line). It keeps the DDA, so its failure count — and the
     // helping hand — survive; a new ride starts a fresh one.
-    const keepHelp = !!this._helpKeepRide && !!this.ddaManager && !this._rankedRunActive;
+    const keepHelp = !!this._helpKeepRide && !!this.ddaManager;
     this._helpKeepRide = false;
-    this.ddaManager = (this._rankedRunActive || !this._rideSystemOn('dda')) ? null
+    this.ddaManager = !this._rideSystemOn('dda') ? null
       : (keepHelp ? this.ddaManager : new DDAManager(difficultyName));
     if (keepHelp) this.ddaManager.applyInvisibleAdjustments();
     this._assistWeight = 0;
@@ -2357,33 +2353,19 @@ class Game {
       flavorNum.textContent = '3';
       flavorNum.className = 'tick-3 pop';
     }
-    // D-2 · is this the day's ranked run? The lobby asked; the demo never does
-    // (practice only there), and a stoker takes whatever the captain chose.
-    // The chooser sets _dailyMode per ride and it is CONSUMED here: without
-    // clearing it, every later Today's Road ride in the session would claim to
-    // be ranked, show the badge, and try to spend a run that is already gone.
-    // The stoker never chooses: its value arrives in the captain's `dailyMode`
-    // message, which can land either side of the countdown event, so this must
-    // not overwrite it.
-    if (this.mode !== 'stoker') {
-      const chosenMode = this.lobby._dailyMode;
-      this.lobby._dailyMode = null;
-      this._rankedRunActive = !!(level.isDaily && chosenMode === 'ranked' && getEditionRules().ranked);
-    }
-    // #403: the DDA above was created before this ride was known to be ranked
-    // (the flag still held the previous ride's value), so a ranked run used to
-    // get the silent tune and the ASSIST offer. Ranked stays pure.
-    if (this._rankedRunActive) this.ddaManager = null;
-    this._applyRankedLocks();   // M4: SAFETY and SPEED off and locked on a ranked run
-    if (this._rankedRunActive && this.mode === 'captain' && this.net) {
-      // The countdown event is a bare byte, so the mode needs its own message.
-      this.net.sendProfile({ type: 'dailyMode', mode: 'ranked', key: level.key });
-    }
-
     // M2: the payout ledger is keyed by RIDE: start line → finish or abandon,
     // through any checkpoint restarts. A retry of segment 1 is the same ride.
-    if (!this._sameRideNext || !this._rideRef) this._rideRef = {};
+    const newRide = !this._sameRideNext || !this._rideRef;
+    if (newRide) this._rideRef = {};
     this._sameRideNext = false;
+    // #641 · a new ride on the Daily Ride counts (the demo's cap, the first
+    // try) and starts out clean: SAFETY, SPEED, ASSIST, the silent tune or the
+    // helping hand at any point make it a ride that posts no board time.
+    if (newRide) {
+      this._rideAided = false;
+      this._dailyRideNo = (level.isDaily && level.key && this.mode !== 'versus')
+        ? recordRideStart(browserStore(), level.key) : 0;
+    }
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
@@ -2446,7 +2428,7 @@ class Game {
     // along; they would all land at the start (#432).
     if (this._rideSystemOn('disruptions') && !level.isTourist) this._startDisruptions(level, difficultyName);
     else this._disruptions = [];
-    if (this.hud.setRankedBadge) this.hud.setRankedBadge(this._rankedRunActive);
+
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -2825,6 +2807,9 @@ class Game {
     this._closePause();   // #459: RESTART from the pause menu, or a partner's reset while paused
     // Slingshot: every reset is back into the slingshot, never to a checkpoint.
     if (this.isSlingshot) { this._resetToSling(); return; }
+    // #641: PLAY AGAIN / NEXT LEVEL onto the Daily Ride is a new ride — refuse
+    // it here, before the partner is told to reset, when the demo's are used.
+    if (fromBeginning && !fromRemote && this._dailyCapReached()) { this._leaveForDailyCap(); return; }
     // M2: pay what the ride has done before the bike goes back (the ledger
     // makes a second payout of the same metres pay nothing).
     this._payoutAbandon();
@@ -3350,12 +3335,6 @@ class Game {
     if (lobbyBtn) lobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
 
     const skipBtn = document.getElementById('btn-skip-checkpoint');
-    // #403 · a failed ranked run: offer the same road as practice, with help.
-    const practiceBtn = document.getElementById('btn-practice-help');
-    if (practiceBtn) {
-      const level = this.lobby.selectedLevel;
-      practiceBtn.style.display = (this._rankedRunActive && this.mode !== 'stoker' && level && level.isDaily) ? '' : 'none';
-    }
     // B-5: wishlist + send-a-link, after the ride buttons.
     this._updateCtaButtons('gameover');
     // #400 D4: a crashed ride still pays for its distance.
@@ -3506,10 +3485,10 @@ class Game {
       html += '<div class="victory-stat">' + earned + chase + '</div>';
     }
 
-    // C-2 / D-2 · Today's Road counts its own rides, so the card can say what
-    // you have done today, and the day's ranked run is spent here if this was
-    // one. The stoker's screen shows the captain's numbers but writes nothing
-    // from them — except the pair result, which is genuinely both riders'.
+    // C-2 / #641 · the Daily Ride counts its own finishes, so the card can say
+    // what you have done today and the share strip knows the first try. The
+    // stoker's screen shows the captain's numbers but writes nothing from them
+    // — except the pair result, which is genuinely both riders'.
     if (level.isDaily && level.key) {
       const store = browserStore();
       const dailyMode = this._dailyRunMode();
@@ -3518,31 +3497,22 @@ class Game {
       // record goes in, consumed by the payout (_payoutRide).
       const firstToday = !finishedToday(store, level.key);
       let recorded = false;
-      if (this._rankedRunActive) {
-        recorded = true;
-        recordRanked(store, level.key, dailyMode, {
-          timeMs: summary.timeMs,
-          distance: summary.distance,
-          collectibles: summary.collectibles,
-          collectiblesTotal: summary.collectiblesTotal,
-          crashes: summary.crashes,
-          safety: this.safetyMode,
-          sync: this.sharedPedal ? this.sharedPedal.offsetScore : null,
-          partner: this._partnerKey()
-        });
-      } else if (!fromRemote && !help.skipped) {
+      if (!fromRemote && !help.skipped) {
         // #403: a 🛟 finish counts as finishing the road (streaks, Slingshot's
-        // gate) but its time is not the practice best; a shortcut is neither.
-        recordPractice(store, level.key, help.helped ? null : summary.timeMs);
+        // gate) but its time is not the day's best; a shortcut is neither.
+        recordDailyFinish(store, level.key, {
+          timeMs: summary.timeMs, helped: help.helped, skipped: help.skipped, rideNo: this._dailyRideNo
+        });
         recorded = true;
       }
       if (recorded) this._dailyBonusInfo = { firstToday, streak: computeStreak(store, level.key).current };
+      if (!fromRemote) html += this._dailyVictoryLine();
       if (dailyMode === 'pair' && this._partnerKey()) {
         recordPartner(store, level.key, this._partnerKey());
       }
       try {
         analytics.trackEvent('daily_finish', {
-          key: level.key, mode: dailyMode, ranked: this._rankedRunActive,
+          key: level.key, mode: dailyMode, clean: this._dailyRideClean(), ride_no: this._dailyRideNo || 0,
           time_ms: summary.timeMs, safety: this.safetyMode, crashes: summary.crashes,
           geese_scattered: this.geeseManager ? this.geeseManager.getDisruptedCount() : 0   // #364
         });
@@ -3564,34 +3534,81 @@ class Game {
     return html;
   }
 
+  // ── #641 · the Daily Ride: every ride counts, the best clean time posts ──
+
   /**
-   * #398 · a ranked run is over (finish, END RIDE / DNF, quit, disconnect):
-   * nothing is ranked any more, and the RANKED RUN badge must not follow the
-   * player back into the lobby.
+   * Did this ride use no help at all? SAFETY or SPEED switched on at any
+   * point, the DDA's silent tune, ASSIST, the helping hand or the Royal
+   * Shortcut each make it a ride whose time stays off the board.
    */
-  _endRankedRun() {
-    this._rankedRunActive = false;
-    this._applyRankedLocks();   // M4: SAFETY and SPEED back as the player had them
-    if (this.hud && this.hud.setRankedBadge) this.hud.setRankedBadge(false);
+  _dailyRideClean() {
+    const help = this._helpFlags ? this._helpFlags() : { helped: false, skipped: false };
+    return !this._rideAided && !help.helped && !help.skipped;
   }
 
-  /** D-2 · spend the day's ranked run as an unfinished attempt. */
-  _recordRankedDnf() {
-    const level = this.lobby.selectedLevel;
-    if (!level || !level.isDaily || !level.key) return;
-    recordRanked(browserStore(), level.key, this._dailyRunMode(), {
-      dnf: true,
-      distance: this.bike ? this.bike.distanceTraveled : 0,
-      crashes: this.raceManager ? this.raceManager.crashCount : 0,
-      safety: this.safetyMode,
-      partner: this._partnerKey()
-    });
-    this._endRankedRun();
+  /** Per frame while riding: note any help the ride is using. */
+  _noteRideAided() {
+    if (this._rideAided) return;
+    if (this.safetyMode || this.autoSpeed || (this.ddaManager && this.ddaManager._adjustmentsActive)) {
+      this._rideAided = true;
+    }
+  }
+
+  /**
+   * The edition's gate for starting ANOTHER Daily Ride from this device:
+   * {ok, left} or {ok:false, reason:'needs'|'cap'} (edition.dailyRideGate).
+   */
+  _dailyGate() {
+    const level = this.lobby && this.lobby.selectedLevel;
+    if (!level || !level.isDaily || !level.key) return { ok: true, left: null };
+    // One gate for the lobby and the game (lobby._dailyGate reads the saved list).
+    if (this.lobby._dailyGate) return this.lobby._dailyGate();
+    const earned = this.achievements ? this.achievements.getEarnedIds() : [];
+    return dailyRideGate(this._roomRules(), ridesStarted(browserStore(), level.key), earned);
+  }
+
+  /**
+   * Would the countdown about to run start a NEW Daily Ride the demo has no
+   * rides left for? A retry of segment 1 is the same ride, and the stoker
+   * never decides (the captain's side counts).
+   */
+  _dailyRideBlocked() {
+    if (this._sameRideNext && this._rideRef) return false;
+    return this._dailyCapReached();
+  }
+
+  /** Are the demo's Daily Rides for today used up (captain / solo / local side)? */
+  _dailyCapReached() {
+    const level = this.lobby && this.lobby.selectedLevel;
+    if (!level || !level.isDaily || this.mode === 'stoker' || this.mode === 'versus') return false;
+    const gate = this._dailyGate();
+    return !gate.ok && gate.reason === 'cap';
+  }
+
+  /** Out of Daily Rides: back to the room (a room stays together) or the lobby, and say why. */
+  _leaveForDailyCap() {
+    this._hideVictory();
+    this._hideGameOver();
+    if (this.net && this.net.connected) this._returnToRoom();
+    else this._returnToLobby();
+    this._showDailyCapNotice();
+  }
+
+  /** The Daily Ride's line on the victory sheet: rides left (demo) and whether the time posts. */
+  _dailyVictoryLine() {
+    const bits = [];
+    const cap = this._roomRules().dailyRideCap;
+    if (cap != null && this._dailyRideNo) {
+      bits.push('📅 Daily Ride ' + Math.min(this._dailyRideNo, cap) + ' of ' + cap + ' today');
+    }
+    if (!this._dailyRideClean()) bits.push('🛟 Help used, so this time stays off the board');
+    return bits.length ? '<div class="victory-stat">' + bits.join(' · ') + '</div>' : '';
+  }
+
+  _showDailyCapNotice() {
     try {
-      analytics.trackEvent('daily_finish', {
-        key: level.key, mode: this._dailyRunMode(), ranked: true, dnf: true,
-        distance: this.bike ? Math.round(this.bike.distanceTraveled) : 0
-      });
+      showInfoToast('📅', 'That’s today’s three Daily Rides',
+        'A new road arrives at 09:00 UTC. The full game rides it as often as you like.');
     } catch {}
   }
 
@@ -4439,7 +4456,7 @@ class Game {
         (pair.rides || 0) + ' ride' + (pair.rides === 1 ? '' : 's') + ' together' +
         (km >= 0.1 ? ' · ' + km.toFixed(1) + ' km' : '') +
         (previousBest ? ' · best ' + records.formatTime(previousBest) : '') +
-        (pair.daily_streak >= 2 && !getEditionRules().weeklyRoad ? ' · 🔥 ' + pair.daily_streak : '') +
+        (pair.daily_streak >= 2 ? ' · 🔥 ' + pair.daily_streak : '') +
       '</div>' +
       (beat ? '<div class="pair-panel-best">⭐ NEW PAIR BEST</div>' : '');
     el.style.display = 'block';
@@ -4448,14 +4465,15 @@ class Game {
   }
 
   /**
-   * D-6 · send the day's ranked run to the server, once. A 409 means this
-   * account has already ridden today in this mode, which is not an error —
-   * it is the rule working.
+   * D-6 / #641 · send a finished Daily Ride to the board. Every clean finish
+   * goes; the server keeps the account's best time of the day per mode. A
+   * helped ride, a DNF and the stoker's copy of the captain's finish never go.
    */
-  async _submitDailyRanked(summary) {
+  async _submitDailyBest(summary, fromRemote = false) {
     const level = this.lobby.selectedLevel;
     const auth = this.lobby.auth;
-    if (!level || !level.isDaily || !this._rankedRunActive) return;
+    if (!level || !level.isDaily || !level.key || fromRemote) return;
+    if (!summary || summary.dnf || !(summary.timeMs > 0) || !this._dailyRideClean()) return;
     if (!auth || !auth.isLoggedIn()) return;      // a local result is still kept
     if (!DAILY_BOARD_ENABLED) return;
 
@@ -4464,21 +4482,21 @@ class Game {
         dayKey: level.key,
         mode: this._dailyRunMode(),
         timeMs: summary.timeMs,
-        dnf: !!summary.dnf,
+        dnf: false,
         distance: summary.distance,
         collectibles: summary.collectibles,
         crashes: summary.crashes,
-        safetyUsed: this.safetyMode,
+        safetyUsed: false,
         syncPct: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : null,
         partnerUserId: this._partnerServerId || (this._seatAccount() ? this._seatAccount().user.id : null)
       });
-      if (res && res.alreadyRidden) {
-        analytics.trackEvent('daily_submit_duplicate', { key: level.key });
+      if (res && res.success) {
+        analytics.trackEvent('daily_submit', { key: level.key, improved: !!res.improved });
       }
     } catch { /* the ride is already recorded locally; the server can wait */ }
   }
 
-  /** D-2 · 'solo' or 'pair' — the two independent ranked runs per day. */
+  /** D-2 · 'solo' or 'pair' — the two independent board entries per day. */
   _dailyRunMode() {
     return (this.mode === 'solo') ? 'solo' : 'pair';
   }
@@ -4508,9 +4526,11 @@ class Game {
    * pure, tested function; this method only gathers the numbers.
    */
   _buildDailyStripHtml(summary, level) {
-    if (!level.isDaily || !level.key || this._isDemo) return '';
+    if (!level.isDaily || !level.key) return '';
     const store = browserStore();
     const mode = this._dailyRunMode();
+    // #641 · the day so far: the best clean time and the first try.
+    const day = dailyStatus(store, level.key);
     const partnerKey = this._partnerKey();
     const streak = mode === 'pair' && partnerKey
       ? computePairStreak(store, partnerKey, level.key).current
@@ -4524,13 +4544,18 @@ class Game {
       dnf: !!summary.dnf,
       distance: summary.distance,
       raceDistance: summary.raceDistance || level.distance,
-      medal: this._helpMedal(summary.timeMs, thresholds),   // #403
+      // #641: the strip leads with the day's best, so its medal is the best's.
+      medal: day.best && !(summary.timeMs > 0 && summary.timeMs <= day.best)
+        ? records.medalFor(day.best, thresholds)
+        : this._helpMedal(summary.timeMs, thresholds),   // #403
       collectibles: summary.collectibles,
       collectiblesTotal: summary.collectiblesTotal,
       crashes: summary.crashes,
       sync: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : undefined,
       safety: this.safetyMode,
-      practice: !this._rankedRunActive,
+      bestMs: day.best,
+      first: firstTry(store, level.key),
+      rides: day.started,
       streak,
       partnerName: mode === 'pair' ? this._partnerName : null
     }, { origin: location.origin });
@@ -4757,11 +4782,8 @@ class Game {
 
     // F-1 · the loops the plan built. Read from the local stores, so they work
     // signed out; the pair numbers come from the server panel when there is one.
-    // #400: no day streaks off the demo's weekly road.
-    const weekly = !!(level.isWeekly || getEditionRules().weeklyRoad);
-    if (level.isDaily && level.key && !weekly) {
+    if (level.isDaily && level.key) {
       const store = browserStore();
-      state.dailyRanked = this._rankedRunActive;
       const mode = this._dailyRunMode();
       const partnerKey = this._partnerKey();
       state.dailyStreak = mode === 'pair' && partnerKey
@@ -4784,7 +4806,6 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
-      weekly,   // m5: the weekly road feeds no day streak
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
     });
     // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
@@ -5215,8 +5236,9 @@ class Game {
 
     // Auto-submit score if logged in
     this._submitScore();
-    // D-6 / D-8: the day's ranked result, and what the two of you have done.
-    this._submitDailyRanked(summary);
+    // D-6 / D-8 · #641: a clean Daily finish goes to the board (the server keeps
+    // the day's best), and what the two of you have done.
+    this._submitDailyBest(summary, fromRemote);
     this._renderPairPanel(summary);
 
     // Show NEXT LEVEL button if there's a next level. #400: in the demo, after
@@ -5289,7 +5311,7 @@ class Game {
     const auth = this.lobby.auth;
     if (!auth || !auth.isLoggedIn()) return;
     // Demo mode: don't save scores to leaderboard
-    if (!getEditionRules().ranked) return;
+    if (!getEditionRules().postScores) return;
 
     const level = this.lobby.selectedLevel;
     const raceSummary = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
@@ -5516,7 +5538,6 @@ class Game {
       this._overlayFocus.input = this.input;
     }
     this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
-    this._endRankedRun();   // #398
     this._helpEndRide();    // #403
     if (this._coachVisible) this._dismissCoachCard();
     this._hideTouristGoal();   // E-7
@@ -5671,7 +5692,6 @@ class Game {
     this._waitingForCaptain = false;
     this._closePause();      // #459
     this._payoutAbandon();   // #400 D4
-    this._endRankedRun();   // #398
     this._helpEndRide();    // #403
     // A short ride can end before the first-ride coach card does; don't carry
     // it over the room (_returnToLobby does the same).
@@ -6152,7 +6172,7 @@ class Game {
     // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
-      on ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH,
+      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey),   // #611: a special bike stays itself
       !this.versusRigs // live versus clones share the old model's geometry
     );
 
@@ -6219,7 +6239,7 @@ class Game {
   }
 
   /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
-  /** #611 · reward outfits this device has not earned yet (the robot: player bots). */
+  /** #611 · reward outfits this device has not earned yet (the robot: the Time Warp reward). */
   _lockedOutfits() {
     return lockedOutfits(GOOSE_OUTFITS, this.achievements ? this.achievements.getEarnedIds() : []);
   }
@@ -6885,8 +6905,7 @@ class Game {
     const segmentKey = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
     this._crashState = countCrash(this._crashState || { segmentKey: -1, crashes: 0 }, segmentKey);
     const decision = decideAfterCrash({
-      crashesThisSegment: this._crashState.crashes,
-      rankedRun: !!this._rankedRunActive        // Phase D sets this
+      crashesThisSegment: this._crashState.crashes
     });
 
     if (decision.action === 'modal') {
@@ -7245,6 +7264,8 @@ class Game {
       if (this.mode === 'versus') this._pollVersusRecenter();
       else { this._pollDpad(); this._pollP2Recenter(); }
 
+      // #641: any help the ride uses keeps a Daily time off the board.
+      if (this.mode !== 'versus' && this.mode !== 'stoker') this._noteRideAided();
       // Playing state — dispatch by mode
       if (this.mode === 'solo') {
         this._updateSolo(dt * this._crashScale(this.bike));   // #484 slow-mo
@@ -7683,34 +7704,7 @@ class Game {
     this._updateSafetyBtn();
   }
 
-  /**
-   * M4 · ranked fairness. A ranked run rides with SAFETY and SPEED (cruise)
-   * forced off, and both buttons (HUD, D-pad, quick menu) disabled for the
-   * ride — `safetyUsed` is only sampled at the finish, so toggling mid-run
-   * would otherwise submit as safety-free. When the run is over the player's
-   * own choices come back. Called whenever _rankedRunActive changes.
-   */
-  _applyRankedLocks() {
-    const lock = !!this._rankedRunActive;
-    if (lock) {
-      // (Safety the helping hand turned on is not the player's choice — m13.)
-      if (!this._rankedLockPrev) this._rankedLockPrev = { safety: this._helpSafetyPrev === false ? false : this.safetyMode, speed: this.autoSpeed };
-      this.safetyMode = false;
-      this.autoSpeed = false;
-    } else if (this._rankedLockPrev) {
-      this.safetyMode = this._rankedLockPrev.safety;
-      this.autoSpeed = this._rankedLockPrev.speed;
-      this._rankedLockPrev = null;
-    }
-    this._updateSafetyBtn();
-    if (this.speedBtn) {
-      this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
-      this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
-      this.speedBtn.disabled = lock;
-    }
-    if (this.safetyBtn) this.safetyBtn.disabled = lock;
-    if (this.quickMenu && this.quickMenu.sync) this.quickMenu.sync();
-  }
+
 
   _recordBalanceCrashIfNew(wasFallen) {
     if (!wasFallen && this.bike.fallen && !this._lastCrashCause) {
