@@ -26,6 +26,12 @@ import { CrankMotion } from './crank-motion.js';
 import { fallLean } from './crash-tumble.js';
 import { shakeAt } from './crash-wobble.js';
 import { batchSplit, hasParts } from './physics/bike-parts.js';
+import { isRigTwin } from './special-bikes.js';
+
+// #611 · the goose tandem's length (claude-3d bike_rig_goosefit26.json length_m): a special bike on the same rig
+// (the Time Warp, whose rockets and flames make it longer) is sized as this, so its geese stay the same size.
+const GOOSE_TANDEM_LENGTH = 2.466;
+const underFx = (o) => { for (let p = o; p; p = p.parent) if (/^Flame[BO]_/.test(p.name || '')) return true; return false; };
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
 
@@ -367,7 +373,7 @@ export class BikeModel {
       const preBox = new THREE.Box3().setFromObject(model, isGoose);
       const preSize = preBox.getSize(new THREE.Vector3());
       const maxDim = Math.max(preSize.x, preSize.y, preSize.z);
-      const scale = targetLength / maxDim;
+      const scale = isGoose && isRigTwin(modelPath) ? targetLength / GOOSE_TANDEM_LENGTH : targetLength / maxDim;
       model.scale.setScalar(scale);
 
       // Face the riders model down the road. Applied before the bounds scan so
@@ -384,7 +390,7 @@ export class BikeModel {
       const v = new THREE.Vector3();
 
       model.traverse((child) => {
-        if (child.isMesh && child.geometry && child.geometry.attributes.position) {
+        if (child.isMesh && child.geometry && child.geometry.attributes.position && !underFx(child)) {   // (not the flames)
           const pos = child.geometry.attributes.position;
           for (let i = 0; i < pos.count; i++) {
             v.fromBufferAttribute(pos, i);

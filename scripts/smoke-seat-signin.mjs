@@ -65,6 +65,12 @@ const card = (page, n) => page.evaluate((k) => {
     disabled: [...(acc?.querySelectorAll('button[disabled]') || [])].map((b) => b.textContent.trim()),
   };
 }, n);
+// The <uf-person> (picture + sign-in badge + name) inside a selector, or null.
+const person = (page, sel) => page.evaluate((s) => {
+  const p = document.querySelector(s + ' uf-person');
+  return p ? { name: p.getAttribute('name'), source: p.getAttribute('source'), pic: !!p.querySelector('img'), badge: p.querySelector('.uf-person__src')?.getAttribute('aria-label') || '' } : null;
+}, sel);
+
 const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = document.querySelector(`#dr-cards .dr-card[data-n="${k}"] ${s}`); if (!b) return false; b.click(); return true; }, [n, sel]);
 
 // ── SS-01..04 · web, local co-op ──
@@ -95,8 +101,13 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   check(reach, "SS-01: P2's own pad can reach their Sign in button");
   await h.shot(page, 'ss01-cards');
 
+  // A desktop-app spy for the click only: P2's sign-in must never open this PC's browser
+  // (it is signed in to P1's Discord). Removed right after, so the web run stays the web.
+  await page.evaluate(() => { window.__opened = []; window.__hadApp = !!window.electronApp; window.electronApp = window.electronApp || {}; window.__oldOpen = window.electronApp.openSignIn; window.electronApp.openSignIn = (u) => { window.__opened.push(u); return Promise.resolve(true); }; });
   await cardClick(page, 2, '[data-act="acc-signin"]');
   await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-acc-code')?.textContent === 'Q4MZ');
+  const p2Opened = await page.evaluate(() => { const o = window.__opened.slice(); if (window.__hadApp) window.electronApp.openSignIn = window.__oldOpen; else delete window.electronApp; return o; });
+  check(p2Opened.length === 0, "SS-01: P2's Sign in shows only the QR, never opens this PC's browser", p2Opened);
   c1 = await card(page, 1); c2 = await card(page, 2);
   check(c2.state === 'pending' && c2.qr && c2.code === 'Q4MZ', "SS-02: P2's card shows its own QR + code", c2);
   check(c1.state === 'signed-out' && !c1.qr, "SS-02: P1's card is untouched", c1);
@@ -112,9 +123,20 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   check((await card(page, 1)).disabled.length === 0, "SS-02: once P2 is in, P1's Sign in is free again", await card(page, 1));
   check(c2.state === 'signed-in' && c2.pics.join() === 'discord' && c2.buttons.includes('Not me') && /Sam/.test(c2.who), "SS-02: P2's card: Sam's picture, name and Not me", c2);
   check(!(await page.evaluate(() => window._game.lobby.auth.isLoggedIn())), 'SS-02: Player 1 is still signed out');
+  const drP2 = await person(page, '#dr-cards .dr-card[data-n="2"] .dr-who');
+  check(drP2 && drP2.name === 'Sam' && drP2.source === 'discord' && drP2.pic && drP2.badge === 'Discord', "SS-02: P2's card title: Sam's picture with the Discord badge", drP2);
+  check(!(await person(page, '#dr-cards .dr-card[data-n="1"] .dr-who')), "SS-02: signed-out P1's card title has no picture");
   await h.shot(page, 'ss02-p2-signed-in');
   await page.evaluate(() => window._game.lobby._room.close('smoke'));
   check(await until(page, () => document.getElementById('host-seat-stoker')?.who === 'Sam'), 'SS-02: the stoker seat card says Sam', await page.evaluate(() => document.getElementById('host-seat-stoker')?.who));
+  const stoSeat = await person(page, '#host-seat-stoker');
+  const stoDev = await page.evaluate(() => document.getElementById('host-seat-stoker')?.dev);
+  check(stoSeat && stoSeat.name === 'Sam' && stoSeat.source === 'discord' && stoSeat.pic && /dualsense/i.test(stoDev || ''), "SS-02: the stoker seat: Sam's picture + Discord badge over the controller", { stoSeat, stoDev });
+  await until(page, () => !!document.querySelector('#host-roster uf-person'));
+  const chip = await page.evaluate(() => [...document.querySelectorAll('#host-roster .ucr-chip')].map((c) => ({ person: c.querySelector('uf-person')?.getAttribute('name') || null, source: c.querySelector('uf-person')?.getAttribute('source') || null, text: c.textContent })));
+  check(chip.some((c) => c.person === 'Sam' && c.source === 'discord' && /dualsense/i.test(c.text)) && chip.filter((c) => c.person).length === 1, "SS-02: the controller strip: Sam's chip has the picture and the DualSense; P1's has none", chip);
+  check(!(await person(page, '#host-seat-captain')), "SS-02: signed-out P1's seat is the controller alone");
+  await h.shot(page, 'ss02-host-seats');
 
   // SS-03 · the couch ride's submit (the finish + submit, with a stub ride).
   const sub = await page.evaluate(async () => {
@@ -187,6 +209,17 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   await until(page, () => !!document.querySelector('#dr-cards .dr-card[data-n="1"] .dr-account'));
   const c1 = await card(page, 1);
   check(c1.state === 'signed-in' && c1.pics.join() === 'steam' && c1.buttons.includes('Link Discord') && !c1.buttons.includes('Not me'), "SS-05: P1's card on Steam: Steam picture + Link Discord (no Not me)", c1);
+  const drP1 = await person(page, '#dr-cards .dr-card[data-n="1"] .dr-who');
+  const p1Name = await page.evaluate(() => window._game.lobby.auth.getUser().name);
+  check(drP1 && drP1.name === p1Name && drP1.source === 'steam' && drP1.badge === 'Steam', "SS-05: P1's card title on Steam: the Steam picture and badge, under the account's name", { drP1, p1Name });
+  // Steam + Discord both linked: the Steam app still leads with Steam; the web would lead with Discord.
+  const lead = await page.evaluate(() => {
+    const l = window._game.lobby; const u = l.auth.user; const was = u.identities;
+    u.identities = { ...was, discord: { name: 'pete_dc', avatar: 'x' } };
+    const steamApp = l.seatPerson(1).source; l._isSteam = false; const web = l.seatPerson(1).source; l._isSteam = true;
+    u.identities = was; return { steamApp, web };
+  });
+  check(lead.steamApp === 'steam' && lead.web === 'discord', 'SS-05: P1 leads with Steam in the Steam app, Discord elsewhere', lead);
   await h.shot(page, 'ss05-p1-steam-card');
   await page.evaluate(() => window._game.lobby._room.close('smoke'));
 
