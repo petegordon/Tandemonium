@@ -17,7 +17,38 @@ import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
+  handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl,
 } from './identity.js';
+import { gameProfile, recordGame, handleMeGames } from './games.js';
+
+/**
+ * #612 · what other House Tandem game Workers may do, through the private
+ * HouseTandemGames RPC entrypoint (worker/index.js). Each takes env first.
+ */
+export const houseTandemGames = {
+  async resolveDiscord(env, profile) {
+    const discordId = String((profile && profile.discordId) || '');
+    if (!/^\d{5,25}$/.test(discordId)) throw new Error('bad Discord id');
+    const name = String((profile && profile.name) || 'Discord player').slice(0, 64);
+    const avatar = typeof (profile && profile.avatar) === 'string' && /^https:\/\/cdn\.discordapp\.com\//.test(profile.avatar)
+      ? profile.avatar : discordAvatarUrl({ id: discordId });
+    const { userId } = await upsertIdentity(env, { provider: 'discord', providerId: discordId, name, avatar }, null, identityDeps());
+    const user = await env.DB.prepare('SELECT display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
+    return { userId, name: user ? user.display_name : name, avatar: user ? user.avatar_url : avatar };
+  },
+  async verifySession(env, token) {
+    if (typeof token !== 'string' || token.length > 4096) return null;
+    let payload;
+    try { payload = await verifyJWT(token, env.JWT_SECRET); } catch { return null; }
+    const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(payload.sub).first();
+    if (!user) return null;
+    const ids = await listIdentities(env, user.id);
+    const avatar = (ids.discord && ids.discord.avatar) || user.avatar_url;
+    return { userId: user.id, name: user.display_name, avatar };
+  },
+  gameProfile: (env, userId, game) => gameProfile(env, userId, game),
+  recordGame: (env, userId, game, delta, earned) => recordGame(env, userId, game, delta, earned),
+};
 
 /** What the identity module needs from this worker. */
 const identityDeps = () => ({
@@ -97,6 +128,22 @@ export default {
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
+      if (path === '/me/games') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleMeGames(req, e, c, uid, identityDeps()));
+      }
+      // #612 · open another House Tandem site (dice) already signed in.
+      if (path === '/auth/handoff' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleHandoffCreate(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/auth/handoff/redeem' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
+      }
       if (path === '/me/discord') {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
@@ -2204,6 +2251,8 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM friends WHERE user_id = ? OR friend_id = ?', userId, userId),
     q('DELETE FROM pairs WHERE user_lo = ? OR user_hi = ?', key, key),
     q('DELETE FROM auth_requests WHERE link_user_id = ?', userId),
+    q('DELETE FROM game_achievements WHERE user_id = ?', userId),
+    q('DELETE FROM game_stats WHERE user_id = ?', userId),
     q('DELETE FROM user_identities WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
