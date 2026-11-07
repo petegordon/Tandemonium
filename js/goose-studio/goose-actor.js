@@ -34,7 +34,7 @@ export const GEESE = {
   goose_captain_robot_m: { label: 'Robot', pair: 'robot', seat: 'Captain', sex: 'm',
     pieceLabels: { hat: 'Visor helmet', collar: 'Collar ring', waistcoat: 'Chest plate', jacket: 'Caps + power pack' } },
   goose_stoker_robot_f: { label: 'Lady robot', pair: 'robot', seat: 'Stoker', sex: 'f',
-    pieceLabels: { hat: 'Visor helmet', collar: 'Collar ring', waistcoat: 'Chest plate', jacket: 'Caps + power pack' } },
+    pieceLabels: { hat: 'Visor helmet', collar: 'Collar ring', waistcoat: 'Chest plate', jacket: 'Caps + power pack', peplum: 'Hip plates' } },
 };
 
 const FACE = new Set(['Jaw', 'Tongue', 'LeftEye', 'RightEye', 'LeftEyelidUpper', 'LeftEyelidLower',
