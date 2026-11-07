@@ -237,7 +237,7 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   const again = await page.evaluate(() => { const l = window._game.lobby; l._linkPromptDue = true; return l.maybePromptLinkDiscord(); });
   check(!again, 'SS-05: not again for a week');
   const back2 = await page.evaluate(() => { window._game.lobby._toggleProfile(); const t = document.getElementById('profile-popup-back').textContent; window._game.lobby._toggleProfile(); return t; });
-  check(back2 === 'RETURN TO LOBBY', 'SS-05: opened by hand, the card is the normal Profile', back2);
+  check(back2 === 'CLOSE', 'SS-05: opened by hand, the card is the normal Profile', back2);
   await page.close();
 }
 
