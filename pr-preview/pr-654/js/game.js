@@ -3283,7 +3283,7 @@ class Game {
     const title = document.getElementById('gameover-title');
     if (title) title.textContent = opts.timeout ? 'TOO SLOW!' : 'GAME OVER';
     { const sh = /** @type {any} */ (document.getElementById('gameover-sheet')); if (sh) sh.heading = opts.timeout ? 'Too slow!' : 'Game over'; }   // #428 kit sheet
-    { const u = document.getElementById('gameover-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; } }
+    { const u = document.getElementById('gameover-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; u.classList.remove('icons-only'); } }
 
     // Crash analytics already recorded at impact time in _recordCrash()
     this._lastCrashCause = null;
@@ -5004,7 +5004,7 @@ class Game {
       level.icon + ' ' + level.name;
 
     { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = victoryTitle.textContent; }   // #428 kit sheet
-    { const u = document.getElementById('victory-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; } }
+    { const u = document.getElementById('victory-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; u.classList.remove('icons-only'); } }
 
     // Animated chromakey destination video at top of victory screen
     this._startVictoryVideo(level);

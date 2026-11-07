@@ -142,6 +142,11 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 .end-unlocked { display: grid; grid-template-columns: repeat(auto-fill, minmax(14em, 1fr)); gap: var(--uf-space-2); width: 100%; }
 .end-unlocked[hidden] { display: none; }
 /* What the list is (a lone badge read as "all your achievements", Steam playtest 2026-11-07). */
+/* More than 10 unlocked in one ride: icons only, a tight row (achievements.js END_LIST_NAMES_MAX). */
+#victory-body #victory-unlocked.icons-only, .end-unlocked.icons-only { grid-template-columns: repeat(auto-fill, minmax(3.4em, 1fr)); }
+.end-unlocked.icons-only uf-achievement { grid-template-columns: 1fr; justify-items: center; padding: var(--uf-space-2); }
+.end-unlocked.icons-only uf-achievement .ua-name, .end-unlocked.icons-only uf-achievement .ua-new { display: none; }
+.end-unlocked.icons-only uf-achievement .ua-icon { grid-row: auto; font-size: var(--uf-size-xl); }
 .end-unlocked::before { content: 'Unlocked this ride'; grid-column: 1 / -1; font: 700 var(--uf-size-sm)/1.2 var(--uf-font-ui); color: var(--uf-color-accent-2); letter-spacing: .04em; text-transform: uppercase; }
 /* The floating toast is now a kit badge: the wrapper only animates it. */
 .achievement-toast { padding: 0 !important; background: none !important; border: none !important; backdrop-filter: none !important; }
