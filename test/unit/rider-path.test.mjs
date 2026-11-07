@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
-  GOOSE_OUTFITS, SEATS, SEAT_BODY, RIDER_FILES, riderFileName, resolveRider, riderPath, _resetRiderWarnings,
+  GOOSE_OUTFITS, BASE_OUTFITS, SEATS, SEAT_BODY, RIDER_FILES, riderFileName, resolveRider, riderPath, _resetRiderWarnings,
 } from '../../js/goose-outfits.js';
 import { colourwayParams, colourwayParamsForBody } from '../../js/goose-colourways.js';
 
@@ -23,7 +23,7 @@ test('the 8 existing combos map to today\'s files', () => {
   assert.equal(riderPath('Stoker', 'fancy', 'f'), 'tandem-3d/goose/goose_stoker.glb', 'the fancy stoker is the original goose_stoker.glb');
   assert.equal(riderPath('Captain', 'georgian', 'm'), 'tandem-3d/goose/goose_captain_georgian.glb');
   assert.equal(riderPath('Stoker', 'georgian', 'f'), 'tandem-3d/goose/goose_stoker_georgian.glb');
-  for (const o of Object.keys(GOOSE_OUTFITS)) for (const s of SEATS) {
+  for (const o of BASE_OUTFITS) for (const s of SEATS) {
     const r = resolveRider(s, o, SEAT_BODY[s]);
     assert.equal(r.fallback, false, `${s}/${o}`);
     assert.equal(r.body, SEAT_BODY[s]);
@@ -37,7 +37,7 @@ test('naming contract for new files: tandem-3d/goose/goose_<captain|stoker>_<out
   assert.equal(riderFileName('Stoker', 'cyclists', 'm'), 'tandem-3d/goose/goose_stoker_cyclists_m.glb', 'the outfit KEY, not today\'s file stem');
   assert.equal(riderFileName('Captain', 'original', 'f'), 'tandem-3d/goose/goose_captain_victorian_f.glb', 'old outfit names normalise');
   const all = new Set();
-  for (const o of Object.keys(GOOSE_OUTFITS)) for (const s of SEATS) for (const b of ['m', 'f']) all.add(riderFileName(s, o, b));
+  for (const o of BASE_OUTFITS) for (const s of SEATS) for (const b of ['m', 'f']) all.add(riderFileName(s, o, b));
   assert.equal(all.size, 16, 'four outfits × two seats × two bodies, all distinct');
 });
 
@@ -64,19 +64,19 @@ test('a missing (seat, outfit, body) falls back to the seat\'s existing body and
 
 test('all 16 (seat, outfit, body) combos resolve to their own file, no fallback', () => {
   _resetRiderWarnings();
-  for (const o of Object.keys(GOOSE_OUTFITS)) for (const s of SEATS) for (const b of ['m', 'f']) {
+  for (const o of BASE_OUTFITS) for (const s of SEATS) for (const b of ['m', 'f']) {
     const r = resolveRider(s, o, b, () => assert.fail('no fallback expected'));
     assert.equal(r.fallback, false, `${s}/${o}/${b}`);
     assert.equal(r.body, b);
     assert.ok(fs.existsSync(r.path), r.path);
     if (b !== SEAT_BODY[s]) assert.equal(r.path, riderFileName(s, o, b));
   }
-  assert.equal(RIDER_FILES.size, 8);
+  assert.equal(RIDER_FILES.size, 10, '8 swapped-body files + the 2 robot files');
 });
 
 test('every new-contract file listed as shipped is on disk and named by the contract', () => {
   for (const f of RIDER_FILES) {
-    assert.match(f, /^tandem-3d\/goose\/goose_(captain|stoker)_(victorian|cyclists|fancy|georgian)_(m|f)\.glb$/, f);
+    assert.match(f, /^tandem-3d\/goose\/goose_(captain|stoker)_(victorian|cyclists|fancy|georgian|robot)_(m|f)\.glb$/, f);
     assert.ok(fs.existsSync(f), f);
   }
 });
@@ -92,4 +92,15 @@ test('colourway params follow the body, not the seat', () => {
   assert.deepEqual(colourwayParamsForBody('victorian', 'v_navy', 'm'), both.Captain);
   assert.deepEqual(colourwayParamsForBody('victorian', 'v_navy', 'f'), both.Stoker);
   assert.deepEqual(colourwayParamsForBody('victorian', 'default', 'f'), {});
+});
+
+test('#611 · the robot is a one-body outfit: both seats and both bodies ride the gander robot, no fallback', () => {
+  _resetRiderWarnings();
+  for (const s of SEATS) for (const b of ['m', 'f']) {
+    const r = resolveRider(s, 'robot', b, () => assert.fail('no fallback expected'));
+    assert.equal(r.fallback, false, s + '/' + b);
+    assert.equal(r.body, 'm');
+    assert.equal(r.path, riderFileName(s, 'robot', 'm'));
+    assert.ok(fs.existsSync(r.path), r.path);
+  }
 });

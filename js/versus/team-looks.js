@@ -2,11 +2,11 @@
 // the two bikes read apart at a glance. Team Blue (A) wears the player's saved
 // outfit; Team Red (B) the next outfit in the list. Each outfit's colourway is
 // the one closest to the team's colour (js/goose-colourways-data.js).
-import { GOOSE_OUTFITS, normalizeGooseOutfit } from '../goose-outfits.js';
+import { BASE_OUTFITS, normalizeGooseOutfit } from '../goose-outfits.js';
 
 export const TEAM_COLOURWAYS = {
-  A: { victorian: 'v_navy', cyclists: 'c_blue', fancy: 'f_royal', georgian: 'default' },     // Georgian's own coat is navy
-  B: { victorian: 'v_forest', cyclists: 'c_burgundy', fancy: 'default', georgian: 'g_claret' }, // Fancy's own dress is red
+  A: { victorian: 'v_navy', cyclists: 'c_blue', fancy: 'f_royal', georgian: 'default', robot: 'default' },     // Georgian's own coat is navy
+  B: { victorian: 'v_forest', cyclists: 'c_burgundy', fancy: 'default', georgian: 'g_claret', robot: 'default' }, // Fancy's own dress is red
 };
 
 /**
@@ -14,7 +14,7 @@ export const TEAM_COLOURWAYS = {
  * @returns {{A: {outfit: string, colourway: string}, B: {outfit: string, colourway: string}}}
  */
 export function versusTeamLooks(savedOutfit) {
-  const order = Object.keys(GOOSE_OUTFITS);
+  const order = BASE_OUTFITS;                      // (reward outfits never become Team Red's fallback)
   const a = normalizeGooseOutfit(savedOutfit);
   const b = order[(order.indexOf(a) + 1) % order.length];
   return {
