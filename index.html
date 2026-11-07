@@ -21,7 +21,6 @@
   })();
 </script>
 <title>Tandemonium</title>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <!-- @usersfirst/ui design tokens (vendored from the controller lab: npm run sync-ui). Loaded before the page CSS so every var(--uf-*) below resolves. -->
 <link rel="stylesheet" href="shared/ui/tokens.css">
 <style>
@@ -3953,6 +3952,28 @@
   .profile-popup-back:hover {
     background: rgba(255,255,255,0.18);
   }
+  /* #612 · House Tandem account: Discord sign-in, linked pictures, device code */
+  #profile-popup-signin { padding: 4px 0 0; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .profile-popup-title { font-size: 15px; font-weight: 700; color: #fff; }
+  .profile-popup-sub { font-size: 11px; line-height: 1.4; color: rgba(255,255,255,0.6); max-width: 18em; }
+  .profile-popup-signin-btn.profile-popup-discord {
+    border-color: #5865f2; background: #5865f2; color: #fff;
+  }
+  .profile-popup-signin-btn.profile-popup-discord:hover { background: #4752c4; }
+  .profile-popup-avatars { display: flex; gap: 8px; justify-content: center; }
+  .profile-popup-avatars img {
+    width: 48px; height: 48px; border-radius: 50%; object-fit: cover;
+    border: 2px solid rgba(60,200,80,0.5);
+  }
+  .profile-popup-avatars img[data-provider="discord"] { border-color: #5865f2; }
+  .profile-popup-avatars img[data-provider="steam"] { border-color: #66c0f4; }
+  .profile-popup-device { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: 8px; width: 100%; }
+  .profile-popup-device[hidden] { display: none; }
+  .profile-popup-qr { background: #fff; border-radius: 8px; padding: 6px; line-height: 0; }
+  .profile-popup-qr svg { width: 132px; height: 132px; display: block; }
+  .profile-popup-steps { margin: 0; padding-left: 1.4em; text-align: left; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.8); }
+  .profile-popup-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffd36b; font-size: 1.25em; }
+  .profile-popup-device-status { font-size: 11px; color: rgba(255,255,255,0.55); min-height: 1.4em; text-align: center; }
 
   /* ── Share / Record + music buttons ──
      Both are off-screen now; the quick menu carries them. They keep their
@@ -5626,7 +5647,7 @@ ON</button>
 <div id="lobby">
   <div id="lobby-top-bar">
     <div id="lobby-auth" style="display:none;">
-      <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Google</button>
+      <button class="lobby-auth-btn" id="btn-sign-in">Sign in with Discord</button>
       <div id="user-info" style="display:none;">
         <img id="user-avatar" class="user-avatar" style="display:none;" alt="">
         <span id="user-name"></span>
@@ -5672,21 +5693,34 @@ ON</button>
           </svg>
         </button>
         <div id="profile-popup">
+          <!-- #612: the House Tandem account. One picture per linked sign-in
+               (Discord left, Steam right), and LINK DISCORD for a Steam player. -->
           <div class="profile-popup-content">
-            <img class="profile-popup-avatar" id="profile-popup-avatar" src="" alt="">
+            <div class="profile-popup-avatars" id="profile-popup-avatars"></div>
             <div class="profile-popup-name" id="profile-popup-name"></div>
             <div class="profile-popup-email" id="profile-popup-email"></div>
+            <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-link-discord" style="display:none;">LINK DISCORD</button>
             <button class="profile-popup-logout" id="profile-popup-logout">LOG OUT</button>
             <button class="profile-popup-back" id="profile-popup-back">RETURN TO LOBBY</button>
           </div>
-          <div id="profile-popup-signin" style="display:none;padding:12px;text-align:center;">
-            <div id="gsi-button-container"></div>
-            <!-- Controller/keyboard-reachable sign-in: the rendered Google button
-                 above is a cross-origin iframe that a synthetic .click() can't
-                 activate, so this proxy triggers One Tap in code instead. (#325) -->
-            <button class="profile-popup-signin-btn" id="profile-popup-signin-proxy" style="margin-top:10px;">SIGN IN WITH GOOGLE</button>
-            <div id="profile-popup-signin-hint" style="display:none;font-size:11px;line-height:1.4;opacity:0.75;margin-top:8px;">One&nbsp;Tap isn't available right now — sign in with the button above (mouse) or on your phone.</div>
-            <button class="profile-popup-back" id="profile-popup-signin-back" style="margin-top:10px;">RETURN TO LOBBY</button>
+          <!-- #612: Discord replaces Google. Same device: the button goes to
+               Discord and back. TV / desktop app: scan the QR with a phone (or the
+               desktop app opens your browser), sign in, check the code. -->
+          <div id="profile-popup-signin" style="display:none;">
+            <div class="profile-popup-title">Sign in to House Tandem</div>
+            <div class="profile-popup-sub">Save your scores, achievements and Tandem Tokens everywhere you play.</div>
+            <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-discord">SIGN IN WITH DISCORD</button>
+            <button class="profile-popup-back" id="profile-popup-signin-back">RETURN TO LOBBY</button>
+          </div>
+          <!-- The device-code steps; lobby.js moves this into whichever section is showing. -->
+          <div class="profile-popup-device" id="profile-popup-device" hidden>
+            <div class="profile-popup-qr" id="profile-popup-qr"></div>
+            <ol class="profile-popup-steps">
+              <li>Scan with your phone&rsquo;s camera</li>
+              <li>Sign in with Discord</li>
+              <li>Check the code matches <b class="profile-popup-code" id="profile-popup-code"></b></li>
+            </ol>
+            <div class="profile-popup-device-status" id="profile-popup-device-status" role="status"></div>
           </div>
         </div>
       </div>
@@ -6179,7 +6213,7 @@ ON</button>
       </div>
       <div class="help-toggle-row">
         <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>
-        <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc" id="help-profile-desc">— Sign in with Google to save scores</span></span>
+        <span><span class="help-toggle-name">Profile</span> <span class="help-toggle-desc" id="help-profile-desc">— Sign in with Discord to save scores everywhere you play</span></span>
       </div>
       <div class="help-toggle-row">
         <span class="help-icon help-icon-all" style="font-size:10px;font-weight:700">ALL</span>

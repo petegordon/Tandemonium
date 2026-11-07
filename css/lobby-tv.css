@@ -277,6 +277,19 @@ uf-button[size="pill"] > img.bar-avatar {
   width: 1.5em; height: 1.5em; flex: none; margin: -0.2em 0;
   border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 1.5px currentColor;
 }
+/* #612 · Discord's picture on the left of "Profile", Steam's on the right. */
+uf-button[size="pill"] > img.bar-avatar[data-provider="discord"] { box-shadow: 0 0 0 2px #5865f2; }
+uf-button[size="pill"] > img.bar-avatar[data-provider="steam"] { box-shadow: 0 0 0 2px #66c0f4; }
+/* The QR steps in the popup, at the kit's sizes on a TV. */
+@media (min-width: 1024px) {
+  body > #profile-popup.bar-popup { width: min(24em, 40vw); }
+  body > #profile-popup.bar-popup .profile-popup-title { font-size: var(--uf-size-md); }
+  body > #profile-popup.bar-popup .profile-popup-sub,
+  body > #profile-popup.bar-popup .profile-popup-steps { font-size: var(--uf-size-xs); }
+  body > #profile-popup.bar-popup .profile-popup-qr svg { width: 9em; height: 9em; }
+  body > #profile-popup.bar-popup .profile-popup-code { font-size: var(--uf-size-md); }
+  body > #profile-popup.bar-popup .profile-popup-avatars img { width: 3.2em; height: 3.2em; }
+}
 
 /* #517 · Settings (the Options overlay) owns the pad while it is open: the
    lobby's highlight under it would look like a second focus. */

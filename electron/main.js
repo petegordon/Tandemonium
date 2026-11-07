@@ -352,6 +352,20 @@ ipcMain.on('renderer:diag', (_event, msg) => {
   if (typeof msg === 'string' && msg) _diagLog(msg.slice(0, 4000));
 });
 
+// #612: "Sign in with Discord" / "Link Discord" finishes in the system browser
+// (where the player is already signed in to Discord). Only our API's sign-in
+// pages, never an arbitrary URL from the page.
+ipcMain.handle('app:openSignIn', async (_event, url) => {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol !== 'https:' || !/(^|\.)workers\.dev$|(^|\.)housetandem\.com$/.test(u.hostname) || !u.pathname.startsWith('/auth/')) return false;
+    await require('electron').shell.openExternal(u.toString());
+    return true;
+  } catch (e) {
+    return false;
+  }
+});
+
 ipcMain.handle('app:toggleDevTools', () => {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.toggleDevTools();

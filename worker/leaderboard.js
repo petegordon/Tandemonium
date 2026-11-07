@@ -13,6 +13,16 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
   return allowed[0];
 }
 
+import {
+  upsertIdentity, listIdentities,
+  handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
+} from './identity.js';
+
+/** What the identity module needs from this worker. */
+const identityDeps = () => ({
+  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey,
+});
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -38,6 +48,33 @@ export default {
         const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         return handleSteamAuth(request, env, corsOrigin);
+      }
+
+      // #612 · Discord sign-in (redirect on the same device, or a device code for TV / Steam)
+      if (path === '/auth/discord/begin' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordBegin(request, env, url, corsOrigin, identityDeps());
+      }
+      if (path === '/auth/discord/go' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordGo(request, env, url);
+      }
+      if (path === '/auth/discord/callback' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordCallback(request, env, url, identityDeps());
+      }
+      if (path === '/auth/discord/confirm' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleDiscordConfirm(request, env, url, identityDeps());
+      }
+      if (path === '/auth/poll' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
 
       // Authed routes
@@ -171,28 +208,14 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const picture = payload.picture || null;
   const email = payload.email || null;
 
-  // Upsert user
-  const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
-  ).bind('google', googleId).first();
-
-  let userId;
-  if (existing) {
-    userId = existing.id;
-    await env.DB.prepare(
-      'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
-    ).bind(name, picture, userId).run();
-  } else {
-    const ins = await env.DB.prepare(
-      'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind('google', googleId, name, picture).run();
-    userId = ins.meta.last_row_id;
-  }
+  // #612: Google is a legacy sign-in; its users keep their account.
+  const { userId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
 
   // Create server JWT (include email for dashboard access control)
   const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
 
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture } }, 200, corsOrigin);
+  const identities = await listIdentities(env, userId);
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
 async function handleSteamAuth(request, env, corsOrigin) {
@@ -259,27 +282,13 @@ async function handleSteamAuth(request, env, corsOrigin) {
     // Non-fatal — proceed with default avatar
   }
 
-  // Upsert user
-  const existing = await env.DB.prepare(
-    'SELECT id FROM users WHERE provider = ? AND provider_id = ?'
-  ).bind('steam', steamId).first();
-
-  let userId;
-  if (existing) {
-    userId = existing.id;
-    await env.DB.prepare(
-      'UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?'
-    ).bind(name, avatarUrl, userId).run();
-  } else {
-    const ins = await env.DB.prepare(
-      'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind('steam', steamId, name, avatarUrl).run();
-    userId = ins.meta.last_row_id;
-  }
+  // #612: Steam is one sign-in on the account; a linked Discord rides along.
+  const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
 
   const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
 
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl } }, 200, corsOrigin);
+  const identities = await listIdentities(env, userId);
+  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -619,8 +628,17 @@ function dailyKeyUTC(now = Date.now()) {
  */
 async function mergeGuestPairs(env, deviceId, userId) {
   if (!deviceId || !userId) return;
-  const guestKey = 'guest:' + deviceId;
-  const real = String(userId);
+  return mergePairKey(env, 'guest:' + deviceId, String(userId));
+}
+
+/**
+ * Fold every pair row keyed by `fromKey` into `toKey`: a guest who signed in,
+ * or (#612) an account merged into another when a sign-in was linked.
+ */
+async function mergePairKey(env, fromKey, toKey) {
+  const guestKey = String(fromKey);
+  const real = String(toKey);
+  if (!guestKey || !real || guestKey === real) return;
 
   const rows = await env.DB.prepare(
     'SELECT * FROM pairs WHERE user_lo = ? OR user_hi = ?'
@@ -856,6 +874,9 @@ async function getMe(request, env, corsOrigin, userId) {
     `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
      FROM scores WHERE user_id = ? GROUP BY level_id`
   ).bind(userId).all();
+
+  // #612: every sign-in linked to the account (the TV's Profile pill shows Discord + Steam).
+  if (user) user.identities = await listIdentities(env, userId);
 
   return jsonResponse({
     user,

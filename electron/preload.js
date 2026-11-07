@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('electronApp', {
   quit: () => ipcRenderer.send('app:quit'),
   // Perf readout: { label, width, height, scale, hz, internal, count } of the window's display.
   display: () => ipcRenderer.invoke('app:display'),
+  // #612: open a Discord sign-in page (our API's /auth/… only) in the system browser.
+  openSignIn: (url) => ipcRenderer.invoke('app:openSignIn', url),
 });
 
 // #400 B4c: main decides the edition (--demo, TANDEMONIUM_DEMO=1, or the demo
