@@ -1,0 +1,91 @@
+/* ============================================================
+   Modal / sheet shell (#459 items 11, 12, 18, 6)
+   ============================================================
+   The kit's <uf-sheet> draws every popup: the pause menu, the Garage, Help
+   and the tutorial intro open through js/ui-shell.js openModal() (B / Esc /
+   scrim / Close all dismiss; focus returns to what opened it). This file only
+   lays out what the game puts inside those sheets, at the kit's text sizes
+   (phone sizes below 1024px, TV sizes at 1920px — shared/ui/tokens.css). */
+
+/* A line of copy inside a sheet. */
+uf-sheet .shell-line { margin: 0; font-size: var(--uf-size-md); line-height: 1.45; color: var(--uf-color-fg-muted); text-align: center; }
+uf-sheet .shell-line b, uf-sheet .shell-line strong { color: var(--uf-color-fg); }
+uf-sheet .shell-line uf-controller-glyph { margin: 0 .1em; }
+
+/* A vertical menu of full-width buttons (the pause menu). */
+/* #576: the sheet body scrolls (overflow: auto), which clipped the focus ring on
+   the buttons' sides and under the last one; the padding keeps it inside. */
+uf-sheet .shell-menu { display: grid; gap: var(--uf-space-3); width: 100%; box-sizing: border-box; padding: 8px; }
+uf-sheet .shell-menu > uf-button { width: 100%; }
+uf-sheet .shell-menu > uf-button[hidden], uf-sheet .shell-menu[hidden] { display: none; }
+/* #576: the ride toggles under the pause menu, two to a row; ON reads in the accent. */
+#pause-toggles { grid-template-columns: 1fr 1fr; border-top: 1px solid rgba(255,255,255,.12); padding-top: var(--uf-space-3); }
+#pause-toggles .pause-state { margin-left: .35em; opacity: .7; }
+#pause-toggles .pause-on .pause-state { color: var(--uf-color-accent); opacity: 1; }
+
+/* Pad glyphs inside buttons and hints show only while a pad drives the menus
+   (js/game.js + js/lobby.js toggle body.pad-menus); touch and mouse players
+   see the plain label. */
+.pad-only { display: none !important; }
+body.pad-menus .pad-only { display: inline-flex !important; }
+
+/* Pause menu: a short card, its Help entry as a quiet footer. */
+#pause-sheet .uf-sheet__body { justify-items: center; }
+#pause-sheet .uf-sheet__actions { justify-content: center; }
+
+/* Tutorial intro: centred copy, START first. */
+#tutorial-intro .uf-sheet__body { justify-items: center; text-align: center; }
+#tutorial-intro .uf-sheet__actions { justify-content: center; }
+#tutorial-intro .uf-sheet__title { text-align: center; width: 100%; }
+
+/* The in-ride SKIP TUTORIAL (fixed, top right) at the kit's small size. */
+#btn-tutorial-skip uf-controller-glyph { margin-right: .2em; }
+
+/* Help: the old hand-made modal's text sizes, now from the kit's ramp so a TV
+   reads it from the couch (#428 finding 8). */
+#help-modal { z-index: calc(var(--uf-z-modal) + 1); }   /* over the pause menu it can open from; under Options (90) */
+#help-modal .uf-sheet__body { text-align: left; }
+#help-modal #help-modal-inner { font-size: var(--uf-size-sm); line-height: 1.55; }
+#help-modal #help-modal-inner h3 { font-size: var(--uf-size-lg); margin: 0 0 var(--uf-space-2); text-align: left; }
+#help-modal .help-section-title { font-size: var(--uf-size-xs); }
+#help-modal .help-toggle-row { font-size: var(--uf-size-sm); }
+#help-modal .help-toggle-row svg, #help-modal .help-toggle-row span.help-icon { width: calc(var(--uf-size-md) * 1.75); height: calc(var(--uf-size-md) * 1.75); }
+#help-modal .help-attribution, #help-modal .help-achievement-list li { font-size: var(--uf-size-sm); }
+#help-modal .help-achievement-list .ach-desc { font-size: var(--uf-size-xs); }
+@media (min-width: 1024px) {
+  /* Two columns of sections on a wide screen, so less of it scrolls. */
+  #help-modal #help-modal-inner { column-count: 2; column-gap: var(--uf-space-6); }
+  #help-modal #help-modal-inner > h3, #help-modal #help-modal-inner > p { column-span: all; }
+  #help-modal .help-section { break-inside: avoid; }
+}
+
+/* #576 · the ride's top strip (speed, distance, time, sync) at TV / Steam size.
+   It was drawn at phone pixel sizes (speed 20px), unreadable from the couch.
+   zoom scales the whole strip together, bars and chips included. Not on touch
+   screens (a big tablet keeps the phone strip). */
+@media (min-width: 1024px) and (pointer: fine), (min-width: 1024px) and (pointer: none) {
+  #hud-dashboard { zoom: 1.5; }
+  /* The strip sits at the left here, so the one-line RANKED / help badge goes up
+     beside it (top centre) instead of under it, clear of the bigger strip. */
+  #ranked-badge, #help-badge { top: 14px; }
+}
+@media (min-width: 1600px) and (pointer: fine), (min-width: 1600px) and (pointer: none) {
+  #hud-dashboard { zoom: 2; }
+}
+@media (min-width: 2400px) and (pointer: fine), (min-width: 2400px) and (pointer: none) {
+  #hud-dashboard { zoom: 2.8; }
+}
+
+/* #578 · Help in the desktop (Steam) app: the phone is a controller there, not
+   the game, so the web's "play on your phone" rows go. */
+html.desktop-app #help-modal .help-web-only { display: none; }
+/* #578 · the ALL and ? badges are text, not SVG: size their letters to the
+   badge (inline 10px / 14px read tiny at TV sizes) and match the SVG badges' box. */
+#help-modal .help-toggle-row svg, #help-modal .help-toggle-row span.help-icon {
+  box-sizing: border-box;
+  /* one badge size for icons and letters (an older TV rule made the icons 90px) */
+  width: calc(var(--uf-size-md) * 2.4) !important; height: calc(var(--uf-size-md) * 2.4) !important;
+  padding: calc(var(--uf-size-md) * 0.45) !important;
+}
+#help-modal .help-toggle-row span.help-icon { font-size: var(--uf-size-lg) !important; line-height: 1; padding: 0 !important; }
+#help-modal .help-toggle-row span.help-icon-all { font-size: var(--uf-size-sm) !important; letter-spacing: .02em; }
