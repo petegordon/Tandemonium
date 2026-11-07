@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
+import { bikeModelPathFor, isRigTwin, isSpecialBike } from './special-bikes.js';
 import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -1189,7 +1190,7 @@ class Game {
     this._restoreProceduralWorld();       // #400: never on a leftover tiles world
     this._hideTouristGoal();
     this._leaveSlingMode();
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
     this._lobbyBtn.textContent = 'LOBBY';
 
     // Load saved tuning on every solo start
@@ -1215,6 +1216,17 @@ class Game {
     this._setupStartHandler();
   }
 
+  /**
+   * #611 · the chooser's pick for this ride: a paint preset on the goose tandem, or a special bike
+   * (its own GLB on the same rig, js/special-bikes.js) swapped in. Swapping is a no-op when it is
+   * already loaded; a locked pick never reaches here (the chooser falls back to the default).
+   */
+  _applyBikeChoice() {
+    const key = this.lobby && this.lobby.selectedPresetKey;
+    if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key), !this.versusRigs);
+    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.selectedPreset);
+  }
+
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
@@ -1222,7 +1234,7 @@ class Game {
     this._partnerLookKey = '';
     this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
 
     // The lobby's InputManager may already hold motion permission (granted via
     // a user gesture in the lobby). Our game InputManager is a separate
@@ -1639,7 +1651,7 @@ class Game {
     this._localP2Type = sourceType;
     this.balanceCtrlP2 = new BalanceController(inputP2);
     this._lobbyBtn.textContent = 'LOBBY';
-    this.bike.applyPreset(this.lobby.selectedPreset);
+    this._applyBikeChoice();
     this._loadSavedTuning();
 
     // Shared pedal controller: P1 taps as 'captain', P2 taps as 'stoker'.
@@ -1739,7 +1751,9 @@ class Game {
         scene: this.scene,
         world: this.world,
         lateralOffset: i === 0 ? -0.8 : 0.8,
-        bikeCloneSource: this.bike, // boot bike's GLB is loaded — clone, don't re-fetch
+        // boot bike's GLB is loaded — clone, don't re-fetch; a special bike (#611) has no team paint, so
+        // versus loads the goose tandem fresh instead
+        bikeCloneSource: isRigTwin(this.bike._modelPath) ? null : this.bike,
       });
       rig.bike.applyPreset(presets[rig.color.presetKey] || null);
       rig.bike.setGooseLook(teamLooks(t));
@@ -6152,7 +6166,7 @@ class Game {
     // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
-      on ? BIKE_MODEL_PATH : CHOOSER_MODEL_PATH,
+      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey),   // #611: a special bike stays itself
       !this.versusRigs // live versus clones share the old model's geometry
     );
 

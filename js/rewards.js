@@ -4,7 +4,7 @@
 //
 // Pete, 2026-11-07 (#611): the unlock ladder.
 //   Solo Flight bike  -> "player bots"  : any 80 of the 81 SOLO achievements (all solo but one)
-//   Time Warp bike    -> time warp mode : any 90 of the 95 non-calendar achievements
+//   Time Warp bike    -> time warp mode : any 90 of the 95 non-calendar achievements (timeWarpProgress)
 //   Gold Standard bike                  : all 100
 // The robot outfit (the Canada Goose bot's suit) comes with the player-bots reward.
 //
@@ -52,6 +52,24 @@ export function playerBotsProgress(earnedIds, defs = ACHIEVEMENTS) {
   const need = Math.max(0, total - 1);
   return { have, need, total, unlocked: have >= need };
 }
+
+/**
+ * #611 · progress toward the Time Warp bike: any 90 of the 95 non-calendar achievements (the slack of 5 can
+ * come from either the solo or the multiplayer ones). Counts follow the definitions (#608 swap).
+ * @param {Iterable<string>} earnedIds
+ * @returns {{have: number, need: number, total: number, unlocked: boolean}}
+ */
+export function timeWarpProgress(earnedIds, defs = ACHIEVEMENTS) {
+  const pool = new Set(defs.filter(d => !isCalendarAchievement(d)).map(d => d.id));
+  let have = 0;
+  for (const id of new Set(earnedIds || [])) if (pool.has(id)) have++;
+  const total = pool.size;
+  const need = Math.max(0, total - TIME_WARP_SLACK);
+  return { have, need, total, unlocked: have >= need };
+}
+
+/** Non-calendar achievements the Time Warp bike may be short of (Pete: 90 of 95). */
+export const TIME_WARP_SLACK = 5;
 
 /**
  * Outfits a player has not unlocked yet (the Dressing Room / Settings hook, #574). Today only the
