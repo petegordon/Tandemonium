@@ -57,6 +57,11 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 #victory-stats uf-stat .ust-value { font-size: var(--uf-size-lg); }
 #victory-stats uf-stat .ust-icon { font-size: var(--uf-size-lg); }
 #victory-stats uf-stat .ust-label { font-size: var(--uf-size-xs); }
+/* A word value ("Adventurous", "Phone tilt") at the number size ran into the next cell on a TV: smaller, and it may wrap. */
+#victory-stats uf-stat[data-words] .ust-value { font-size: var(--uf-size-md); overflow-wrap: anywhere; white-space: normal; }
+#victory-stats uf-stat { min-width: 0; }
+/* D-3 · the share strip: what SHARE RESULT copies, at the kit's type sizes (11px was unreadable on a TV). */
+#victory-body #daily-strip, #gameover-sheet #daily-strip { font-size: var(--uf-size-sm); max-width: none; padding: var(--uf-space-2) var(--uf-space-3); }
 #victory-stats .victory-stat { font-size: var(--uf-size-sm) !important; }
 #victory-stats .victory-perfect { font-size: var(--uf-size-md) !important; }
 /* The ledger (uf-ledger): compact rows, the heading at body size. */
@@ -136,6 +141,8 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 /* Achievements unlocked this ride. */
 .end-unlocked { display: grid; grid-template-columns: repeat(auto-fill, minmax(14em, 1fr)); gap: var(--uf-space-2); width: 100%; }
 .end-unlocked[hidden] { display: none; }
+/* What the list is (a lone badge read as "all your achievements", Steam playtest 2026-11-07). */
+.end-unlocked::before { content: 'Unlocked this ride'; grid-column: 1 / -1; font: 700 var(--uf-size-sm)/1.2 var(--uf-font-ui); color: var(--uf-color-accent-2); letter-spacing: .04em; text-transform: uppercase; }
 /* The floating toast is now a kit badge: the wrapper only animates it. */
 .achievement-toast { padding: 0 !important; background: none !important; border: none !important; backdrop-filter: none !important; }
 /* #482: the kit's own uf-achievement[state="new"] fill is a 10% tint over

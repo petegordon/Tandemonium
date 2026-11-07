@@ -5046,7 +5046,7 @@ class Game {
       const inputSourceEmoji = { keyboard: '\uD83D\uDCBB', gamepad: '\uD83D\uDD79\uFE0F', motion: '\uD83D\uDCF1', 'gamepad-gyro': '\uD83C\uDFAE' };
       const diffNames = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil', tutorial: 'Tutorial' };
       const diffName = diffNames[this.lobby.selectedDifficulty] || this.lobby.selectedDifficulty;
-      left.push({ icon: '\u26A1', value: diffName, label: 'Difficulty' }); // ⚡ Difficulty
+      left.push({ icon: '\u26A1', value: diffName, label: 'Difficulty', words: true }); // ⚡ Difficulty
       const right = [
         { icon: '\u2601\uFE0F', value: summary.checkpointsPassed + '/' + summary.checkpointsTotal, label: 'Checkpoints' }, // ☁️ Checkpoints
       ];
@@ -5061,7 +5061,8 @@ class Game {
       // mode we skip it here because the contribution breakdown below shows
       // BOTH players' input sources per-column (no need to duplicate P1's).
       if (this.mode !== 'local' && summary.inputSource && summary.inputSource !== 'none') {
-        right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: summary.inputSource, label: 'Steering' });
+        const inputSourceNames = { keyboard: 'Keyboard', gamepad: 'Joystick', motion: 'Phone tilt', 'gamepad-gyro': 'Gyro' };
+        right.push({ icon: inputSourceEmoji[summary.inputSource] || '', value: inputSourceNames[summary.inputSource] || summary.inputSource, label: 'Steering', words: true });
       }
 
       // Solo performance stats
@@ -5081,7 +5082,8 @@ class Game {
       // #512: the geese, crash and restart counts sit in the grid too (each
       // used to be a full-width row under it, which pushed the tally off a
       // 1280×800 screen).
-      const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"></uf-stat>';
+      // words: a word, not a number ("Adventurous"): a size that fits its cell on a TV (Steam playtest 2026-11-07)
+      const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"' + (x.words ? ' data-words' : '') + '></uf-stat>';
       const cells = [...left, ...right];
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
