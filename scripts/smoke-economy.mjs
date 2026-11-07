@@ -203,8 +203,9 @@ await clickText('#sling-garage button, #sling-garage uf-button', /REBUILD/);
 await clickText('#sling-garage button, #sling-garage uf-button', /PRESS AGAIN/);
 const pw = await wallet();
 const badge = await page.evaluate(() => document.querySelector('#sling-garage .sling-rebuilds')?.textContent || '');
-check(pw.rebuilds === 1 && Object.keys(pw.lv).length === 0 && pw.coins === 5000 && /×1/.test(badge),
-  `rebuilding the bike resets upgrades, keeps coins, shows the badge ("${badge}")`);
+// #608/#651: a rebuild keeps the Token multiplier (wallet.js REBUILD_KEEPS = magnet); every other upgrade goes to 0.
+check(pw.rebuilds === 1 && JSON.stringify(pw.lv) === JSON.stringify({ magnet: 8 }) && pw.coins === 5000 && /×1/.test(badge),
+  `rebuilding the bike resets upgrades (keeps the Token multiplier ${JSON.stringify(pw.lv)}), keeps coins, shows the badge ("${badge}")`);
 await clickText('#sling-garage button, #sling-garage uf-button', /BACK/);
 await waitState('lobby', 20000);
 
