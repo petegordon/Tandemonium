@@ -932,9 +932,11 @@ export class Lobby {
     const partner = this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : '';
     const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
     const me = { who: (user && user.name) || 'You', dev: 'This screen', state: 'joined' };
-    const them = connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined' }
-      : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
-        : { who: 'Waiting for partner…', dev: '', state: 'open' };
+    const left = this._roomPartnerName === 'LEFT';
+    const them = left ? { who: 'Partner left', dev: 'Disconnected', state: 'open' }
+      : connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined' }
+        : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
+          : { who: 'Waiting for partner…', dev: '', state: 'open' };
     const code = on ? (this.net.roomCode || '') : '';
     const key = on ? [role, code, me.who, them.who, them.dev, them.state].join('|') : 'off';
     if (key === this._levelRoomKey) return;
@@ -2385,6 +2387,9 @@ export class Lobby {
         this._achievements.syncToSteam();
       }
 
+      // A live online session (a ride, or a room with the partner in it) is never replaced by a
+      // queued "sign in, then create / join": drop the queue instead.
+      if (this.net && this.net.connected) { this._pendingAutoJoinCode = null; this._pendingCreateRoom = false; }
       // Resume auto-join if user arrived via shared URL before logging in
       if (this._pendingAutoJoinCode) {
         const code = this._pendingAutoJoinCode;
@@ -4192,6 +4197,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
+    this._roomPartnerName = null;   // a new room: no partner yet (the room bar, the host seat)
     this._hostRoomCode = null;   // #563: set once the relay has us in the room
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
     const netEpoch = this._netSession.epoch;
@@ -4254,8 +4260,9 @@ export class Lobby {
     };
 
     // Auth error: token was rejected by relay — try silent refresh first. Acts on
-    // THIS transport (the ride shares it while lobby.net is null), and only until it is
-    // destroyed (2026-11-06 diag: "Cannot set properties of null (_relayToken)").
+    // THIS transport (the one the ride also uses), and only until it is destroyed: across
+    // the awaits this.net can be replaced or nulled (2026-11-06 diag: "Cannot set
+    // properties of null (_relayToken)").
     const capNet = this.net;
     capNet.onAuthError = async () => {
       const live = () => this._netSession.isCurrent(netEpoch) && !capNet._destroyed;
@@ -4272,8 +4279,13 @@ export class Lobby {
         if (freshToken) capNet._relayToken = freshToken;
         capNet.enterRoom(code, 'captain');
       } else {
-        statusEl.textContent = 'Sign-in required...';
-        this._pendingCreateRoom = true;
+        // The relay also takes a connection with no valid token (worker/relay.js), and a refused
+        // socket is usually the network: keep dialling (the transport backs off). Only on the
+        // host step queue "sign in, then make the room" — mid-ride that would replace the ride's
+        // transport once a login lands.
+        statusEl.textContent = 'Reconnecting...';
+        capNet.enterRoom(code, 'captain');
+        if (this._currentStep === this.hostStep) this._pendingCreateRoom = true;
       }
     };
 
@@ -4282,6 +4294,7 @@ export class Lobby {
 
   async _joinRoom(code) {
     this._replaceNet();
+    this._roomPartnerName = null;
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
@@ -4356,16 +4369,14 @@ export class Lobby {
       if (refreshed) {
         const freshToken = await this.auth.getRelayToken(code, 'stoker');
         if (!live()) return;
-        if (freshToken) {
-          statusEl.textContent = 'Reconnecting...';
-          stoNet.retryWithToken(freshToken);
-        } else {
-          statusEl.textContent = 'Sign-in required...';
-          this._pendingAutoJoinCode = code;
-        }
+        statusEl.textContent = 'Reconnecting...';
+        stoNet.retryWithToken(freshToken || stoNet._relayToken);
+        if (!freshToken && this._currentStep === this.joinStep) this._pendingAutoJoinCode = code;
       } else {
-        statusEl.textContent = 'Sign-in required...';
-        this._pendingAutoJoinCode = code;
+        // As the captain's: keep dialling; queue the sign-in rejoin only on the join step.
+        statusEl.textContent = 'Reconnecting...';
+        stoNet.retryWithToken(stoNet._relayToken);
+        if (this._currentStep === this.joinStep) this._pendingAutoJoinCode = code;
       }
     };
 
@@ -4443,6 +4454,7 @@ export class Lobby {
       this._showStep(this.hostStep);
       // Re-use _createRoom logic but with saved code
       this._replaceNet();
+      this._roomPartnerName = null;
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -4490,6 +4502,8 @@ export class Lobby {
         statusEl.className = 'conn-status error';
       };
 
+      // A refused socket (usually the network): keep dialling; the transport backs off.
+      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
       this.net.enterRoom(saved.roomCode, 'captain');
     } else {
       this._showStep(this.joinStep);
@@ -4500,6 +4514,7 @@ export class Lobby {
       this._applyStepSpatialFocus(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
+      this._roomPartnerName = null;
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -4543,6 +4558,7 @@ export class Lobby {
         statusEl.className = 'conn-status error';
       };
 
+      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
       this.net.enterRoom(saved.roomCode, 'stoker');
     }
 
@@ -4625,7 +4641,9 @@ export class Lobby {
     this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
 
     // Handle partner disconnect while in room or levels
+    const roomNet = this.net;
     this.net.onDisconnected = (reason) => {
+      if (this.net !== roomNet) return;   // a newer room already replaced this one
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
@@ -4633,7 +4651,10 @@ export class Lobby {
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
-        if (this.net) { this.net.destroy(); this.net = null; }
+        // Only this room's transport, and only if the lobby is still on it (not a fresh room).
+        try { roomNet.destroy(); } catch (e) { /* already gone */ }
+        if (this.net !== roomNet) return;
+        this.net = null;
         this._removePipLobbyMode();
         this._showStep(this.roleStep);
       }, 2000);
@@ -7069,7 +7090,9 @@ export class Lobby {
     }
 
     // Re-register disconnect handler for room
+    const roomNet = this.net;
     this.net.onDisconnected = (reason) => {
+      if (this.net !== roomNet) return;   // a newer room already replaced this one
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
       if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
@@ -7077,7 +7100,10 @@ export class Lobby {
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
-        if (this.net) { this.net.destroy(); this.net = null; }
+        // Only this room's transport, and only if the lobby is still on it (not a fresh room).
+        try { roomNet.destroy(); } catch (e) { /* already gone */ }
+        if (this.net !== roomNet) return;
+        this.net = null;
         this._removePipLobbyMode();
         this._showStep(this.roleStep);
       }, 2000);

@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'68a2c17',pr:621,time:'11-06-2026 18:26'}</script><base href="/pr-preview/pr-621/">
+<head><script>window.__BUILD={sha:'594f235',pr:621,time:'11-06-2026 19:20'}</script><base href="/pr-preview/pr-621/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -1528,8 +1528,14 @@
   }
 
   /* Online room bar on the Level screen: the two seats, compact, above the cards. */
-  .level-room-team { width: 100%; max-width: 720px; margin: 0 auto 10px; }
+  /* Compact: each seat one line (role · name · connection), so the cards and START RIDE keep their room. */
+  .level-room-team { width: 100%; max-width: 720px; margin: 0 auto 10px; padding: 6px 10px; gap: 6px; }
   .level-room-team[hidden] { display: none; }
+  .level-room-team > .uf-team__title { font-size: var(--uf-size-xs); }
+  #level-room-team > uf-seat { min-height: 0; flex-direction: row; flex-wrap: wrap; justify-content: flex-start; align-items: baseline; column-gap: .55em; row-gap: 0; padding: 5px 40px 5px 10px; text-align: left; animation: none; }
+  .level-room-team > uf-seat .uf-seat__who { font-size: var(--uf-size-md); }
+  .level-room-team > uf-seat .uf-seat__badge { top: 50%; transform: translateY(-50%); }
+  @media (max-width: 600px) { #level-room-team[layout] > uf-seat { flex: 1 1 100%; } }
 
   /* ── COMPONENT: Level Cards ── */
   .level-cards {
@@ -5554,7 +5560,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'68a2c17',pr:621,time:'11-06-2026 18:26'}</script><base href="/pr-preview/pr-621/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'594f235',pr:621,time:'11-06-2026 19:20'}</script><base href="/pr-preview/pr-621/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -6065,7 +6071,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.68a2c17 | 11-06-2026 18:26 (PR #621)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.594f235 | 11-06-2026 19:20 (PR #621)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

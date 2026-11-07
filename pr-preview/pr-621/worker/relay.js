@@ -91,6 +91,12 @@ export class TandemRoom {
         const senderRole = tags[0];
         const targetRole = senderRole === 'captain' ? 'stoker' : 'captain';
 
+        // Another socket already holds this seat (a re-dial replaced this one): the player is
+        // still here, so don't tell the partner they left. That notice made the partner re-dial
+        // too, and the two sides could chase each other (TV playtest 2026-11-06, #620).
+        const stillHere = this.state.getWebSockets(senderRole).some((s) => s !== ws && s.readyState === 1);
+        if (stillHere) return;
+
         // Notify partner
         const closeMsg = JSON.stringify({ type: 'disconnect', role: senderRole });
         for (const sock of this.state.getWebSockets(targetRole)) {
