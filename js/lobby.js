@@ -8103,8 +8103,9 @@ export class Lobby {
         }
         if (seats.lastError && seats.lastError.n === n) seats.lastError = null;
         try {
-          const dev = await seats.startSignIn(n);
-          openBrowser(dev && dev.url);
+          // Seats 2–4 use the QR only (Pete, 2026-11-07). This PC's browser is signed in to
+          // P1's Discord, so opening it here would sign P2's seat in as P1.
+          await seats.startSignIn(n);
         } catch (e) { seats.lastError = { n, error: e.message || 'Discord sign-in is unavailable' }; emit(n); }
       },
       signOut: (n) => { if (n > 1) seats.signOut(n); },

@@ -95,8 +95,13 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   check(reach, "SS-01: P2's own pad can reach their Sign in button");
   await h.shot(page, 'ss01-cards');
 
+  // A desktop-app spy for the click only: P2's sign-in must never open this PC's browser
+  // (it is signed in to P1's Discord). Removed right after, so the web run stays the web.
+  await page.evaluate(() => { window.__opened = []; window.__hadApp = !!window.electronApp; window.electronApp = window.electronApp || {}; window.__oldOpen = window.electronApp.openSignIn; window.electronApp.openSignIn = (u) => { window.__opened.push(u); return Promise.resolve(true); }; });
   await cardClick(page, 2, '[data-act="acc-signin"]');
   await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-acc-code')?.textContent === 'Q4MZ');
+  const p2Opened = await page.evaluate(() => { const o = window.__opened.slice(); if (window.__hadApp) window.electronApp.openSignIn = window.__oldOpen; else delete window.electronApp; return o; });
+  check(p2Opened.length === 0, "SS-01: P2's Sign in shows only the QR, never opens this PC's browser", p2Opened);
   c1 = await card(page, 1); c2 = await card(page, 2);
   check(c2.state === 'pending' && c2.qr && c2.code === 'Q4MZ', "SS-02: P2's card shows its own QR + code", c2);
   check(c1.state === 'signed-out' && !c1.qr, "SS-02: P1's card is untouched", c1);
