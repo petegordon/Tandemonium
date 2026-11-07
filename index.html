@@ -4265,6 +4265,12 @@
   .dr-account[hidden] { display: none; }
   .dr-account .opt-btn { width: auto; flex: 0 1 auto; }
   .dr-acc-discord { background: #5865f2 !important; border-color: #5865f2 !important; color: #fff !important; }
+  .dr-acc-discord:disabled { opacity: 0.4; cursor: default; }
+  .dr-acc-wait { flex-basis: 100%; }
+  /* A code showing: make room for the QR (the look summary and the stick hint step aside). */
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-summary,
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-stick-hint { display: none; }
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-preview { min-height: 0; flex-shrink: 1; }
   .dr-acc-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
   .dr-acc-pic { width: 1.8em; height: 1.8em; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px var(--uf-color-border, #555); }
   .dr-acc-pic[data-provider="discord"] { box-shadow: 0 0 0 2px #5865f2; }
@@ -4272,7 +4278,7 @@
   .dr-acc-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dr-account[data-state="pending"] { flex-direction: column; }
   .dr-acc-qr { background: #fff; border-radius: 8px; padding: 5px; line-height: 0; }
-  .dr-acc-qr svg { width: 7.5em; height: 7.5em; display: block; }
+  .dr-acc-qr svg { width: 6.5em; height: 6.5em; display: block; }
   .dr-acc-steps { margin: 0; padding-left: 1.3em; text-align: left; font-size: var(--uf-size-xs); }
   .dr-acc-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffd36b; font-size: 1.2em; }
   .dr-acc-status { margin: 0; font-size: var(--uf-size-xs); color: var(--uf-color-fg-muted); text-align: center; }

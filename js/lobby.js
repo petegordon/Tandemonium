@@ -8053,18 +8053,33 @@ export class Lobby {
       }
       return { state: 'signed-out', error: this._p1DeviceError || null };
     };
+    // Pete, 2026-11-06: one QR on the TV at a time. While one seat's code is open, every
+    // other Sign in waits (greyed, "Waiting for P2 to sign in…"); Hide frees it.
+    const openSeat = () => {
+      const dev = this.auth._device;
+      if (dev && !dev.stopped) return 1;
+      for (const n of [2, 3, 4]) if (seats.pending(n)) return n;
+      return null;
+    };
+    const withWait = (n, v) => {
+      const busy = openSeat();
+      if (busy && busy !== n && v.state !== 'pending') v.blockedBy = busy;
+      return v;
+    };
     return {
       view: (n) => {
-        if (n === 1) return p1();
+        if (n === 1) return withWait(1, p1());
         const dev = seats.pending(n);
         if (dev) return { state: 'pending', code: dev.code, url: dev.url, status: dev.status };
         const a = seats.get(n);
-        if (a) return { state: 'signed-in', name: a.user.name, pics: identityPictures(a.user), canSignOut: true };
+        if (a) return withWait(n, { state: 'signed-in', name: a.user.name, pics: identityPictures(a.user), canSignOut: true });
         const err = seats.lastError && seats.lastError.n === n ? seats.lastError.error : null;
-        return { state: 'signed-out', error: err === 'cancelled' ? 'Cancelled.' : err === 'expired' ? 'That code expired. Try again.' : err };
+        return withWait(n, { state: 'signed-out', error: err === 'cancelled' ? 'Cancelled.' : err === 'expired' ? 'That code expired. Try again.' : err });
       },
       bind: (n, padKey) => { if (n > 1) seats.bindSeat(n, padKey); },
       signIn: async (n) => {
+        const busy = openSeat();
+        if (busy && busy !== n) return;   // someone else's QR is open
         if (n === 1) {
           this._p1DeviceError = null;
           try {

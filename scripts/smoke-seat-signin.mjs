@@ -11,6 +11,7 @@
 //   SS-03  the couch ride's score submit: mode 'local' with P2's own token in seats[]
 //          (never an id P1 claims) and Sam's achievements from the ride
 //   SS-04  Not me: the card goes back to Sign in, the seat to the pad's name
+//   one QR at a time: while a card's code is open the other Sign ins wait (greyed + note); Hide frees them
 //   SS-05  Steam: P1's card offers Link Discord; after a ride the Profile card opens once
 //          with the reason, LINK DISCORD focused and NOT NOW; not again for a week
 import { startHarness } from './lib/smoke-harness.mjs';
@@ -61,6 +62,7 @@ const card = (page, n) => page.evaluate((k) => {
     qr: !!acc?.querySelector('.dr-acc-qr svg'),
     pics: [...(acc?.querySelectorAll('.dr-acc-pic') || [])].map((i) => i.dataset.provider),
     status: acc?.querySelector('.dr-acc-status')?.textContent || '',
+    disabled: [...(acc?.querySelectorAll('button[disabled]') || [])].map((b) => b.textContent.trim()),
   };
 }, n);
 const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = document.querySelector(`#dr-cards .dr-card[data-n="${k}"] ${s}`); if (!b) return false; b.click(); return true; }, [n, sel]);
@@ -98,11 +100,16 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   c1 = await card(page, 1); c2 = await card(page, 2);
   check(c2.state === 'pending' && c2.qr && c2.code === 'Q4MZ', "SS-02: P2's card shows its own QR + code", c2);
   check(c1.state === 'signed-out' && !c1.qr, "SS-02: P1's card is untouched", c1);
+  check(c1.disabled.includes('Sign in with Discord') && /Waiting for P2 to sign in/.test(c1.status), "SS-02: one QR at a time: P1's Sign in waits, with a note", c1);
+  const p1Reach = await page.evaluate(() => { const r = window._game.lobby._room; return r._items(r.cards.get(1)).some((b) => b.dataset.act === 'acc-signin'); });
+  check(!p1Reach, "SS-02: P1's pad skips the greyed Sign in");
+  check(c2.buttons.includes('Hide'), "SS-02: the open card's button is Hide", c2.buttons);
   const begins = await page.evaluate(() => window.__api.begins);
   check(begins.length === 1 && !begins[0].authed, 'SS-02: the seat sign-in carries no session (it can never link into Player 1)', begins);
   await h.shot(page, 'ss02-p2-qr');
   await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-account')?.dataset.state === 'signed-in', null, 15000);
   c2 = await card(page, 2);
+  check((await card(page, 1)).disabled.length === 0, "SS-02: once P2 is in, P1's Sign in is free again", await card(page, 1));
   check(c2.state === 'signed-in' && c2.pics.join() === 'discord' && c2.buttons.includes('Not me') && /Sam/.test(c2.who), "SS-02: P2's card: Sam's picture, name and Not me", c2);
   check(!(await page.evaluate(() => window._game.lobby.auth.isLoggedIn())), 'SS-02: Player 1 is still signed out');
   await h.shot(page, 'ss02-p2-signed-in');
@@ -142,6 +149,16 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-account')?.dataset.state === 'signed-out');
   c2 = await card(page, 2);
   check(c2.state === 'signed-out' && !/Sam/.test(c2.who), 'SS-04: Not me → Sign in again, the card loses the name', c2);
+  // Hide: P1 opens a code, then hides it; P2's Sign in waits meanwhile and is free after.
+  await cardClick(page, 1, '[data-act="acc-signin"]');
+  await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="1"] .dr-account')?.dataset.state === 'pending');
+  const waiting = await card(page, 2);
+  check(waiting.disabled.includes('Sign in with Discord') && /Waiting for P1/.test(waiting.status), "SS-04: P1's code open → P2 waits", waiting);
+  await h.shot(page, 'ss04-one-qr');
+  await cardClick(page, 1, '[data-act="acc-cancel"]');
+  await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="1"] .dr-account')?.dataset.state === 'signed-out');
+  const freed = await card(page, 2);
+  check(freed.disabled.length === 0 && (await card(page, 1)).state === 'signed-out', 'SS-04: Hide closes the QR and frees Sign in for everyone', freed);
   await page.evaluate(() => window._game.lobby._room.close('smoke'));
   check(await until(page, () => document.getElementById('host-seat-stoker')?.who !== 'Sam'), 'SS-04: the seat goes back to the pad', await page.evaluate(() => document.getElementById('host-seat-stoker')?.who));
   await page.close();
