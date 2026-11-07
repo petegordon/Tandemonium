@@ -310,9 +310,21 @@ export class AuthManager {
     } catch (e) {}
   }
 
+  /**
+   * #612 · the account behind this session is gone (deleted on housetandem.com):
+   * drop the session; the Steam build signs in again by ticket (a fresh account).
+   */
+  async _recoverGoneAccount(res) {
+    if (res.status !== 401) return false;
+    const body = await res.clone().json().catch(() => ({}));
+    if (body.code !== 'account_gone') return false;
+    this.clearToken();
+    return this.ensureValidToken();
+  }
+
   async submitScore(data) {
     if (!this.token) return null;
-    const res = await fetch(`${API_BASE}/score`, {
+    const send = () => fetch(`${API_BASE}/score`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -320,6 +332,8 @@ export class AuthManager {
       },
       body: JSON.stringify(data),
     });
+    let res = await send();
+    if (!res.ok && (await this._recoverGoneAccount(res))) res = await send();
     return res.ok ? res.json() : null;
   }
 
@@ -339,9 +353,11 @@ export class AuthManager {
 
   async getMe() {
     if (!this.token) return null;
-    const res = await fetch(`${API_BASE}/me`, {
+    const send = () => fetch(`${API_BASE}/me`, {
       headers: { 'Authorization': `Bearer ${this.token}` },
     });
+    let res = await send();
+    if (!res.ok && (await this._recoverGoneAccount(res))) res = await send();
     return res.ok ? res.json() : null;
   }
 
