@@ -25,6 +25,7 @@
 // its Controllers panel rows (docs/UI-KIT-TV-COMPONENTS.md §7).
 
 import { UfElement, prop, esc } from '../uf-element.js';
+import { personTag } from './uf-person.js';
 
 /**
  * @typedef {object} RosterRow  (the fields this element reads; core's RosterEntry has them all)
@@ -39,6 +40,7 @@ import { UfElement, prop, esc } from '../uf-element.js';
  * @property {string} [connection]
  * @property {boolean} [active]
  * @property {string} [detail]   list variant: a second line (ids, vid:pid, serial…)
+ * @property {{ name: string, pic?: string, source?: string }|null} [person]  the signed-in player on this controller: shown before the controller's name
  */
 
 const CONNECTION = { usb: 'USB', bluetooth: 'Bluetooth', puck: 'Puck', webhid: 'WebHID', gamepad: 'Gamepad', keyboard: 'Keys' };
@@ -118,7 +120,7 @@ export class UfControllerRoster extends UfElement {
   /** @param {RosterRow[]} v */
   set rows(v) {
     this.#rows = Array.isArray(v) ? v : [];
-    const sig = this.#rows.map((r) => [r.key, r.shortName || r.name, r.state, r.player, r.seat && r.seat.team, r.seat && r.seat.role, r.glyphFamily, r.swapAB, r.connection, r.detail].join('|')).join('~');
+    const sig = this.#rows.map((r) => [r.key, r.shortName || r.name, r.state, r.player, r.seat && r.seat.team, r.seat && r.seat.role, r.glyphFamily, r.swapAB, r.connection, r.detail, r.person && [r.person.name, r.person.pic, r.person.source].join(',')].join('|')).join('~');
     if (sig !== this.#sig) { this.#sig = sig; this.requestUpdate(); }
     else this.#patchDots();
   }
@@ -168,7 +170,8 @@ export class UfControllerRoster extends UfElement {
     const chips = ordered.map((r) => {
       const name = esc(r.shortName || r.name || 'Controller');
       if (isSeated(r)) {
-        return `<span class="ucr-chip" data-tone="${seatTone(r)}"><span class="ucr-badge">${esc(seatBadge(r))}</span>${name}` +
+        const who = r.person ? personTag(r.person, 'sm') + `<em>${name}</em>` : name;
+        return `<span class="ucr-chip" data-tone="${seatTone(r)}"><span class="ucr-badge">${esc(seatBadge(r))}</span>${who}` +
           (r.state === 'ready' ? `<em>ready</em>` : '') + `</span>`;
       }
       const glyph = `<uf-controller-glyph size="sm" button="confirm" family="${esc(r.glyphFamily || 'generic')}"${r.swapAB ? ' swap' : ''}></uf-controller-glyph>`;
@@ -187,7 +190,7 @@ export class UfControllerRoster extends UfElement {
       const seat = isSeated(r) ? `${seatBadge(r)} · ` : (r.state === 'joined' && r.player != null ? `P${r.player} · ` : '');
       return `<div class="ucr-row" data-key="${esc(r.key)}"${focus}>` +
         `<i class="ucr-dot${r.active ? ' on' : ''}" data-key="${esc(r.key)}"></i>` +
-        `<div><b>${esc(r.name || r.shortName || 'Controller')}</b>${r.detail ? `<small>${esc(seat)}${esc(r.detail)}</small>` : (seat ? `<small>${esc(seat.replace(/ · $/, ''))}</small>` : '')}</div>` +
+        `<div><b>${r.person ? personTag(r.person, 'sm') + ' · ' : ''}${esc(r.name || r.shortName || 'Controller')}</b>${r.detail ? `<small>${esc(seat)}${esc(r.detail)}</small>` : (seat ? `<small>${esc(seat.replace(/ · $/, ''))}</small>` : '')}</div>` +
         `<span class="ucr-conn">${esc(CONNECTION[/** @type {keyof typeof CONNECTION} */ (r.connection)] || r.connection || '')}</span>` +
         `<span class="ucr-tags">${tags.join('')}</span></div>`;
     }).join('');

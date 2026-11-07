@@ -26,6 +26,7 @@
 // (js/seat-accounts.js). The lobby supplies the row's state through `accounts`.
 
 import { ManualInput } from '../shared/ui/inputs.js';
+import { personTag } from '../shared/ui/elements/uf-person.js';
 import { RowFocusController as FocusController } from './row-focus.js';
 import { playerLooks, BODIES, LED_COLOURS, lookColourway, withColourway, seatLook, ledRgb } from './player-look.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
@@ -56,7 +57,7 @@ export class DressingRoom {
    * @param {() => void} [o.onClose]
    * @param {() => (import('./dressing-room-preview.js').DressingRoomPreview | null)} [o.makePreview] null = static cards (Low tier)
    * @param {() => Set<string>} [o.lockedOutfits] outfits the store has not unlocked (#574)
-   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Player Bots reward: 63 of 79 …")
+   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Time Warp reward: 63 of 88 …")
    * @param {{ view: (n: number) => any, bind?: (n: number, padKey: string|null) => void, signIn: (n: number) => any, signOut: (n: number) => void, cancel: (n: number) => void, onChange?: (fn: (n: number) => void) => void }|null} [o.accounts] #612 the account row
    */
   constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null, lockHint = null, accounts = null }) {
@@ -268,7 +269,7 @@ export class DressingRoom {
     const stickHint = c.el.querySelector('.dr-stick-hint');
     if (stickHint) stickHint.hidden = !(c.type === 'gamepad' && this._preview);
     // The same P# badge as the seat cards (uf-seat badge), then the player's name (#617).
-    c.el.querySelector('.dr-who').innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(this._name(c))}`;
+    c.el.querySelector('.dr-who').innerHTML = this._whoHtml(c);
     this._renderAccount(c, false);
     c.el.querySelector('.dr-summary').textContent = this._summary(look);
     c.el.querySelector('.dr-rows-wrap').innerHTML = c.state === 'editing' ? this._rows(c, look) : '';
@@ -280,6 +281,13 @@ export class DressingRoom {
     const canvas = c.el.querySelector('canvas.dr-preview');
     if (canvas && this._preview) this._preview.show('p' + c.n, /** @type {HTMLCanvasElement} */ (canvas), p.seat, seatLook(look));
     this._refocus(c, c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
+  }
+
+  /** P# then the player: picture, sign-in badge and name once signed in (#612), else the seat's label. */
+  _whoHtml(c) {
+    const v = this._accounts ? this._accounts.view(c.n) : null;
+    const who = v && v.state === 'signed-in' && v.person ? personTag(v.person) : esc(this._name(c));
+    return `<span class="dr-pnum">P${c.n}</span>${who}`;
   }
 
   /** The card's name: the signed-in account's, else the seat's label. */
@@ -327,7 +335,8 @@ export class DressingRoom {
     }
     if (box.innerHTML !== html) box.innerHTML = html;
     const who = c.el.querySelector('.dr-who');
-    if (who) who.innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(this._name(c))}`;
+    const whoHtml = this._whoHtml(c);
+    if (who && who.innerHTML !== whoHtml) who.innerHTML = whoHtml;
     if (refocus && c.focus) {
       const next = box.querySelector('button:not([disabled])') || (c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
       c.focus.setSpatial(this._items(c), next || null);
