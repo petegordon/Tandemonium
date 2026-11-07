@@ -35,9 +35,9 @@ test('#641 demo: co-op stays, Versus goes, the Slingshot stops at stage 3, two b
   assert.equal(achievementAllowed(DEMO_RULES, 'first_pedal'), true);
   assert.equal(achievementAllowed(DEMO_RULES, 'versus_first'), false);
   assert.equal(achievementAllowed(FULL_RULES, 'versus_first'), true);
-  // Level scores: the full game posts them, the demo doesn't (as #400).
+  // Level scores: both editions post them to the 🏆 leaderboard (#641).
   assert.equal(FULL_RULES.postScores, true);
-  assert.equal(DEMO_RULES.postScores, false);
+  assert.equal(DEMO_RULES.postScores, true);
 });
 
 test('#641 Daily Ride gate: the demo opens it after the Tutorial and Grandma\'s, then 3 rides a day', () => {
