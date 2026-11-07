@@ -20,7 +20,7 @@ import { applyColourway, colourwayParams } from '../goose-colourways.js';
 
 export const GOOSE_DIR = '../tandem-3d/goose/';
 
-/** The in-game geese (eight + the robot, #611): pair (Goose Outfits key) + seat (colourway params); pieceLabels renames a piece for this goose. */
+/** The in-game geese (eight + the two robots, #611): pair (Goose Outfits key) + seat (colourway params); pieceLabels renames a piece for this goose. */
 export const GEESE = {
   goose_captain: { label: 'Gent', pair: 'victorian', seat: 'Captain', sex: 'm' },
   goose_stoker_victorian: { label: 'Lady in tweed', pair: 'victorian', seat: 'Stoker', sex: 'f' },
@@ -33,6 +33,8 @@ export const GEESE = {
     pieceLabels: { bowtie: 'Choker', cuffs: 'Sleeve flounces', lace: 'Lace ruffles' } },
   goose_captain_robot_m: { label: 'Robot', pair: 'robot', seat: 'Captain', sex: 'm',
     pieceLabels: { hat: 'Visor helmet', collar: 'Collar ring', waistcoat: 'Chest plate', jacket: 'Caps + power pack' } },
+  goose_stoker_robot_f: { label: 'Lady robot', pair: 'robot', seat: 'Stoker', sex: 'f',
+    pieceLabels: { hat: 'Visor helmet', collar: 'Collar ring', waistcoat: 'Chest plate', jacket: 'Caps + power pack', peplum: 'Hip plates' } },
 };
 
 const FACE = new Set(['Jaw', 'Tongue', 'LeftEye', 'RightEye', 'LeftEyelidUpper', 'LeftEyelidLower',
