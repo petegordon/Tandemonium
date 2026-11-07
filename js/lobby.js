@@ -942,14 +942,15 @@ export class Lobby {
     const connected = on && !!this.net.connected;
     const partner = this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : '';
     const user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
-    const me = { who: (user && user.name) || 'You', dev: 'This screen', state: 'joined' };
+    const mePerson = user ? this.seatPerson(1) : null;
+    const me = { who: (mePerson && mePerson.name) || (user && user.name) || 'You', pic: mePerson ? mePerson.pic : '', source: mePerson ? mePerson.source : '', dev: 'This screen', state: 'joined' };
     const left = this._roomPartnerName === 'LEFT';
     const them = left ? { who: 'Partner left', dev: 'Disconnected', state: 'open' }
       : connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined' }
         : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
           : { who: 'Waiting for partner…', dev: '', state: 'open' };
     const code = on ? (this.net.roomCode || '') : '';
-    const key = on ? [role, code, me.who, them.who, them.dev, them.state].join('|') : 'off';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
@@ -959,7 +960,7 @@ export class Lobby {
     const sto = /** @type {any} */ (document.getElementById('level-room-stoker'));
     const [mine, theirs] = role === 'captain' ? [cap, sto] : [sto, cap];
     if (mine) Object.assign(mine, me);
-    if (theirs) Object.assign(theirs, them);
+    if (theirs) Object.assign(theirs, { pic: '', source: '' }, them);
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
@@ -2333,6 +2334,8 @@ export class Lobby {
     };
 
     const updateUI = (user) => {
+      // P1's seat card shows their picture and name once signed in (#612).
+      queueMicrotask(() => { try { this._refreshHostNext(); } catch (e) {} });
       if (user) {
         this.toggleProfile.classList.add('active');
         this.toggleLeaderboard.classList.add('active');
@@ -3338,7 +3341,8 @@ export class Lobby {
     if (!sheet || !sheet.open) return;
     const seat = document.getElementById('controls-seat');
     if (seat) {
-      seat.who = id ? id.shortName : 'No controller yet';
+      const me = id ? this.seatPerson(1) : null;
+      Object.assign(seat, { who: me ? me.name : id ? id.shortName : 'No controller yet', pic: me ? me.pic : '', source: me ? me.source : '' });
       seat.dev = id ? `Player 1 · ${id.name}` : 'Press a button on a controller';
       seat.state = id ? 'joined' : 'open';
       seat.badge = id ? 'P1' : '';
@@ -3360,7 +3364,7 @@ export class Lobby {
       roster.rows = this.controllerManager.controllerRoster(pads, {
         seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
         keyboard: true,
-      }).map(fixRosterRow);
+      }).map(fixRosterRow).map((r) => (r.player === 1 ? { ...r, person: this.seatPerson(1) } : r));
     }
   }
 
@@ -5074,9 +5078,9 @@ export class Lobby {
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
     if (sto) {
       if (!sto._openHint) sto._openHint = sto.hint;
-      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: '' });
-      else if (local) Object.assign(sto, { who: this._localP2Name || 'Player 2', dev: '', state: 'joined', hint: '' });
-      else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '' });
+      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: '', pic: '', source: '' });
+      else if (local) Object.assign(sto, { dev: '', state: 'joined', hint: '' }, this._seatWho(2, this._localP2NameBeforeAccount || this._localP2Name || 'Player 2'));
+      else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '', pic: '', source: '' });
       // P2 in the corner once someone sits there, like the captain's P1.
       sto.badge = online || local ? 'P2' : '';
     }
@@ -6425,19 +6429,20 @@ export class Lobby {
     const p2Slot = p2Im && p2Im._slot ? p2Im._slot.id : null;
     const stokerSeat = { team: 'coop', role: 'stoker', label: 'Stoker', tone: 'stoker' };
     const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|') +
-      '§' + (online ? 'online:' + (this._roomPartnerName || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '');
+      '§' + (online ? 'online:' + (this._roomPartnerName || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '') +
+      '§' + this._personKey(1) + '§' + (p2Im ? this._personKey(2) : '');
     if (key === this._hostSeatsKey) return;
     this._hostSeatsKey = key;
-    cap.who = p1 ? p1.shortName : 'You';
+    Object.assign(cap, { dev: '' }, this._seatWho(1, p1 ? p1.shortName : 'You'));
     const rows = [];
-    if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
+    if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, person: this.seatPerson(1), seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
     let p2Listed = false;
     for (const c of candidates) {
       const id = this._versusIdentity(c);
       const isP2 = !!p2Slot && c.slotId === p2Slot;
       if (isP2) p2Listed = true;
       rows.push({ key: c.key, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
-        state: isP2 ? 'seated' : 'connected', player: isP2 ? 2 : null, seat: isP2 ? stokerSeat : null });
+        state: isP2 ? 'seated' : 'connected', player: isP2 ? 2 : null, seat: isP2 ? stokerSeat : null, person: isP2 ? this.seatPerson(2) : null });
     }
     if (p2Im && !p2Listed) {
       // A seated pad drops out of the join candidates; name and glyph come from
@@ -6445,8 +6450,10 @@ export class Lobby {
       const mgr = this.controllerManager;
       const p2SlotObj = p2Im._slot && p2Im._slot.state === 'claimed' ? p2Im._slot : null;
       const pid = this._localP2Type !== 'keyboard' && p2SlotObj && mgr ? slotIdentityHidFirst(p2SlotObj, (s) => mgr.slotIdentity(s)) : null;
-      const n = this._localP2Name || (this._localP2Type === 'keyboard' ? 'Keyboard' : (pid ? pid.shortName : 'Player 2'));
-      rows.push({ key: 'p2', name: this._localP2Name || (pid ? pid.name : n), shortName: n,
+      const p2 = this.seatPerson(2);
+      const own = p2 ? this._localP2NameBeforeAccount : this._localP2Name;   // the seat's own name, not the account's
+      const n = own || (this._localP2Type === 'keyboard' ? 'Keyboard' : (pid ? pid.shortName : 'Player 2'));
+      rows.push({ key: 'p2', name: own || (pid ? pid.name : n), shortName: n, person: p2,
         glyphFamily: this._localP2Type === 'keyboard' ? 'keyboard' : (pid ? pid.glyphFamily : 'generic'),
         swapAB: pid ? !!pid.swapAB : false, state: 'seated', player: 2, seat: stokerSeat });
     }
@@ -7035,7 +7042,7 @@ export class Lobby {
    */
   _renderVersusCards() {
     const candidates = this._versusCandidates || [];
-    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}:${p.slotId || ''}`).join('|')
+    const key = this._versusPlayers.map(p => `${p.n}:${p.team}:${p.name}:${p.slotId || ''}:${p.type === 'bot' ? '' : this._personKey(p.n)}`).join('|')
       + '§' + candidates.map(c => `${c.key}:${c.name}`).join('|');
     if (key === this._versusLastCardsKey) return;
     this._versusLastCardsKey = key;
@@ -7064,7 +7071,7 @@ export class Lobby {
       for (const p of this._versusPlayers.filter(pl => pl.team === team)) {
         const id = this._versusIdentity(p);
         const seat = document.createElement('uf-seat');
-        Object.assign(seat, { seat: `Player ${p.n}`, tone, who: id.shortName, state: 'joined', badge: `P${p.n}` });
+        Object.assign(seat, { seat: `Player ${p.n}`, tone, state: 'joined', badge: `P${p.n}` }, p.type === 'bot' ? { who: id.shortName } : this._seatWho(p.n, id.shortName));
         seats.push(seat);
       }
       for (const c of joinFor[team]) {
@@ -7139,7 +7146,7 @@ export class Lobby {
       const id = this._versusIdentity(p);
       rows.push({
         key: 'p' + p.n, name: id.name, shortName: id.shortName, glyphFamily: id.glyphFamily, swapAB: id.swapAB,
-        state: 'seated', player: p.n, connection: connection(p),
+        state: 'seated', player: p.n, connection: connection(p), person: p.type === 'bot' ? null : this.seatPerson(p.n),
         seat: { team: p.team === 'A' ? 'a' : 'b', role: 'player', label: `P${p.n}`, tone: p.team === 'A' ? 'team-a' : 'team-b' },
       });
     }
@@ -8015,6 +8022,34 @@ export class Lobby {
     return this._seatAchievements;
   }
 
+  /**
+   * #612 · who sits in seat n, for the picture and name next to their controller: Player 1 is
+   * the game's own account (its Steam sign-in first in the Steam app, else Discord), seats 2–4
+   * their own Discord sign-ins. The name is the account's (what the rest of the game calls them).
+   * { name, pic, source } or null when nobody is signed in.
+   */
+  seatPerson(n) {
+    let user = null;
+    if (n === 1) user = this.auth && this.auth.isLoggedIn() ? this.auth.getUser() : null;
+    else { try { const a = this.seatAccounts.get(n); user = a && a.user; } catch (e) {} }
+    if (!user) return null;
+    const ids = user.identities || {};
+    const order = n === 1 && this._isSteam ? ['steam', 'discord'] : ['discord', 'steam'];
+    for (const p of order) {
+      if (ids[p] && (ids[p].avatar || ids[p].name)) return { name: user.name || ids[p].name || 'Player ' + n, pic: ids[p].avatar || '', source: p };
+    }
+    const src = user.provider === 'steam' || user.provider === 'discord' ? user.provider : '';
+    return { name: user.name || 'Player ' + n, pic: user.avatar || '', source: src };
+  }
+
+  /** A seat card's fields for seat n: the person's name and picture over their controller, else the controller. */
+  _seatWho(n, controllerName) {
+    const p = this.seatPerson(n);
+    return p ? { who: p.name, pic: p.pic, source: p.source, dev: controllerName || '' } : { who: controllerName, pic: '', source: '' };
+  }
+
+  _personKey(n) { const p = this.seatPerson(n); return p ? [p.name, p.pic, p.source].join(',') : ''; }
+
   /** The signed-in name for seat n (2–4), or null. */
   seatAccountName(n) {
     const a = n > 1 ? this.seatAccounts.get(n) : null;
@@ -8049,7 +8084,7 @@ export class Lobby {
       if (this.auth.isLoggedIn()) {
         const u = this.auth.getUser();
         return {
-          state: 'signed-in', name: u.name, pics: identityPictures(u),
+          state: 'signed-in', name: u.name, pics: identityPictures(u), person: this.seatPerson(1),
           linkable: !this.auth.hasIdentity('discord'), canSignOut: false,
         };
       }
@@ -8074,7 +8109,7 @@ export class Lobby {
         const dev = seats.pending(n);
         if (dev) return { state: 'pending', code: dev.code, url: dev.url, status: dev.status };
         const a = seats.get(n);
-        if (a) return withWait(n, { state: 'signed-in', name: a.user.name, pics: identityPictures(a.user), canSignOut: true });
+        if (a) return withWait(n, { state: 'signed-in', name: a.user.name, pics: identityPictures(a.user), person: this.seatPerson(n), canSignOut: true });
         const err = seats.lastError && seats.lastError.n === n ? seats.lastError.error : null;
         return withWait(n, { state: 'signed-out', error: err === 'cancelled' ? 'Cancelled.' : err === 'expired' ? 'That code expired. Try again.' : err });
       },
@@ -8103,8 +8138,9 @@ export class Lobby {
         }
         if (seats.lastError && seats.lastError.n === n) seats.lastError = null;
         try {
-          const dev = await seats.startSignIn(n);
-          openBrowser(dev && dev.url);
+          // Seats 2–4 use the QR only (Pete, 2026-11-07). This PC's browser is signed in to
+          // P1's Discord, so opening it here would sign P2's seat in as P1.
+          await seats.startSignIn(n);
         } catch (e) { seats.lastError = { n, error: e.message || 'Discord sign-in is unavailable' }; emit(n); }
       },
       signOut: (n) => { if (n > 1) seats.signOut(n); },
