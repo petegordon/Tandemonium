@@ -30,6 +30,7 @@ const UPPER = new Set(['Spine', 'Spine1', 'Spine2', 'Neck', 'Neck1', 'Neck2', 'N
 const LOWER_RE = /^(Left|Right)(UpLeg|Leg|Foot|ToeBase)$|^Cloth_/;
 const CRANK_RE = /^(Crank|Pedal)_/;      // the bike's Pedal clip: cranks + pedals (+ their PedalPin sockets ride along)
 const WHEEL_RE = /^Wheel_/;
+const FX_RE = /^(Clock|Flame)/;   // #611 · the Time Warp bike's TimeWarpFX clip: clock hands + rocket flames
 
 /** Bone (node) name a three.js track targets: "LeftLeg.quaternion" -> "LeftLeg". */
 export function trackBone(trackName) {
@@ -46,11 +47,14 @@ export function isLowerBone(name) { return LOWER_RE.test(name); }
 /** The bike's crank / pedal bones (its Pedal clip) and wheel bones (its WheelSpin clip). */
 export function isCrankBone(name) { return CRANK_RE.test(name); }
 export function isWheelBone(name) { return WHEEL_RE.test(name); }
+/** A special bike's effect bones (the Time Warp's clock hands and flames: its TimeWarpFX clip). */
+export function isFxBone(name) { return FX_RE.test(name); }
 
 /** Which bones a clip may drive, by its name; null = not a clip of the goose tandem. */
 export function boneFilterFor(clipName) {
   if (clipName === 'Pedal') return isCrankBone;
   if (clipName === 'WheelSpin') return isWheelBone;
+  if (clipName === 'TimeWarpFX') return isFxBone;
   if (/^Pedal_/.test(clipName)) return isLowerBone;
   if (/^(Ride|Lean_L|Lean_R)_/.test(clipName)) return isUpperBone;
   return null;
