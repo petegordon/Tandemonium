@@ -8478,7 +8478,7 @@ export class Lobby {
       this.selectedPresetKey = 'default';
       nameEl.style.color = 'rgba(255,255,255,0.3)';
       nameEl.textContent = '\uD83D\uDD12 ' + def.name;
-      hintEl.innerHTML = `<span class="bike-count" style="font-size:18px;font-weight:700;color:rgba(255,255,255,0.85)">${prog.have} of ${prog.need}</span>`
+      hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
@@ -8490,7 +8490,7 @@ export class Lobby {
     nameEl.textContent = def.icon + ' ' + def.name;
     if (!def.rideable) {
       this.selectedPresetKey = 'default';
-      hintEl.innerHTML = '<span style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.85)">Coming soon</span>';
+      hintEl.innerHTML = '<span style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">Coming soon</span>';
       hintEl.title = `${def.name} is earned; riding it comes in a later update`;
       hintEl.style.display = '';
       return;
