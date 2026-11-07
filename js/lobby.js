@@ -2466,7 +2466,7 @@ export class Lobby {
 
     // Back buttons close the popup
     document.getElementById('profile-popup-back').addEventListener('click', () => {
-      this._profileDiag('RETURN TO LOBBY clicked');
+      this._profileDiag('CLOSE clicked');
       this.profilePopup.classList.remove('visible');
     });
     document.getElementById('profile-popup-signin-back').addEventListener('click', () => {
@@ -3580,7 +3580,7 @@ export class Lobby {
     const promptEl = document.getElementById('profile-popup-prompt');
     if (promptEl) promptEl.hidden = !(signedIn && this._isSteam && !this.auth.hasIdentity('discord'));
     const backEl = document.getElementById('profile-popup-back');
-    if (backEl) backEl.textContent = open && asPrompt ? 'NOT NOW' : 'RETURN TO LOBBY';
+    if (backEl) backEl.textContent = open && asPrompt ? 'NOT NOW' : 'CLOSE';   // (Pete: it only ever closed the popup; was RETURN TO LOBBY)
     // #612: a TV or the desktop app shows the QR steps as soon as the popup
     // opens (a phone is the easy way to type a Discord password). A phone or a
     // laptop browser just uses the button.
