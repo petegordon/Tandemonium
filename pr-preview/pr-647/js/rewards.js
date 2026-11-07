@@ -6,7 +6,8 @@
 //   Solo Flight bike  -> "player bots"  : any 80 of the 81 SOLO achievements (all solo but one)
 //   Time Warp bike    -> time warp mode : any 90 of the 95 non-calendar achievements (timeWarpProgress)
 //   Gold Standard bike                  : all 100
-// The robot outfit (the Canada Goose bot's suit) comes with the player-bots reward.
+// The robot outfit (the Canada Goose bot's suit) comes with the Time Warp reward (Pete, 2026-11-07, #644;
+// it was the player-bots reward until then).
 //
 // Groups are read from the definitions, so the counts follow the achievement swap (#608) on their own:
 //   calendar    -- needs real days: a `unit: 'days'` counter (days_3, days_7, launch_week, ...) or a Daily Ride
@@ -73,25 +74,31 @@ export const TIME_WARP_SLACK = 5;
 
 /**
  * Outfits a player has not unlocked yet (the Dressing Room / Settings hook, #574). Today only the
- * reward outfits: `reward: 'playerBots'` in js/goose-outfits.js.
+ * reward outfits: `reward: 'timeWarp'` (or 'playerBots') in js/goose-outfits.js.
  * @param {Record<string, {reward?: string}>} outfits GOOSE_OUTFITS
  * @param {Iterable<string>} earnedIds
  */
 export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS) {
   const locked = new Set();
-  let bots = null;
   for (const [key, o] of Object.entries(outfits)) {
-    if (o.reward === 'playerBots') {
-      bots = bots || playerBotsProgress(earnedIds, defs);
-      if (!bots.unlocked) locked.add(key);
-    }
+    const p = rewardProgress(o.reward, earnedIds, defs);
+    if (p && !p.unlocked) locked.add(key);
   }
   return locked;
 }
 
-/** The line a locked reward outfit shows ("Player Bots reward: 63 of 79 solo achievements"). */
+/** Progress toward a reward by its key ('timeWarp' | 'playerBots'); null = not a reward. */
+export function rewardProgress(reward, earnedIds, defs = ACHIEVEMENTS) {
+  if (reward === 'timeWarp') return timeWarpProgress(earnedIds, defs);
+  if (reward === 'playerBots') return playerBotsProgress(earnedIds, defs);
+  return null;
+}
+
+/** The line a locked reward outfit shows ("Time Warp reward: 63 of 88 achievements"). */
 export function outfitLockHint(outfit, earnedIds, defs = ACHIEVEMENTS) {
-  if (!outfit || outfit.reward !== 'playerBots') return 'Coming to the store';
-  const p = playerBotsProgress(earnedIds, defs);
-  return `Player Bots reward: ${p.have} of ${p.need} solo achievements`;
+  const p = outfit && rewardProgress(outfit.reward, earnedIds, defs);
+  if (!p) return 'Coming to the store';
+  return outfit.reward === 'timeWarp'
+    ? `Time Warp reward: ${p.have} of ${p.need} achievements`
+    : `Player Bots reward: ${p.have} of ${p.need} solo achievements`;
 }

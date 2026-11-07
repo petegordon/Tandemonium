@@ -6233,7 +6233,7 @@ class Game {
   }
 
   /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
-  /** #611 · reward outfits this device has not earned yet (the robot: player bots). */
+  /** #611 · reward outfits this device has not earned yet (the robot: the Time Warp reward). */
   _lockedOutfits() {
     return lockedOutfits(GOOSE_OUTFITS, this.achievements ? this.achievements.getEarnedIds() : []);
   }

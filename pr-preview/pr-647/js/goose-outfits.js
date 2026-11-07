@@ -11,7 +11,7 @@
 //   fancy      Victorian gent (swallowtail coat, top hat) + the lady in the red bustle dress
 //   georgian   1770s gentleman (navy frock coat, tricorne) + a lady in a blue damask robe a l'anglaise
 //   robot      the Canada Goose bot's suit (chrome, white plates, blue lights, visor helmet) -- a REWARD outfit:
-//              unlocked with player bots (#611, js/rewards.js); the gander robot + the lady robot, both seats
+//              unlocked with the Time Warp reward (#611/#644, js/rewards.js); the gander robot + the lady robot, both seats
 
 const DIR = 'tandem-3d/goose/';
 
@@ -21,7 +21,7 @@ export const GOOSE_OUTFITS = {
   fancy: { label: 'Fancy', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
   georgian: { label: 'Georgian', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
   robot: { label: 'Robot', Captain: DIR + 'goose_captain_robot_m.glb', Stoker: DIR + 'goose_stoker_robot_f.glb',
-    reward: 'playerBots' },
+    reward: 'timeWarp' },
 };
 
 /** The everyday outfits (no reward to unlock): versus team looks cycle through these. */
