@@ -27,8 +27,8 @@ export const WALLET_VERSION = 1;
 
 /** Prestige: each rebuild adds this to a permanent coin bonus (first guess, pending playtest). */
 export const REBUILD_BONUS = 0.10;
-/** B5: only the first REBUILD_CAP rebuilds add to it (+50 %); later ones are allowed but add nothing. */
-export const REBUILD_CAP = 5;
+/** B5: only the first REBUILD_CAP rebuilds add to it (+30 %, #608: 3, matching Ship of Theseus); later ones are allowed but add nothing. */
+export const REBUILD_CAP = 3;
 
 export function emptyWallet() {
   return { v: WALLET_VERSION, coins: 0, earned: 0, lv: {}, rebuilds: 0 };
@@ -89,7 +89,7 @@ export function deposit(w, amount) {
   return { ...w, coins: w.coins + n, earned: (w.earned || 0) + n };
 }
 
-/** The permanent prestige bonus: 1.0, 1.1, 1.2, … up to 1.5 at REBUILD_CAP rebuilds. */
+/** The permanent prestige bonus: 1.0, 1.1, 1.2, up to 1.3 at REBUILD_CAP rebuilds (older saves past 3 clamp here). */
 export function prestigeBonus(w) {
   return 1 + REBUILD_BONUS * Math.min(REBUILD_CAP, (w && w.rebuilds) || 0);
 }
@@ -105,13 +105,17 @@ export function canRebuild(w) {
 }
 
 /**
- * "Rebuild the bike": upgrade levels back to 0, coins and Slingshot progress
- * kept, one more permanent +10% on every Slingshot payout (up to REBUILD_CAP rebuilds;
- * past that a rebuild is allowed but adds nothing). Returns { ok, wallet }.
+ * "Rebuild the bike": upgrade levels back to 0 except the Token multiplier
+ * (#608: `magnet` stays maxed), coins and Slingshot progress kept, one more
+ * permanent +10% on every Slingshot payout (up to REBUILD_CAP rebuilds; past
+ * that a rebuild is allowed but adds nothing). Returns { ok, wallet }.
  */
+export const REBUILD_KEEPS = Object.freeze(['magnet']);
 export function rebuild(w) {
   if (!canRebuild(w)) return { ok: false, wallet: w };
-  return { ok: true, wallet: { ...w, lv: {}, rebuilds: (w.rebuilds || 0) + 1 } };
+  const lv = {};
+  for (const id of REBUILD_KEEPS) if ((w.lv || {})[id]) lv[id] = w.lv[id];
+  return { ok: true, wallet: { ...w, lv, rebuilds: (w.rebuilds || 0) + 1 } };
 }
 
 /** Guarded localStorage (same shape as every other store here). */

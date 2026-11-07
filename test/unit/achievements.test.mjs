@@ -7,16 +7,18 @@ import {
   ACHIEVEMENTS, SECTIONS, DEMO_UNEARNABLE, MEDAL_LEVELS,
   emptyStats, migrateStats, applyEvent, RideTracker, versusResult, opensMedalGate,
   STATS_VERSION, stageForDistance, RENAMED_IDS, migrateEarned, getDefinition,
+  COLOUR_BIKES, FULL_HOUSE_MODES, finishModes, seedStats,
 } from '../../js/achievement-defs.js';
 import { DEMO_RULES, FULL_RULES } from '../../js/edition.js';
 import { completedTrails, isStraightShot, COINS_PER_TRAIL, planCourse } from '../../js/slingshot.js';
 
-// The 23 achievements on main before #401 — their ids (Steam API names) must not change.
+// The 23 achievements on main before #401 — their ids (Steam API names) must not change
+// (daily_streak_30 left with the #608 swap; days_30 and pair_100km kept their ids with new goals).
 const EXISTING = [
   'first_500m', 'first_km', 'five_k', 'speed_demon', 'perfect_sync', 'collector', 'hoarder',
   'home_sweet', 'grandma_default', 'grandma_orange', 'grandma_magenta', 'grandma_red',
   'grandma_blue', 'grandma_green', 'grandma_yellow', 'perfect_1k', 'team_player',
-  'daily_first', 'daily_streak_7', 'daily_streak_30', 'pair_10_rides', 'pair_100km',
+  'daily_first', 'daily_streak_7', 'pair_10_rides', 'pair_100km',
   'distance_between_us',
 ];
 
@@ -34,21 +36,26 @@ const DEMO_20 = [
 ];
 
 // Rows per section, in the spec's order.
-const SPEC_SECTIONS = { first: 7, distance: 7, back: 4, medals: 9, clean: 7, speed: 4, collect: 4, sling: 15,
-  coins: 10, daily: 6, together: 7, versus: 6, chaos: 5, explore: 2, colours: 7 };
+// #608: distance -1 (Century), daily -1 (A Month of Roads), together -1 (Standing Date),
+// versus -1 +2 (Neck and Beak out; Underdog, Clean Sweep in), explore +1 (Full House), colours +1 (Rainbow Gold).
+const SPEC_SECTIONS = { first: 7, distance: 6, back: 4, medals: 9, clean: 7, speed: 4, collect: 4, sling: 15,
+  coins: 10, daily: 5, together: 6, versus: 7, chaos: 5, explore: 3, colours: 8 };
 
 test('exactly 100 achievements, unique ids, 7 bike colours', () => {
   assert.equal(ACHIEVEMENTS.length, 100);
   assert.equal(new Set(ACHIEVEMENTS.map(a => a.id)).size, 100);
-  const colours = ACHIEVEMENTS.filter(a => a.section === 'colours');
+  const colours = ACHIEVEMENTS.filter(a => a.section === 'colours' && a.id !== 'rainbow_gold');
   assert.equal(colours.length, 7);
   for (const a of colours) assert.match(a.id, /^grandma_/);
+  assert.equal(COLOUR_BIKES.length, 7);
 });
 
 test('the 23 existing ids are kept unchanged (77 new)', () => {
   const ids = new Set(ACHIEVEMENTS.map(a => a.id));
   for (const id of EXISTING) assert.ok(ids.has(id), `${id} is missing`);
-  assert.equal(ACHIEVEMENTS.filter(a => !EXISTING.includes(a.id)).length, 77);
+  assert.equal(ACHIEVEMENTS.filter(a => !EXISTING.includes(a.id)).length, 78);
+  // #608 swapped these out.
+  for (const gone of ['century', 'daily_streak_30', 'standing_date', 'versus_close']) assert.ok(!ids.has(gone), `${gone} was removed (#608)`);
   // Castle and ghost achievements are gone (#400 D2/D3).
   for (const gone of ['royal', 'perfect_5k', 'beat_ghost']) assert.ok(!ids.has(gone), `${gone} was removed`);
 });
@@ -79,6 +86,8 @@ function maxedLifetime() {
   L.launchDays = Array.from({ length: 10 }, (_, i) => `2026-10-${String(i + 1).padStart(2, '0')}`);
   L.partners = ['a', 'b', 'c'];
   L.dayList = ['2026-10-01'];
+  L.grandmaGoldBikes = [...COLOUR_BIKES];
+  L.modesFinished = [...FULL_HOUSE_MODES];
   return L;
 }
 
@@ -313,6 +322,63 @@ test('versus: human win, 2v2, close, comeback', () => {
     raceDistance: 500, halfLeader: 'B',
   });
   assert.deepEqual([bot.win, bot.twoVtwo, bot.close, bot.comeback], [false, false, false, false]);
+});
+
+test('#608 versus: Underdog (1v2 as the lone rider) and Clean Sweep (no crash)', () => {
+  const one = [{ type: 'keyboard' }], two = [{ type: 'keyboard' }, { type: 'gamepad' }];
+  const lone = versusResult({ winner: { id: 'A', members: one, crashes: 0 }, loser: { id: 'B', members: two, distance: 300, speed: 5 }, raceDistance: 500 });
+  assert.deepEqual([lone.oneVtwo, lone.clean], [true, true]);
+  const tandem = versusResult({ winner: { id: 'B', members: two, crashes: 2 }, loser: { id: 'A', members: one, distance: 300, speed: 5 }, raceDistance: 500 });
+  assert.deepEqual([tandem.oneVtwo, tandem.clean], [false, false]);
+  let L = applyEvent(emptyStats(), 'versus', { ...lone, win: true });
+  L = applyEvent(L, 'versus', { win: false, oneVtwo: true, clean: true });   // a loss counts for neither
+  assert.equal(L.versus1v2Wins, 1);
+  assert.equal(L.versusClean, 1);
+  assert.ok(getDefinition('versus_underdog').condition({}, L));
+  assert.ok(getDefinition('versus_clean').condition({}, L));
+});
+
+test("#608 Rainbow Gold: gold on Grandma's on each of the 7 colours, any difficulty", () => {
+  let L = emptyStats();
+  const def = getDefinition('rainbow_gold');
+  for (const [i, bikeKey] of COLOUR_BIKES.entries()) {
+    assert.equal(def.condition({}, L), false);
+    L = applyEvent(L, 'finish', { finishedLevel: 'grandma', medal: 'gold', bikeKey, difficulty: i % 2 ? 'daredevil' : 'chill' });
+  }
+  L = applyEvent(L, 'finish', { finishedLevel: 'daily', medal: 'gold', bikeKey: 'bike_red' });
+  assert.deepEqual([...L.grandmaGoldBikes].sort(), [...COLOUR_BIKES].sort());
+  assert.ok(def.condition({}, L));
+  assert.deepEqual(def.progress(L), [7, 7]);
+  // A special bike or a silver doesn't count.
+  let L2 = applyEvent(emptyStats(), 'finish', { finishedLevel: 'grandma', medal: 'gold', bikeKey: 'time_warp' });
+  L2 = applyEvent(L2, 'finish', { finishedLevel: 'grandma', medal: 'silver', bikeKey: 'bike_red' });
+  assert.deepEqual(L2.grandmaGoldBikes, []);
+});
+
+test('#608 Full House: a finish in every mode', () => {
+  const def = getDefinition('full_house');
+  let L = emptyStats();
+  L = applyEvent(L, 'finish', { finishedLevel: 'grandma' });
+  L = applyEvent(L, 'finish', { finishedLevel: 'daily', isCoop: true, partnerKey: 'p' });
+  L = applyEvent(L, 'slingRun', { distance: 300 });
+  L = applyEvent(L, 'versus', { win: false });
+  assert.equal(def.condition({}, L), false);
+  assert.deepEqual(def.progress(L), [5, 6]);
+  L = applyEvent(L, 'finish', { finishedLevel: 'grandma', touristFinished: true });
+  assert.ok(def.condition({}, L));
+  assert.deepEqual(finishModes({ finishedLevel: 'tutorial' }), []);
+  // Saves from before the stat existed fill it in.
+  const seeded = seedStats(emptyStats(), { records: { 'grandma|chill|solo': { timeMs: 9000 }, 'daily:2026-11-01|chill|coop': { timeMs: 9000 } }, sling: { runs: 2 } });
+  assert.deepEqual([...seeded.modesFinished].sort(), ['coop', 'daily', 'grandma', 'slingshot']);
+});
+
+test('#608: Lifer is 100 rides, 5K Together is 5 km, Ship of Theseus is 3 rebuilds', () => {
+  assert.equal(getDefinition('days_30').condition({}, { ...emptyStats(), rides: 99 }), false);
+  assert.ok(getDefinition('days_30').condition({}, { ...emptyStats(), rides: 100 }));
+  assert.equal(getDefinition('days_30').unit, undefined, 'Lifer no longer waits for days');
+  assert.ok(getDefinition('pair_100km').condition({ pairDistanceKm: 5 }, emptyStats()));
+  assert.equal(getDefinition('pair_100km').condition({ pairDistanceKm: 4.9 }, emptyStats()), false);
+  assert.ok(getDefinition('ship_of_theseus').condition({}, { ...emptyStats(), rebuilds: 3 }));
 });
 
 // ── Slingshot helpers ────────────────────────────────────────────
