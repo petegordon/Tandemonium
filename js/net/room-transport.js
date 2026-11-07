@@ -35,6 +35,11 @@ const PEERJS_CONFIG = {
   secure: PEERJS_SECURE,
 };
 
+/** The relay replaced our socket: re-dial once after this long… */
+const REPLACED_REDIAL_MS = 3000;
+/** …and a second replace within this window means the seat is taken. */
+const REPLACED_REDIAL_WINDOW_MS = 30000;
+
 export class RoomTransport {
   constructor() {
     this.peer = null;
@@ -191,6 +196,7 @@ export class RoomTransport {
   }
 
   _handleMessage(data) {
+    if (this._destroyed) return;
     let bytes;
     if (data instanceof ArrayBuffer) {
       bytes = new Uint8Array(data);
@@ -383,8 +389,12 @@ export class RoomTransport {
 
   _handleDisconnect() {
     clearTimeout(this._reconnectTimeout);
+    if (this._destroyed) return;
     this.connected = false;
     this._stopHeartbeat();
+    // Another connection holds this room seat (see the 'replaced' close): re-dialling would take
+    // it back and start a tug of war. Only an explicit retry (retryConnection) dials again.
+    if (this._evicted) return;
 
     if (this._reconnectAttempts < this._maxReconnectAttempts) {
       this._reconnectAttempts++;
@@ -392,16 +402,22 @@ export class RoomTransport {
       const delay = this._reconnectAttempts <= this._fastReconnectAttempts
         ? Math.pow(2, this._reconnectAttempts - 1) * 1000
         : 16000;
-      setTimeout(() => {
-        if (!this.connected) this._attemptReconnect();
+      clearTimeout(this._reconnectDelayTimer);
+      this._reconnectDelayTimer = setTimeout(() => {
+        if (!this.connected && !this._destroyed) this._attemptReconnect();
       }, delay);
     } else {
+      this._gaveUp = true;   // no reconnect pending any more: only retryConnection dials again
       if (this.onDisconnected) this.onDisconnected('Connection lost');
     }
   }
 
   // Public: reset retry counter and start a fresh reconnection cycle
   retryConnection() {
+    if (this._destroyed) return;
+    this._evicted = false;
+    this._gaveUp = false;
+    this._lastReplacedAt = 0;
     this._reconnectAttempts = 0;
     this._ensureBrokerConnection();
     this._handleDisconnect();
@@ -415,11 +431,12 @@ export class RoomTransport {
   }
 
   _attemptReconnect() {
+    if (this._destroyed || this._evicted) return;
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
 
     // Close stale connections
     if (this.conn) { try { this.conn.close(); } catch (e) {} }
-    if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} this._relayWs = null; }
+    this._dropRelaySocket();
 
     // Reconnect via relay first (primary transport)
     if (this._fallbackUrl) {
@@ -488,18 +505,42 @@ export class RoomTransport {
     audioEl.play().catch(() => {});
   }
 
+  /**
+   * Close the relay socket we hold, with its handlers detached first so its close
+   * cannot start a reconnect. The relay keeps ONE socket per room + role and
+   * closes the older one ("replaced") when another arrives; a socket this
+   * transport had already given up on, still acting on its close, re-dialled
+   * and replaced the live one, whose close re-dialled in turn: an endless
+   * replace loop that dropped the online ride (TV playtest 2026-11-06).
+   */
+  _dropRelaySocket() {
+    const ws = this._relayWs;
+    this._relayWs = null;
+    if (!ws) return;
+    ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+    try { ws.close(); } catch (e) { /* already closed */ }
+  }
+
   _connectRelay() {
-    if (!this._fallbackUrl) return;
+    // Evicted: another connection holds this seat; only retryConnection (Try again) dials again.
+    if (!this._fallbackUrl || this._destroyed || this._evicted) return;
+    this._dropRelaySocket();
     this._relayPartnerReady = false;
     this._relayDidOpen = false;
     let url = this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role;
     if (this._relayToken) url += '&token=' + encodeURIComponent(this._relayToken);
-    this._relayWs = new WebSocket(url);
+    const ws = new WebSocket(url);
+    this._relayWs = ws;
+    // Every handler below acts only while `ws` is still this transport's socket.
+    const current = () => this._relayWs === ws && !this._destroyed;
 
-    this._relayWs.binaryType = 'arraybuffer';
-    this._relayWs.onopen = () => {
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+      if (!current()) return;
       this._relayDidOpen = true;
       this._relayReconnectAttempts = 0;
+      this._relayAuthFailures = 0;
+      clearTimeout(this._authRetryTimer);
       this.transport = 'relay';
 
       // Room joined — notify caller
@@ -509,13 +550,47 @@ export class RoomTransport {
         this._enterRoomCallback = null;
       }
     };
-    this._relayWs.onmessage = (e) => {
+    ws.onmessage = (e) => {
+      if (!current()) return;
       this._handleMessage(e.data);
     };
-    this._relayWs.onerror = (err) => {
+    ws.onerror = (err) => {
+      if (!current()) return;
       console.warn('NET: Relay WebSocket error:', err);
     };
-    this._relayWs.onclose = () => {
+    ws.onclose = (ev) => {
+      if (!current()) return;
+      this._relayWs = null;
+      // The relay replaced this socket with a newer one for the same room + role:
+      // another connection holds the seat now. Re-dialling would replace it back.
+      if (ev && ev.reason === 'replaced') {
+        // Our own re-dials never get here (the old socket's handlers are detached first), so
+        // another connection took this seat: usually a dial of ours that raced this socket to
+        // the relay, sometimes the same room opened elsewhere. Take the seat back once, a moment
+        // later; replaced again soon after means it is really taken — stop and say so rather
+        // than tug the seat back and forth.
+        const now = Date.now();
+        if (now - (this._lastReplacedAt || 0) > REPLACED_REDIAL_WINDOW_MS) {
+          this._lastReplacedAt = now;
+          console.warn('NET: Relay socket replaced by another connection — re-dialling once');
+          clearTimeout(this._replacedRedialTimer);
+          this._replacedRedialTimer = setTimeout(() => { if (!this._destroyed && !this._relayWs && !this._evicted) this._connectRelay(); }, REPLACED_REDIAL_MS);
+          return;
+        }
+        console.warn('NET: Relay seat taken by another connection again — giving it up');
+        this._evicted = true;
+        clearTimeout(this._reconnectTimeout);
+        clearTimeout(this._authRetryTimer);
+        clearTimeout(this._relayRetryTimer);
+        // Let go of the P2P side too: its peer id belongs to whoever holds the seat now.
+        this._activeConn = null;
+        if (this.conn) { try { this.conn.close(); } catch (e2) { /* closed */ } this.conn = null; }
+        this._closeFastChannel();
+        if (this.peer) { try { this.peer.destroy(); } catch (e2) { /* gone */ } this.peer = null; }
+        if (this.connected) { this.connected = false; this._stopHeartbeat(); }
+        if (this.onDisconnected) this.onDisconnected('This room was opened somewhere else');
+        return;
+      }
       // If P2P is active, silently ignore relay failures (it's just a hot standby)
       if (this.transport === 'p2p' && this.connected) {
         if (this._relayDidOpen) {
@@ -528,9 +603,14 @@ export class RoomTransport {
       // If WebSocket never opened, the relay rejected the connection (401/403)
       if (!this._relayDidOpen) {
         console.warn('NET: Relay rejected connection (likely auth error — missing or invalid token)');
-        // Fire auth error callback instead of futile reconnect loop
+        // Fire auth error callback instead of futile reconnect loop. Backed off
+        // (1 s, 2 s, 4 s … 15 s): the handler re-dials at once, and a relay that
+        // keeps refusing was being hit several times a second.
         if (this.onAuthError) {
-          this.onAuthError();
+          const n = this._relayAuthFailures = (this._relayAuthFailures || 0) + 1;
+          const wait = n <= 1 ? 0 : Math.min(15000, 1000 * Math.pow(2, n - 2));
+          clearTimeout(this._authRetryTimer);
+          this._authRetryTimer = setTimeout(() => { if (!this._destroyed && !this._relayWs && this.onAuthError) this.onAuthError(); }, wait);
         } else {
           // No auth error handler — surface as disconnect with clear message
           if (this.onDisconnected) this.onDisconnected('Authentication failed');
@@ -552,8 +632,10 @@ export class RoomTransport {
           this._relayReconnectAttempts++;
           const delay = Math.pow(2, this._relayReconnectAttempts - 1) * 1000; // 1s, 2s, 4s
           console.warn('NET: Relay closed, retrying in ' + delay + 'ms (attempt ' + this._relayReconnectAttempts + '/3)');
-          setTimeout(() => {
-            if (!this.connected) {
+          clearTimeout(this._relayRetryTimer);
+          this._relayRetryTimer = setTimeout(() => {
+            // Only when nothing else has dialled meanwhile (a retry, an auth refresh).
+            if (!this.connected && !this._relayWs && !this._destroyed && !this._evicted) {
               this._connectRelay();
             }
           }, delay);
@@ -569,14 +651,13 @@ export class RoomTransport {
   retryWithToken(token) {
     this._relayToken = token;
     this._relayReconnectAttempts = 0;
-    if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} this._relayWs = null; }
     this._connectRelay();
   }
 
   _reconnectRelayBackground() {
     // Silently reconnect relay as hot standby while P2P is active
     setTimeout(() => {
-      if (this.connected && this.transport === 'p2p') {
+      if (this.connected && this.transport === 'p2p' && !this._relayWs && !this._destroyed) {
         this._relayReconnectAttempts = 0;
         this._connectRelay();
       }
@@ -606,6 +687,12 @@ export class RoomTransport {
     const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
 
     this._fetchIceServers().then(iceServers => {
+      // Destroyed while the TURN fetch was in flight: a Peer made now would never be destroyed,
+      // hold this room's peer id ("peer ID in use") and could take the partner's connection.
+      if (this._destroyed || this._evicted) return;
+      // Two upgrade attempts close together both reach here: keep one Peer, never leak the
+      // other (a leaked Peer holds this room's id: "peer ID in use").
+      if (this.peer) { try { this.peer.destroy(); } catch (e) { /* gone */ } this.peer = null; }
       this.peer = new window.Peer(peerId, {
         ...PEERJS_CONFIG,
         config: { iceServers }
@@ -755,6 +842,11 @@ export class RoomTransport {
   }
 
   destroy() {
+    this._destroyed = true;   // pending relay retries and late socket events stop here
+    clearTimeout(this._authRetryTimer);
+    clearTimeout(this._reconnectDelayTimer);
+    clearTimeout(this._replacedRedialTimer);
+    clearTimeout(this._relayRetryTimer);
     this._stopHeartbeat();
     this._stopStatsPolling();
     clearTimeout(this._reconnectTimeout);
@@ -784,11 +876,10 @@ export class RoomTransport {
     if (audioEl) { audioEl.srcObject = null; }
     if (this.conn) { try { this.conn.close(); } catch (e) {} }
     if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
-    if (this._relayWs) { try { this._relayWs.close(); } catch (e) {} }
+    this._dropRelaySocket();
     this.connected = false;
     this.conn = null;
     this.peer = null;
-    this._relayWs = null;
   }
 
   // ---- WebRTC Quality Stats ----
