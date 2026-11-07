@@ -6,7 +6,7 @@
 // wrong and every stored best is against a road that no longer exists.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RoadPath } from '../../js/road-path.js';
+import { RoadPath, START_BEHIND, START_CLEARANCE } from '../../js/road-path.js';
 import { deriveSeed, SALT } from '../../js/daily-seed.js';
 
 // Captured from main before any seed plumbing existed.
@@ -68,3 +68,45 @@ function hash(s) {
   return (h >>> 0) || 1;
 }
 function seedOfDay() { return hash('2026-09-08'); }
+
+// 2026-11-07 · Pete's TV playtest: the Daily Ride started with a second road
+// running beside the real one, "Your Home" standing at its head. The loop's
+// closure hairpinned past the start, and the road chunks draw the last 100 m
+// of the loop behind the rider at the start line. The tail drawn there must
+// only ever be the approach: behind the start line, not beside or ahead of it.
+function tailBesideStart(path) {
+  for (let b = path.loopLength - START_BEHIND; b < path.loopLength; b += 1) {
+    const q = path.getPointAtDistance(b);
+    if (q.z <= 0 && Math.abs(q.x) <= -q.z) continue;          // on the approach
+    for (let a = 0; a <= 80; a += 1) {                         // the straight start
+      const p = path.getPointAtDistance(a);
+      if (Math.hypot(p.x - q.x, p.z - q.z) < START_CLEARANCE) return { a, b };
+    }
+  }
+  return null;
+}
+
+// Captured from main before the closure rebuild existed.
+const GOLDEN_1107_500 = [-159.3, 350.194];
+
+test("today's road (2026-11-07) has one road at the start, not two", () => {
+  const path = new RoadPath(deriveSeed(hash('2026-11-07'), SALT.road));
+  assert.equal(tailBesideStart(path), null);
+  assert.ok(path.startIsClear());
+});
+
+test('no daily road for two months draws a second road beside the start', () => {
+  const day0 = Date.UTC(2026, 10, 1);
+  for (let i = 0; i < 60; i++) {
+    const key = new Date(day0 + i * 864e5).toISOString().slice(0, 10);
+    const path = new RoadPath(deriveSeed(hash(key), SALT.road));
+    assert.equal(tailBesideStart(path), null, `${key}: tail beside the start`);
+  }
+});
+
+test('the ridden road is untouched by the closure rebuild', () => {
+  // 2026-11-07's closure is rebuilt; the first 900 m keep their old shape.
+  const path = new RoadPath(deriveSeed(hash('2026-11-07'), SALT.road));
+  const p = path.getPointAtDistance(500);
+  assert.deepEqual([r(p.x, 3), r(p.z, 3)], GOLDEN_1107_500);
+});
