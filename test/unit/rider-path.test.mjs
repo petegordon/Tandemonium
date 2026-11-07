@@ -71,7 +71,7 @@ test('all 16 (seat, outfit, body) combos resolve to their own file, no fallback'
     assert.ok(fs.existsSync(r.path), r.path);
     if (b !== SEAT_BODY[s]) assert.equal(r.path, riderFileName(s, o, b));
   }
-  assert.equal(RIDER_FILES.size, 10, '8 swapped-body files + the 2 robot files');
+  assert.equal(RIDER_FILES.size, 10, 'swapped-body files: 4 everyday outfits + the robot');
 });
 
 test('every new-contract file listed as shipped is on disk and named by the contract', () => {
@@ -94,13 +94,14 @@ test('colourway params follow the body, not the seat', () => {
   assert.deepEqual(colourwayParamsForBody('victorian', 'default', 'f'), {});
 });
 
-test('#611 · the robot is a one-body outfit: both seats and both bodies ride the gander robot, no fallback', () => {
+test('#611 · the robot has both bodies: the gander robot and the lady robot ride either seat, no fallback', () => {
   _resetRiderWarnings();
   for (const s of SEATS) for (const b of ['m', 'f']) {
     const r = resolveRider(s, 'robot', b, () => assert.fail('no fallback expected'));
     assert.equal(r.fallback, false, s + '/' + b);
-    assert.equal(r.body, 'm');
-    assert.equal(r.path, riderFileName(s, 'robot', 'm'));
+    assert.equal(r.body, b);
+    assert.equal(r.path, b === SEAT_BODY[s] ? GOOSE_OUTFITS.robot[s] : riderFileName(s, 'robot', b));
+    assert.equal(r.path, riderFileName(s, 'robot', b));
     assert.ok(fs.existsSync(r.path), r.path);
   }
 });
