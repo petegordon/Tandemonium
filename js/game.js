@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
+import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -1403,6 +1404,15 @@ class Game {
       if (this.net.roomCode) {
         analytics.trackRoomUpdate(this.net.roomCode, { p2p_upgrade_succeeded: 1 });
       }
+    };
+
+    // #623 · the partner ended the ride together: stop here too, with a word, and back to the
+    // lobby from the sheet (no reconnect wait, no "lost connection" later). Back in the room the
+    // lobby's own disconnect handler says it and leaves the room.
+    const rideNet = this.net;
+    this.net.onPartnerLeft = () => {
+      if (this.state === 'lobby' || this.net !== rideNet) { if (rideNet.onDisconnected) rideNet.onDisconnected(PARTNER_LEFT_REASON); return; }
+      this._endedByPartner();
     };
 
     this.net.onDisconnected = (reason) => {
@@ -3627,6 +3637,25 @@ class Game {
    * "Ready" means the tiles renderer is built for the route with a Maps key;
    * tiles then stream in during the ride as they do solo.
    */
+  /** #623 · the partner left the ride on purpose: freeze, say so, offer the lobby. */
+  _endedByPartner() {
+    if (this._drop) this._endDropPause();
+    this._hideReconnecting();
+    this._hideGameOver();
+    this._hideVictory();
+    this._clearStokerTimeout();
+    this._waitingForCaptain = false;
+    this._netLost = false;
+    // The session is over: nothing reconnects, nothing is sent.
+    const net = this.net;
+    this.net = null;
+    if (this.lobby.net === net) this.lobby.net = null;
+    if (net) { try { net.destroy(); } catch (e) { /* gone */ } }
+    this.state = 'gameover';   // pause the ride under the sheet
+    this._showDisconnect(PARTNER_LEFT_REASON);
+    document.getElementById('btn-try-reconnect').hidden = true;
+  }
+
   /** Stoker: a message from the captain arrived — note when, and lift a "Waiting for the captain…" sheet. */
   _heardFromCaptain() {
     this._lastCaptainAt = performance.now();
@@ -5485,7 +5514,9 @@ class Game {
     this.recorder.stopSelfie();
     this.recorder.clearPartnerStream();
     updateBadgeDisplay('partner-badges', []);
-    if (this.net) { this.net.destroy(); this.net = null; }
+    // The lobby holds the same transport: leaving the ride leaves the session there too
+    // (the captain kept a dead session and later said "partner lost connection", #623).
+    if (this.net) { if (this.lobby.net === this.net) this.lobby.net = null; this.net.destroy(); this.net = null; }
     // Local multiplayer teardown: release P2 InputManager + restore P1 keyboard
     if (this.inputP2) {
       this.inputP2 = null;

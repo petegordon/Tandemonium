@@ -85,6 +85,9 @@ export const COUNT_BY_DIFFICULTY = { tutorial: 0, chill: 0, adventurous: 2, dare
 export const START_CLEARANCE_M = 60;
 export const CHECKPOINT_CLEARANCE_M = 40;
 
+/** Two events never closer than this: a cobbled stretch plus the next one's 3 s warning. */
+export const MIN_EVENT_GAP_M = 60;
+
 /** Fisher-Yates, so the order is seeded and the draw takes each kind once. */
 function shuffled(list, rng) {
   const out = list.slice();
@@ -158,6 +161,14 @@ export function planDisruptions({ seed, distance, difficulty, checkpoints = [] }
     let atM = START_CLEARANCE_M + slot * i + slot * (0.2 + rng() * 0.6);
     atM = nudgeClearOfCheckpoints(atM, checkpoints, distance);
     if (atM === null) continue;
+    // Never on top of the one before (#623: a checkpoint nudge put a gust and a cobbled stretch
+    // both at 149.7 m on a short road). Push it on past that one, clear of checkpoints again, or
+    // drop it.
+    const prev = events[events.length - 1];
+    if (prev && atM < prev.atM + MIN_EVENT_GAP_M) {
+      atM = nudgeClearOfCheckpoints(prev.atM + MIN_EVENT_GAP_M, checkpoints, distance);
+      if (atM === null || atM > distance - 20) continue;
+    }
     events.push({
       kind,
       atM: Math.round(atM * 10) / 10,
