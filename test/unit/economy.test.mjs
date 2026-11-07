@@ -256,13 +256,13 @@ test('#512 the finish tally lists every line: distance, tokens n/N, presents, fi
 
 // ---- Prestige (D11c) -------------------------------------------------------
 
-test('B5: the rebuild bonus stops at REBUILD_CAP (5) rebuilds, +50 %', () => {
-  assert.equal(REBUILD_CAP, 5);
+test('B5: the rebuild bonus stops at REBUILD_CAP (3, #608) rebuilds, +30 %', () => {
+  assert.equal(REBUILD_CAP, 3);
   const at = n => prestigeBonus({ ...emptyWallet(), rebuilds: n });
-  assert.ok(Math.abs(at(5) - 1.5) < 1e-9);
-  assert.equal(at(6), at(5));
-  assert.equal(at(40), at(5));
-  assert.ok(at(4) < at(5));
+  assert.ok(Math.abs(at(3) - 1.3) < 1e-9);
+  assert.equal(at(5), at(3), 'older saves with 4-5 rebuilds clamp to +30 %');
+  assert.equal(at(40), at(3));
+  assert.ok(at(2) < at(3));
   // Rebuilding past the cap is still allowed (it just adds nothing).
   const r = rebuild({ ...emptyWallet(), lv: maxed(), rebuilds: 7 });
   assert.ok(r.ok);
@@ -277,7 +277,8 @@ test('prestige: only when everything is maxed; resets upgrades, keeps coins and 
   assert.equal(canRebuild(w), true);
   const r = rebuild(w);
   assert.ok(r.ok);
-  assert.deepEqual(r.wallet.lv, {});
+  assert.deepEqual(r.wallet.lv, { magnet: 8 }, '#608: the Token multiplier survives a rebuild');
+  assert.equal(canRebuild(r.wallet), false);
   assert.equal(r.wallet.coins, 777);
   assert.equal(r.wallet.rebuilds, 1);
   writeSave(store, { ...emptySave(), stage: 8 });
