@@ -16,7 +16,7 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
 import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
-  handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback,
+  handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
 } from './identity.js';
 
 /** What the identity module needs from this worker. */
@@ -97,6 +97,11 @@ export default {
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
+      if (path === '/me/discord') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
+      }
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
         const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);

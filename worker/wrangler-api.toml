@@ -11,6 +11,10 @@ database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com"
 # #612: House Tandem Discord application (sign-in). DISCORD_CLIENT_SECRET is a secret.
 DISCORD_CLIENT_ID = "1568461616578699348"
+# #612 · the House Tandem players' Discord: membership shows on the account page (needs the
+# DISCORD_BOT_TOKEN secret and the House Tandem bot in the server).
+DISCORD_GUILD_ID = "1560085412838379560"
+DISCORD_INVITE_URL = "https://housetandem.com/discord"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
 [[analytics_engine_datasets]]

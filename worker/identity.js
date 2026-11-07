@@ -477,6 +477,38 @@ export async function handleSteamWebCallback(request, env, url, deps) {
   return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
 }
 
+// ------------------------------------------------------------
+// House Tandem Discord membership (#612)
+// ------------------------------------------------------------
+//
+// The House Tandem bot sits in the players' server with no permissions; it
+// only looks up one member by id. That needs no privileged intent and no
+// extra consent from the player.
+
+/**
+ * GET /me/discord → { linked, member: true | false | null, invite }
+ * member is null when it can't be checked (no bot set up, or Discord is down).
+ */
+export async function handleDiscordMembership(request, env, corsOrigin, userId, deps) {
+  const invite = env.DISCORD_INVITE_URL || null;
+  const row = await env.DB.prepare(
+    "SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC LIMIT 1"
+  ).bind(userId).first();
+  if (!row) return deps.jsonResponse({ linked: false, member: null, invite }, 200, corsOrigin);
+  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) return deps.jsonResponse({ linked: true, member: null, invite }, 200, corsOrigin);
+  const fetchImpl = deps.fetchImpl || fetch;
+  let member = null;
+  try {
+    const res = await fetchImpl(`${DISCORD_API}/v10/guilds/${env.DISCORD_GUILD_ID}/members/${row.provider_id}`, {
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.ok) member = true;
+    else if (res.status === 404) member = false;
+  } catch {}
+  return deps.jsonResponse({ linked: true, member, invite }, 200, corsOrigin);
+}
+
 /** The small page the browser shows during a sign-in. */
 function page(title, body, status = 200) {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">

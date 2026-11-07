@@ -444,3 +444,41 @@ test('deleting an account removes every record on it; the partner keeps their ow
     assert.deepEqual(Object.keys(again.user.identities), ['steam'], 'a fresh account: Discord is not brought back');
   } finally { restore(); }
 });
+
+test('House Tandem Discord membership: member, not a member (with the invite), unknown, no Discord', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), DISCORD_GUILD_ID: 'G1', DISCORD_INVITE_URL: 'https://discord.gg/abc' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  let answer = 200;
+  const asked = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) { asked.push({ u, auth: init.headers.Authorization }); return new Response('{}', { status: answer }); }
+    return inner(input, init);
+  };
+  try {
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
+    let r = await (await call(env, '/me/discord', { token: steam.token })).json();
+    assert.deepEqual(r, { linked: false, member: null, invite: 'https://discord.gg/abc' }, 'no Discord linked');
+
+    const d = await deviceSignIn(env, steam.token);
+    r = await (await call(env, '/me/discord', { token: d.token })).json();
+    assert.equal(r.member, null, 'no bot token: unknown');
+    assert.equal(asked.length, 0);
+
+    env.DISCORD_BOT_TOKEN = 'bot-token';
+    r = await (await call(env, '/me/discord', { token: d.token })).json();
+    assert.equal(r.member, true);
+    assert.equal(asked[0].u, `https://discord.com/api/v10/guilds/G1/members/${DISCORD_PETE.id}`);
+    assert.equal(asked[0].auth, 'Bot bot-token');
+    answer = 404;
+    r = await (await call(env, '/me/discord', { token: d.token })).json();
+    assert.equal(r.member, false);
+    assert.equal(r.invite, 'https://discord.gg/abc');
+    answer = 503;
+    r = await (await call(env, '/me/discord', { token: d.token })).json();
+    assert.equal(r.member, null, 'Discord down: unknown, not "not a member"');
+    assert.equal((await call(env, '/me/discord')).status, 401);
+  } finally { globalThis.fetch = inner; restore(); }
+});
