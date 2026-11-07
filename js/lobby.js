@@ -46,13 +46,12 @@ import { InputManager, isSteamTwinPad } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
-import { makePlacementSalt, dailyKey, dailySeed, weeklyKey } from './daily-seed.js';
+import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
 import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt } from './tourist-config.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
-  rankedResult, computeStreak, formatDayLabel, formatClock,
-  asWeeklyRoad, resolveWeeklyLevel, weeklyDescription, WEEKLY_RULES_LINE
+  ridesStarted
 } from './daily-ride.js';
 import * as records from './records.js';
 import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
@@ -80,7 +79,7 @@ import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
-import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery } from './edition.js';
+import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
@@ -1201,7 +1200,20 @@ export class Lobby {
     // VERSUS (local split-screen team racing) — desktop-only, like local co-op:
     // needs multiple physical controllers on one machine.
     const btnVersus = document.getElementById('btn-versus');
-    if (btnVersus && !isMobile) {
+    // #641: Versus is the full game's. The demo shows it shut, with a tag, and
+    // a press says where it is rather than doing nothing.
+    const versusInEdition = getEditionRules().versus;
+    if (btnVersus && !isMobile && !versusInEdition) {
+      btnVersus.style.display = '';
+      btnVersus.classList.add('lobby-role-locked');
+      btnVersus.style.opacity = '0.55';
+      const desc = btnVersus.querySelector('.lobby-role-desc');
+      if (desc) desc.textContent = '🔒 In the full game';
+      btnVersus.addEventListener('click', () => {
+        showInfoToast('🔒', 'Versus is in the full game', 'Race side by side, 2–4 players. Wishlist Tandemonium on Steam.');
+        analytics.trackEvent('demo_locked', { what: 'versus' });
+      });
+    } else if (btnVersus && !isMobile) {
       btnVersus.style.display = '';
       btnVersus.addEventListener('click', async () => {
         analytics.trackEvent('versus_setup_opened');
@@ -1264,22 +1276,6 @@ export class Lobby {
       this._showStep(this.levelStep);
     });
 
-    // D-2 · Today's Road asks one question before the ride: practice, or the
-    // day's ranked run? The chooser intercepts START RIDE and calls it back.
-    for (const [id, mode] of [['btn-daily-ranked', 'ranked'], ['btn-daily-practice', 'practice']]) {
-      const btn = document.getElementById(id);
-      if (btn) btn.addEventListener('click', () => {
-        if (btn.disabled) return;
-        this._dailyMode = mode;
-        document.getElementById('daily-mode-overlay').classList.remove('visible');
-        this._startRide();
-      });
-    }
-    const cancelBtn = document.getElementById('btn-daily-cancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', () => {
-      document.getElementById('daily-mode-overlay').classList.remove('visible');
-    });
-
     // Levels step: START RIDE button — works for solo, multiplayer, and local co-op
     document.getElementById('btn-start-ride').addEventListener('click', () => {
       // #517: the Slingshot card was picked — START RIDE opens its garage.
@@ -1291,9 +1287,9 @@ export class Lobby {
         analytics.trackEvent('slingshot_open');
         return;
       }
-      // D-2: on Today's Road, ask first — unless this is the demo, which is
-      // practice-only, or the chooser has already been answered.
-      if (this._shouldAskDailyMode()) { this._showDailyModeChooser(); return; }
+      // #641: the Daily Ride's gate (the demo opens it after the Tutorial and
+      // Grandma's, then gives it three rides a day). The stoker never starts.
+      if (this.selectedLevel && this.selectedLevel.isDaily && !this._dailyGateAllows()) return;
       this._startRide();
     });
 
@@ -1490,7 +1486,7 @@ export class Lobby {
     const store = records.load();
     // Today's Road is recorded under today's day (or week) key; the card's
     // level is the unresolved base, so pass the key it would ride today.
-    const roadKey = level.isWeekly ? weeklyKey() : level.isDaily ? dailyKey() : undefined;
+    const roadKey = level.isDaily ? dailyKey() : undefined;
     const best = records.getBest(store, records.key(records.levelRecordId(level, roadKey), this.selectedDifficulty, cardMode));
     const thresholds = getMedals(level.id, this.selectedDifficulty);
     if (!best) {
@@ -1534,7 +1530,7 @@ export class Lobby {
     const extra = { difficulty: this.selectedDifficulty };
     if (level && level.isDaily) {
       extra.key = level.key; extra.seed = level.seed;
-      extra.roadKind = level.isWeekly ? 'weekly' : 'daily';
+      extra.roadKind = 'daily';
     }
     return extra;
   }
@@ -1545,62 +1541,15 @@ export class Lobby {
   }
 
   /**
-   * #400 · the shared road with its identity attached: Today's Road, or in the
-   * demo Weekly Ride (rules.weeklyRoad). Any other level comes back as is.
-   * `key`/`seed` are the captain's when a stoker resolves it (C-2).
+   * The shared road with its identity attached (the Daily Ride, in both
+   * editions since #641). Any other level comes back as is. `key`/`seed` are
+   * the captain's when a stoker resolves it (C-2).
    */
   resolveRoadLevel(level, { key, seed } = {}) {
     if (!level || !level.isDaily) return level;
-    if (this.roomRules().weeklyRoad) return resolveWeeklyLevel(level, { key, seed });
     return resolveDailyLevel(level, {
       key: key || dailyKey(), seed: typeof seed === 'number' ? seed : dailySeed()
     });
-  }
-
-  /**
-   * D-2 · should the practice/ranked chooser appear?
-   *
-   * Only on Today's Road, only in the web build, and only for the person who
-   * decides: in a room the captain chooses for the pair and the stoker rides
-   * whatever was chosen.
-   */
-  _shouldAskDailyMode() {
-    if (!this.selectedLevel || !this.selectedLevel.isDaily) return false;
-    if (!this.roomRules().ranked) return false;        // demo is practice-only; so is a room with a demo/old partner
-    if (this._pendingMode === 'multiplayer' && this._roomRole !== 'captain') return false;
-    return true;
-  }
-
-  /** D-2 · the chooser itself. RANKED is disabled once the day's run is used. */
-  _showDailyModeChooser() {
-    const overlay = document.getElementById('daily-mode-overlay');
-    if (!overlay) { this._dailyMode = 'practice'; this._startRide(); return; }
-
-    const key = this.selectedLevel.key || dailyKey();
-    const mode = this._pendingMode === 'multiplayer' || this._pendingMode === 'local' ? 'pair' : 'solo';
-    const store = browserStore();
-    const done = rankedResult(store, key, mode);
-
-    const sub = document.getElementById('daily-mode-sub');
-    if (sub) {
-      const streak = computeStreak(store, key);
-      const streakText = streak.current >= 2 ? ` · 🔥 ${streak.current}` : '';
-      sub.textContent = `${formatDayLabel(key)} · ${mode === 'pair' ? 'riding as a pair' : 'riding solo'}${streakText}`;
-    }
-
-    const rankedBtn = document.getElementById('btn-daily-ranked');
-    const hint = document.getElementById('daily-ranked-hint');
-    if (rankedBtn) {
-      rankedBtn.disabled = !!done;
-      if (hint) {
-        hint.textContent = done
-          ? (done.dnf ? 'Done for today — ended early.' : `Done for today — ${formatClock(done.timeMs)}.`)
-          : 'One per day. Crashes are fine; ending early is not.';
-      }
-    }
-
-    overlay.classList.add('visible');
-    analytics.trackEvent('daily_chooser', { key, mode, ranked_available: !done });
   }
 
   // ============================================================
@@ -1888,18 +1837,49 @@ export class Lobby {
   }
 
   /**
-   * C-2 · Today's Road (or the weekly road) card text: which day it is, what
-   * you've done on it (practice and the ranked run, #398), and when it changes.
+   * C-2 · the Daily Ride card text: which day it is, what you've done on it,
+   * and when it changes. #641: in the demo, why it is shut (the Tutorial and
+   * Grandma's open it; three rides a day) or how many rides are left.
    */
   _roadDescHtml(level) {
-    if (level.isWeekly) {
-      const key = weeklyKey();
-      return weeklyDescription(dailyStatus(browserStore(), key), key) +
-        '<br><span class="level-card-daily-rule">' + WEEKLY_RULES_LINE + '</span>';
-    }
     const key = dailyKey();
-    return dailyDescription(dailyStatus(browserStore(), key), key) +
-      '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+    const gate = this._dailyGate();
+    const rule = '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+    if (!gate.ok) return '&#x1F512; ' + this._dailyGateText(gate) + rule;
+    let line = dailyDescription(dailyStatus(browserStore(), key), key);
+    if (gate.left != null) line += ' · ' + gate.left + ' of ' + this.roomRules().dailyRideCap + ' rides left';
+    return line + rule;
+  }
+
+  /** #641 · can this device start another Daily Ride? (edition.dailyRideGate) */
+  _dailyGate() {
+    // Read the saved list, not this._achievements: the game holds its own
+    // manager, and the Grandma's finish that opens the road is earned there.
+    let earned = [];
+    try {
+      const raw = localStorage.getItem('tandemonium_achievements');
+      if (raw) earned = JSON.parse(raw).map(a => a.id);
+    } catch { /* empty */ }
+    return dailyRideGate(this.roomRules(), ridesStarted(browserStore(), dailyKey()), earned);
+  }
+
+  /** #641 · the words for a shut Daily Ride. */
+  _dailyGateText(gate) {
+    if (gate.reason === 'needs') {
+      const names = { tutorial_done: 'the Tutorial', home_sweet: 'Grandma’s' };
+      const list = gate.needs.map(id => names[id] || id);
+      return 'Finish ' + list.join(' and ') + ' to open the Daily Ride';
+    }
+    return 'That’s today’s ' + this.roomRules().dailyRideCap + ' rides · the full game rides it as often as you like';
+  }
+
+  /** #641 · true when a Daily Ride may start; otherwise says why and returns false. */
+  _dailyGateAllows() {
+    const gate = this._dailyGate();
+    if (gate.ok) return true;
+    showInfoToast('🔒', 'Daily Ride', this._dailyGateText(gate));
+    analytics.trackEvent('daily_gate', { reason: gate.reason });
+    return false;
   }
 
   /** B-3 · re-render the record line (and Today's Road's day line) on every visible level card. */
@@ -1909,15 +1889,28 @@ export class Lobby {
       if (!line) return;
       const base = LEVELS.find(l => l.id === card.dataset.levelId);
       if (!base) return;
-      // Same swap as the card builder: in the demo the shared road is the Weekly Ride.
-      const level = base.isDaily && this.roomRules().weeklyRoad ? asWeeklyRoad(base) : base;
-      // The day line changes after every ride on Today's Road (a practice
-      // count, the ranked time), and the cards are built once at boot.
+      const level = base;
+      // The day line changes after every ride on the Daily Ride, and the cards
+      // are built once at boot. #641: so does its gate (the demo's lock).
       const desc = level.isDaily && card.querySelector('.level-card-desc');
       if (desc) desc.innerHTML = this._roadDescHtml(level);
+      if (level.isDaily) this._applyDailyLock(card);
       const inVersus = !!card.closest('#versus-level-list, [id*="versus"]');
       line.textContent = this._recordLine(level, inVersus ? 'versus' : (this.net ? 'coop' : 'solo'));
     });
+  }
+
+  /**
+   * #641 · show the Daily Ride card shut (greyed, skipped by the default pick
+   * and by NEXT LEVEL) while its gate is closed. It stays clickable, so a
+   * click explains what opens it.
+   */
+  _applyDailyLock(card) {
+    const shut = !this._dailyGate().ok;
+    card.classList.toggle('level-locked', shut);
+    this._lockedLevelIds = this._lockedLevelIds || new Set();
+    if (shut) this._lockedLevelIds.add(card.dataset.levelId);
+    else this._lockedLevelIds.delete(card.dataset.levelId);
   }
 
   _buildLevelCardsShared({ container, isClickable, mode, showTutorial, startBtn, backBtn, step }) {
@@ -1938,12 +1931,10 @@ export class Lobby {
     // C-2: Today's Road is not in the VERSUS list — versus has its own rules
     // (two teams, one screen) and a shared daily result means nothing there.
     const isVersus = mode === 'versus';
-    // #400: every list offers only what this edition includes; in the demo the
-    // shared road is the Weekly Ride.
+    // #400: every list offers only what this edition includes.
     const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
     const levels = LEVELS.filter(l =>
-      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id))
-      .map(l => (l.isDaily && rules.weeklyRoad ? asWeeklyRoad(l) : l));
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id));
     this._lockedLevelIds = this._lockedLevelIds || new Set();   // read by NEXT LEVEL
 
     levels.forEach(level => {
@@ -1989,8 +1980,11 @@ export class Lobby {
           // first visit instead of an absence.
           '<div class="level-card-record">' + this._recordLine(level, mode) + '</div>';
 
+        if (level.isDaily) this._applyDailyLock(card);   // #641
         if (isClickable) {
           card.addEventListener('click', () => {
+            // #641: a shut Daily Ride explains itself instead of being picked.
+            if (level.isDaily && !this._dailyGateAllows()) return;
             // C-2: Today's Road resolves its identity at the moment it is picked
             // — the day key and seed come from the clock now, not from whenever
             // this page was loaded (someone may have left it open overnight).
@@ -2175,9 +2169,7 @@ export class Lobby {
     // C-2: Today's Road is one road at one difficulty for everyone — a shared
     // road that each player tunes to taste is not a shared road.
     const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
-    // #400 D10: the demo's weekly road rides on Chill (safety on).
-    const roadDifficulty = daily && this.roomRules().weeklyRoad
-      ? asWeeklyRoad(daily).fixedDifficulty : (daily && daily.fixedDifficulty);
+    const roadDifficulty = daily && daily.fixedDifficulty;
     const forced = isTutorial ? 'chill' : (daily ? roadDifficulty : null);
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
     if (forced && !isTutorial) {
@@ -4283,7 +4275,7 @@ export class Lobby {
     try { param = new URLSearchParams(window.location.search).get('daily'); } catch { return; }
     if (!param) return;
 
-    const today = getEditionRules().weeklyRoad ? weeklyKey() : dailyKey();   // #400
+    const today = dailyKey();
     const expired = param !== today;
     const level = LEVELS.find(l => l.isDaily);
     if (!level) return;
@@ -5194,12 +5186,8 @@ export class Lobby {
       // C-2: for Today's Road, take the captain's key and seed rather than
       // reading this device's clock — otherwise a stoker on the far side of
       // the 09:00 UTC rollover would ride a different road with the same name.
-      // PR #397 M1: and the captain's road KIND (weekly / daily), not one
-      // resolved from this side's edition.
       this.selectedLevel = picked && picked.isDaily
-        ? (verdict.roadKind === 'weekly'
-          ? resolveWeeklyLevel(picked, { key: profile.key, seed: profile.seed })
-          : resolveDailyLevel(picked, { key: profile.key || dailyKey(), seed: typeof profile.seed === 'number' ? profile.seed : dailySeed() }))
+        ? resolveDailyLevel(picked, { key: profile.key || dailyKey(), seed: typeof profile.seed === 'number' ? profile.seed : dailySeed() })
         : (picked || this.selectedLevel);
       // Track if captain selected tutorial — stoker needs _forceWizard too
       this._forceWizard = (profile.levelId === 'tutorial');
@@ -5210,7 +5198,7 @@ export class Lobby {
       // Update difficulty selector (disable harder options for tutorial)
       this._updateDifficultyVisibility(profile.levelId);
       // PR #397 M1: the captain's effective difficulty wins over the one this
-      // side would force (e.g. a full stoker on a demo captain's weekly road).
+      // side would force (e.g. a full stoker on a demo captain's road).
       if (typeof profile.difficulty === 'string' && profile.difficulty) this._adoptDifficulty(profile.difficulty);
     } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
       // Partner toggled their camera — update state and refresh PiP
@@ -5306,7 +5294,7 @@ export class Lobby {
     this._lastLevelRefused = profile.levelId || '';   // read by smoke:tourist
     if (profile.reason === 'demo') {
       showInfoToast('🔒', 'Your partner is on the demo',
-        'They can ride the Tutorial, Grandma’s House and the Weekly Ride with you.');
+        'They can ride the Tutorial, Grandma’s House and the Daily Ride with you.');
     } else {
       showInfoToast('🔒', 'Your partner can’t ride that one', 'Pick another level to ride together.');
     }
@@ -7694,22 +7682,7 @@ export class Lobby {
       this._modalFocus.poll();
       return;
     }
-    // #576 · Today's Road chooser (RANKED RUN / PRACTICE / Back) over the levels
-    // step: the pad moves between its buttons and A picks; B is Back. It had no
-    // branch here, so the pad kept driving the step underneath it.
-    const dailyOverlay = document.getElementById('daily-mode-overlay');
-    if (dailyOverlay && dailyOverlay.classList.contains('visible')) {
-      if (this._activeModal !== 'daily') {
-        this._activeModal = 'daily';
-        this._modalBack = () => dailyOverlay.classList.remove('visible');
-        const items = ['btn-daily-ranked', 'btn-daily-practice', 'btn-daily-cancel']
-          .map((id) => document.getElementById(id))
-          .filter((el) => el && !el.disabled && !el.hasAttribute('disabled'));
-        this._modalFocus.setSpatial(items, items[0]);
-      }
-      this._modalFocus.poll();
-      return;
-    }
+
     // #540: an achievement's detail card over the leaderboard — only its Close
     // to focus; B closes it and the grid gets the pad back (uf-sheet:close).
     if (this._achievementDetailOpen()) {
@@ -8329,7 +8302,10 @@ export class Lobby {
   _applyPresetToPreview() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
-    const locked = HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key);
+    // #641: the demo rides Grandma's Classic and Marmalade Express; the other
+    // colours show, shut, as the full game's.
+    const demoLocked = !bikeAllowed(getEditionRules(), key);
+    const locked = demoLocked || (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
     nameEl.style.color = locked ? 'rgba(255,255,255,0.3)' : (BIKE_COLORS[key] || 'rgba(68, 255, 102, 0.7)');
 
     // Reset all materials to originals
@@ -8356,6 +8332,10 @@ export class Lobby {
         hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
         nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
       }
+      if (demoLocked) {
+        hintEl.textContent = 'In the full game';
+        hintEl.style.display = '';
+      } else {
       // Show per-bike progress: ✓ won / ✗ not yet
       let earnedIds = [];
       try {
@@ -8374,6 +8354,7 @@ export class Lobby {
           : `<span style="color:rgba(255,255,255,0.4)">${l}</span>`
       ).join('<br>');
       hintEl.style.display = '';
+      }
 
       // Grey out the preview model
       this.selectedPreset = null;

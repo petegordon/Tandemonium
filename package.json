@@ -35,7 +35,7 @@
     "smoke:ctas": "node scripts/smoke-demo-ctas.mjs",
     "smoke:daily": "node scripts/smoke-daily-ride.mjs",
     "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs",
-    "smoke:ranked": "node scripts/smoke-ranked-run.mjs",
+    "smoke:daily-best": "node scripts/smoke-daily-best.mjs",
     "smoke:tutorial": "node scripts/smoke-tutorial-first.mjs",
     "smoke:lookahead": "node scripts/smoke-lookahead.mjs",
     "smoke:ping": "node scripts/smoke-sync-ping.mjs",

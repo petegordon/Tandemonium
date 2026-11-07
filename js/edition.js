@@ -1,5 +1,5 @@
 // ============================================================
-// EDITION — full game vs demo (#400)
+// EDITION — full game vs demo (#400, redefined by #641)
 //
 // The demo is a restricted set of the full game, not a fork. Every place that
 // behaves differently in the demo reads these rules instead of re-parsing the
@@ -16,10 +16,13 @@ export const FULL_RULES = Object.freeze({
   isDemo: false,
   /** Level ids offered in the level lists (lobby + NEXT LEVEL). null = all. */
   levels: null,
-  /** The Daily Ride becomes the "Weekly Ride": one seeded road per ISO week. */
-  weeklyRoad: false,
-  /** Ranked Today's Road runs + leaderboard submission. */
-  ranked: true,
+  /**
+   * #641 · Daily Ride rides a day. null = unlimited. A ride counts when it
+   * starts (a restart is a new ride; a checkpoint retry is not).
+   */
+  dailyRideCap: null,
+  /** #641 · achievements that must be earned before the Daily Ride opens. */
+  dailyNeeds: Object.freeze([]),
   /** Slingshot card + garage. maxStage = last stage playable (null = no cap). */
   slingshot: Object.freeze({ enabled: true, maxStage: null }),
   /** Tourist entries (still also need a Maps key — see tourist-config.js). */
@@ -27,23 +30,67 @@ export const FULL_RULES = Object.freeze({
   /** RIDE TOGETHER (online + couch co-op) and VERSUS. */
   rideTogether: true,
   versus: true,
+  /** #641 · bike colours offered in the chooser. null = all. */
+  bikes: null,
+  /** #641 · achievements this edition can award. null = all 100. */
+  achievements: null,
+  /** Level scores go to the 🏆 leaderboard (game._submitScore). */
+  postScores: true,
 });
 
 /**
- * The demo (#400, Pete 2026-10-04): Tutorial, Grandma's and one road a week.
- * The Slingshot stays in with an early stage gate that points at the full game.
- * Multiplayer stays. These are the knobs to change when the demo is redefined.
+ * #641 · the 20 the demo can award (Pete, 2026-11-07). The rest keep counting
+ * their stats, so they unlock on the full game's first check.
+ */
+export const DEMO_ACHIEVEMENTS = Object.freeze([
+  'first_pedal', 'tutorial_done', 'first_crash', 'first_remount', 'first_boost',
+  'home_sweet', 'grandma_bronze', 'grandma_silver', 'grandma_gold', 'first_km',
+  'new_best', 'daily_first', 'daily_gold', 'sling_first', 'sling_stage3',
+  'jackpot', 'first_upgrade', 'coop_first', 'grandma_orange', 'days_3',
+]);
+
+/**
+ * The demo (#641, Pete 2026-11-07, replacing #400's Weekly Ride): Tutorial,
+ * Grandma's, the real Daily Ride (3 rides a day, opened by finishing the
+ * Tutorial and Grandma's), and the Slingshot to stage 3. Co-op stays; Versus,
+ * Tourist, five bike colours and 80 achievements are the full game's.
  */
 export const DEMO_RULES = Object.freeze({
   isDemo: true,
   levels: Object.freeze(['tutorial', 'grandma', 'daily']),
-  weeklyRoad: true,
-  ranked: false,
+  dailyRideCap: 3,
+  dailyNeeds: Object.freeze(['tutorial_done', 'home_sweet']),
   slingshot: Object.freeze({ enabled: true, maxStage: 3 }),
   tourist: false,
   rideTogether: true,
-  versus: true,
+  versus: false,
+  bikes: Object.freeze(['default', 'bike_orange']),
+  achievements: DEMO_ACHIEVEMENTS,
+  postScores: false,   // as #400: the demo's level scores stay off the 🏆 leaderboard
 });
+
+/** #641 · may this edition award achievement `id`? */
+export function achievementAllowed(rules, id) {
+  return !rules.achievements || rules.achievements.includes(id);
+}
+
+/** #641 · is bike preset `key` offered by this edition? */
+export function bikeAllowed(rules, key) {
+  return !rules.bikes || rules.bikes.includes(key);
+}
+
+/**
+ * #641 · can another Daily Ride start? `started` = rides already started on
+ * today's road, `earnedIds` = the player's earned achievement ids.
+ * @returns {{ok:true, left:number|null} | {ok:false, reason:'needs'|'cap', needs?:string[]}}
+ */
+export function dailyRideGate(rules, started, earnedIds = []) {
+  const needs = (rules.dailyNeeds || []).filter(id => !earnedIds.includes(id));
+  if (needs.length) return { ok: false, reason: 'needs', needs };
+  if (rules.dailyRideCap == null) return { ok: true, left: null };
+  const left = Math.max(0, rules.dailyRideCap - Math.max(0, Math.floor(Number(started) || 0)));
+  return left > 0 ? { ok: true, left } : { ok: false, reason: 'cap' };
+}
 
 /**
  * Is this the demo? `?demo=1` (web demo link, and what electron/main.js
@@ -135,7 +182,8 @@ export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
  * client (the build before this list existed).
  *   tourist      co-op Map Tourists (touristPlan / touristReady barrier)
  *   helpingHand  follows the captain's helping-hand tier (timer scaling)
- *   weeklyRoad   knows the demo's Weekly Ride
+ *   weeklyRoad   knew #400's Weekly Ride. #641 retired that road; the cap
+ *                stays advertised so this build still reads as current.
  *   v2LevelSync  adopts levelSync {difficulty, roadKind, key, seed}; refuses
  *                a level its edition does not allow (levelRefused)
  */
@@ -161,8 +209,8 @@ export function partnerFromProfile(profile) {
 /**
  * The rules a room rides by: the MOST RESTRICTIVE of the two sides. Either
  * player on the demo → DEMO_RULES for both. An OLD partner (or one not heard
- * from yet) → no ranked, no Map Tourists, no helping hand. A partner without
- * the 'tourist' cap → no Map Tourists.
+ * from yet) → no Map Tourists, no helping hand. A partner without the
+ * 'tourist' cap → no Map Tourists.
  * @param {object} mine     this side's FULL_RULES / DEMO_RULES
  * @param {{edition:string, caps:string[]|null}|null} partner
  */
@@ -171,7 +219,6 @@ export function mergeRoomRules(mine, partner) {
   const base = mine.isDemo || (partner && partner.edition === 'demo') ? DEMO_RULES : mine;
   return Object.freeze({
     ...base,
-    ranked: base.ranked && !!caps,
     tourist: base.tourist && !!caps && caps.includes('tourist'),
     helpingHand: !!caps && caps.includes('helpingHand'),
     partnerOld: !caps,
@@ -180,17 +227,17 @@ export function mergeRoomRules(mine, partner) {
 
 /**
  * Stoker: may it ride the level in this levelSync under ITS OWN edition?
- * The road kind is the captain's (`roadKind`); a captain that sends none is
- * an old build, whose shared road is always Today's Road ('daily').
- * @returns {{ok:true, roadKind:'daily'|'weekly'|null} | {ok:false, reason:string}}
+ * #641: there is one shared road again (the Daily Ride), so its kind is
+ * always 'daily'. An old #400 demo captain asking for its 'weekly' road is
+ * refused: this side can't build that road any more.
+ * @returns {{ok:true, roadKind:'daily'|null} | {ok:false, reason:string}}
  */
 export function levelSyncVerdict(rules, level, msg = {}) {
   if (!level) return { ok: false, reason: 'unknown' };
   if (!levelAllowed(rules, level.id)) return { ok: false, reason: rules.isDemo ? 'demo' : 'level' };
   if (!level.isDaily) return { ok: true, roadKind: null };
-  const roadKind = msg.roadKind === 'weekly' ? 'weekly' : 'daily';
-  if (roadKind === 'daily' && rules.weeklyRoad) return { ok: false, reason: 'demo' };
-  return { ok: true, roadKind };
+  if (msg.roadKind === 'weekly') return { ok: false, reason: 'level' };
+  return { ok: true, roadKind: 'daily' };
 }
 
 // ── cached, browser-facing ──────────────────────────────────

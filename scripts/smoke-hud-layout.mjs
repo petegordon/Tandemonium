@@ -40,7 +40,6 @@ async function check(label, viewport) {
     document.getElementById('ping-call').textContent = '3';
     document.getElementById('ping-call').classList.add('show');
     document.getElementById('ping-bubbles').innerHTML = '<div class="ping-bubble">C👍</div>';
-    document.getElementById('ranked-badge').classList.add('show');
     document.getElementById('split-delta').textContent = '+1.3';
     document.getElementById('split-delta').className = 'show behind';
     document.getElementById('ping-row').classList.add('visible');
@@ -51,7 +50,7 @@ async function check(label, viewport) {
     // #576: the visible strip, not #hud-top (a transparent full-width band); on a
     // wide screen the strip is at the left and the badge sits beside it.
     const ids = ['hud-dashboard','coach-card','lookahead','disruption-banner','ping-call','ping-bubbles',
-                 'ranked-badge','split-delta','pedal-bar','sync-row','ping-row','coop-coach'];
+                 'split-delta','pedal-bar','sync-row','ping-row','coop-coach'];
     const out = {};
     for (const id of ids) {
       const el = document.getElementById(id);

@@ -30,7 +30,7 @@ export function key(levelId, difficulty, mode = 'solo') {
 }
 
 /**
- * The level id a record is kept under. Today's Road (and the weekly road) is a
+ * The level id a record is kept under. Today's Road is a
  * different road every day/week, so its record carries the day: yesterday's
  * best is not a target for today's road. The game writes with the resolved
  * level's own key; the lobby card passes today's key (the card's level is the

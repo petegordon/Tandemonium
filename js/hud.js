@@ -238,19 +238,8 @@ export class HUD {
   }
 
   /**
-   * D-2 · say when a ride counts. A ranked run looks exactly like a practice
-   * run from the saddle, and finding out afterwards that the one that counted
-   * was the one you were not trying on would be miserable.
-   */
-  setRankedBadge(on) {
-    const el = this._rankedBadgeEl || (this._rankedBadgeEl = document.getElementById('ranked-badge'));
-    if (el) el.classList.toggle('show', !!on);
-  }
-
-  /**
    * #403 · the helping hand's badge: 💨 (Tier 1) or 🎩 (Tier 2) while a tier is
-   * on, so the easier retry reads as a game mechanic, not a hidden nerf. It sits
-   * where the RANKED RUN badge does — a ranked run never gets help.
+   * on, so the easier retry reads as a game mechanic, not a hidden nerf.
    */
   setHelpBadge(tier, label = '') {
     const el = this._helpBadgeEl || (this._helpBadgeEl = document.getElementById('help-badge'));

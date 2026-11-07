@@ -16,17 +16,13 @@
 // Most conditions read L, so an event anywhere (a payout, a launch, a garage
 // purchase) can earn them without a ride in progress.
 //
-// demo: false marks the 18 rows the spec's Demo column calls full-game only,
-// plus sling_stage5: the spec marks it demo ✓, but DEMO_RULES caps the
-// Slingshot at stage 3, so stage 5 can't be cleared in the demo; and
-// daily_streak_3/7: the demo rides the weekly road, which feeds no day streak
-// (21 in all). double_down left this list with #546: the pot of gold no longer
-// ends the run, so a stage 2-3 run can collect it and go on to a best.
-// `full` says why: an edition rule (js/edition.js · DEMO_RULES) blocks it, or
-// 'scope' — a long-haul goal kept for the full game. The demo never awards
-// them; the stats keep counting, so they unlock on the full game's first check.
+// #641 · the demo awards 20 of these (js/edition.js · DEMO_ACHIEVEMENTS, Pete
+// 2026-11-07); `demo` on each row says whether it is one of them. The demo
+// never awards the other 80, but their stats keep counting, so they unlock on
+// the full game's first check.
 
 import { LEVELS, getMedals } from './race-config.js';
+import { DEMO_ACHIEVEMENTS } from './edition.js';
 import { STAGE_GATES, STAGE_GOALS, UPGRADES, upgradeCost } from './slingshot.js';
 import { medalFor, capMedal } from './records.js';
 
@@ -129,13 +125,13 @@ export const ACHIEVEMENTS = [
   { id: 'ten_k',          section: 'distance', name: 'Ten-K Tandem',     icon: '🔟', desc: 'Ride 10 km in total',                 ...km(10000) },
   { id: 'half_marathon',  section: 'distance', name: 'Half Marathon',    icon: '🎽', desc: 'Ride 21.1 km in total',               ...km(21100) },
   { id: 'marathon',       section: 'distance', name: 'Marathon Geese',   icon: '🏃', desc: 'Ride 42.2 km in total',               ...km(42200) },
-  { id: 'century',        section: 'distance', name: 'Century Ride',     icon: '💯', desc: 'Ride 100 km in total',                ...km(100000), demo: false, full: 'scope' },
+  { id: 'century',        section: 'distance', name: 'Century Ride',     icon: '💯', desc: 'Ride 100 km in total',                ...km(100000) },
 
   // ── 3. Coming back ───────────────────────────────────────
   { id: 'rides_10',       section: 'back', name: 'Regular Rider',        icon: '🚲', desc: 'Go on 10 rides of any kind',          ...count('rides', 10) },
   { id: 'days_3',         section: 'back', name: 'Coming Back',          icon: '📆', desc: 'Ride on 3 different days',            ...count('days', 3), unit: 'days' },
   { id: 'days_7',         section: 'back', name: 'Habit Forming',        icon: '🗓️', desc: 'Ride on 7 different days',           ...count('days', 7), unit: 'days' },
-  { id: 'days_30',        section: 'back', name: 'Lifer',                icon: '🪺', desc: 'Ride on 30 different days',           ...count('days', 30), unit: 'days', demo: false, full: 'scope' },
+  { id: 'days_30',        section: 'back', name: 'Lifer',                icon: '🪺', desc: 'Ride on 30 different days',           ...count('days', 30), unit: 'days' },
 
   // ── 4. Levels and medals ─────────────────────────────────
   { id: 'home_sweet',     section: 'medals', name: 'Home Sweet Home',    icon: '🏠', desc: "Finish Grandma's",          condition: s => s.finishedLevel === 'grandma' },
@@ -145,10 +141,10 @@ export const ACHIEVEMENTS = [
   { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'bronze' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 1 },
   { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'silver' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 2 },
   { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'gold' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 3 },
-  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish the Daily Ride inside its gold time, on any day (practice counts); each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
+  { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish the Daily Ride inside its gold time, on any day; each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
   { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: "Win gold on both timed roads: Grandma's and the Daily Ride",
     condition: (s, L) => MEDAL_LEVELS.every(id => (L.golds || []).includes(id)),
-    progress: L => [MEDAL_LEVELS.filter(id => (L.golds || []).includes(id)).length, MEDAL_LEVELS.length], demo: false, full: 'scope' },
+    progress: L => [MEDAL_LEVELS.filter(id => (L.golds || []).includes(id)).length, MEDAL_LEVELS.length] },
   { id: 'adventurer',     section: 'medals', name: 'Adventurer',         icon: '🧭', desc: 'Finish any level on Adventurous',     condition: s => fin(s) && s.difficulty === 'adventurous' },
   { id: 'daredevil',      section: 'medals', name: 'Daredevil',          icon: '😈', desc: 'Finish any level on Daredevil',       condition: s => fin(s) && s.difficulty === 'daredevil' },
 
@@ -176,9 +172,9 @@ export const ACHIEVEMENTS = [
   { id: 'sling_first',    section: 'sling', name: 'Fire!',               icon: '🪃', desc: 'Launch from the slingshot',            ...count('slingLaunches', 1) },
   { id: 'sling_stage1',   section: 'sling', name: 'Stage One',           icon: '1️⃣', desc: 'Clear Slingshot stage 1 (300 m)',     ...count('slingStage', 1), stage: 1 },
   { id: 'sling_stage3',   section: 'sling', name: 'Getting the Hang of It', icon: '3️⃣', desc: 'Clear Slingshot stage 3',       ...count('slingStage', 3), stage: 3 },
-  { id: 'sling_stage5',   section: 'sling', name: 'Long Shot',           icon: '5️⃣', desc: 'Clear Slingshot stage 5',             ...count('slingStage', 5), stage: 5, demo: false, full: 'slingStage' },   // spec says demo ✓, but the demo stops at stage 3 (edition.js)
-  { id: 'sling_stage7',   section: 'sling', name: 'Slingshot Royalty',   icon: '7️⃣', desc: 'Clear Slingshot stage 7 (1,050 m)',   ...count('slingStage', 7), stage: 7, demo: false, full: 'slingStage' },
-  { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm', demo: false, full: 'slingStage' },
+  { id: 'sling_stage5',   section: 'sling', name: 'Long Shot',           icon: '5️⃣', desc: 'Clear Slingshot stage 5',             ...count('slingStage', 5), stage: 5 },
+  { id: 'sling_stage7',   section: 'sling', name: 'Slingshot Royalty',   icon: '7️⃣', desc: 'Clear Slingshot stage 7 (1,050 m)',   ...count('slingStage', 7), stage: 7 },
+  { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm' },
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
   { id: 'jackpot',        section: 'sling', name: 'Pot of Gold',         icon: '💰', desc: 'Collect the pot of gold',             ...count('jackpots', 1) },   // #546: id kept for saves + Steam
@@ -186,31 +182,31 @@ export const ACHIEVEMENTS = [
   { id: 'full_trail',     section: 'sling', name: 'Full Trail',          icon: '🪙', desc: 'Grab all 5 coins in a trail',         ...count('fullTrails', 1) },
   { id: 'straight_shooter', section: 'sling', name: 'Straight Shooter',  icon: '📐', desc: 'Go 300 m without steering after launch', ...count('straightShots', 1) },
   { id: 'medal_key',      section: 'sling', name: 'Medal Key',           icon: '🗝️', desc: "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7", ...count('medalKeys', 1) },
-  { id: 'daily_launch',   section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1), demo: false, full: 'dailyLaunch' },
-  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days', demo: false, full: 'dailyLaunch' },
+  { id: 'daily_launch',   section: 'sling', name: 'Daily Launch',        icon: '🌅', desc: "Fly the Daily Launch (the Slingshot's daily course)", ...countList('launchDays', 1) },
+  { id: 'launch_week',    section: 'sling', name: 'Launch Week',         icon: '📅', desc: "Fly the Daily Launch on 7 different days", ...countList('launchDays', 7), unit: 'days' },
 
   // ── 9. Tandem Tokens ───────────────────────────────────────
   { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Collect your first Tandem Token',          ...count('coinsEarned', 1) },
   { id: 'coins_1000',     section: 'coins', name: 'Token Purse',         icon: '👛', desc: 'Earn 1,000 Tandem Tokens in total',     ...count('coinsEarned', 1000) },
-  { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Tandem Tokens in total',    ...count('coinsEarned', 10000), demo: false, full: 'scope' },
+  { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Tandem Tokens in total',    ...count('coinsEarned', 10000) },
   { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 200 Tandem Tokens from one regular (non-Slingshot) ride', ...count('bestRideCoins', 200) },
   { id: 'first_upgrade',  section: 'coins', name: 'Tinkerer',            icon: '🔧', desc: 'Buy your first garage upgrade',       ...count('upgrades', 1) },
-  { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny, demo: false, full: 'scope' },
-  { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll, demo: false, full: 'scope' },
+  { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny },
+  { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll },
   { id: 'big_spender',    section: 'coins', name: 'Big Spender',         icon: '💸', desc: 'Spend 1,000 Tandem Tokens in the garage',     ...count('coinsSpent', 1000) },
-  { id: 'rebuilt',        section: 'coins', name: 'Rebuilt',             icon: '♻️', desc: 'Rebuild the bike (prestige) for the first time', ...count('rebuilds', 1), demo: false, full: 'scope' },
-  { id: 'ship_of_theseus', section: 'coins', name: 'Ship of Theseus',    icon: '⛵', desc: 'Rebuild the bike 5 times',            ...count('rebuilds', 5), demo: false, full: 'scope' },
+  { id: 'rebuilt',        section: 'coins', name: 'Rebuilt',             icon: '♻️', desc: 'Rebuild the bike (prestige) for the first time', ...count('rebuilds', 1) },
+  { id: 'ship_of_theseus', section: 'coins', name: 'Ship of Theseus',    icon: '⛵', desc: 'Rebuild the bike 5 times',            ...count('rebuilds', 5) },
 
   // ── 10. Daily Ride ───────────────────────────────────────
-  { id: 'daily_first',    section: 'daily', name: 'Daily Ride',          icon: '📅', desc: "Do your first ranked Daily Ride", condition: s => s.dailyRanked === true, demo: false, full: 'ranked' },
+  { id: 'daily_first',    section: 'daily', name: 'Daily Ride',          icon: '📅', desc: "Finish your first Daily Ride", condition: s => s.finishedLevel === 'daily' },
   { id: 'daily_streak_3', section: 'daily', name: 'Three in a Row',      icon: '🔁', desc: "Take the Daily Ride on 3 days running", condition: (s, L) => n(s.dailyStreak) >= 3 || n(L.dailyDayBest) >= 3,
-    progress: streakProgress(3), unit: 'days', demo: false, full: 'weeklyRoad' },
+    progress: streakProgress(3), unit: 'days' },
   { id: 'daily_streak_7', section: 'daily', name: 'A Week of Roads',     icon: '🔥', desc: "Take the Daily Ride 7 days running", condition: (s, L) => n(s.dailyStreak) >= 7 || n(L.dailyDayBest) >= 7,
-    progress: streakProgress(7), unit: 'days', demo: false, full: 'weeklyRoad' },
+    progress: streakProgress(7), unit: 'days' },
   { id: 'daily_streak_30', section: 'daily', name: 'A Month of Roads',   icon: '☄️', desc: "Take the Daily Ride 30 days running", condition: (s, L) => n(s.dailyStreak) >= 30 || n(L.dailyDayBest) >= 30,
-    progress: streakProgress(30), unit: 'days', demo: false, full: 'scope' },
+    progress: streakProgress(30), unit: 'days' },
   { id: 'daily_share',    section: 'daily', name: 'Show-Off',            icon: '📣', desc: "Share a Daily Ride result",         ...count('shares', 1) },
-  { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 Daily Ride practice runs", ...count('dailyPractice', 10) },
+  { id: 'daily_practice_10', section: 'daily', name: 'Practice Makes Perfect', icon: '🔂', desc: "Finish 10 Daily Rides", ...count('dailyPractice', 10) },
 
   // ── 11. Riding together ──────────────────────────────────
   // A-2: Perfect Sync is reachable by cooperation — each paired beat adds +0.10
@@ -219,10 +215,10 @@ export const ACHIEVEMENTS = [
   { id: 'perfect_sync',   section: 'together', name: 'Perfect Sync',     icon: '🤝', desc: 'Stay in sync for 10 s',     condition: s => s.offsetScore > 0.9 && s.syncDuration >= 10 },
   { id: 'team_player',    section: 'together', name: 'Team Player',      icon: '🤜', desc: '80% or more safe-riding contribution in co-op', condition: s => s.isMultiplayer && s.safePct >= 80 },
   { id: 'pair_10_rides',  section: 'together', name: 'Regulars',         icon: '👫', desc: 'Ride 10 times with the same partner', condition: s => s.pairRides >= 10 },
-  { id: 'pair_100km',     section: 'together', name: 'A Hundred Together', icon: '🛣️', desc: 'Ride 100 km with the same partner', condition: s => s.pairDistanceKm >= 100, demo: false, full: 'scope' },
+  { id: 'pair_100km',     section: 'together', name: 'A Hundred Together', icon: '🛣️', desc: 'Ride 100 km with the same partner', condition: s => s.pairDistanceKm >= 100 },
   { id: 'coop_first',     section: 'together', name: 'The Two of Us',    icon: '💞', desc: 'Finish a co-op ride',                 ...count('coopFinishes', 1) },
   { id: 'social_goose',   section: 'together', name: 'Social Goose',     icon: '🦢', desc: 'Finish co-op rides with 3 different partners', ...countList('partners', 3) },
-  { id: 'standing_date',  section: 'together', name: 'Standing Date',    icon: '💐', desc: 'Keep a 4-week pair streak',           condition: s => n(s.pairWeekStreak) >= 4, demo: false, full: 'scope' },
+  { id: 'standing_date',  section: 'together', name: 'Standing Date',    icon: '💐', desc: 'Keep a 4-week pair streak',           condition: s => n(s.pairWeekStreak) >= 4 },
 
   // ── 12. Versus ───────────────────────────────────────────
   { id: 'versus_first',   section: 'versus', name: 'Rivals',             icon: '⚔️', desc: 'Finish a versus race',                ...count('versusRaces', 1) },
@@ -240,8 +236,8 @@ export const ACHIEVEMENTS = [
   { id: 'gone_with_wind', section: 'chaos', hidden: true, name: 'Gone With the Wind', icon: '🌪️', desc: 'Get pushed by 10 gusts', ...count('gusts', 10) },
 
   // ── 14. Exploring ────────────────────────────────────────
-  { id: 'distance_between_us', section: 'explore', name: 'The Distance Between Us', icon: '📍', desc: 'Finish a Tourist ride', condition: s => s.touristFinished === true, demo: false, full: 'tourist' },
-  { id: 'grand_tour',     section: 'explore', name: 'Grand Tour',        icon: '🗺️', desc: 'Ride 5 km in total in Tourist',       ...count('touristDistance', 5000), unit: 'm', demo: false, full: 'tourist' },
+  { id: 'distance_between_us', section: 'explore', name: 'The Distance Between Us', icon: '📍', desc: 'Finish a Tourist ride', condition: s => s.touristFinished === true },
+  { id: 'grand_tour',     section: 'explore', name: 'Grand Tour',        icon: '🗺️', desc: 'Ride 5 km in total in Tourist',       ...count('touristDistance', 5000), unit: 'm' },
 
   // ── 15. Grandma's in every colour ────────────────────────
   // F-1 hid these (riding the same 250 m seven times); restored 2026-10-20
@@ -256,9 +252,9 @@ export const ACHIEVEMENTS = [
 
   // ── #500 · added after the first 100 (Clean riding section, last in the list); sling_500 Half a Klick was dropped to stay at Steam's 100 cap (stage 3 already needs 540 m) ──
   { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },
-].map(a => ({ demo: true, hidden: false, ...a }));
+].map(a => ({ hidden: false, ...a, demo: DEMO_ACHIEVEMENTS.includes(a.id) }));
 
-/** The ids the demo never awards (the spec's Demo column "—"). */
+/** The ids the demo never awards (#641: everything outside DEMO_ACHIEVEMENTS). */
 export const DEMO_UNEARNABLE = ACHIEVEMENTS.filter(a => !a.demo).map(a => a.id);
 
 export function getDefinition(id) {
@@ -526,8 +522,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
         L.coopFinishes += 1;
         if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       }
-      // The demo's weekly road (d.weekly) is one road a week: it feeds no day streak.
-      if (d.finishedLevel === 'daily' && !d.weekly && today && L.lastDailyDay !== today) {
+      if (d.finishedLevel === 'daily' && today && L.lastDailyDay !== today) {
         const gap = L.lastDailyDay ? daysBetween(L.lastDailyDay, today) : 0;
         L.dailyDayRun = gap === 1 ? L.dailyDayRun + 1 : 1;
         L.dailyDayBest = Math.max(L.dailyDayBest, L.dailyDayRun);

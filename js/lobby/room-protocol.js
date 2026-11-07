@@ -38,7 +38,7 @@ export const RoomProtocol = {
    * rollover must ride the captain's road, not a road of their own.
    *
    * PR #397 M1: `extra` also carries the room's EFFECTIVE road — roadKind
-   * ('daily' | 'weekly') and difficulty — which the stoker adopts instead of
+   * ('daily'; #400's 'weekly' is retired) and difficulty — which the stoker adopts instead of
    * resolving from its own edition. Old stokers read only key/seed.
    */
   levelSync: (levelId, extra = null) =>

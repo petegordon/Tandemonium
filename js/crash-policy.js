@@ -17,14 +17,12 @@ export const STUCK_AFTER_CRASHES = 3;
 /**
  * @param {object} ctx
  * @param {number} ctx.crashesThisSegment  including the one that just happened
- * @param {boolean} [ctx.rankedRun]        a Phase D ranked attempt
  * @param {boolean} [ctx.rideOver]         time-up, or the player pressed END RIDE
  * @returns {{ action: 'resume'|'modal', reason: string }}
  */
 export function decideAfterCrash(ctx) {
   const crashes = ctx.crashesThisSegment || 0;
   if (ctx.rideOver) return { action: 'modal', reason: 'ride-over' };
-  if (ctx.rankedRun) return { action: 'modal', reason: 'ranked' };
   if (crashes >= STUCK_AFTER_CRASHES) return { action: 'modal', reason: 'stuck' };
   return { action: 'resume', reason: 'beat' };
 }

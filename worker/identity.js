@@ -144,7 +144,7 @@ export async function mergeAccounts(env, from, to, deps = {}) {
   await q(`INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, earned_at, score_id)
            SELECT ?, achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?`, to, from);
   await q('DELETE FROM user_achievements WHERE user_id = ?', from);
-  // One ranked daily run per day per mode: keep `to`'s where both rode.
+  // One daily row per day per mode: keep `to`'s where both rode.
   await q('UPDATE OR IGNORE daily_results SET user_id = ? WHERE user_id = ?', to, from);
   await q('DELETE FROM daily_results WHERE user_id = ?', from);
   await q('UPDATE daily_results SET partner_user_id = ? WHERE partner_user_id = ?', to, from);

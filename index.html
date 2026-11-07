@@ -537,13 +537,12 @@
     line-height: 1;
     filter: drop-shadow(0 1px 2px rgba(0,0,0,0.6));
   }
-  /* D-2 · the in-ride "this one counts" badge. */
   /* HUD ZONES (review pass). Everything added in phases A-E was placed
      "top-centre" independently and ended up in a heap: eight overlapping
      elements on desktop, six on a phone. The screen is now divided:
 
        top strip      0 - 90px    #hud-top (speed, sync row, ping row)
-       under strip    92px        #ranked-badge (small, persistent, centred)
+       under strip    92px        #help-badge (small, persistent, centred)
        left edge      centred     #lookahead (a vertical lane map belongs at a side)
        right edge     96px+       #ping-bubbles, then #split-delta
        centre 18%                 #disruption-banner (urgent, transient)
@@ -552,25 +551,7 @@
        above pedals               #coach-card / #coop-coach (never both)
 
      Verified by scripts/smoke-hud-layout.mjs, which fails on any overlap. */
-  #ranked-badge {
-    position: fixed;
-    top: 92px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: none;
-    padding: 3px 10px;
-    border-radius: 999px;
-    background: rgba(255,210,63,0.9);
-    color: #201a00;
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    pointer-events: none;
-    z-index: 56;
-  }
-  #ranked-badge.show { display: block; }
-  /* #403 · the helping hand's badge (💨 / 🎩). Same slot as #ranked-badge: a
-     ranked run never gets help, so the two are never on screen together. */
+  /* #403 · the helping hand's badge (💨 / 🎩). */
   #help-badge {
     position: fixed;
     top: 92px;
@@ -595,35 +576,6 @@
     color: #bfe6ff;
     font-weight: 700;
     font-size: 17px;
-  }
-  /* D-2 · practice / ranked chooser. */
-  #daily-mode-overlay {
-    display: none;
-    position: fixed;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: rgba(8,10,14,0.88);
-    z-index: 120;
-    align-items: center;
-    justify-content: center;
-    padding: 20px;
-  }
-  #daily-mode-overlay.visible { display: flex; }
-  #daily-mode-box {
-    width: 100%;
-    max-width: 340px;
-    text-align: center;
-  }
-  #daily-mode-box h2 { margin: 0 0 4px; font-size: 20px; color: #fff; }
-  #daily-mode-sub { margin: 0 0 16px; font-size: 12px; color: rgba(255,255,255,0.6); }
-  #daily-mode-box uf-button { width: 100%; margin-top: 8px; }
-  #daily-mode-box uf-button[disabled] { opacity: 0.45; cursor: default; }
-  .daily-mode-hint {
-    display: block;
-    margin-top: 3px;
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0;
-    color: rgba(255,255,255,0.5);
   }
   /* D-3 · the shareable result strip. */
   #daily-strip {
@@ -1906,7 +1858,7 @@
     box-sizing: border-box;
   }
   .side-btn:active { filter: brightness(1.4); }
-  /* M4: SAFETY and SPEED are locked on a ranked run. */
+  /* A side button that can't be used right now. */
   .side-btn:disabled { opacity: 0.35; filter: grayscale(1); cursor: not-allowed; }
   #safety-btn {
     grid-area: safety;
@@ -5333,26 +5285,7 @@ ON</button>
   </div>
 </div>
 
-<!-- D-2 · this ride counts. -->
-<div id="ranked-badge">RANKED RUN</div>
 <div id="help-badge" data-tier="0"></div>
-
-<!-- D-2 · Practice or a ranked run, on the Daily Ride only. Shown by the lobby
-     before START RIDE takes effect. The demo build never shows this: it is
-     practice-only there (see game._isDemo). -->
-<div id="daily-mode-overlay">
-  <div id="daily-mode-box">
-    <h2 id="daily-mode-title">Daily Ride</h2>
-    <p id="daily-mode-sub"></p>
-    <uf-button variant="accent" id="btn-daily-ranked">RANKED RUN
-      <span class="daily-mode-hint" id="daily-ranked-hint">One per day. Crashes are fine; ending early is not.</span>
-    </uf-button>
-    <uf-button id="btn-daily-practice">PRACTICE
-      <span class="daily-mode-hint">Unlimited. Nothing recorded but your best.</span>
-    </uf-button>
-    <uf-button id="btn-daily-cancel">&larr; Back</uf-button>
-  </div>
-</div>
 
 <!-- B-4 · signal the two hidden speed sources. -->
 <div id="center-strip-glow"></div>
@@ -6463,7 +6396,6 @@ ON</button>
       <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
       <div id="gameover-coins" class="ride-coins" style="display:none;"></div>
       <div id="gameover-unlocked" class="end-unlocked" hidden></div>
-      <!-- #403 · a failed ranked run: the attempt is spent; ride the road as practice. -->
       <!-- B-5 · the two things a demo player should be able to do next. Shown by
            _updateCtaButtons(); hidden in the full Steam build. -->
       <!-- D-3 · see the victory overlay. -->
@@ -6472,7 +6404,6 @@ ON</button>
     <div slot="actions">
       <uf-button variant="accent" id="btn-restart">RESTART</uf-button>
       <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
-      <uf-button id="btn-practice-help" style="display:none;">&#x1F6DF; Ride it as practice — with a helping hand</uf-button>
       <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
       <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>
       <uf-button id="btn-gameover-clip" style="display:none;">&#x1F3AC; SAVE CLIP</uf-button>
@@ -6530,7 +6461,7 @@ ON</button>
 <!-- #400 · Demo end: NEXT LEVEL after the last road the demo includes. -->
 <div id="demo-end-overlay" style="display:none;">
   <uf-sheet id="demo-end-sheet" open dismissible="false" headline tone="accent" heading="That's the demo!" size="md">
-      <p>The full game has a new road every day, ranked runs and every Slingshot stage.</p>
+      <p>The full game has unlimited Daily Rides, Versus, every bike colour, every Slingshot stage and all 100 achievements.</p>
     <div slot="actions">
       <uf-button variant="accent" class="cta-btn" id="btn-wishlist-demo-end">&#9829; WISHLIST ON STEAM</uf-button>
       <uf-button id="btn-demo-room" style="display:none;">RETURN TO ROOM</uf-button>

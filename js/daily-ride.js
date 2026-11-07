@@ -2,18 +2,27 @@
 // DAILY RIDE (pure) — the road everyone rides today
 // ============================================================
 //
-// C-2 (the practice-only form of plan item D-1). One 500 m road, generated from
-// today's day key, identical for every player in the world until 09:00 UTC.
+// C-2 / #641. One 500 m road, generated from today's day key, identical for
+// every player in the world until 09:00 UTC.
 //
-// In the demo this is practice only: unlimited runs, normal rules, personal
-// bests from B-3. Ranked runs, streaks, the share strip and the partners board
-// are Phase D, on the web build after the demo cut — a fest visitor plays once
-// for about fourteen minutes, so retention machinery would be shipped to nobody.
+// #641 (Pete, 2026-11-07) — one rule for both editions: there is no practice /
+// ranked split. Every ride on the road counts, and your BEST unaided time of
+// the day is the one that goes on the board. The full game rides it as often
+// as it likes; the demo gets three rides a day (edition.js · dailyRideCap).
+// A ride counts when it starts, so this module keeps:
+//
+//   started   rides begun today (a restart is a new ride, a checkpoint retry
+//             is not — the caller decides, see game.js · _startCountdown)
+//   practice  rides FINISHED today (the field keeps its old name so saves from
+//             before #641 still read as finishes for streaks and the card)
+//   best      the fastest unaided finish today (a 🛟 finish counts as a finish
+//             but is not a best — #403)
+//   first     the first ride's result, for the share strip's "first try"
 //
 // DOM-free and storage-agnostic so it can be tested: the store is any object
 // with get(key)/set(key, value).
 
-import { dailyKey, dailySeed, weeklyKey, weeklySeed } from './daily-seed.js';
+import { dailyKey, dailySeed } from './daily-seed.js';
 
 export const STORAGE_KEY = 'tandemonium_daily';
 
@@ -48,41 +57,82 @@ export function formatDayLabel(key) {
 
 /** What has this player done on the given day's road? */
 export function dailyStatus(store, key) {
-  const all = readAll(store);
-  const entry = all[key];
-  // #398: a ranked run goes through recordRanked, not recordPractice, so the
-  // card has to read it from here or the day still says "not ridden yet".
-  const ranked = (entry && entry.ranked) || {};
+  const entry = readAll(store)[key];
   return {
-    practiced: (entry && entry.practice) || 0,
-    best: (entry && entry.best) || null,
-    ranked: { solo: ranked.solo || null, pair: ranked.pair || null }
+    started: (entry && entry.started) || 0,
+    finished: (entry && entry.practice) || 0,
+    best: bestOf(entry),
+    first: firstTryOf(entry)
   };
 }
 
-/**
- * #512 · has this device finished the given day's road (practice, or a ranked
- * run that was not a DNF)? Read BEFORE recording a finish to know whether it is
- * the day's first, which pays the daily habit bonus (js/economy.js · dailyBonus).
- */
-export function finishedToday(store, key) {
+/** Rides started on the given day's road (what the demo's cap counts). */
+export function ridesStarted(store, key) {
   const entry = readAll(store)[key];
-  if (!entry) return false;
-  if (entry.practice > 0) return true;
-  return Object.values(entry.ranked || {}).some(r => r && !r.dnf);
+  return (entry && entry.started) || 0;
 }
 
-/** Count one finished practice run, keeping the day's best time. */
-export function recordPractice(store, key, timeMs) {
+/**
+ * #512 · has this device finished the given day's road? Read BEFORE recording
+ * a finish to know whether it is the day's first, which pays the daily habit
+ * bonus (js/economy.js · dailyBonus).
+ */
+export function finishedToday(store, key) {
+  return hasFinish(readAll(store)[key]);
+}
+
+/**
+ * #641 · a ride on the road has started. Returns this ride's number today
+ * (1 = the first try), which the caller hands back to recordDailyFinish.
+ */
+export function recordRideStart(store, key) {
   const all = readAll(store);
   const entry = all[key] || { practice: 0, best: null };
-  entry.practice += 1;
-  if (typeof timeMs === 'number' && timeMs > 0 && (!entry.best || timeMs < entry.best)) {
-    entry.best = Math.round(timeMs);
+  entry.started = (entry.started || 0) + 1;
+  all[key] = entry;
+  writeAll(store, prune(all, key));
+  return entry.started;
+}
+
+/**
+ * Count one finished ride, keeping the day's best unaided time. `rideNo` is
+ * recordRideStart's number for this ride: ride 1's result is the first try.
+ * @param {{timeMs?:number, helped?:boolean, skipped?:boolean, rideNo?:number}} run
+ */
+export function recordDailyFinish(store, key, run = {}) {
+  const all = readAll(store);
+  const entry = all[key] || { practice: 0, best: null };
+  entry.practice = (entry.practice || 0) + 1;
+  const clean = !run.helped && !run.skipped;
+  const t = run.timeMs;
+  if (clean && typeof t === 'number' && t > 0 && (!entry.best || t < entry.best)) {
+    entry.best = Math.round(t);
+  }
+  if (run.rideNo === 1 && !entry.first) {
+    entry.first = run.skipped ? { skipped: true }
+      : { timeMs: typeof t === 'number' && t > 0 ? Math.round(t) : null, helped: !!run.helped };
   }
   all[key] = entry;
   writeAll(store, prune(all, key));
   return entry;
+}
+
+/** The first ride's result: {timeMs, helped} · {skipped} · {dnf} · null (not ridden / still riding). */
+export function firstTry(store, key) {
+  return firstTryOf(readAll(store)[key]);
+}
+
+function firstTryOf(entry) {
+  if (!entry) return null;
+  if (entry.first) return entry.first;
+  // The first ride ended without a finish once a second one has started.
+  return (entry.started || 0) >= 2 ? { dnf: true } : null;
+}
+
+/** Best time in an entry (a pre-#641 ranked finish already wrote its time here). */
+function bestOf(entry) {
+  if (!entry) return null;
+  return entry.best || null;
 }
 
 /** Drop days older than KEEP_DAYS relative to `todayKey`. */
@@ -104,70 +154,18 @@ export function prune(all, todayKey) {
 export function dailyDescription(status, key) {
   const label = formatDayLabel(key);
   const bits = [label];
-  // #398: the day's ranked run (solo / pair) counts as ridden, with its time
-  // or DNF, so the card shows that the one ranked attempt has been used.
-  const ranked = (status && status.ranked) || {};
-  for (const mode of ['solo', 'pair']) {
-    const r = ranked[mode];
-    if (!r) continue;
-    const name = mode === 'pair' ? 'Pair ranked' : 'Ranked';
-    bits.push(r.dnf || !(r.timeMs > 0) ? `${name} · DNF` : `${name} ✓ ${formatClock(r.timeMs)}`);
-  }
-  if (status && status.practiced) {
-    bits.push(status.practiced === 1 ? 'ridden once' : `ridden ×${status.practiced}`);
+  if (status && status.finished) {
+    bits.push(status.finished === 1 ? 'finished once' : `finished ×${status.finished}`);
     if (status.best) bits.push(`best ${formatClock(status.best)}`);
+  } else if (status && status.started) {
+    bits.push(status.started === 1 ? 'ridden once' : `ridden ×${status.started}`);
   }
   if (bits.length === 1) return `${label} · not ridden yet`;
   return bits.join(' · ');
 }
 
 /** Fixed subtitle explaining the rules, shown under the description. */
-export const DAILY_RULES_LINE = 'Same road for everyone today · new road at 09:00 UTC (05:00 ET)';
-
-// ── #400 · the demo's weekly road ─────────────────────────────────────────
-//
-// In the demo, the Daily Ride becomes the "Weekly Ride": one road per ISO week
-// (keyed by its Monday, see weeklyKey), ridden on Chill with safety on (D10),
-// practice only. The full game is unchanged. Records and practice counts use
-// the Monday's key, so the storage format is the daily one.
-
-export const WEEKLY_NAME = 'Weekly Ride';
-export const WEEKLY_DESCRIPTION = 'A new road every week';
-export const WEEKLY_DIFFICULTY = 'chill';
-export const WEEKLY_RULES_LINE = 'Same road for everyone this week · new road every Monday';
-
-/** The base daily level, presented as the weekly road (no key/seed yet). */
-export function asWeeklyRoad(baseLevel) {
-  return {
-    ...baseLevel,
-    name: WEEKLY_NAME,
-    description: WEEKLY_DESCRIPTION,
-    fixedDifficulty: WEEKLY_DIFFICULTY,
-    isWeekly: true
-  };
-}
-
-/** The weekly road with the week's identity attached (cf. resolveDailyLevel). */
-export function resolveWeeklyLevel(baseLevel, { key, seed } = {}) {
-  const k = key || weeklyKey();
-  const level = resolveDailyLevel(asWeeklyRoad(baseLevel), {
-    key: k, seed: typeof seed === 'number' ? seed : weeklySeed()
-  });
-  level.dateLabel = 'Week of ' + shortWeekLabel(level.key);
-  return level;
-}
-
-/** "Sep 28" from a Monday key. */
-function shortWeekLabel(key) {
-  const label = formatDayLabel(key);
-  return label ? label.split(', ')[1] : '';
-}
-
-/** The card line for the weekly road: what you've done on it this week. */
-export function weeklyDescription(status, key) {
-  const label = 'Week of ' + shortWeekLabel(key);
-  return WEEKLY_DESCRIPTION + '<br>' + dailyDescription(status, key).replace(formatDayLabel(key), label);
-}
+export const DAILY_RULES_LINE = 'Same road for everyone today · your best time counts · new road at 09:00 UTC (05:00 ET)';
 
 // ── storage helpers ───────────────────────────────────────────────────────
 
@@ -195,77 +193,6 @@ export function browserStore() {
     set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } }
   };
 }
-
-// ============================================================
-// D-2 · Ranked runs
-// ============================================================
-//
-// On Today's Road a player chooses Practice (unlimited, normal rules) or a
-// Ranked run — ONE per day per mode. The rules, decided in plan §3 decision 8
-// and stated once here:
-//
-//   - solo and pair are independent: riding alone at lunch does not use up the
-//     evening ride with your partner;
-//   - checkpoint rewinds and restarts are allowed, and cost time, as they do in
-//     every other ride. The one-attempt purity of a Spelunky daily is a bad fit
-//     for a game two people play together on a phone;
-//   - END RIDE consumes the run as a DNF, so a bad start cannot be abandoned
-//     for a re-roll. A crash does not consume it;
-//   - Safety mode stays available. It is recorded and flagged rather than
-//     forbidden — this game's audience includes people who cannot ride without
-//     it, and locking them out of the ranked run locks out the persona.
-//
-// Gated to the web build by the caller: a fest visitor plays once for about
-// fourteen minutes, so a daily ranked run in the demo ships to nobody.
-
-export const MODES = ['solo', 'pair'];
-
-/** Has this player used their ranked run for this day and mode? */
-export function rankedDone(store, key, mode) {
-  const all = readAll(store);
-  const entry = all[key];
-  return !!(entry && entry.ranked && entry.ranked[mode]);
-}
-
-/** The stored ranked result for a day and mode, or null. */
-export function rankedResult(store, key, mode) {
-  const all = readAll(store);
-  const entry = all[key];
-  return (entry && entry.ranked && entry.ranked[mode]) || null;
-}
-
-/**
- * Record a ranked run. Refuses to overwrite an existing one — that refusal is
- * the whole of "one run per day".
- * @returns {{ recorded: boolean, result: object|null }}
- */
-export function recordRanked(store, key, mode, run) {
-  if (!MODES.includes(mode)) return { recorded: false, result: null };
-  const all = readAll(store);
-  const entry = all[key] || { practice: 0, best: null };
-  entry.ranked = entry.ranked || {};
-  if (entry.ranked[mode]) return { recorded: false, result: entry.ranked[mode] };
-
-  entry.ranked[mode] = {
-    timeMs: run.dnf ? null : Math.round(run.timeMs || 0),
-    dnf: !!run.dnf,
-    distance: Math.round(run.distance || 0),
-    collectibles: run.collectibles ?? 0,
-    collectiblesTotal: run.collectiblesTotal ?? 0,
-    crashes: run.crashes ?? 0,
-    safety: !!run.safety,
-    sync: typeof run.sync === 'number' ? Math.round(run.sync * 100) : null,
-    partner: run.partner || null,
-    at: run.at || new Date().toISOString()
-  };
-  if (!run.dnf && run.timeMs > 0 && (!entry.best || run.timeMs < entry.best)) {
-    entry.best = Math.round(run.timeMs);
-  }
-  all[key] = entry;
-  writeAll(store, prune(all, key));
-  return { recorded: true, result: entry.ranked[mode] };
-}
-
 // ============================================================
 // D-5 · Streaks
 // ============================================================
@@ -392,7 +319,8 @@ export function recordPartner(store, key, partnerKey) {
 function hasFinish(entry) {
   if (!entry) return false;
   if (entry.practice > 0) return true;
-  return !!(entry.ranked && Object.keys(entry.ranked).length > 0);
+  // A pre-#641 save: the day's ranked run, if it finished.
+  return Object.values(entry.ranked || {}).some(r => r && !r.dnf);
 }
 
 function longestRun(keysDesc) {
@@ -443,7 +371,10 @@ function shiftKey(key, days) {
  *
  * @param {object} r    { key, mode, timeMs, dnf, distance, raceDistance, medal,
  *                        collectibles, collectiblesTotal, crashes, sync, safety,
- *                        practice, streak, partnerName }
+ *                        streak, partnerName, bestMs, first, rides }
+ *   #641: bestMs = today's best unaided time (shown instead of this ride's
+ *   when it is faster); first = firstTry() — shown as "1st try" once the day
+ *   has more than one ride (rides = rides started today).
  * @param {object} opts { origin }
  */
 export function buildShareStrip(r, opts = {}) {
@@ -458,14 +389,20 @@ export function buildShareStrip(r, opts = {}) {
   const parts = [];
   // The pair marker rides on the time rather than standing as its own field —
   // "👥 2:41" reads as "two of us, 2:41"; "👥 · 2:41" reads as a missing value.
-  const time = r.dnf ? `DNF @ ${Math.round(r.distance || 0)}m` : formatClock(r.timeMs);
+  const best = r.bestMs > 0 && (r.dnf || !(r.timeMs > 0) || r.bestMs < r.timeMs) ? r.bestMs : null;
+  const time = best ? formatClock(best)
+    : r.dnf ? `DNF @ ${Math.round(r.distance || 0)}m` : formatClock(r.timeMs);
   parts.push(r.mode === 'pair' ? `👥 ${time}` : time);
   if (r.medal && MEDALS[r.medal]) parts.push(MEDALS[r.medal]);
   if (r.collectiblesTotal) parts.push(`🎁 ${r.collectibles || 0}/${r.collectiblesTotal}`);
   if (r.crashes) parts.push(`💥 ${r.crashes}`);
   if (r.mode === 'pair' && typeof r.sync === 'number') parts.push(`🔗 ${Math.round(r.sync)}%`);
   if (r.safety) parts.push('🛡️');
-  if (r.practice) parts.push('🏋️');
+  // #641 · the first try, next to the day's best — the one-shot number.
+  if (r.first && (r.rides || 0) > 1) {
+    const f = r.first;
+    parts.push('1st try ' + (f.dnf ? 'DNF' : f.skipped ? '👑' : formatClock(f.timeMs) + (f.helped ? '🛟' : '')));
+  }
   if (r.streak >= 2) parts.push(`🔥 ${r.streak}`);
   const line2 = parts.join(' · ');
 

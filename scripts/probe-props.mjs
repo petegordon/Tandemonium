@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // probe-props.mjs · #478 — what the road props cost to draw: renderer calls and
 // triangles for one frame, and how many of them are presents, cones and
-// Grandma's house, on Grandma's and Today's Road (practice).
+// Grandma's house, on Grandma's and the Daily Ride.
 //
 //   node scripts/probe-props.mjs [--difficulty=daredevil] [--port=8977] [--json=out.json]
 //
@@ -23,9 +23,7 @@ async function ride(levelId) {
   await page.evaluate((id) => document.querySelector(`#level-cards .level-card[data-level-id="${id}"]`).click(), levelId);
   await page.evaluate((d) => { window._game.lobby.selectedDifficulty = d; }, DIFF);
   await sleep(300);
-  await clickId(page, 'btn-start-ride');
-  await sleep(500);
-  await clickId(page, 'btn-daily-practice');
+  await clickId(page, 'btn-start-ride');   // #641: START RIDE starts the Daily Ride too (no chooser)
   await waitState(page, 'playing');
   return page;
 }

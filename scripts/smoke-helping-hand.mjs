@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // smoke-helping-hand.mjs — #403: retries get easier, visibly.
 //
-// On a practice Today's Road, fail checkpoint 2 again and again:
+// On a Daily Ride, fail checkpoint 2 again and again (#641: every Daily ride
+// gets the helping hand; there is no practice / ranked split any more):
 //   attempts 1-3 ride as designed; attempt 4 gets 💨 Lady Victoria (half gusts,
 //   1.25× time); attempt 5 gets 🎩 Sir Winston (no gusts, 1.5× time, safety on);
 //   after the 5th failure the Royal Shortcut is offered — including when that
 //   failure is a timeout. Passing the checkpoint resets it. An assisted finish
 //   gets bronze at most, with 🛟, and does not overwrite an unassisted best.
-//   A failed ranked run offers "Ride it as practice — with a helping hand".
+//   A helped ride is not "clean" (_dailyRideClean false), so its time stays
+//   off the board; a fresh Daily ride starts with the helping hand ready.
 //
 // The ride is frozen in its countdown between steps (headless rendering runs at
 // ~1.4 fps, and an unattended bike would fall over or time out on its own), so
@@ -37,8 +39,8 @@ async function open() {
   return page;
 }
 
-/** Today's Road, solo, as `mode` ('practice' | 'ranked'); returns once riding, frozen. */
-async function rideDaily(page, mode) {
+/** The Daily Ride, solo; returns once riding, frozen. START RIDE starts it (#641). */
+async function rideDaily(page) {
   await page.evaluate(() => {
     document.getElementById('tap-to-start')?.click();
     (document.getElementById('btn-solo') || Array.from(document.querySelectorAll('button, uf-button')).find(x=>/solo/i.test(x.textContent)))?.click();
@@ -46,10 +48,7 @@ async function rideDaily(page, mode) {
   await sleep(600);
   await page.evaluate(() => document.querySelector('.level-card[data-level-id="daily"]')?.click());
   await sleep(300);
-  await page.evaluate((mode) => {
-    document.getElementById('btn-start-ride').click();
-    document.getElementById(mode === 'ranked' ? 'btn-daily-ranked' : 'btn-daily-practice').click();
-  }, mode);
+  await page.evaluate(() => document.getElementById('btn-start-ride').click());
   await page.waitForFunction(() => window._game?.state === 'playing', { timeout: 180000, polling: 200 });
   await page.evaluate(() => {
     const g = window._game;
@@ -129,9 +128,9 @@ async function failByTimeout(page) {
 }
 
 // ── 1. Practice: fail checkpoint 2 again and again ─────────────────────────
-console.log("practice Daily Ride:");
+console.log("Daily Ride:");
 const page = await open();
-await rideDaily(page, 'practice');
+await rideDaily(page);
 const start = await page.evaluate(() => {
   const g = window._game;
   // Ride past checkpoint 1: the stretch to checkpoint 2 is the one we fail.
@@ -141,11 +140,12 @@ const start = await page.evaluate(() => {
   if (ev) g._handleRaceEvent(ev);
   g.state = 'countdown'; g.countdownTimer = 1e9;
   g.raceManager.resetSegmentTimer(cp1 + 5);
-  return { level: g.lobby.selectedLevel.id, ranked: g._rankedRunActive, dda: !!g.ddaManager,
+  return { level: g.lobby.selectedLevel.id, dda: !!g.ddaManager, eligible: g._helpEligible(), helped: g._helpFlags().helped,
            passed: g.raceManager.passedCheckpoints.size, cp1, safety: g.safetyMode };
 });
 console.log('  ride:', JSON.stringify(start));
-check('a practice daily ride with the DDA on, past checkpoint 1', start.level === 'daily' && !start.ranked && start.dda && start.passed === 1);
+check('a daily ride with the DDA on and the helping hand eligible, past checkpoint 1',
+  start.level === 'daily' && start.dda && start.eligible && !start.helped && start.passed === 1);
 
 const base = await probe(page);
 console.log('  attempt 1:', JSON.stringify(base));
@@ -234,45 +234,32 @@ const fin = await page.evaluate(async () => {
   const th = getMedals(g.lobby.selectedLevel.id, g.lobby.selectedDifficulty);
   const summary = { timeMs: th.gold - 1000, distance: 500, raceDistance: 500, collectibles: 0, collectiblesTotal: 0, crashes: 0 };
   const helped = g._helpFlags().helped;
+  const clean = g._dailyRideClean();
   const html = g._buildRecordHtml(summary, false);
   const after = records.getBest(records.load(), k);
-  return { helped, html, outcome: g._lastRecordOutcome, best: after, realBest };
+  return { helped, clean, html, outcome: g._lastRecordOutcome, best: after, realBest };
 });
 console.log('  assisted finish outcome:', JSON.stringify(fin.outcome), 'best:', JSON.stringify(fin.best));
 check('the ride is flagged helped after a tier was on', fin.helped === true);
+check('a helped Daily ride is not clean (its time stays off the board)', fin.clean === false);
 check('a gold-pace assisted finish shows 🛟 BRONZE, not gold',
   /🛟/.test(fin.html) && /BRONZE/.test(fin.html) && !/GOLD/.test(fin.html) && fin.outcome.medal === 'bronze');
 check("it does not overwrite the unassisted best", fin.best.timeMs === fin.realBest && !fin.best.helped && fin.outcome.isNewBest === false);
 await page.close();
 
-// ── 3. A failed ranked run offers practice with a helping hand ──────────────
-console.log('ranked Today\'s Road:');
+// ── 3. #641: a fresh Daily ride gets the helping hand; no practice button ───
+console.log('a fresh Daily Ride:');
 const rp = await open();
-await rideDaily(rp, 'ranked');
-const ranked = await rp.evaluate(() => {
+await rideDaily(rp);
+const fresh = await rp.evaluate(() => {
   const g = window._game;
-  const before = { ranked: g._rankedRunActive, dda: !!g.ddaManager };
-  g._showGameOver();
-  const btn = document.getElementById('btn-practice-help');
-  return { before, shown: btn.style.display !== 'none', text: btn.textContent,
-           help: document.getElementById('gameover-help').style.display };
+  const before = { dda: !!g.ddaManager, eligible: g._helpEligible(), helped: g._helpFlags().helped,
+    chooser: ['daily-mode-overlay', 'btn-daily-ranked', 'btn-daily-practice', 'btn-practice-help'].filter((id) => document.getElementById(id)) };
+  return { before };
 });
-console.log('  ranked game over:', JSON.stringify(ranked));
-check('ranked: no helping hand on the run itself', ranked.before.ranked === true && ranked.before.dda === false && ranked.help === 'none');
-check('ranked failure offers "Ride it as practice — with a helping hand"', ranked.shown && /Ride it as practice — with a helping hand/.test(ranked.text));
-const practice = await rp.evaluate(async () => {
-  const g = window._game;
-  document.getElementById('btn-practice-help').click();
-  const d = await import('./js/daily-ride.js');
-  const key = g.lobby.selectedLevel.key;
-  const entry = d.readAll ? d.readAll(d.browserStore())[key] : null;
-  return { ranked: g._rankedRunActive, dda: !!g.ddaManager, level: g.lobby.selectedLevel.id,
-           spent: d.rankedDone(d.browserStore(), key, 'solo'), entry,
-           overlay: document.getElementById('gameover-overlay').style.display };
-});
-console.log('  after the button:', JSON.stringify(practice));
-check('it spends the ranked run and starts practice on the same road, with the DDA on',
-  practice.ranked === false && practice.dda === true && practice.level === 'daily' && practice.spent && practice.overlay === 'none');
+console.log('  fresh daily ride:', JSON.stringify(fresh));
+check('a fresh Daily ride: DDA on, helping hand eligible, not yet helped', fresh.before.dda && fresh.before.eligible && !fresh.before.helped);
+check('no practice / ranked chooser and no "Ride it as practice" button', fresh.before.chooser.length === 0, fresh.before.chooser);
 
 // ── 4. Segment 1: a retry goes back to the start line through a fresh
 // countdown, and the count must survive it ─────────────────────────────────
