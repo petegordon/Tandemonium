@@ -4260,6 +4260,28 @@
   @media (prefers-reduced-motion: reduce) { .dr-rows { animation: none; } }
   .dr-preview--static { display: grid; place-content: center; box-sizing: border-box; text-align: center; font: 700 var(--uf-size-xl)/1.3 var(--uf-font-ui); color: var(--uf-color-fg); }
   .dr-summary { margin: 0; font: var(--uf-size-sm)/1.35 var(--uf-font-ui); color: var(--uf-color-fg-muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* #612 · the card's account row: Sign in with Discord / QR + code / picture, name, Not me */
+  .dr-account { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 8px; font: var(--uf-size-sm)/1.35 var(--uf-font-ui); }
+  .dr-account[hidden] { display: none; }
+  .dr-account .opt-btn { width: auto; flex: 0 1 auto; }
+  .dr-acc-discord { background: #5865f2 !important; border-color: #5865f2 !important; color: #fff !important; }
+  .dr-acc-discord:disabled { opacity: 0.4; cursor: default; }
+  .dr-acc-wait { flex-basis: 100%; }
+  /* A code showing: make room for the QR (the look summary and the stick hint step aside). */
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-summary,
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-stick-hint { display: none; }
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-preview { min-height: 0; flex-shrink: 1; }
+  .dr-acc-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .dr-acc-pic { width: 1.8em; height: 1.8em; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px var(--uf-color-border, #555); }
+  .dr-acc-pic[data-provider="discord"] { box-shadow: 0 0 0 2px #5865f2; }
+  .dr-acc-pic[data-provider="steam"] { box-shadow: 0 0 0 2px #66c0f4; }
+  .dr-acc-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dr-account[data-state="pending"] { flex-direction: column; }
+  .dr-acc-qr { background: #fff; border-radius: 8px; padding: 5px; line-height: 0; }
+  .dr-acc-qr svg { width: 6.5em; height: 6.5em; display: block; }
+  .dr-acc-steps { margin: 0; padding-left: 1.3em; text-align: left; font-size: var(--uf-size-xs); }
+  .dr-acc-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffd36b; font-size: 1.2em; }
+  .dr-acc-status { margin: 0; font-size: var(--uf-size-xs); color: var(--uf-color-fg-muted); text-align: center; }
   .dr-note { margin: 0; text-align: center; color: var(--uf-color-fg-muted); font-style: italic; }
   .dr-rows { display: grid; gap: 7px; }
   .dr-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); margin-bottom: 5px; }
@@ -5699,6 +5721,7 @@ ON</button>
             <div class="profile-popup-avatars" id="profile-popup-avatars"></div>
             <div class="profile-popup-name" id="profile-popup-name"></div>
             <div class="profile-popup-email" id="profile-popup-email"></div>
+            <div class="profile-popup-sub" id="profile-popup-prompt" hidden>Link Discord to keep your rides and achievements on housetandem.com and sign in on any device.</div>
             <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-link-discord" style="display:none;">LINK DISCORD</button>
             <button class="profile-popup-logout" id="profile-popup-logout">LOG OUT</button>
             <button class="profile-popup-back" id="profile-popup-back">RETURN TO LOBBY</button>
@@ -6105,7 +6128,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.12c3ca7 | 11-06-2026 23:02</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.30081e5 | 11-07-2026 05:54</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

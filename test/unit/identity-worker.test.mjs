@@ -35,7 +35,14 @@ function d1(db) {
     first: async () => db.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...args) }),
   });
-  return { prepare: (sql) => ({ bind: (...args) => bound(sql, args.map((a) => (a === undefined ? null : a))), ...bound(sql, []) }) };
+  return {
+    prepare: (sql) => ({ bind: (...args) => bound(sql, args.map((a) => (a === undefined ? null : a))), ...bound(sql, []) }),
+    batch: async (stmts) => {
+      db.exec('BEGIN');
+      try { for (const s of stmts) db.prepare(s._sql).run(...s._args); db.exec('COMMIT'); } catch (e) { db.exec('ROLLBACK'); throw e; }
+      return stmts.map(() => ({ success: true }));
+    },
+  };
 }
 
 const allow = { limit: async () => ({ success: true }) };
@@ -202,6 +209,44 @@ test('a Steam user created by the old code after the backfill keeps their accoun
     assert.equal(res.user.id, before);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
     assert.deepEqual(Object.keys(res.user.identities), ['steam']);
+  } finally { restore(); }
+});
+
+test('couch co-op: the ride saves for Player 1 and, by their own sign-in, Player 2 (#612 item 5)', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const p2 = await deviceSignIn(env);   // Sam's own Discord sign-in on the Wardrobe card
+    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'stranger', 'Stranger')").run();
+    const stranger = db.prepare("SELECT id FROM users WHERE provider_id = 'stranger'").get().id;
+    const ride = {
+      levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'local',
+      contributions: { captain: { overallPct: 55, userId: stranger }, stoker: { overallPct: 45, userId: stranger, guestDeviceId: 'x' } },
+      newAchievements: ['first_finish'],
+      seats: [{ role: 'stoker', token: p2.token, newAchievements: ['first_finish', 'first_pedal'] }],
+    };
+    const res = await call(env, '/score', { method: 'POST', body: ride, token: p1.token });
+    assert.equal(res.status, 200, await res.clone().text());
+    const rows = db.prepare('SELECT user_id, mode FROM scores ORDER BY id').all().map((r) => [r.user_id, r.mode]);
+    assert.deepEqual(rows, [[p1.user.id, 'captain'], [p2.user.id, 'stoker']]);
+    const contrib = Object.fromEntries(db.prepare('SELECT role, player_user_id FROM score_contributions').all().map((r) => [r.role, r.player_user_id]));
+    assert.deepEqual(contrib, { captain: p1.user.id, stoker: p2.user.id }, 'ids come from the sign-ins, never the body');
+    const ach = db.prepare('SELECT user_id, achievement_id FROM user_achievements ORDER BY user_id, achievement_id').all().map((r) => `${r.user_id}:${r.achievement_id}`);
+    assert.deepEqual(ach, [`${p1.user.id}:first_finish`, `${p2.user.id}:first_finish`, `${p2.user.id}:first_pedal`]);
+    const pair = db.prepare('SELECT user_lo, user_hi, rides FROM pairs').all();
+    assert.equal(pair.length, 1);
+    assert.deepEqual([pair[0].user_lo, pair[0].user_hi].sort(), [String(p1.user.id), String(p2.user.id)].sort());
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM scores WHERE user_id = ?').get(stranger).n, 0);
+
+    // A forged seat token (not signed by us) is ignored; Player 1's ride still saves.
+    const forged = { ...ride, seats: [{ role: 'stoker', token: p2.token.slice(0, -4) + 'AAAA' }] };
+    await new Promise((r) => setTimeout(r, 10));
+    db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
+    const res2 = await call(env, '/score', { method: 'POST', body: forged, token: p1.token });
+    assert.equal(res2.status, 200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM scores WHERE user_id = ?').get(p2.user.id).n, 1, 'no second ride for P2 from a forged token');
   } finally { restore(); }
 });
 

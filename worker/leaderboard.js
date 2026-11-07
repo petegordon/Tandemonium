@@ -297,8 +297,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
 async function submitScore(request, env, corsOrigin, userId) {
   const body = await request.json();
-  const { levelId, distance, timeMs, mode, collectiblesCount, inputSource, contributions, newAchievements,
+  const { levelId, distance, timeMs, collectiblesCount, inputSource, contributions, newAchievements,
           difficulty, safetyUsed, scoreMultiplier } = body;
+  let { mode } = body;
 
   if (!levelId || !distance || !timeMs) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
@@ -310,10 +311,27 @@ async function submitScore(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Invalid level' }, 400, corsOrigin);
   }
 
-  // Validate mode
-  const VALID_MODES = ['solo', 'captain', 'stoker'];
+  // Validate mode. #612: 'local' (couch co-op) is stored as Player 1's captain ride; a
+  // signed-in Player 2 gets their own stoker row from their own sign-in (body.seats).
+  const VALID_MODES = ['solo', 'captain', 'stoker', 'local'];
   if (mode && !VALID_MODES.includes(mode)) {
     return jsonResponse({ error: 'Invalid mode' }, 400, corsOrigin);
+  }
+  const isLocal = mode === 'local';
+  if (isLocal) mode = 'captain';
+
+  // #612 · the seats on this couch who signed in themselves: each token is checked
+  // here, so Player 1's game can't put a ride on anyone else's account.
+  const seatRiders = [];
+  if (isLocal && Array.isArray(body.seats)) {
+    for (const seat of body.seats.slice(0, 3)) {
+      if (!seat || typeof seat.token !== 'string' || !['captain', 'stoker'].includes(seat.role)) continue;
+      let p;
+      try { p = await verifyJWT(seat.token, env.JWT_SECRET); } catch { continue; }
+      const sid = p && p.sub;
+      if (!sid || String(sid) === String(userId) || seatRiders.some((r) => String(r.userId) === String(sid))) continue;
+      seatRiders.push({ userId: sid, role: seat.role, newAchievements: Array.isArray(seat.newAchievements) ? seat.newAchievements.slice(0, 100) : [] });
+    }
   }
 
   // Plausibility checks
@@ -348,6 +366,16 @@ async function submitScore(request, env, corsOrigin, userId) {
   // Batch insert contributions and achievements in a single round-trip
   const batchStmts = [];
 
+  // A local ride's contribution ids come from the checked sign-ins, never the body.
+  if (contributions && isLocal) {
+    for (const [role, stats] of Object.entries(contributions)) {
+      if (!stats || typeof stats !== 'object') continue;
+      const seat = seatRiders.find((r) => r.role === role);
+      stats.userId = role === 'captain' ? userId : (seat ? seat.userId : null);
+      delete stats.guestDeviceId;
+    }
+  }
+
   if (contributions) {
     for (const [role, stats] of Object.entries(contributions)) {
       batchStmts.push(
@@ -378,6 +406,21 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   if (batchStmts.length > 0) {
     await env.DB.batch(batchStmts);
+  }
+
+  // #612 · each signed-in seat's own copy of the ride, and the achievements it earned them.
+  for (const seat of seatRiders) {
+    try {
+      await env.DB.prepare(
+        'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(seat.userId, levelId, distance, timeMs, seat.role, collectiblesCount || 0, inputSource || 'none',
+             difficulty || 'adventurous', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
+      const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
+        env.DB.prepare('INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)').bind(seat.userId, achId, scoreId));
+      if (achStmts.length) await env.DB.batch(achStmts);
+    } catch (err) {
+      console.error('seat ride failed', err);   // Player 1's ride is saved either way
+    }
   }
 
   // D-7 · fold this ride into the pair's history when two riders can be

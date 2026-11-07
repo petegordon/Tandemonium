@@ -279,6 +279,7 @@ export class AchievementManager {
     const ride = this.ride.ref === state.ref ? this.ride.snapshot() : {};
     const s = { ...ride, ...state };
     s.crashes = Math.max(s.crashes || 0, ride.rideCrashes || 0);
+    this.lastFinishState = s;   // #612: a signed-in seat's achievements read the same finish
     this._stats = applyEvent(this._stats, 'finish', s, dailyKey());
     this._saveStats();
     return this._evaluate(s);
