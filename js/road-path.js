@@ -17,6 +17,17 @@ const LOOP_LENGTH = 1200;      // total loop distance
 const CLOSURE_ZONE = 300;      // Hermite spline from (LOOP_LENGTH - CLOSURE_ZONE) to LOOP_LENGTH
 const RAMP_DOWN = 200;         // elevation ramps to 0 over this distance before closure
 
+// The road behind the start line. The road chunks draw 100 m behind the rider,
+// so at the start line the last 100 m of the loop is on screen together with
+// the first 500 m. On some seeds the closure spline hairpinned right beside
+// the start, which drew a second road parallel to the real one, with the
+// "Your Home" sign standing on it (Daily Ride, 2026-11-07). When the closure
+// crowds the start road like that it is rebuilt to aim at a point behind the
+// start and finish on a straight runway into the start line.
+export const START_BEHIND = 100;  // loop drawn behind the start line (m) — road-chunks.js
+export const START_AHEAD = 500;   // road drawn ahead of the start line (m)
+export const START_CLEARANCE = 15; // min gap between that tail and the start road (m)
+
 export class RoadPath {
   constructor(seed = 42) {
     this._seed = seed;
@@ -51,6 +62,36 @@ export class RoadPath {
 
     // Build closure spline for [900, 1200]
     this._buildClosure();
+
+    // A tail that crowds the start road is rebuilt with a straight runway.
+    // Roads whose tail was already clear (seed 42 among them) are untouched.
+    if (!this.startIsClear()) {
+      this._cache.length = Math.round(randomEnd / SAMPLE_STEP) + 1;
+      this._buildClosure(START_BEHIND);
+    }
+  }
+
+  /**
+   * Is the start of the ride free of a second road? Checks the tail of the
+   * loop (the START_BEHIND m drawn behind the rider at the start line) against
+   * the first START_AHEAD m of road. A tail point only belongs there when it
+   * is the approach: behind the start line, inside a 45° cone, meeting the
+   * first few metres of road.
+   * @returns {boolean}
+   */
+  startIsClear() {
+    const L = LOOP_LENGTH;
+    const step = 1;
+    for (let b = L - START_BEHIND; b < L; b += step) {
+      const q = this.getPointAtDistance(b);
+      const onApproach = q.z <= 0 && Math.abs(q.x) <= -q.z;
+      for (let a = 0; a <= START_AHEAD; a += step) {
+        if (onApproach && a <= START_CLEARANCE + 5) continue;
+        const p = this.getPointAtDistance(a);
+        if (Math.hypot(p.x - q.x, p.z - q.z) < START_CLEARANCE) return false;
+      }
+    }
+    return true;
   }
 
   _ensureControlPoints(upToD) {
@@ -133,8 +174,14 @@ export class RoadPath {
     this._cacheMaxD = d - SAMPLE_STEP;
   }
 
-  _buildClosure() {
-    const closureStart = LOOP_LENGTH - CLOSURE_ZONE; // 900
+  /**
+   * Hermite spline from the end of the random road back to the start line.
+   * With `runway` > 0 the spline aims at a point `runway` m behind the start
+   * (heading 0) and the loop then runs straight into the start line.
+   * @param {number} runway
+   */
+  _buildClosure(runway = 0) {
+    const splineLength = CLOSURE_ZONE - runway;
 
     // Get state at end of random portion
     const lastEntry = this._cache[this._cache.length - 1];
@@ -143,17 +190,19 @@ export class RoadPath {
     const p0y = lastEntry.y;
     const h0 = lastEntry.heading;
 
-    // Target: origin at heading 0
+    // Target: origin (or the head of the runway) at heading 0
     const p1x = 0;
-    const p1z = 0;
+    const p1z = runway > 0 ? -runway : 0;
     const p1y = 0;
     const h1 = 0; // heading at d=0
 
-    // Distance from last point to origin
-    const distToOrigin = Math.sqrt(p0x * p0x + p0z * p0z);
+    // Distance from last point to the target
+    const tx = p0x - p1x;
+    const tz = p0z - p1z;
+    const distToOrigin = Math.sqrt(tx * tx + tz * tz);
 
     // Tangent scale for Hermite: big enough for smooth curve
-    const tangentScale = Math.max(CLOSURE_ZONE * 0.35, distToOrigin * 0.5);
+    const tangentScale = Math.max(splineLength * 0.35, distToOrigin * 0.5);
 
     // Hermite tangent vectors (direction from heading, scaled)
     const m0x = Math.sin(h0) * tangentScale;
@@ -162,7 +211,7 @@ export class RoadPath {
     const m1z = Math.cos(h1) * tangentScale;
 
     // Sample closure zone in SAMPLE_STEP increments
-    const numSteps = Math.round(CLOSURE_ZONE / SAMPLE_STEP);
+    const numSteps = Math.round(splineLength / SAMPLE_STEP);
 
     for (let i = 1; i <= numSteps; i++) {
       const t = i / numSteps;
@@ -196,6 +245,12 @@ export class RoadPath {
       const heading = Math.atan2(dxdt, dzdt);
 
       this._cache.push({ x, y, z, heading });
+    }
+
+    // The straight runway into the start line.
+    const runwaySteps = Math.round(runway / SAMPLE_STEP);
+    for (let i = 1; i <= runwaySteps; i++) {
+      this._cache.push({ x: 0, y: 0, z: -runway + i * SAMPLE_STEP, heading: 0 });
     }
 
     this._cacheMaxD = LOOP_LENGTH;
