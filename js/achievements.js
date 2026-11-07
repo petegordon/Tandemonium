@@ -17,8 +17,7 @@ import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
   ACHIEVEMENTS, SECTIONS, STATS_VERSION,
-  migrateStats, applyEvent, seedStats, RideTracker, versusResult, migrateEarned,
-} from './achievement-defs.js';
+  migrateStats, applyEvent, seedStats, RideTracker, versusResult, migrateEarned, foldBests, bestProgress } from './achievement-defs.js';
 
 export { ACHIEVEMENTS, SECTIONS };
 
@@ -184,6 +183,15 @@ export class AchievementManager {
   _evaluate(state) {
     const newlyEarned = [];
     const demo = this.demo;
+    // Best-so-far values (top speed, longest steady stretch, …): kept for the lobby's progress (Pete 2026-11-07).
+    // Saved when a whole unit improves or at a finish, not every frame.
+    const folded = foldBests(this._stats, state, new Set(this._earned.keys()));
+    if (folded !== this._stats) {
+      const prev = this._stats.bests;
+      this._stats = folded;
+      const crossed = Object.keys(folded.bests).some(k => Math.floor(folded.bests[k]) > Math.floor(prev[k] || 0));
+      if (crossed || (state && state.finishedLevel)) this._saveStats();
+    }
     for (const ach of ACHIEVEMENTS) {
       if (this._earned.has(ach.id)) continue;
       if (demo && !ach.demo) continue;
@@ -332,8 +340,9 @@ export class AchievementManager {
   getAllDefinitions() {
     const demo = this.demo;
     // The day-streak badges read the streak held today (m6).
-    let live = { dailyStreak: 0 };
-    try { live = { dailyStreak: computeStreak(browserStore(), dailyKey()).current }; } catch (e) {}
+    let live = { dailyStreak: 0, wallet: null };
+    try { live.dailyStreak = computeStreak(browserStore(), dailyKey()).current; } catch (e) {}
+    try { const w = localStorage.getItem(WALLET_KEY); live.wallet = w ? sanitizeWallet(JSON.parse(w)) : null; } catch (e) {}
     return ACHIEVEMENTS
       .map((a, i) => {
         const record = this._earned.get(a.id);
@@ -342,7 +351,10 @@ export class AchievementManager {
         let progress = null;
         if (!earned && !secret && a.progress) {
           try { progress = a.progress(this._stats, live); } catch (e) { progress = null; }
+        } else if (!earned && !secret && a.best) {
+          progress = bestProgress(a, this._stats);
         }
+        const bestAt = a.best && this._stats.bestsAt ? this._stats.bestsAt[a.id] || null : null;
         return {
           id: a.id,
           n: i + 1,                                   // #540: "No. 12 of 100" on the detail card
@@ -357,7 +369,8 @@ export class AchievementManager {
           progress,
           unit: a.unit || '',
           demoLocked: demo && !a.demo,
-          medal: a.medal || null,                      // { level, rank }: the detail card prints the live times
+          medal: a.medal || null,
+          bestAt,                                      // { level, at }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
         };
       });
   }
@@ -403,6 +416,9 @@ export class AchievementManager {
 // Toast notification
 let _toastContainer = null;
 
+/** Unlocked-this-ride badges shown with their names; beyond this the end screen shows icons only. */
+export const END_LIST_NAMES_MAX = 10;
+
 export function showAchievementToast(achievement) {
   if (!_toastContainer) {
     _toastContainer = document.getElementById('achievement-toast-container');
@@ -421,7 +437,10 @@ export function showAchievementToast(achievement) {
   const endList = document.querySelector('#victory-overlay.visible #victory-unlocked, #gameover-overlay:not([style*="none"]) #gameover-unlocked');
   if (endList) {
     endList.hidden = false;
+    badge.title = achievement.name || '';
     endList.appendChild(badge);
+    // Pete (Steam playtest 2026-11-07): more than 10 unlocked in one ride shows icons only (the names in tooltips)
+    endList.classList.toggle('icons-only', endList.querySelectorAll('uf-achievement').length > END_LIST_NAMES_MAX);
     return;
   }
   const toast = document.createElement('div');

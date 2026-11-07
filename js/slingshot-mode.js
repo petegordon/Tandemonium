@@ -622,6 +622,8 @@ class SlingshotMode {
       coins: run.coins,
       distance: sling.runDistance(this.bike.distanceTraveled),
       goal: daily ? null : sling.stageGoal(this._slingPlayStage()),
+      stage: daily ? null : this._slingPlayStage(),   // Pete 2026-11-07: "how do I tell what stage I'm in?"
+      stages: sling.STAGE_GOALS.length,
       best: daily ? sling.dailyLaunchStatus(this._slingSave, daily.key).best : 0,
     });
   }

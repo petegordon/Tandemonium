@@ -13,6 +13,10 @@
 //   AD-05  Unlocked shows its date; a counter shows its progress with a bar; a
 //          hidden one stays ??? / "Hidden".
 //   AD-06  B closes the Achievements sheet.
+//   AD-08  Hold to scroll (Steam playtest 2026-11-07): a d-pad tap moves one
+//          row; holding ↓ ~1.5 s runs past No. 40 with the focus in view;
+//          releasing stops; the left stick holds the same way; LB / RB jump
+//          a section (and leave the bike alone).
 //   AD-07  Phone: the ⭐ toggle opens the sheet; a tap on a badge opens its
 //          card, which fits the phone; Close returns to the grid.
 import { startHarness } from './lib/smoke-harness.mjs';
@@ -142,6 +146,64 @@ const blur = await page.evaluate(() => {
 });
 check(blur.every((b) => b.filter === 'none' && b.anims === 0), 'AD-04 the grid is sharp again once the card closes (no blur left on it)', blur);
 await h.shot(page, '2b-tv-after-close');
+
+// ── AD-08 · hold to scroll fast; LB / RB jump a section ──
+const achAt = () => page.evaluate(() => {
+  const items = Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item'));
+  const f = document.querySelector('#achievements-modal .lb-ach-item.gamepad-focus');
+  const body = document.getElementById('achievements-modal').querySelector('.uf-sheet__body').getBoundingClientRect();
+  const r = f ? f.getBoundingClientRect() : null;
+  return { i: f ? items.indexOf(f) : -1, top: r ? Math.round(r.top) : null, inView: !!r && r.top >= body.top - 1 && r.bottom <= body.bottom + 1,
+    section: f ? f.closest('.lb-ach-section')?.dataset.section : null, bike: window._game.lobby._presetIndex ?? null };
+});
+const toTop = async () => {
+  await page.evaluate(() => { const L = window._game.lobby; L._achievementsSheet.body.scrollTop = 0; L._achResetFocus(); });
+  await new Promise((r) => setTimeout(r, 300));
+};
+await toTop();
+const t0 = await achAt();
+await pads.press(0, 'DOWN', 160);
+await new Promise((r) => setTimeout(r, 600));
+const t1 = await achAt();
+const perRow = await page.evaluate(() => {
+  const items = Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item'));
+  const top0 = Math.round(items[0].getBoundingClientRect().top);
+  return items.filter((el) => Math.round(el.getBoundingClientRect().top) === top0).length;
+});
+check(t0.i === 0 && t1.i > 0 && t1.i <= perRow && t1.top > t0.top, 'AD-08 a d-pad tap moves one row', { t0, t1, perRow });
+await toTop();
+await pads.hold(0, 'DOWN', true);
+await new Promise((r) => setTimeout(r, 1500));
+await pads.hold(0, 'DOWN', false);
+await new Promise((r) => setTimeout(r, 120));
+const h1 = await achAt();
+await new Promise((r) => setTimeout(r, 700));
+const h2 = await achAt();
+check(h1.i >= 40 && h1.inView, 'AD-08 holding d-pad ↓ for 1.5 s runs past No. 40, the focused badge in view', h1);
+check(h2.i === h1.i, 'AD-08 releasing stops on that badge', { h1, h2 });
+await h.shot(page, '2c-tv-held-down');
+await toTop();
+await pads.stick(0, 'LY', 0.9);
+await new Promise((r) => setTimeout(r, 1500));
+await pads.stick(0, 'LY', 0);
+await new Promise((r) => setTimeout(r, 120));
+const s1 = await achAt();
+await new Promise((r) => setTimeout(r, 500));
+const s2 = await achAt();
+check(s1.i >= 40 && s1.inView && s2.i === s1.i, 'AD-08 holding the left stick ↓ does the same, and stops on release', { s1, s2 });
+await toTop();
+const bikeBefore = (await achAt()).bike;
+await pads.press(0, 'RB', 160); await new Promise((r) => setTimeout(r, 300));
+const r1 = await achAt();
+await pads.press(0, 'RB', 160); await new Promise((r) => setTimeout(r, 300));
+const r2 = await achAt();
+await pads.press(0, 'LB', 160); await new Promise((r) => setTimeout(r, 300));
+const l1 = await achAt();
+const secs = await page.evaluate(() => Array.from(document.querySelectorAll('#achievements-modal .lb-ach-section')).map((s) => ({ id: s.dataset.section, first: Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item')).indexOf(s.querySelector('.lb-ach-item')) })));
+check(r1.section === secs[1].id && r1.i === secs[1].first && r2.section === secs[2].id && r2.i === secs[2].first && l1.section === secs[1].id && l1.i === secs[1].first && r2.inView,
+  'AD-08 RB jumps to the next section’s first badge, LB back', { r1, r2, l1, secs: secs.slice(0, 3) });
+check(l1.bike === bikeBefore, 'AD-08 LB / RB over the sheet leave the bike colour alone', { bikeBefore, after: l1.bike });
+await toTop();
 
 // ── AD-05 · unlocked date, progress bar, hidden ──
 const open = async (id) => {
