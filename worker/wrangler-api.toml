@@ -10,7 +10,7 @@ database_name = "tandemonium-leaderboard"
 database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
-CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com"
+CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
 # #612: House Tandem Discord application (sign-in). DISCORD_CLIENT_SECRET is a secret.
 DISCORD_CLIENT_ID = "1568461616578699348"
 # #612 · the House Tandem players' Discord: membership shows on the account page (needs the
