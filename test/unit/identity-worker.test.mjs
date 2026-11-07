@@ -380,3 +380,67 @@ test('Steam web sign-in refuses forged, replayed or foreign answers', async () =
     assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 410);
   } finally { ok.restore(); }
 });
+
+test('deleting an account removes every record on it; the partner keeps their own ride', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    await deviceSignIn(env, p1.token);   // Pete links Discord: two sign-ins on one account
+    // Sam, the couch partner, has their own account.
+    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
+    const sam = db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id;
+
+    // A couch ride: Pete (P1) and Sam (P2) both credited; plus daily, friends, pairs.
+    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 1200, 200000, 'captain')").run(p1.user.id);
+    const s1 = db.prepare('SELECT id FROM scores WHERE user_id = ?').get(p1.user.id).id;
+    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 1200, 200000, 'stoker')").run(sam);
+    const s2 = db.prepare('SELECT id FROM scores WHERE user_id = ?').get(sam).id;
+    for (const s of [s1, s2]) {
+      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id) VALUES (?, 'captain', ?)").run(s, p1.user.id);
+      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id) VALUES (?, 'stoker', ?)").run(s, sam);
+    }
+    db.prepare("INSERT INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, 'first_finish', ?)").run(p1.user.id, s1);
+    db.prepare("INSERT INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, 'first_finish', ?)").run(sam, s2);
+    db.prepare("INSERT INTO daily_results (user_id, day_key, mode, partner_user_id) VALUES (?, '2026-11-07', 'pair', ?)").run(p1.user.id, sam);
+    db.prepare("INSERT INTO daily_results (user_id, day_key, mode, partner_user_id) VALUES (?, '2026-11-07', 'pair', ?)").run(sam, p1.user.id);
+    db.prepare('INSERT INTO friends (user_id, friend_id) VALUES (?, ?)').run(sam, p1.user.id);
+    db.prepare('INSERT INTO pairs (user_lo, user_hi, rides) VALUES (?, ?, 1)').run(String(Math.min(p1.user.id, sam)), String(Math.max(p1.user.id, sam)));
+
+    // Without the typed confirmation, nothing happens.
+    assert.equal((await call(env, '/me/delete', { method: 'POST', body: {}, token: p1.token })).status, 400);
+    assert.equal((await call(env, '/me/delete', { method: 'POST', body: { confirm: 'delete' } , token: p1.token })).status, 400);
+    assert.equal((await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' } })).status, 401);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(p1.user.id).n, 1);
+
+    const res = await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' }, token: p1.token });
+    assert.equal(res.status, 200, await res.clone().text());
+    const out = await res.json();
+    assert.equal(out.deleted, true);
+    assert.equal(out.rides, 1);
+    const id = p1.user.id;
+    const n = (sql, ...a) => db.prepare(sql).get(...a).n;
+    assert.equal(n('SELECT COUNT(*) n FROM users WHERE id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM user_identities WHERE user_id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM scores WHERE user_id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM score_contributions WHERE player_user_id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM user_achievements WHERE user_id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? OR partner_user_id = ?', id, id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM friends WHERE user_id = ? OR friend_id = ?', id, id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM pairs WHERE user_lo = ? OR user_hi = ?', String(id), String(id)), 0);
+    // Sam keeps their own ride, achievement and daily result, with Pete taken off.
+    assert.equal(n('SELECT COUNT(*) n FROM scores WHERE user_id = ?', sam), 1);
+    assert.equal(n('SELECT COUNT(*) n FROM user_achievements WHERE user_id = ?', sam), 1);
+    assert.equal(n('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? AND partner_user_id IS NULL', sam), 1);
+    assert.equal(n('SELECT COUNT(*) n FROM score_contributions WHERE score_id = ? AND player_user_id IS NULL', s2), 1);
+
+    // The old session is refused with a code the game understands; Steam sign-in starts fresh.
+    const me = await call(env, '/me', { token: p1.token });
+    assert.equal(me.status, 401);
+    assert.equal((await me.json()).code, 'account_gone');
+    const again = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    assert.notEqual(again.user.id, id);
+    assert.deepEqual(Object.keys(again.user.identities), ['steam'], 'a fresh account: Discord is not brought back');
+  } finally { restore(); }
+});
