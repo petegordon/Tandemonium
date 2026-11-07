@@ -226,11 +226,11 @@ ipcMain.handle('app:display', (e) => {
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
 ipcMain.handle('steam:input:xinputMap', () => steamXInputMap);
-// #617 · Steam Controller haptics and light. A Steam Controller read over WebHID has no
-// rumble command of the game's own, so the renderer also asks Steam: TriggerVibration on
-// a handle from the XInput-slot map (Steam renders it as the controller's haptics),
-// stopped after ms; SetLEDColor with the player's light colour. Only handles listed in
-// that map are accepted.
+// #617 · Steam Controller haptics. A Steam Controller read over WebHID has no rumble
+// command of the game's own, so the renderer also asks Steam: TriggerVibration on a handle
+// from the XInput-slot map (Steam renders it as the controller's haptics), stopped after
+// ms. Only handles listed in that map are accepted. (SetLEDColor did nothing on a Steam
+// Controller and was removed, #623.)
 const _vibrateStops = new Map();
 let _diagVibrateOnce = false;
 function _knownSteamHandle(h) {
@@ -251,13 +251,7 @@ ipcMain.on('steam:input:vibrate', (_e, m) => {
     try { steam.input.triggerVibration(handle, 0, 0); } catch (e) { /* controller gone */ }
   }, Math.max(20, Math.min(2000, Number(m.ms) || 100))));
 });
-ipcMain.on('steam:input:led', (_e, m) => {
-  const handle = _knownSteamHandle(m && m.handle);
-  if (handle == null) return;
-  const c = (v) => Math.max(0, Math.min(255, v | 0));
-  try { steam.input.setLEDColor(handle, c(m.r), c(m.g), c(m.b), 0); }
-  catch (err) { _diagLog('[SteamInput] SetLEDColor failed: ' + err.message); }
-});
+
 // B4c: preload reads this synchronously at load so js/edition.js sees
 // window.tandemoniumSteam.isDemo before the first getEditionRules() call.
 ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });

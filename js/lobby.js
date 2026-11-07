@@ -38,6 +38,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
+import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamTwinPad } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
@@ -1298,7 +1299,7 @@ export class Lobby {
         // B-4: the captain picks the run's placement salt and ships it with
         // the start message, so both riders meet the same pylons.
         this._placementSalt = makePlacementSalt();
-        this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, this.selectedLevel?.seed ?? null));
+        this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, this.selectedLevel?.seed ?? null, false, this.selectedDifficulty));
         this._transitionToGame();
       } else if (this._pendingMode === 'local') {
         // Local same-screen co-op: hand off the pre-constructed P2 InputManager
@@ -1846,7 +1847,7 @@ export class Lobby {
       this._roomTouristPlan = plan;
       this._placementSalt = makePlacementSalt();
       this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor));
-      this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true));
+      this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true, this.selectedDifficulty));
       analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
       this._transitionToGame();
       return;
@@ -4647,7 +4648,8 @@ export class Lobby {
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
       // This device lost its seat (the room was opened somewhere else): say that, not "partner".
-      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else') : 'Partner disconnected';
+      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else')
+        : reason === PARTNER_LEFT_REASON ? reason : 'Partner disconnected';
       if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
       if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';
@@ -5130,6 +5132,8 @@ export class Lobby {
       if (typeof profile.worldSeed === 'number' && this.selectedLevel) {
         this.selectedLevel = { ...this.selectedLevel, seed: profile.worldSeed };
       }
+      // #623: ride the captain's difficulty, whatever this screen last had.
+      if (typeof profile.difficulty === 'string' && profile.difficulty) this._adoptDifficulty(profile.difficulty);
       this._transitionToGame();
     }
   }
@@ -7098,7 +7102,8 @@ export class Lobby {
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
       // This device lost its seat (the room was opened somewhere else): say that, not "partner".
-      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else') : 'Partner disconnected';
+      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else')
+        : reason === PARTNER_LEFT_REASON ? reason : 'Partner disconnected';
       if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
       if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';

@@ -138,6 +138,8 @@ const buzz2 = await until(page, () => (window._game.lobby._room.cards.get(2).buz
 await new Promise((r) => setTimeout(r, 900));
 const buzzN = await page.evaluate(() => window._game.lobby._room.cards.get(2).buzzCount);
 check(buzz2 && buzzN === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', buzzN);
+const noteGone = await until(page, () => { const h = document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint'); return !!h && h.textContent === ''; }, null, 6000);
+check(noteGone, '#623: "Buzzing Player 2\'s controller…" clears once the buzz is over', await page.evaluate(() => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent));
 const hints = await page.evaluate(() => ({
   shown: [...document.querySelectorAll('#dr-cards .dr-card')].map((el) => [el.dataset.n, !el.querySelector('.dr-stick-hint').hidden, el.querySelector('.dr-stick-hint').textContent]),
   label: document.querySelector('#dr-buzz .dr-buzz-label')?.textContent.replace(/\s+/g, ' ').trim(),
@@ -378,6 +380,23 @@ console.log('WD-08 four players editing at 1280×720');
   await press(1);   // Back = Ready
   const readied = await p.evaluate(() => window.__phoneRoom.states()[2]);
   check(edited === 'editing' && moved && readied === 'ready', "WD-09: the phone's OK edits, its D-pad moves, its Back readies", { edited, moved, readied });
+  // #623 · no Controller light row where there is no light to set: a phone, a Steam Controller.
+  const lightRows = await p.evaluate(() => {
+    const r = window.__phoneRoom;
+    const phoneCard = r.cards.get(2);
+    r._setState(phoneCard, 'editing');
+    const phone = !!phoneCard.el.querySelector('.dr-group[data-group="led"]');
+    r._setState(phoneCard, 'ready');
+    // A Steam Controller seat: its driver is the one with needsSiblingFanout.
+    class SteamControllerDriver { static needsSiblingFanout = true; }
+    const pad = window.__phonePad;
+    const steamIn = { gamepadConnected: true, getGamepadState: () => pad, _gpSwapAB: false, _controllerDriver: new SteamControllerDriver(), _gpName: 'Steam Controller' };
+    const dsIn = { gamepadConnected: true, getGamepadState: () => pad, _gpSwapAB: false, _controllerDriver: {}, _gpName: 'DualSense' };
+    const sc = { n: 3, player: { n: 3, input: steamIn, type: 'gamepad', label: 'Steam', team: null, seat: 'Captain' }, type: 'gamepad' };
+    const ds = { n: 4, player: { n: 4, input: dsIn, type: 'gamepad', label: 'DualSense', team: null, seat: 'Captain' }, type: 'gamepad' };
+    return { phone, steam: r._hasLight(sc), dualsense: r._hasLight(ds) };
+  });
+  check(!lightRows.phone && !lightRows.steam && lightRows.dualsense, '#623: no Controller light row for a phone or a Steam Controller (a DualSense keeps it)', lightRows);
   await p.evaluate(() => window.__phoneRoom.close('test'));
   await p.close();
 }

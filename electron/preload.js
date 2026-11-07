@@ -59,9 +59,8 @@ contextBridge.exposeInMainWorld('steam', {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
     getXInputMap: () => _steamXInputMap,
     getFullDiag: () => ipcRenderer.invoke('steam:input:fullDiag'),
-    // #617 · Steam Controller haptics + light, by a Steam Input handle from getXInputMap().
+    // #617 · Steam Controller haptics, by a Steam Input handle from getXInputMap().
     // strong / weak 0..1; main stops the vibration after ms.
     vibrate: (handle, strong, weak, ms) => ipcRenderer.send('steam:input:vibrate', { handle: String(handle), strong: +strong || 0, weak: +weak || 0, ms: +ms || 0 }),
-    setLed: (handle, r, g, b) => ipcRenderer.send('steam:input:led', { handle: String(handle), r: r | 0, g: g | 0, b: b | 0 }),
   },
 });
