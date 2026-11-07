@@ -7,6 +7,9 @@ export { UfElement, prop, coerce, esc, kebab } from './uf-element.js';
 export { FocusController } from './focus-controller.js';
 export { GamepadInput, ManualInput } from './inputs.js';
 // uf:elements — the scaffolder appends one line per element below this marker.
+export { UfAchievementSheet } from './elements/uf-achievement-sheet.js';
+export { UfAchievementDetail } from './elements/uf-achievement-detail.js';
+export { UfAchievementGrid } from './elements/uf-achievement-grid.js';
 export { UfPips } from './elements/uf-pips.js';
 export { UfPlayerCard } from './elements/uf-player-card.js';
 export { UfAchievement } from './elements/uf-achievement.js';
@@ -27,3 +30,4 @@ export { UfSeat } from './elements/uf-seat.js';
 export { UfFlow } from './elements/uf-flow.js';
 export { UfStep } from './elements/uf-step.js';
 export { UfButton } from './elements/uf-button.js';
+export { UfPerson, personTag, PERSON_SOURCES } from './elements/uf-person.js';

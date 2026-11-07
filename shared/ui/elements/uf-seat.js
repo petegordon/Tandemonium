@@ -22,6 +22,7 @@
 // "JOIN AS PLAYER 2" buttons (docs/UI-KIT-TV-COMPONENTS.md §5).
 
 import { UfElement, prop, esc } from '../uf-element.js';
+import { personTag } from './uf-person.js';
 
 export class UfSeat extends UfElement {
   /** @override */ static tag = 'uf-seat';
@@ -34,6 +35,8 @@ export class UfSeat extends UfElement {
     state: prop.enum(/** @type {const} */ (['open', 'candidate', 'joined', 'ready', 'locked']), 'open'),
     tone: prop.enum(/** @type {const} */ (['captain', 'stoker', 'team-a', 'team-b']), 'captain'),
     badge: prop.string(''),
+    pic: prop.string(''),      // the player's picture: `who` then shows as a <uf-person>
+    source: prop.string(''),   // where their sign-in came from: 'discord' | 'steam'
   };
 
   /** @override */ static styles = `
@@ -57,6 +60,7 @@ export class UfSeat extends UfElement {
     uf-seat .uf-seat__role { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; color: var(--_tone); text-transform: uppercase; }
     uf-seat .uf-seat__who { font: 700 var(--uf-size-lg)/1.2 var(--uf-font-ui); letter-spacing: .3px; }
     uf-seat[state="joined"] .uf-seat__who, uf-seat[state="ready"] .uf-seat__who { color: var(--_tone); }
+    uf-seat .uf-seat__who uf-person { max-width: 100%; }
     uf-seat .uf-seat__dev { font: var(--uf-size-sm)/1.3 var(--uf-font-ui); color: var(--uf-color-fg-muted); }
     uf-seat .uf-seat__dev uf-controller-glyph { margin: 0 .15em; }
     uf-seat .uf-seat__badge { position: absolute; top: 6px; right: 8px; font: 800 var(--uf-size-xs)/1 var(--uf-font-mono); padding: 3px 6px; border-radius: var(--uf-radius-sm); background: var(--_tone); color: var(--uf-color-bg); }
@@ -89,6 +93,12 @@ export class UfSeat extends UfElement {
   /** @returns {string} */ get badge() { return this.get('badge'); }
   /** @param {string} v */ set badge(v) { this.set('badge', v); }
 
+  /** The signed-in player's picture URL. @returns {string} */ get pic() { return this.get('pic'); }
+  /** @param {string} v */ set pic(v) { this.set('pic', v); }
+
+  /** 'discord' | 'steam' | '' @returns {string} */ get source() { return this.get('source'); }
+  /** @param {string} v */ set source(v) { this.set('source', v); }
+
   /** Open and candidate seats take focus; the rest are read-only. */
   #syncFocusable() {
     const focusable = this.state === 'open' || this.state === 'candidate';
@@ -106,7 +116,7 @@ export class UfSeat extends UfElement {
     return (this.badge ? `<span class="uf-seat__badge">${esc(this.badge)}</span>` : '') +
       (this.state === 'ready' ? `<span class="uf-seat__check">✓ READY</span>` : '') +
       `<span class="uf-seat__role">${esc(this.seat)}</span>` +
-      `<span class="uf-seat__who">${esc(this.who)}</span>` + sub;
+      `<span class="uf-seat__who">${this.pic || this.source ? personTag({ name: this.who, pic: this.pic, source: this.source }) : esc(this.who)}</span>` + sub;
   }
 
   /** @override @param {Set<string>} _changed */
