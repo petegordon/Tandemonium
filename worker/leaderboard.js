@@ -97,6 +97,12 @@ export default {
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
+      // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
+      if (path === '/me/delete' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return withAuth(request, env, corsOrigin, handleDeleteAccount);
+      }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
       // D-6 / D-7 · the pair, and the day's ranked results of people you have
@@ -2154,7 +2160,50 @@ function jsonResponse(data, status, corsOrigin) {
 async function withAuth(request, env, corsOrigin, handler) {
   const userId = await getUserFromRequest(request, env);
   if (!userId) return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
+  // #612: a session can outlive its account (deleted, or merged into another).
+  const exists = await env.DB.prepare('SELECT 1 AS ok FROM users WHERE id = ?').bind(userId).first();
+  if (!exists) return jsonResponse({ error: 'Account not found', code: 'account_gone' }, 401, corsOrigin);
   return handler(request, env, corsOrigin, userId);
+}
+
+/**
+ * POST /me/delete { confirm: 'DELETE' } — remove the House Tandem account and
+ * every record on it, in one transaction: sign-ins, rides, achievements, daily
+ * results, friends and pair records. A partner's own rides stay, with this
+ * player taken off them. Anonymous analytics carry no account and stay.
+ */
+async function handleDeleteAccount(request, env, corsOrigin, userId) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
+  const key = String(userId);
+  const counts = {};
+  for (const [name, sql, arg] of [
+    ['rides', 'SELECT COUNT(*) AS n FROM scores WHERE user_id = ?', userId],
+    ['achievements', 'SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?', userId],
+    ['pairs', 'SELECT COUNT(*) AS n FROM pairs WHERE user_lo = ? OR user_hi = ?', key],
+  ]) {
+    const r = await env.DB.prepare(sql).bind(...(name === 'pairs' ? [arg, arg] : [arg])).first();
+    counts[name] = (r && r.n) || 0;
+  }
+  const mine = 'SELECT id FROM scores WHERE user_id = ?';
+  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args);
+  await env.DB.batch([
+    q(`UPDATE user_achievements SET score_id = NULL WHERE score_id IN (${mine})`, userId),
+    q(`DELETE FROM score_contributions WHERE score_id IN (${mine})`, userId),
+    q('UPDATE score_contributions SET player_user_id = NULL WHERE player_user_id = ?', userId),
+    q('DELETE FROM scores WHERE user_id = ?', userId),
+    q('DELETE FROM user_achievements WHERE user_id = ?', userId),
+    q('DELETE FROM daily_results WHERE user_id = ?', userId),
+    q('UPDATE daily_results SET partner_user_id = NULL WHERE partner_user_id = ?', userId),
+    q('DELETE FROM friends WHERE user_id = ? OR friend_id = ?', userId, userId),
+    q('DELETE FROM pairs WHERE user_lo = ? OR user_hi = ?', key, key),
+    q('DELETE FROM auth_requests WHERE link_user_id = ?', userId),
+    q('DELETE FROM user_identities WHERE user_id = ?', userId),
+    q('DELETE FROM users WHERE id = ?', userId),
+  ]);
+  writeMetric(env, 'account_deleted');
+  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
 
 // Dashboard auth: verify JWT + check email against allow-list
