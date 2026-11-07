@@ -161,3 +161,36 @@ test('destroy() also stops a pending reconnect chain', () => {
   assert.equal(sockets.length, 1, 'no dial after destroy');
   assert.equal(reconnecting, before, 'no reconnecting callback after destroy');
 });
+
+test('an evicted transport is not re-dialled by a token retry, a pending refusal retry or a plain retry', async () => {
+  const t = transport();
+  t.onAuthError = () => t.retryWithToken('x');   // what the lobby's handler does
+  t.enterRoom('TNDM-AAAA', 'captain');
+  sockets[0].open(); t.connected = true;
+  sockets[0].drop('replaced'); runTimers();      // the one re-dial
+  sockets[1].drop();                              // refused before opening: a refusal retry is pending…
+  t.enterRoom('TNDM-AAAA', 'captain');
+  sockets[2].open(); sockets[2].drop('replaced'); // …then evicted
+  const n = sockets.length;
+  runTimers(); runTimers();
+  t.retryWithToken('y');
+  t._connectRelay();
+  assert.equal(sockets.length, n, 'nothing dials while evicted');
+});
+
+test('two P2P upgrade attempts close together leave one Peer, not a leaked one', async () => {
+  const t = transport();
+  t.roomCode = 'TNDM-AAAA'; t.role = 'captain';
+  delete t._attemptP2PUpgrade;                    // the real one this time
+  const peers = [];
+  globalThis.window = { Peer: class { constructor(id) { this.id = id; this.destroyed = false; peers.push(this); } on() {} destroy() { this.destroyed = true; } } };
+  t._fetchIceServers = () => Promise.resolve([]);
+  try {
+    t._attemptP2PUpgrade();
+    t._attemptP2PUpgrade();
+    await flush();
+  } finally { delete globalThis.window; }
+  assert.equal(peers.length, 2);
+  assert.equal(peers.filter((p) => !p.destroyed).length, 1, 'exactly one live Peer');
+  assert.equal(t.peer, peers.find((p) => !p.destroyed));
+});

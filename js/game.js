@@ -158,8 +158,10 @@ const TUTORIAL_ITEMS = {
   }
 };
 
-/** Stoker: TOO SLOW with no word from the captain for this long = the link is gone. */
+/** Stoker: on TOO SLOW with no word from the captain for this long, say so. */
 const STOKER_TOO_SLOW_STUCK_MS = 12000;
+/** A partner's EVT_RETURN_ROOM copies land within ~0.5 s; later ones are not a new request. */
+const RETURN_ROOM_DEDUPE_MS = 2000;
 
 class Game {
   constructor() {
@@ -1341,8 +1343,10 @@ class Game {
           this._startFinishCinematic(true);
         }
       } else if (eventType === EVT_RETURN_ROOM) {
-        // Sent reliably (several copies): act on the first only.
-        if (this.state !== 'lobby') this._returnToRoom();
+        // Sent reliably (several copies 200 ms apart): act on the first only. The later copies
+        // must not pull back a ride the captain has already started again.
+        const sinceRoom = performance.now() - (this._roomReturnAt || 0);
+        if (this.state !== 'lobby' && sinceRoom > RETURN_ROOM_DEDUPE_MS) this._returnToRoom(true);
       }
     };
 
@@ -1355,6 +1359,8 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       this._netLost = false;
+      this._waitingForCaptain = false;
+      this._lastCaptainAt = performance.now();
       document.getElementById('disconnect-overlay').style.display = 'none';
       // PR #397 M1: profile messages sent while disconnected were dropped —
       // resend this side's room profile and the captain's helping-hand state.
@@ -3181,6 +3187,8 @@ class Game {
 
   _endDropPause() {
     this._drop = null;
+    this._waitingForCaptain = false;   // a waiting sheet the pause covered is gone with it
+    this._lastCaptainAt = performance.now();
     this._dropCandidate = null;
     this._localP2Disconnected = false;
     document.getElementById('disconnect-overlay').style.display = 'none';
@@ -5406,6 +5414,7 @@ class Game {
 
   _returnToLobby() {
     if (this._drop) this._endDropPause();
+    this._waitingForCaptain = false;
     this._closePause();   // #459
     if (this._intro) this._intro.close();
     if (this._helpSheet) this._helpSheet.close();
@@ -5562,7 +5571,9 @@ class Game {
     this._versusPaused = false;
   }
 
-  _returnToRoom() {
+  /** @param {boolean} [fromPartner] acting on the partner's EVT_RETURN_ROOM: don't send one back */
+  _returnToRoom(fromPartner = false) {
+    this._roomReturnAt = performance.now();
     // Leave no disconnect pause or lost-link flag behind: the next ride would start paused.
     if (this._drop) this._endDropPause();
     this._netLost = false;
@@ -5585,7 +5596,8 @@ class Game {
     // Notify partner to return to room too (only if we're initiating,
     // not if we received EVT_RETURN_ROOM — prevents infinite loop)
     // Reliably: a lost copy left the partner on the ride's last screen (TV playtest 2026-11-06).
-    if (this.state !== 'lobby' && this.net.connected) {
+    // Only when this side starts it: an echo of the partner's would come back to them.
+    if (!fromPartner && this.state !== 'lobby' && this.net.connected) {
       this.net.sendEventReliable(EVT_RETURN_ROOM);
     }
 
@@ -8332,6 +8344,9 @@ class Game {
         console.warn('[online] stoker: no word from the captain for ' + (STOKER_TOO_SLOW_STUCK_MS / 1000) + ' s on TOO SLOW');
         this._waitingForCaptain = true;
         this._showDisconnect('Waiting for the captain…');
+        // The link itself is up: Try again would tear it down (and drop the captain's ride too).
+        // Return to Lobby is the way out; the sheet lifts by itself when the captain is heard.
+        if (this.net && this.net.connected) document.getElementById('btn-try-reconnect').hidden = true;
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
       this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);

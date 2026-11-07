@@ -520,7 +520,8 @@ export class RoomTransport {
   }
 
   _connectRelay() {
-    if (!this._fallbackUrl || this._destroyed) return;
+    // Evicted: another connection holds this seat; only retryConnection (Try again) dials again.
+    if (!this._fallbackUrl || this._destroyed || this._evicted) return;
     this._dropRelaySocket();
     this._relayPartnerReady = false;
     this._relayDidOpen = false;
@@ -537,6 +538,7 @@ export class RoomTransport {
       this._relayDidOpen = true;
       this._relayReconnectAttempts = 0;
       this._relayAuthFailures = 0;
+      clearTimeout(this._authRetryTimer);
       this.transport = 'relay';
 
       // Room joined — notify caller
@@ -576,6 +578,13 @@ export class RoomTransport {
         console.warn('NET: Relay seat taken by another connection again — giving it up');
         this._evicted = true;
         clearTimeout(this._reconnectTimeout);
+        clearTimeout(this._authRetryTimer);
+        clearTimeout(this._relayRetryTimer);
+        // Let go of the P2P side too: its peer id belongs to whoever holds the seat now.
+        this._activeConn = null;
+        if (this.conn) { try { this.conn.close(); } catch (e2) { /* closed */ } this.conn = null; }
+        this._closeFastChannel();
+        if (this.peer) { try { this.peer.destroy(); } catch (e2) { /* gone */ } this.peer = null; }
         if (this.connected) { this.connected = false; this._stopHeartbeat(); }
         if (this.onDisconnected) this.onDisconnected('This room was opened somewhere else');
         return;
@@ -621,9 +630,10 @@ export class RoomTransport {
           this._relayReconnectAttempts++;
           const delay = Math.pow(2, this._relayReconnectAttempts - 1) * 1000; // 1s, 2s, 4s
           console.warn('NET: Relay closed, retrying in ' + delay + 'ms (attempt ' + this._relayReconnectAttempts + '/3)');
-          setTimeout(() => {
+          clearTimeout(this._relayRetryTimer);
+          this._relayRetryTimer = setTimeout(() => {
             // Only when nothing else has dialled meanwhile (a retry, an auth refresh).
-            if (!this.connected && !this._relayWs && !this._destroyed) {
+            if (!this.connected && !this._relayWs && !this._destroyed && !this._evicted) {
               this._connectRelay();
             }
           }, delay);
@@ -677,7 +687,10 @@ export class RoomTransport {
     this._fetchIceServers().then(iceServers => {
       // Destroyed while the TURN fetch was in flight: a Peer made now would never be destroyed,
       // hold this room's peer id ("peer ID in use") and could take the partner's connection.
-      if (this._destroyed) return;
+      if (this._destroyed || this._evicted) return;
+      // Two upgrade attempts close together both reach here: keep one Peer, never leak the
+      // other (a leaked Peer holds this room's id: "peer ID in use").
+      if (this.peer) { try { this.peer.destroy(); } catch (e) { /* gone */ } this.peer = null; }
       this.peer = new window.Peer(peerId, {
         ...PEERJS_CONFIG,
         config: { iceServers }
@@ -831,6 +844,7 @@ export class RoomTransport {
     clearTimeout(this._authRetryTimer);
     clearTimeout(this._reconnectDelayTimer);
     clearTimeout(this._replacedRedialTimer);
+    clearTimeout(this._relayRetryTimer);
     this._stopHeartbeat();
     this._stopStatsPolling();
     clearTimeout(this._reconnectTimeout);

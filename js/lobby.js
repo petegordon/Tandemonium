@@ -2387,6 +2387,9 @@ export class Lobby {
         this._achievements.syncToSteam();
       }
 
+      // A live online session (a ride, or a room with the partner in it) is never replaced by a
+      // queued "sign in, then create / join": drop the queue instead.
+      if (this.net && this.net.connected) { this._pendingAutoJoinCode = null; this._pendingCreateRoom = false; }
       // Resume auto-join if user arrived via shared URL before logging in
       if (this._pendingAutoJoinCode) {
         const code = this._pendingAutoJoinCode;
@@ -4257,8 +4260,9 @@ export class Lobby {
     };
 
     // Auth error: token was rejected by relay — try silent refresh first. Acts on
-    // THIS transport (the ride shares it while lobby.net is null), and only until it is
-    // destroyed (2026-11-06 diag: "Cannot set properties of null (_relayToken)").
+    // THIS transport (the one the ride also uses), and only until it is destroyed: across
+    // the awaits this.net can be replaced or nulled (2026-11-06 diag: "Cannot set
+    // properties of null (_relayToken)").
     const capNet = this.net;
     capNet.onAuthError = async () => {
       const live = () => this._netSession.isCurrent(netEpoch) && !capNet._destroyed;
@@ -4450,6 +4454,7 @@ export class Lobby {
       this._showStep(this.hostStep);
       // Re-use _createRoom logic but with saved code
       this._replaceNet();
+      this._roomPartnerName = null;
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -4497,6 +4502,8 @@ export class Lobby {
         statusEl.className = 'conn-status error';
       };
 
+      // A refused socket (usually the network): keep dialling; the transport backs off.
+      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
       this.net.enterRoom(saved.roomCode, 'captain');
     } else {
       this._showStep(this.joinStep);
@@ -4507,6 +4514,7 @@ export class Lobby {
       this._applyStepSpatialFocus(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
+      this._roomPartnerName = null;
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -4550,6 +4558,7 @@ export class Lobby {
         statusEl.className = 'conn-status error';
       };
 
+      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
       this.net.enterRoom(saved.roomCode, 'stoker');
     }
 
