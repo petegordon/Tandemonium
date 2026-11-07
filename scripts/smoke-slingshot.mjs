@@ -265,6 +265,11 @@ const got = await page.evaluate(() => ({ all: window._game.collectibleManager._i
 check(fan.fresh > 0 && got.all && got.coins - fan.before === fan.fresh && got.hud.includes(String(got.coins)) && got.fx,
   `rolling through a coin fan collects every coin in it (+${got.coins - fan.before}, HUD "${got.hud}"), with a sparkle burst`);
 
+// 11b. The stage is on screen (Pete 2026-11-07: "how do I tell what stage I'm in?"): a STAGE n / N badge and a goal bar.
+const st = await page.evaluate(() => { const h = document.getElementById('sling-hud'); const s = h.querySelector('.sling-stage'); const b = h.querySelector('.sling-goalbar i');
+  return { stage: s && !s.hidden ? s.textContent : '', want: window._game._slingPlayStage(), bar: b ? parseFloat(b.style.width) : -1, visible: h.classList.contains('visible') }; });
+check(st.visible && st.stage === `STAGE ${st.want} / 7` && st.bar > 0 && st.bar <= 100, `the HUD names the stage ("${st.stage}") with a goal bar (${st.bar}%)`);
+
 // 12. A ramp at speed: the bike takes off, sails over gate 2's hay bale, and a
 // long flight lands as Big Air.
 const bigBefore = await page.evaluate(() => window._game._slingRun.bigAirs);
