@@ -104,7 +104,7 @@ export class DressingRoom {
     document.addEventListener('keydown', this._onKey, true);
     document.addEventListener('keyup', this._onKey, true);
     // #612: an account change (signed in on the phone, Not me) redraws that card's row.
-    if (this._accounts && this._accounts.onChange) this._offAccounts = this._accounts.onChange((n) => { const c = this.open && this.cards.get(n); if (c) this._renderAccount(c, true); });
+    if (this._accounts && this._accounts.onChange) this._offAccounts = this._accounts.onChange((n) => { if (!this.open) return; for (const c of this.cards.values()) this._renderAccount(c, c.n === n); });
     this._sheet.show();
     this._sync(openerN);
     console.log(`[dressing room] open by P${openerN}: ${[...this.cards.keys()].map((n) => 'P' + n).join(' ')}`);
@@ -308,20 +308,26 @@ export class DressingRoom {
       html = `<div class="dr-acc-qr">${qr}</div>
         <ol class="dr-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Check the code <b class="dr-acc-code">${esc(v.code || '')}</b></li></ol>
         <p class="dr-acc-status">${v.status === 'confirming' ? 'Confirm the code on your phone…' : 'Waiting for Discord…'}</p>
-        <button class="opt-btn dr-acc-btn" data-act="acc-cancel">Cancel</button>`;
-    } else if (v.state === 'signed-in') {
-      html = `<div class="dr-acc-who">${pics}<span class="dr-acc-name">${esc(v.name || '')}</span></div>`
-        + (v.linkable ? `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin">Link Discord</button>` : '')
-        + (v.canSignOut ? `<button class="opt-btn dr-acc-btn" data-act="acc-signout">Not me</button>` : '');
+        <button class="opt-btn dr-acc-btn" data-act="acc-cancel">Hide</button>`;
     } else {
-      html = `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin">Sign in with Discord</button>`
-        + (v.error ? `<p class="dr-acc-status">${esc(v.error)}</p>` : '');
+      // One QR at a time: while another seat's is open, this Sign in waits (greyed, skipped by the pad).
+      const wait = v.blockedBy ? ' disabled' : '';
+      const note = v.blockedBy ? `<p class="dr-acc-status dr-acc-wait">Waiting for P${v.blockedBy} to sign in…</p>` : '';
+      if (v.state === 'signed-in') {
+        html = `<div class="dr-acc-who">${pics}<span class="dr-acc-name">${esc(v.name || '')}</span></div>`
+          + (v.linkable ? `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin"${wait}>Link Discord</button>` : '')
+          + (v.canSignOut ? `<button class="opt-btn dr-acc-btn" data-act="acc-signout">Not me</button>` : '')
+          + (v.linkable ? note : '');
+      } else {
+        html = `<button class="opt-btn dr-acc-btn dr-acc-discord" data-act="acc-signin"${wait}>Sign in with Discord</button>`
+          + (note || (v.error ? `<p class="dr-acc-status">${esc(v.error)}</p>` : ''));
+      }
     }
     if (box.innerHTML !== html) box.innerHTML = html;
     const who = c.el.querySelector('.dr-who');
     if (who) who.innerHTML = `<span class="dr-pnum">P${c.n}</span>${esc(this._name(c))}`;
     if (refocus && c.focus) {
-      const next = box.querySelector('button') || (c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
+      const next = box.querySelector('button:not([disabled])') || (c.state === 'editing' ? c.el.querySelector('.dr-rows .opt-btn.active') : c.el.querySelector('.dr-edit'));
       c.focus.setSpatial(this._items(c), next || null);
     }
   }
@@ -367,7 +373,7 @@ export class DressingRoom {
 
   /** The card's own focusables (+ BACK TO SEATS when it shows), focus on `initial`. */
   _items(c) {
-    const shown = (b) => b.getBoundingClientRect().width > 0;
+    const shown = (b) => b.getBoundingClientRect().width > 0 && !b.disabled;
     const own = [...c.el.querySelectorAll('button')].filter(shown);
     // Only Player 1's pad navigates into the Buzz strip (down past the card's last row lands on
     // P1's chip, up returns to the card); every other pad's scope never includes it.

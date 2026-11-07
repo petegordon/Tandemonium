@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'8c00722',pr:628,time:'11-06-2026 23:31'}</script><base href="/pr-preview/pr-628/">
+<head><script>window.__BUILD={sha:'f388217',pr:628,time:'11-06-2026 23:36'}</script><base href="/pr-preview/pr-628/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -4265,6 +4265,12 @@
   .dr-account[hidden] { display: none; }
   .dr-account .opt-btn { width: auto; flex: 0 1 auto; }
   .dr-acc-discord { background: #5865f2 !important; border-color: #5865f2 !important; color: #fff !important; }
+  .dr-acc-discord:disabled { opacity: 0.4; cursor: default; }
+  .dr-acc-wait { flex-basis: 100%; }
+  /* A code showing: make room for the QR (the look summary and the stick hint step aside). */
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-summary,
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-stick-hint { display: none; }
+  .dr-card:has(.dr-account[data-state="pending"]) .dr-preview { min-height: 0; flex-shrink: 1; }
   .dr-acc-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
   .dr-acc-pic { width: 1.8em; height: 1.8em; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px var(--uf-color-border, #555); }
   .dr-acc-pic[data-provider="discord"] { box-shadow: 0 0 0 2px #5865f2; }
@@ -4272,7 +4278,7 @@
   .dr-acc-name { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dr-account[data-state="pending"] { flex-direction: column; }
   .dr-acc-qr { background: #fff; border-radius: 8px; padding: 5px; line-height: 0; }
-  .dr-acc-qr svg { width: 7.5em; height: 7.5em; display: block; }
+  .dr-acc-qr svg { width: 6.5em; height: 6.5em; display: block; }
   .dr-acc-steps { margin: 0; padding-left: 1.3em; text-align: left; font-size: var(--uf-size-xs); }
   .dr-acc-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffd36b; font-size: 1.2em; }
   .dr-acc-status { margin: 0; font-size: var(--uf-size-xs); color: var(--uf-color-fg-muted); text-align: center; }
@@ -5597,7 +5603,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'8c00722',pr:628,time:'11-06-2026 23:31'}</script><base href="/pr-preview/pr-628/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'f388217',pr:628,time:'11-06-2026 23:36'}</script><base href="/pr-preview/pr-628/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -6122,7 +6128,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.8c00722 | 11-06-2026 23:31 (PR #628)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.f388217 | 11-06-2026 23:36 (PR #628)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
