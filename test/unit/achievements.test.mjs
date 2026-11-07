@@ -25,11 +25,12 @@ const EXISTING = [
 // so the edition rules win. (double_down left this list with #546: the pot of
 // gold no longer ends the run, so a demo stage 2-3 run can pair it with a best.)
 // daily_streak_3/7 (m5): the demo rides the weekly road, which feeds no day streak.
-const SPEC_FULL_ONLY = [
-  'sling_stage5', 'daily_streak_3', 'daily_streak_7',
-  'century', 'days_30', 'all_gold', 'sling_stage7', 'sling_1000', 'daily_launch', 'launch_week',
-  'coins_10000', 'max_upgrade', 'garage_royalty', 'rebuilt', 'ship_of_theseus', 'daily_first',
-  'daily_streak_30', 'pair_100km', 'standing_date', 'distance_between_us', 'grand_tour',
+// #641 · the 20 the demo awards (Pete, 2026-11-07).
+const DEMO_20 = [
+  'first_pedal', 'tutorial_done', 'first_crash', 'first_remount', 'first_boost',
+  'home_sweet', 'grandma_bronze', 'grandma_silver', 'grandma_gold', 'first_km',
+  'new_best', 'daily_first', 'daily_gold', 'sling_first', 'sling_stage3',
+  'jackpot', 'first_upgrade', 'coop_first', 'grandma_orange', 'days_3',
 ];
 
 // Rows per section, in the spec's order.
@@ -112,24 +113,21 @@ test('nothing is earned from a fresh start', () => {
 
 // ── the demo ─────────────────────────────────────────────────────
 
-test('the demo-unearnable list is the spec Demo column + the stage cap (21 full-only, 79 demo)', () => {
-  assert.deepEqual([...DEMO_UNEARNABLE].sort(), [...SPEC_FULL_ONLY].sort());
-  assert.equal(ACHIEVEMENTS.filter(a => a.demo).length, 79);
+test('#641: the demo awards exactly the agreed 20, and the full game all 100', () => {
+  const demo = ACHIEVEMENTS.filter(a => a.demo).map(a => a.id);
+  assert.deepEqual([...demo].sort(), [...DEMO_20].sort());
+  assert.deepEqual([...DEMO_RULES.achievements].sort(), [...DEMO_20].sort());
+  assert.equal(DEMO_UNEARNABLE.length, 80);
+  assert.equal(FULL_RULES.achievements, null);
 });
 
-test('each full-only reason matches the edition rules', () => {
-  for (const a of ACHIEVEMENTS.filter(x => !x.demo)) {
-    switch (a.full) {
-      case 'tourist': assert.equal(DEMO_RULES.tourist, false); assert.equal(FULL_RULES.tourist, true); break;
-      case 'ranked': assert.equal(DEMO_RULES.ranked, false); assert.equal(FULL_RULES.ranked, true); break;
-      case 'dailyLaunch': assert.equal(DEMO_RULES.isDemo, true); break;   // slingshot-mode · _dailyLaunchOn
-      case 'slingStage':
-        assert.ok(a.stage > DEMO_RULES.slingshot.maxStage, `${a.id}: stage ${a.stage} is inside the demo`);
-        assert.equal(FULL_RULES.slingshot.maxStage, null);
-        break;
-      case 'weeklyRoad': assert.equal(DEMO_RULES.weeklyRoad, true); assert.equal(FULL_RULES.weeklyRoad, false); break;
-      case 'scope': break;   // a long-haul goal the spec keeps for the full game
-      default: assert.fail(`${a.id} has no reason to be full-only (${a.full})`);
+test('#641: every demo achievement can be earned inside the demo', () => {
+  for (const a of ACHIEVEMENTS.filter(x => x.demo)) {
+    assert.notEqual(a.section, 'versus', `${a.id}: Versus is full-game only`);
+    assert.notEqual(a.section, 'explore', `${a.id}: Tourist is full-game only`);
+    if (a.section === 'colours') {
+      const bike = a.id === 'grandma_default' ? 'default' : 'bike_' + a.id.slice('grandma_'.length);
+      assert.ok(DEMO_RULES.bikes.includes(bike), `${a.id}: ${bike} is not a demo bike`);
     }
   }
   // …and every Slingshot row the demo can earn fits inside the demo's stages.
@@ -190,12 +188,6 @@ test("stats: Daily Ride day streak and medal keys", () => {
   L = applyEvent(L, 'finish', { finishedLevel: 'daily' }, '2026-10-06');
   assert.equal(L.dailyDayRun, 1);
   assert.equal(L.dailyDayBest, 3);
-  // m5: weekly-road finishes on later days feed no day streak.
-  let W = L;
-  for (const day of ['2026-10-07', '2026-10-08', '2026-10-09']) W = applyEvent(W, 'finish', { finishedLevel: 'daily', weekly: true }, day);
-  assert.equal(W.dailyDayRun, 1);
-  assert.equal(W.dailyDayBest, 3);
-  assert.equal(W.lastDailyDay, '2026-10-06');
   assert.equal(opensMedalGate('grandma', 'bronze'), true);
   assert.equal(opensMedalGate('grandma', null), false);
   L = applyEvent(L, 'finish', { finishedLevel: 'grandma', medal: 'gold', isCoop: true, partnerKey: 'p1' }, '2026-10-06');
@@ -524,11 +516,13 @@ test('manager: the demo never awards a full-game-only achievement', async () => 
   const m = new AchievementManager();
   m.demo = true;
   const got = m.record('coins', { amount: 20000 }).map(a => a.id);
-  assert.ok(got.includes('coins_1000'));
+  // #641: coin_first, coins_1000 and coins_10000 are all full-game only now.
+  assert.ok(!got.includes('coin_first'));
   assert.ok(!got.includes('coins_10000'));
   assert.ok(m.getAllDefinitions().find(d => d.id === 'coins_10000').demoLocked);
   m.demo = false;
-  assert.ok(m.record('share').map(a => a.id).includes('coins_10000'), 'the full game catches up');
+  const caught = m.record('share').map(a => a.id);
+  assert.ok(caught.includes('coins_10000') && caught.includes('coin_first'), 'the full game catches up');
 });
 
 test('the Steam sync script describes every achievement', () => {

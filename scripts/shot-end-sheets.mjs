@@ -3,8 +3,8 @@
 // viewports Pete cares about, so a layout change can be eyeballed without a
 // playtest. Not a smoke (nothing is checked beyond "no page errors"); it writes
 // <outDir>/<viewport>-<scene>.png:
-//   grandma-victory · grandma-gameover · daily-practice-victory (first of the
-//   day, 3-day streak) · daily-ranked-victory · coop-victory (local co-op)
+//   grandma-victory · grandma-gameover · daily-victory (first of the day,
+//   3-day streak) · coop-victory (local co-op)
 // at lap 1280×800 (laptop / Steam Deck), tv 1920×1080 and phone 844×390
 // (landscape). Headless renders slowly, so distances are set directly.
 //   node scripts/shot-end-sheets.mjs [--out <dir>] [--only lap,tv,phone]
@@ -84,18 +84,15 @@ for (const [vpName, vp] of Object.entries(VIEWPORTS)) {
     await page.close();
   }
 
-  // The Daily Ride, practice then ranked: first finish of the day on a 3-day streak.
-  for (const mode of ['practice', 'ranked']) {
+  // The Daily Ride (#641: START RIDE starts it, every ride counts): first finish of the day on a 3-day streak.
+  {
     const page = await open(vp, { tandemonium_daily: STREAK });
     await pickLevel(page, 'daily', 'adventurous');
     await clickId(page, 'btn-start-ride');
-    await sleep(400);
-    const chooser = await page.evaluate(() => document.getElementById('daily-mode-overlay')?.classList.contains('visible'));
-    if (chooser) await clickId(page, 'btn-daily-' + mode);
     await waitState(page, 'playing');
     await collectSome(page, 5, 23);
     await finishRide(page);
-    await shot(page, `${vpName}-daily-${mode}-victory`);
+    await shot(page, `${vpName}-daily-victory`);
     await page.close();
   }
 

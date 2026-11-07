@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // smoke:tv-playtest · #576: fixes from the TV / Steam playtest of 2026-11-04.
 //
-//   TP-01  Daily Ride chooser: the pad's focus is on RANKED RUN (or PRACTICE
-//          when the ranked run is spent), ↓ moves, B is Back, A picks PRACTICE
-//          and the ride starts.
+//   TP-01  #641 Daily Ride: no practice / ranked chooser; with the Daily card
+//          picked, A on START RIDE starts the ride directly.
 //   TP-02  Pause menu: SAFETY / AUTO SPEED are there with ON / OFF, the pad
 //          reaches them, A flips the ride's setting and the menu stays open.
 //   TP-03  Pause menu: every button's 3px focus ring fits inside the sheet's
@@ -125,32 +124,37 @@ await pads.press(0, 'B', 160);
 await until(() => document.getElementById('leaderboard-modal').open === false);
 await sleep(400);
 
-// ── TP-01 · Daily Ride chooser ──
-const focusId = () => page.evaluate(() => document.querySelector('#daily-mode-overlay .gamepad-focus')?.id || null);
-const openChooser = () => page.evaluate(() => {
+// ── TP-01 · Daily Ride: START RIDE starts it (#641: no practice / ranked chooser) ──
+await page.evaluate(() => {
   const l = window._game.lobby;
-  l._showStep(l.levelStep);
   l._pendingMode = 'solo';
-  l._showDailyModeChooser();
+  l._showStep(l.levelStep);
 });
-await openChooser();
-const first = await until(() => document.querySelector('#daily-mode-overlay .gamepad-focus')?.id || null, null, 3000);
-const rankedOpen = await page.evaluate(() => !document.getElementById('btn-daily-ranked').disabled);
-check(first === (rankedOpen ? 'btn-daily-ranked' : 'btn-daily-practice'), 'TP-01 the chooser takes the pad: focus on its first live button', { first, rankedOpen });
-await h.shot(page, '2-daily-chooser');
-await pads.press(0, 'DOWN', 160); await sleep(250);
-const second = await focusId();
-check(!!second && second !== first, 'TP-01 ↓ moves to the next choice', { first, second });
-await pads.press(0, 'B', 160); await sleep(400);
-check(await page.evaluate(() => !document.getElementById('daily-mode-overlay').classList.contains('visible')), 'TP-01 B is Back: the chooser closes');
-await sleep(300);
-await openChooser();
-await until(() => !!document.querySelector('#daily-mode-overlay .gamepad-focus'), null, 3000);
-for (let i = 0; i < 3 && (await focusId()) !== 'btn-daily-practice'; i++) { await pads.press(0, 'DOWN', 160); await sleep(250); }
+await until(() => !!document.querySelector('#lobby-level .level-card[data-level-id="daily"]'), null, 5000);
+const picked = await page.evaluate(() => {
+  document.querySelector('#lobby-level .level-card[data-level-id="daily"]').click();
+  const l = window._game.lobby, card = document.querySelector('#lobby-level .level-card[data-level-id="daily"]');
+  return { level: l.selectedLevel && l.selectedLevel.id, isDaily: !!(l.selectedLevel && l.selectedLevel.isDaily), selected: card.classList.contains('selected'), locked: card.classList.contains('level-locked') };
+});
+check(picked.isDaily && picked.selected && !picked.locked, 'TP-01 the full game\'s Daily Ride card is open and picks', picked);
+const noChooser = await page.evaluate(() => ['daily-mode-overlay', 'btn-daily-ranked', 'btn-daily-practice', 'btn-daily-cancel', 'btn-practice-help', 'ranked-badge'].filter((id) => document.getElementById(id)));
+check(noChooser.length === 0, 'TP-01 no practice / ranked chooser on the page', noChooser);
+// The pad lands on START RIDE (the level step's default focus); walk to it if not.
+const startFocus = () => page.evaluate(() => window._game.lobby.lobbyEl.querySelector('.gamepad-focus')?.id || null);
+await page.evaluate(() => window._game.lobby._showStep(window._game.lobby.levelStep));
+await until(() => !!window._game.lobby.lobbyEl.querySelector('.gamepad-focus'), null, 3000);
+for (let i = 0; i < 12 && (await startFocus()) !== 'btn-start-ride'; i++) {
+  const was = await startFocus();
+  await pads.press(0, 'DOWN', 160);
+  await until((w) => (window._game.lobby.lobbyEl.querySelector('.gamepad-focus')?.id || null) !== w, was, 2000);
+}
+const onStart = await startFocus();
+await h.shot(page, '2-daily-start');
 await pads.press(0, 'A', 160);
-const riding = await until(() => window._game.state === 'playing' || window._game.state === 'countdown', null, 120000);
-const rideInfo = await page.evaluate(() => ({ state: window._game.state, ranked: !!window._game._rankedRunActive, chose: window._game.lobby._dailyMode }));
-check(!!riding && !rideInfo.ranked, 'TP-01 A on PRACTICE starts the ride, not ranked', rideInfo);
+const riding = await until(() => window._game.state === 'playing' || window._game.state === 'countdown', null, 60000);
+const rideInfo = await page.evaluate(() => ({ state: window._game.state, level: window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.id,
+  rideNo: window._game._dailyRideNo ?? null }));
+check(onStart === 'btn-start-ride' && !!riding && rideInfo.level === 'daily', 'TP-01 A on START RIDE starts the Daily Ride directly', { onStart, ...rideInfo });
 await until(() => window._game.state === 'playing', null, 60000);
 await sleep(800);
 

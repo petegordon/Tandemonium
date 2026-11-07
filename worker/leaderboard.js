@@ -648,9 +648,11 @@ async function handlePair(request, env, corsOrigin, userId) {
 }
 
 /**
- * D-6 · POST /daily — record the day's ranked run, once.
- * A second submission for the same (user, day, mode) is a 409, not an update:
- * that refusal is the whole of "one run per day".
+ * D-6 / #641 · POST /daily — a finished Daily Ride. The board shows each
+ * account's BEST time of the day per mode, so a faster finish replaces the
+ * row and a slower one changes nothing. A DNF (only pre-#641 builds send one)
+ * is kept only when the day has no row yet, and never replaces a finish.
+ * Responds { success, improved } — improved = this ride is now the day's best.
  */
 async function handleDailySubmit(request, env, corsOrigin, userId) {
   const body = await request.json();
@@ -672,26 +674,37 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Implausible time' }, 400, corsOrigin);
   }
 
-  try {
-    await env.DB.prepare(
-      `INSERT INTO daily_results
-       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
-      distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
-      typeof syncPct === 'number' ? Math.round(syncPct) : null,
-      partnerUserId || null
-    ).run();
-  } catch (e) {
-    if (/UNIQUE/i.test(String(e && e.message))) {
-      return jsonResponse({ error: 'Already ridden today' }, 409, corsOrigin);
-    }
-    throw e;
-  }
+  const res = await env.DB.prepare(dailyUpsertSql(!!dnf)).bind(
+    userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
+    distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
+    typeof syncPct === 'number' ? Math.round(syncPct) : null,
+    partnerUserId || null
+  ).run();
+  const improved = !dnf && !!(res && res.meta && res.meta.changes > 0);
 
   writeMetric(env, 'daily_submit', mode);
-  return jsonResponse({ success: true }, 200, corsOrigin);
+  return jsonResponse({ success: true, improved }, 200, corsOrigin);
+}
+
+/**
+ * #641 · the daily_results write. One row per (user, day, mode) stays the rule
+ * (the UNIQUE key); what changed is that a better time UPDATES it. A finish
+ * replaces a DNF or a slower finish; a DNF only fills an empty day.
+ */
+export function dailyUpsertSql(dnf) {
+  const insert = `INSERT INTO daily_results
+       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+  if (dnf) return insert + `
+       ON CONFLICT(user_id, day_key, mode) DO NOTHING`;
+  return insert + `
+       ON CONFLICT(user_id, day_key, mode) DO UPDATE SET
+         time_ms = excluded.time_ms, dnf = 0, distance = excluded.distance,
+         collectibles = excluded.collectibles, crashes = excluded.crashes,
+         safety_used = excluded.safety_used, sync_pct = excluded.sync_pct,
+         partner_user_id = excluded.partner_user_id
+       WHERE daily_results.dnf = 1 OR daily_results.time_ms IS NULL
+          OR excluded.time_ms < daily_results.time_ms`;
 }
 
 /**

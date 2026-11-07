@@ -14,10 +14,6 @@ test('the third crash in a segment offers help', () => {
   assert.equal(d.reason, 'stuck');
 });
 
-test('a ranked run ends on any crash', () => {
-  assert.equal(decideAfterCrash({ crashesThisSegment: 1, rankedRun: true }).reason, 'ranked');
-});
-
 test('a finished ride always shows the result', () => {
   assert.equal(decideAfterCrash({ crashesThisSegment: 1, rideOver: true }).reason, 'ride-over');
 });

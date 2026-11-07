@@ -189,7 +189,7 @@ npm run smoke:records        # personal bests reach the level card
 npm run smoke:seed           # world reseeding is deterministic and leak-free
 npm run smoke:daily          # the Daily Ride is the same road for everyone
 npm run smoke:ctas           # end-screen wishlist / invite visibility rules
-npm run smoke:ranked         # one ranked run per day; the demo never asks
+npm run smoke:daily-best     # every Daily ride counts; the demo stops at 3 a day
 npm run smoke:lookahead      # the stoker sees road the captain cannot
 npm run smoke:ping           # sprint call, sync multiplier, emotes
 npm run smoke:disruptions    # warned before it acts, released after

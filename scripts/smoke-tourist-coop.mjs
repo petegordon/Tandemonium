@@ -16,14 +16,17 @@
 //      room with a message; a partner that never answers → timeout, never a hang.
 //   4. couch co-op: one screen, P2 seated, Tourist card → a 'local' tiles ride.
 //   PR #397 M1 / m10 / m15 / m16 / m17 — mixed editions and versions in a room:
-//   6. a demo stoker + a full captain ride the weekly road on Chill, unranked,
-//      with no Map Tourists card (most restrictive edition).
+//   6. #641 a demo stoker + a full captain ride the real Daily Ride (today's
+//      key, Adventurous) under demo room rules (3 rides a day), with no Map
+//      Tourists card (most restrictive edition).
 //   7. an OLD-client stoker (room profile without caps): no Map Tourists card,
-//      no ranked chooser, no helping hand on the captain.
+//      no helping hand on the captain (a NEW full stoker does get it, on the
+//      Daily Ride too).
 //   8. a captain whose own Tourist load fails still returns a silent stoker
 //      to the room (EVT_RETURN_ROOM always).
-//   9. a demo stoker refuses a level its edition lacks (Today's Road, from a
-//      new or an old captain), stays on the level list and tells the captain.
+//   9. a demo stoker refuses a level its edition lacks (Map Tourists from a
+//      new captain; an old #400 demo captain's 'weekly' road), stays on the
+//      level list and tells the captain.
 //  10. a touristReady lost in a blip is resent from onConnected.
 //  m15: the partner failing ends the barrier while this side is still loading.
 //  m16: the stoker uses the captain's anchor height.
@@ -47,8 +50,9 @@ export class TilesRenderer {
 const STUB_PLUGINS = ['GoogleCloudAuthPlugin', 'GLTFExtensionsPlugin', 'TileCompressionPlugin', 'TilesFadePlugin', 'ReorientationPlugin']
   .map(n => `export class ${n} { constructor() {} }`).join('\n');
 
-async function open(withKey, query = '') {
+async function open(withKey, query = '', storage = null) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
+  if (storage) await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
   page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
@@ -137,9 +141,9 @@ const swapOk = swap.every(({ during, after }) =>
 // ── 2-3. online co-op over a relay ─────────────────────────────────────────
 // Each page gets a fake net whose sendProfile/sendEvent land on the other
 // page's current handlers (lobby's room handler, then the game's).
-async function pair(stokerHasKey, { stokerQuery = '', stokerOld = false } = {}) {
-  const cap = await open(true);
-  const sto = await open(stokerHasKey, stokerQuery);
+async function pair(stokerHasKey, { stokerQuery = '', stokerOld = false, storage = null } = {}) {
+  const cap = await open(true, '', storage);
+  const sto = await open(stokerHasKey, stokerQuery, storage);
   const pages = { captain: cap, stoker: sto };
   const drop = { captain: new Set(), stoker: new Set() };   // message types not delivered FROM a side
   for (const [role, page] of Object.entries(pages)) {
@@ -161,6 +165,7 @@ async function pair(stokerHasKey, { stokerQuery = '', stokerOld = false } = {}) 
         connected: true, roomCode: 'TSTX', transport: 'relay', audioEnabled: false, _localMediaStream: null,
         sendProfile: (p) => window.__relay('profile', JSON.stringify(p)),
         sendEvent: (e) => window.__relay('event', JSON.stringify(e)),
+        sendEventReliable: (e) => window.__relay('event', JSON.stringify(e)),   // #621
         sendState() {}, sendLean() {}, sendPedal() {}, getQualityStats: () => null, destroy() {},
       };
       window.__fakeNet = net;
@@ -365,56 +370,61 @@ const startCoopRide = async (levelId) => {
   await cap.evaluate((id) => {
     document.querySelector('#level-cards .level-card[data-level-id="' + id + '"]').click();
   }, levelId);
-  await new Promise(r => setTimeout(r, 300));
-  const asked = await cap.evaluate(() => window._game.lobby._shouldAskDailyMode());
+  await cap.waitForFunction((id) => window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.id === id,
+    { timeout: 5000, polling: 50 }, levelId).catch(() => null);
   await cap.evaluate(() => document.getElementById('btn-start-ride').click());
   await cap.waitForFunction(() => window._game.mode === 'captain', { timeout: 15000, polling: 100 }).catch(() => null);
   await sto.waitForFunction(() => window._game.mode === 'stoker', { timeout: 15000, polling: 100 }).catch(() => null);
-  return asked;
 };
-const roomView = (page) => page.evaluate(() => {
-  const g = window._game, l = g.lobby, lv = l.selectedLevel || {};
-  return { mode: g.mode, level: lv.id, weekly: !!lv.isWeekly, key: lv.key, seed: lv.seed, diff: l.selectedDifficulty,
-    ranked: !!g._rankedRunActive, roomRanked: g._roomRules().ranked, roomDemo: g._roomRules().isDemo };
+const roomView = (page) => page.evaluate(async () => {
+  const g = window._game, l = g.lobby, lv = l.selectedLevel || {}, rr = g._roomRules();
+  const { dailyKey } = await import('./js/daily-seed.js');
+  return { mode: g.mode, level: lv.id, key: lv.key, dailyKey: dailyKey(), seed: lv.seed, diff: l.selectedDifficulty,
+    roomDemo: rr.isDemo, rideCap: rr.dailyRideCap, roomTourist: rr.tourist,
+    chooser: !!document.getElementById('daily-mode-overlay') };
 });
 
-// 6. demo stoker + full captain → the weekly road on Chill, unranked, no Map Tourists.
-({ cap, sto } = await pair(true, { stokerQuery: '?demo=1' }));
+// 6. #641 demo stoker + full captain → the real Daily Ride under demo rules, no Map Tourists.
+// The demo's Daily opens after the Tutorial and Grandma's: both sides have earned them.
+const OPENED = { tandemonium_achievements: JSON.stringify([
+  { id: 'tutorial_done', earnedAt: Date.now() }, { id: 'home_sweet', earnedAt: Date.now() }]) };
+({ cap, sto } = await pair(true, { stokerQuery: '?demo=1', storage: OPENED }));
 const demoCards = await cap.evaluate(() => Array.from(document.querySelectorAll('#level-cards .level-card')).map(c => c.dataset.levelId));
-const demoRoadName = await cap.evaluate(() => document.querySelector('#level-cards .level-card[data-level-id="daily"] .level-card-name').textContent);
-const demoAsked = await startCoopRide('daily');
-await cap.evaluate(() => window.__fakeNet.sendProfile({ type: 'dailyMode', mode: 'ranked', key: 'x' }));   // a rogue ranked call
+const demoCard = await cap.evaluate(() => {
+  const c = document.querySelector('#level-cards .level-card[data-level-id="daily"]');
+  return { name: c.querySelector('.level-card-name').textContent, locked: c.classList.contains('level-locked'),
+    desc: c.querySelector('.level-card-desc').textContent };
+});
+await startCoopRide('daily');
+await cap.evaluate(() => window.__fakeNet.sendProfile({ type: 'dailyMode', mode: 'ranked', key: 'x' }));   // an old build's ranked call: ignored
 await new Promise(r => setTimeout(r, 300));
-const demoRoom = { cards: demoCards, roadName: demoRoadName, asked: demoAsked, cap: await roomView(cap), sto: await roomView(sto),
-  weeklyKey: await cap.evaluate(async () => (await import('./js/daily-seed.js')).weeklyKey()) };
+const demoRoom = { cards: demoCards, card: demoCard, cap: await roomView(cap), sto: await roomView(sto) };
 console.log('demo stoker:', JSON.stringify(demoRoom, null, 1));
-const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.roadName === 'Weekly Ride' && demoRoom.asked === false &&
+const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.card.name === 'Daily Ride' && !demoRoom.card.locked &&
   demoRoom.cap.mode === 'captain' && demoRoom.sto.mode === 'stoker' &&
-  demoRoom.cap.weekly && demoRoom.sto.weekly && demoRoom.cap.key === demoRoom.weeklyKey && demoRoom.sto.key === demoRoom.cap.key &&
-  demoRoom.sto.seed === demoRoom.cap.seed && demoRoom.cap.diff === 'chill' && demoRoom.sto.diff === 'chill' &&
-  !demoRoom.cap.ranked && !demoRoom.sto.ranked && !demoRoom.cap.roomRanked && demoRoom.cap.roomDemo && demoRoom.sto.roomDemo;
+  demoRoom.cap.level === 'daily' && demoRoom.sto.level === 'daily' &&
+  demoRoom.cap.key === demoRoom.cap.dailyKey && demoRoom.sto.key === demoRoom.cap.key &&
+  demoRoom.sto.seed === demoRoom.cap.seed && demoRoom.cap.diff === 'adventurous' && demoRoom.sto.diff === 'adventurous' &&
+  demoRoom.cap.roomDemo && demoRoom.sto.roomDemo && demoRoom.cap.rideCap === 3 && demoRoom.sto.rideCap === 3 &&
+  !demoRoom.cap.roomTourist && !demoRoom.sto.roomTourist && !demoRoom.cap.chooser && !demoRoom.sto.chooser;
 await cap.close(); await sto.close();
 
-// 7. OLD-client stoker: no Map Tourists, no ranked chooser, no helping hand.
+// 7. OLD-client stoker: no Map Tourists, no helping hand.
 ({ cap, sto } = await pair(true, { stokerOld: true }));
 const oldCards = await cap.evaluate(() => Array.from(document.querySelectorAll('#level-cards .level-card')).map(c => c.dataset.levelId));
-await cap.evaluate(() => document.querySelector('#level-cards .level-card[data-level-id="daily"]').click());
-const oldAsked = await cap.evaluate(() => window._game.lobby._shouldAskDailyMode());
 await startCoopRide('grandma');
-const oldRoom = { cards: oldCards, asked: oldAsked, cap: await roomView(cap),
+const oldRoom = { cards: oldCards, cap: await roomView(cap),
   help: await cap.evaluate(() => window._game._helpEligible()), partnerOld: await cap.evaluate(() => window._game._roomRules().partnerOld) };
 console.log('old stoker:', JSON.stringify(oldRoom, null, 1));
-const oldRoomOk = !oldRoom.cards.includes('tourist') && oldRoom.asked === false && oldRoom.cap.mode === 'captain' &&
-  oldRoom.cap.level === 'grandma' && oldRoom.help === false && oldRoom.partnerOld === true && !oldRoom.cap.roomRanked;
+const oldRoomOk = !oldRoom.cards.includes('tourist') && oldRoom.cap.mode === 'captain' && !oldRoom.cap.roomTourist &&
+  oldRoom.cap.level === 'grandma' && oldRoom.help === false && oldRoom.partnerOld === true && !oldRoom.cap.roomDemo;
 await cap.close(); await sto.close();
-// ...and the same pair with a NEW full stoker does get the helping hand + ranked chooser.
+// ...and the same pair with a NEW full stoker does get the helping hand, on the Daily Ride too (#641).
 ({ cap, sto } = await pair(true));
-await cap.evaluate(() => document.querySelector('#level-cards .level-card[data-level-id="daily"]').click());
-const newAsked = await cap.evaluate(() => window._game.lobby._shouldAskDailyMode());
-await startCoopRide('grandma');
-const newHelp = await cap.evaluate(() => window._game._helpEligible());
-const newPairOk = newAsked === true && newHelp === true;
-console.log('new stoker:', JSON.stringify({ newAsked, newHelp }));
+await startCoopRide('daily');
+const newHelp = await cap.evaluate(() => ({ level: window._game.lobby.selectedLevel.id, help: window._game._helpEligible(), mode: window._game.mode }));
+const newPairOk = newHelp.level === 'daily' && newHelp.mode === 'captain' && newHelp.help === true;
+console.log('new stoker:', JSON.stringify(newHelp));
 await cap.close(); await sto.close();
 
 // 8. the captain's own Tourist load fails, the stoker never answers: still back to the room.
@@ -438,31 +448,29 @@ const capFailOk = capFail.cap.state === 'lobby' && capFail.sto.state === 'lobby'
   capFail.sto.kind === 'World' && capFail.stoInRoom;
 await cap.close(); await sto.close();
 
-// 9. a demo stoker refuses Today's Road (new captain, then an old one) and stays on the list.
+// 9. a demo stoker refuses a level its edition lacks (Map Tourists from a new
+// captain; an old #400 demo captain's 'weekly' road) and stays on the list.
 ({ cap, sto } = await pair(true, { stokerQuery: '?demo=1' }));
-const before9 = await sto.evaluate(() => JSON.stringify(window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.key || null));
+const before9 = await sto.evaluate(() => JSON.stringify(window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.id || null));
 await cap.evaluate(async () => {
   const { RoomProtocol } = await import('./js/lobby/room-protocol.js');
-  const { dailyKey } = await import('./js/daily-seed.js');
-  window.__fakeNet.sendProfile(RoomProtocol.levelSync('daily', { key: dailyKey(), seed: 99, roadKind: 'daily', difficulty: 'adventurous' }));
+  window.__fakeNet.sendProfile(RoomProtocol.levelSync('tourist', {}));
 });
-await cap.waitForFunction(() => window._game.lobby._lastLevelRefused === 'daily', { timeout: 5000, polling: 50 }).catch(() => null);
+await cap.waitForFunction(() => window._game.lobby._lastLevelRefused === 'tourist', { timeout: 5000, polling: 50 }).catch(() => null);
 const refusedNew = await cap.evaluate(() => window._game.lobby._lastLevelRefused);
 await cap.evaluate(() => { window._game.lobby._lastLevelRefused = null; });
-await cap.evaluate(async () => {   // an old captain: Today's Road with no roadKind, then the start
+await cap.evaluate(async () => {   // an old #400 demo captain: its Weekly Ride (#641 retired it)
   const { dailyKey } = await import('./js/daily-seed.js');
-  window.__fakeNet.sendProfile({ type: 'levelSync', levelId: 'daily', key: dailyKey(), seed: 99 });
-  window.__fakeNet.sendProfile({ type: 'startRide', placementSalt: 1, worldSeed: 99 });
+  window.__fakeNet.sendProfile({ type: 'levelSync', levelId: 'daily', key: dailyKey(), seed: 99, roadKind: 'weekly', difficulty: 'chill' });
 });
 await cap.waitForFunction(() => window._game.lobby._lastLevelRefused === 'daily', { timeout: 5000, polling: 50 }).catch(() => null);
-await new Promise(r => setTimeout(r, 500));
 const refuse = { refusedNew, refusedOld: await cap.evaluate(() => window._game.lobby._lastLevelRefused),
-  stoKeyBefore: before9,
-  stoKeyAfter: await sto.evaluate(() => JSON.stringify(window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.key || null)),
+  stoLevelBefore: before9,
+  stoLevelAfter: await sto.evaluate(() => JSON.stringify(window._game.lobby.selectedLevel && window._game.lobby.selectedLevel.id || null)),
   stoMode: await sto.evaluate(() => window._game.mode), stoState: await sto.evaluate(() => window._game.state),
   stoOnList: await sto.evaluate(() => window._game.lobby._currentStep === window._game.lobby.levelStep) };
 console.log('demo stoker refuses:', JSON.stringify(refuse));
-const refuseOk = refuse.refusedNew === 'daily' && refuse.refusedOld === 'daily' && refuse.stoKeyAfter === refuse.stoKeyBefore &&
+const refuseOk = refuse.refusedNew === 'tourist' && refuse.refusedOld === 'daily' && refuse.stoLevelAfter === refuse.stoLevelBefore &&
   refuse.stoMode !== 'stoker' && refuse.stoState === 'lobby' && refuse.stoOnList;
 await cap.close(); await sto.close();
 

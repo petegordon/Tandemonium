@@ -184,19 +184,23 @@ test('#512 daily habit: +50 for the first Daily Ride finished today, +10 a strea
   assert.equal(scoreRide({ distance: 500, finished: false, dailyBonus: { firstToday: true, streak: 4 } }).dailyPay, 0, 'only a finish');
 });
 
-test('#512 finishedToday: practice or a non-DNF ranked run; a DNF is not a finish', async () => {
-  const { recordPractice, recordRanked, finishedToday, STORAGE_KEY } = await import('../../js/daily-ride.js');
+test('#512 finishedToday: a finish counts; a started ride, or a pre-#641 ranked DNF, does not', async () => {
+  const { recordDailyFinish, recordRideStart, finishedToday, STORAGE_KEY } = await import('../../js/daily-ride.js');
   const store = memStore();
   const k = '2026-11-04';
   assert.equal(finishedToday(store, k), false);
-  recordRanked(store, k, 'solo', { dnf: true, distance: 120 });
-  assert.equal(finishedToday(store, k), false, 'a ranked DNF');
-  recordPractice(store, k, 90000);
+  recordRideStart(store, k);
+  assert.equal(finishedToday(store, k), false, 'started, not finished');
+  recordDailyFinish(store, k, { timeMs: 90000, rideNo: 1 });
   assert.equal(finishedToday(store, k), true);
   assert.equal(finishedToday(store, '2026-11-05'), false, 'tomorrow is a new day');
-  const s2 = memStore();
-  recordRanked(s2, k, 'pair', { timeMs: 100000, distance: 500 });
-  assert.equal(finishedToday(s2, k), true);
+  // A save from before #641: the day's ranked run.
+  const old = memStore();
+  old.set(STORAGE_KEY, JSON.stringify({ [k]: { practice: 0, best: null, ranked: { solo: { dnf: true } } } }));
+  assert.equal(finishedToday(old, k), false, 'a ranked DNF');
+  const old2 = memStore();
+  old2.set(STORAGE_KEY, JSON.stringify({ [k]: { practice: 0, best: 100000, ranked: { pair: { timeMs: 100000 } } } }));
+  assert.equal(finishedToday(old2, k), true);
   assert.ok(STORAGE_KEY);
 });
 
