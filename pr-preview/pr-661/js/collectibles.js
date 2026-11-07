@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { buildTokenGeometry, tokenMaterials, buildTokenFxGeometry, tokenFxMaterial } from './token-face.js';
 import { buildPresentGeometry, presentMaterial, buildPresentFxGeometry, presentFxMaterial, PRESENT } from './props-3d.js';
 
 const POOL_SIZE = 40;
@@ -36,92 +37,28 @@ const THEMES = {
       };
     },
   },
-  // #512 · Tandem Tokens on a regular road: the Slingshot's gold disc, with a
-  // flat additive halo ring in the disc's plane instead of the sprite
-  // sparkles, so a run of five is two instanced draws however many are out
-  // (a Daily Ride has 40; the TV and phone low tiers stay smooth). Placed by
-  // js/token-runs.js through `opts.items`, never by _placeItems.
+  // #512 · Tandem Tokens, one look in every mode (Pete, 2026-11-07): the
+  // Daily Ride's full gold disc, stamped with the House Tandem controller
+  // (heads) and a star (tails), with the Slingshot's soft breathing halo and
+  // twinkling star sparkles — js/token-face.js. Body and glow are each one
+  // instanced draw however many are out (a Daily Ride has 40; the TV and phone
+  // low tiers stay smooth). On a regular road they are placed by
+  // js/token-runs.js through `opts.items`, never by _placeItems; Slingshot
+  // places its course.
   tokens: {
     instanced: true, name: 'tokens', scale: 1,
     build() {
-      const geo = new THREE.CylinderGeometry(0.5, 0.5, 0.09, 24);
-      geo.rotateX(Math.PI / 2);
-      const mat = new THREE.MeshPhongMaterial({
-        color: 0xffd23f, emissive: 0x9a6400, shininess: 220, specular: 0xffffff,
-      });
-      const fxGeo = new THREE.RingGeometry(0.58, 0.95, 24);
-      const fxMat = new THREE.MeshBasicMaterial({
-        color: 0xffd23f, transparent: true, opacity: 0.35, depthWrite: false,
-        blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-      });
-      return { geo, mat, fxGeo, fxMat, time: { value: 0 } };
+      const time = { value: 0 };
+      return {
+        geo: buildTokenGeometry(), mat: tokenMaterials(), sharedMat: true,   // shared: [edge, heads, tails]
+        fxGeo: buildTokenFxGeometry(), fxMat: tokenFxMaterial(time), time,
+      };
     },
   },
-  // Slingshot mode's Tandem Tokens: big glossy gold discs stood on edge so the
-  // spin flashes the face, each with a soft halo and twinkling star sparkles
-  // that orbit with the spin — they have to read from the chase camera.
-  coins: {
-    build(scene) {
-      const geo = new THREE.CylinderGeometry(0.55, 0.55, 0.1, 28);
-      geo.rotateX(Math.PI / 2);
-      const mat = new THREE.MeshPhongMaterial({
-        color: 0xffd23f, emissive: 0x9a6400, shininess: 220, specular: 0xffffff,
-      });
-      return [{ geo, mat }, { geo, mat }, { geo, mat }];
-    },
-    decorate(mesh) {
-      const halo = new THREE.Sprite(coinSparkleMaterials().halo);
-      halo.scale.set(1.9, 1.9, 1);
-      halo.userData.halo = true;
-      mesh.add(halo);
-      for (let k = 0; k < 3; k++) {
-        const star = new THREE.Sprite(coinSparkleMaterials().star);
-        const a = (k / 3) * Math.PI * 2;
-        star.position.set(Math.cos(a) * 0.6, Math.sin(a) * 0.6, 0.1);
-        star.userData.phase = k * 2.1;
-        mesh.add(star);
-      }
-    },
-    animate(mesh, t, i) {
-      for (const c of mesh.children) {
-        if (c.userData.halo) { const h = 1.7 + Math.sin(t * 3 + i) * 0.25; c.scale.set(h, h, 1); continue; }
-        // A twinkle is a quick flare then nothing: max(0, sin)^3.
-        const tw = Math.pow(Math.max(0, Math.sin(t * 5 + i * 1.3 + c.userData.phase)), 3);
-        const sc = 0.05 + 0.55 * tw;
-        c.scale.set(sc, sc, 1);
-      }
-    }
-  }
 };
-
-// Shared sparkle textures/materials for the coins theme (built once).
-let _coinSparkle = null;
-function coinSparkleMaterials() {
-  if (_coinSparkle) return _coinSparkle;
-  const canvas = (draw) => { const c = document.createElement('canvas'); c.width = c.height = 64; draw(c.getContext('2d')); return new THREE.CanvasTexture(c); };
-  const haloTex = canvas((g) => {
-    const r = g.createRadialGradient(32, 32, 0, 32, 32, 32);
-    r.addColorStop(0, 'rgba(255,236,150,0.9)'); r.addColorStop(0.35, 'rgba(255,210,63,0.45)'); r.addColorStop(1, 'rgba(255,200,40,0)');
-    g.fillStyle = r; g.fillRect(0, 0, 64, 64);
-  });
-  const starTex = canvas((g) => {
-    const r = g.createRadialGradient(32, 32, 0, 32, 32, 30);
-    r.addColorStop(0, 'rgba(255,255,255,1)'); r.addColorStop(0.25, 'rgba(255,245,200,0.9)'); r.addColorStop(1, 'rgba(255,220,120,0)');
-    g.fillStyle = r;
-    g.beginPath();                                   // a four-point star
-    for (let k = 0; k < 8; k++) {
-      const a = k * Math.PI / 4, rad = k % 2 === 0 ? 31 : 6;
-      g.lineTo(32 + Math.cos(a) * rad, 32 + Math.sin(a) * rad);
-    }
-    g.closePath(); g.fill();
-  });
-  const add = { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending };
-  _coinSparkle = {
-    halo: new THREE.SpriteMaterial({ map: haloTex, opacity: 0.55, ...add }),
-    star: new THREE.SpriteMaterial({ map: starTex, ...add }),
-  };
-  return _coinSparkle;
-}
+// Slingshot's level still says 'coins' (analytics' collectible_type): since
+// Pete's 2026-11-07 playtest it is the same token as every other road.
+THEMES.coins = THEMES.tokens;
 
 export class CollectibleManager {
   /**
@@ -163,7 +100,8 @@ export class CollectibleManager {
       body.name = name; fx.name = name + '-fx';
       body.castShadow = true;
       this._instanced = { body, fx, time: parts.time };
-      this._variants = [{ geo: parts.geo, mat: parts.mat }, { geo: parts.fxGeo, mat: parts.fxMat }];
+      // Shared materials (the tokens') are left out so destroy() never disposes them.
+      this._variants = [{ geo: parts.geo, mat: parts.sharedMat ? null : parts.mat }, { geo: parts.fxGeo, mat: parts.fxMat }];
       for (let i = 0; i < POOL_SIZE; i++) {
         const mesh = new THREE.Object3D();
         mesh.scale.setScalar(theme.scale || PRESENT.ROAD_SCALE);

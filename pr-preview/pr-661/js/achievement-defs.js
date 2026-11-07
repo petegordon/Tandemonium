@@ -52,6 +52,26 @@ export const SECTIONS = [
 const MEDAL_RANK = { bronze: 1, silver: 2, gold: 3 };
 const rank = m => MEDAL_RANK[m] || 0;
 
+/** The wallet's upgrade levels ({id: level}) from `live.wallet` (the lobby passes it), or {}. */
+const walletLevels = live => (live && live.wallet && live.wallet.lv) || {};
+
+/** Fully Tuned: the closest upgrade to its max, as [level, max]. */
+export function upgradeProgressAny(live) {
+  const lv = walletLevels(live);
+  let bestU = null, bestF = -1;
+  for (const u of UPGRADES) {
+    const l = Math.min(u.max, Math.floor(n(lv[u.id])));
+    if (l / u.max > bestF) { bestF = l / u.max; bestU = [l, u.max]; }
+  }
+  return bestU || [0, 1];
+}
+
+/** Garage Royalty: upgrades at their max, of all of them. */
+export function upgradeProgressAll(live) {
+  const lv = walletLevels(live);
+  return [UPGRADES.filter(u => n(lv[u.id]) >= u.max).length, UPGRADES.length];
+}
+
 /** Levels that award medals (Gilded Goose wants gold on each of them). */
 export const MEDAL_LEVELS = LEVELS.filter(l => !l.isTutorial && l.timerEnabled !== false).map(l => l.id);
 
@@ -79,6 +99,13 @@ export function gyroOnlySteer(frames) {
   const f = k => Number(frames[k]) || 0;
   return f('gamepad-gyro') >= GYRO_ONLY_MIN_FRAMES && f('keyboard') === 0 && f('gamepad') === 0 && f('motion') === 0;
 }
+
+/**
+ * A best-so-far achievement (Pete, Steam playtest 2026-11-07: "a lot of the achievements don't give you
+ * progress"): `best(s, L)` reads the moment's value (a ride frame or a finish), the manager keeps the highest
+ * ever seen in L.bests[id], and the lobby shows it as [best, goal] progress.
+ */
+const best = (goal, unit, value) => ({ best: value, goal, unit });
 
 /** A counter achievement: condition + lobby progress from one lifetime stat. */
 function count(stat, goal) {
@@ -159,24 +186,24 @@ export const ACHIEVEMENTS = [
   { id: 'daredevil',      section: 'medals', name: 'Daredevil',          icon: '😈', desc: 'Finish any level on Daredevil',       condition: s => fin(s) && s.difficulty === 'daredevil' },
 
   // ── 5. Clean riding ──────────────────────────────────────
-  { id: 'steady_hands',   section: 'clean', name: 'Steady Hands',        icon: '🧘', desc: 'Ride 60 s without the bike shaking from leaning too far', condition: s => n(s.steadyBest) >= 60 },
-  { id: 'centerline',     section: 'clean', name: 'On the Line',         icon: '🎯', desc: "Stay on the road's centre strip for 30 s straight",       condition: s => n(s.stripBest) >= 30 },
+  { id: 'steady_hands',   section: 'clean', name: 'Steady Hands',        icon: '🧘', desc: 'Ride 60 s without the bike shaking from leaning too far', condition: s => n(s.steadyBest) >= 60, ...best(60, 's', s => n(s.steadyBest)) },
+  { id: 'centerline',     section: 'clean', name: 'On the Line',         icon: '🎯', desc: "Stay on the road's centre strip for 30 s straight",       condition: s => n(s.stripBest) >= 30, ...best(30, 's', s => n(s.stripBest)) },
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
   { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash twice at one checkpoint, then finish without using ASSIST',       condition: s => fin(s) && s.assistDeclined === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
-  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9 },
-  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h on a ride',                         condition: s => s.speed >= 65 / 3.6 },
+  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9, ...best(50, 'km/h', s => n(s.speed) * 3.6) },
+  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h on a ride',                         condition: s => s.speed >= 65 / 3.6, ...best(65, 'km/h', s => n(s.speed) * 3.6) },
   { id: 'boost_25',       section: 'speed', name: 'Boost Junkie',        icon: '🔋', desc: 'Trigger 25 boosts',                   ...count('boosts', 25) },
-  { id: 'afterburner',    section: 'speed', name: 'Afterburner',         icon: '🔥', desc: 'Chain pickups to keep boosting for 10 s straight', condition: s => n(s.boostBest) >= 10 },
+  { id: 'afterburner',    section: 'speed', name: 'Afterburner',         icon: '🔥', desc: 'Chain pickups to keep boosting for 10 s straight', condition: s => n(s.boostBest) >= 10, ...best(10, 's', s => n(s.boostBest)) },
 
   // ── 7. Collecting ────────────────────────────────────────
-  { id: 'collector',      section: 'collect', name: 'Collector',         icon: '🌟', desc: 'Collect 10 items in one ride', condition: s => s.collectibles >= 10 },
-  { id: 'hoarder',        section: 'collect', name: 'Hoarder',           icon: '👑', desc: 'Collect every item in one ride', condition: s => s.collectibles > 0 && s.collectibles >= s.totalCollectibles },
+  { id: 'collector',      section: 'collect', name: 'Collector',         icon: '🌟', desc: 'Collect 10 items in one ride', condition: s => s.collectibles >= 10, ...best(10, 'items', s => n(s.collectibles)) },
+  { id: 'hoarder',        section: 'collect', name: 'Hoarder',           icon: '👑', desc: 'Collect every item in one ride', condition: s => s.collectibles > 0 && s.collectibles >= s.totalCollectibles, ...best(100, '% of a ride\'s items', s => (n(s.totalCollectibles) > 0 ? 100 * n(s.collectibles) / s.totalCollectibles : 0)) },
   { id: 'presents_100',   section: 'collect', name: 'Special Delivery',  icon: '🎁', desc: 'Collect 100 presents in total',       ...count('pickups', 100) },
-  { id: 'daily_haul',     section: 'collect', name: 'Daily Haul',        icon: '🧺', desc: "Collect every present on the Daily Ride", condition: s => s.finishedLevel === 'daily' && s.totalCollectibles > 0 && s.collectibles >= s.totalCollectibles },
+  { id: 'daily_haul',     section: 'collect', name: 'Daily Haul',        icon: '🧺', desc: "Collect every present on the Daily Ride", condition: s => s.finishedLevel === 'daily' && s.totalCollectibles > 0 && s.collectibles >= s.totalCollectibles, ...best(100, '% of the presents', s => (s.finishedLevel === 'daily' && n(s.totalCollectibles) > 0 ? 100 * n(s.collectibles) / s.totalCollectibles : 0)) },
 
   // ── 8. Slingshot ─────────────────────────────────────────
   { id: 'sling_first',    section: 'sling', name: 'Fire!',               icon: '🪃', desc: 'Launch from the slingshot',            ...count('slingLaunches', 1) },
@@ -201,8 +228,8 @@ export const ACHIEVEMENTS = [
   { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Tandem Tokens in total',    ...count('coinsEarned', 10000) },
   { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 200 Tandem Tokens from one regular (non-Slingshot) ride', ...count('bestRideCoins', 200) },
   { id: 'first_upgrade',  section: 'coins', name: 'Tinkerer',            icon: '🔧', desc: 'Buy your first garage upgrade',       ...count('upgrades', 1) },
-  { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny },
-  { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll },
+  { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny, progress: (L, live) => upgradeProgressAny(live), unit: 'levels' },
+  { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll, progress: (L, live) => upgradeProgressAll(live), unit: 'upgrades maxed' },
   { id: 'big_spender',    section: 'coins', name: 'Big Spender',         icon: '💸', desc: 'Spend 1,000 Tandem Tokens in the garage',     ...count('coinsSpent', 1000) },
   { id: 'rebuilt',        section: 'coins', name: 'Rebuilt',             icon: '♻️', desc: 'Rebuild the bike (prestige) for the first time', ...count('rebuilds', 1) },
   { id: 'ship_of_theseus', section: 'coins', name: 'Ship of Theseus',    icon: '⛵', desc: 'Rebuild the bike 3 times (the rebuild bonus is Slingshot pay)', ...count('rebuilds', 3) },
@@ -220,10 +247,10 @@ export const ACHIEVEMENTS = [
   // A-2: Perfect Sync is reachable by cooperation — each paired beat adds +0.10
   // to offsetScore against 5%/s decay, so two riders answering each other's
   // beat at ~1 beat/s cross 0.9 in about ten seconds.
-  { id: 'perfect_sync',   section: 'together', name: 'Perfect Sync',     icon: '🤝', desc: 'Stay in sync for 10 s',     condition: s => s.offsetScore > 0.9 && s.syncDuration >= 10 },
-  { id: 'team_player',    section: 'together', name: 'Team Player',      icon: '🤜', desc: '80% or more safe-riding contribution in co-op', condition: s => s.isMultiplayer && s.safePct >= 80 },
-  { id: 'pair_10_rides',  section: 'together', name: 'Regulars',         icon: '👫', desc: 'Ride 10 times with the same partner', condition: s => s.pairRides >= 10 },
-  { id: 'pair_100km',     section: 'together', name: '5K Together',      icon: '🛣️', desc: 'Ride 5 km with the same partner',   condition: s => s.pairDistanceKm >= 5 },   // #608: was 100 km; id kept
+  { id: 'perfect_sync',   section: 'together', name: 'Perfect Sync',     icon: '🤝', desc: 'Stay in sync for 10 s',     condition: s => s.offsetScore > 0.9 && s.syncDuration >= 10, ...best(10, 's', s => (n(s.offsetScore) > 0.9 ? n(s.syncDuration) : 0)) },
+  { id: 'team_player',    section: 'together', name: 'Team Player',      icon: '🤜', desc: '80% or more safe-riding contribution in co-op', condition: s => s.isMultiplayer && s.safePct >= 80, ...best(80, '%', s => (s.isMultiplayer ? n(s.safePct) : 0)) },
+  { id: 'pair_10_rides',  section: 'together', name: 'Regulars',         icon: '👫', desc: 'Ride 10 times with the same partner', condition: s => s.pairRides >= 10, ...best(10, 'rides', s => n(s.pairRides)) },
+  { id: 'pair_100km',     section: 'together', name: '5K Together',      icon: '🛣️', desc: 'Ride 5 km with the same partner',   condition: s => s.pairDistanceKm >= 5, ...best(5000, 'm', s => n(s.pairDistanceKm) * 1000) },   // #608: was 100 km; id kept
   { id: 'coop_first',     section: 'together', name: 'The Two of Us',    icon: '💞', desc: 'Finish a co-op ride',                 ...count('coopFinishes', 1) },
   { id: 'social_goose',   section: 'together', name: 'Social Goose',     icon: '🦢', desc: 'Finish co-op rides with 3 different partners', ...countList('partners', 3) },
 
@@ -345,7 +372,7 @@ const FLAGS = ['pedalled', 'maxedAny', 'maxedAll'];
 const STRINGS = ['lastDay', 'lastDailyDay'];
 
 export function emptyStats() {
-  const L = { v: STATS_VERSION };
+  const L = { v: STATS_VERSION, bests: {}, bestsAt: {} };
   for (const k of NUMERIC) L[k] = 0;
   for (const k of LISTS) L[k] = [];
   for (const k of FLAGS) L[k] = false;
@@ -354,6 +381,32 @@ export function emptyStats() {
 }
 
 /** Any stored object (v1, v2, junk) → a clean v2. Never throws, never loses a counter. */
+/**
+ * Fold the moment's best-so-far values into L.bests (pure). Returns the new stats, or the same object when
+ * nothing improved. `earned` = ids already earned (their bests stop mattering).
+ */
+export function foldBests(L, state, earned = new Set(), now = Date.now()) {
+  let out = null;
+  const level = (state && (state.levelId || state.finishedLevel)) || null;
+  for (const a of ACHIEVEMENTS) {
+    if (!a.best || earned.has(a.id)) continue;
+    let v = 0;
+    try { v = a.best(state || {}, L); } catch (e) { v = 0; }
+    if (!(Number.isFinite(v) && v > (L.bests[a.id] || 0) + 1e-6)) continue;
+    if (!out) out = { ...L, bests: { ...L.bests }, bestsAt: { ...(L.bestsAt || {}) } };
+    out.bests[a.id] = Math.round(Math.min(v, a.goal * 10) * 10) / 10;
+    // Pete 2026-11-07: "record top speed, what ride and date time" — where and when each best was set
+    out.bestsAt[a.id] = { level, at: now };
+  }
+  return out || L;
+}
+
+/** [best, goal] for a best-so-far achievement. */
+export function bestProgress(a, L) {
+  const b = (L && L.bests && L.bests[a.id]) || 0;
+  return [Math.min(a.goal, Math.floor(b)), a.goal];
+}
+
 export function migrateStats(raw) {
   const L = emptyStats();
   if (!raw || typeof raw !== 'object') return L;
@@ -363,6 +416,14 @@ export function migrateStats(raw) {
   }
   for (const k of FLAGS) L[k] = raw[k] === true;
   for (const k of STRINGS) L[k] = typeof raw[k] === 'string' ? raw[k] : null;
+  if (raw.bests && typeof raw.bests === 'object') {
+    for (const [k, v] of Object.entries(raw.bests)) if (Number.isFinite(v) && v > 0) L.bests[k] = v;
+  }
+  if (raw.bestsAt && typeof raw.bestsAt === 'object') {
+    for (const [k, v] of Object.entries(raw.bestsAt)) {
+      if (v && Number.isFinite(v.at) && L.bests[k]) L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+    }
+  }
   L.days = Math.max(L.days, L.dayList.length);
   return L;
 }

@@ -335,6 +335,8 @@ export class Lobby {
         if (this._activeModal === 'leaderboard' && this._leaderboardSheet) scrollPage(this._leaderboardSheet.body, dir);
         else if (this._activeModal === 'achievements' && this._achievementsSheet) scrollPage(this._achievementsSheet.body, dir);   // #540
       },
+      // Steam playtest 2026-11-07: hold the d-pad / left stick to run down the 100 achievements.
+      repeat: () => this._activeModal === 'achievements',
     });
     this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | null
     this._modalBack = null;
@@ -3545,6 +3547,27 @@ export class Lobby {
     this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
   }
 
+  /**
+   * LB / RB over the Achievements sheet: the focus jumps to the first badge of
+   * the previous / next section, with that section's heading at the top.
+   * LB inside a section goes to its own first badge first.
+   * @param {-1|1} dir
+   */
+  _achJumpSection(dir) {
+    const secs = Array.from(document.querySelectorAll('#lb-achievements .lb-ach-section'))
+      .filter((sec) => sec.querySelector('.lb-ach-item'));
+    if (!secs.length) return;
+    const f = this._modalFocus.focused;
+    const cur = f ? secs.findIndex((sec) => sec.contains(f)) : -1;
+    let i;
+    if (cur < 0) i = dir > 0 ? 0 : secs.length - 1;   // on Close (or nothing): RB → top, LB → last section
+    else if (dir < 0 && f !== secs[cur].querySelector('.lb-ach-item')) i = cur;
+    else i = Math.max(0, Math.min(secs.length - 1, cur + dir));
+    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.lb-ach-item'));
+    this._modalFocus.focusElement(first);
+    secs[i].scrollIntoView({ block: 'start', inline: 'nearest' });
+  }
+
   _closeAchievements() {
     if (this._achievementsSheet.open) this._achievementsSheet.close();
     else this._onAchievementsClosed();
@@ -4036,6 +4059,7 @@ export class Lobby {
     const fmt = v => Math.floor(v).toLocaleString('en-US');
     const total = this._achievements.getAllDefinitions().length;
     let state, kicker, status;
+    let bestLine = '';
     if (d.earned) {
       state = 'earned'; kicker = 'Achievement unlocked';
       status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
@@ -4046,6 +4070,12 @@ export class Lobby {
     } else if (d.progress && d.progress[0] > 0) {
       state = 'progress'; kicker = 'In progress';
       status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
+      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+      if (d.bestAt && d.bestAt.at) {
+        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
+      }
     } else {
       state = 'locked'; kicker = 'Locked'; status = 'Not yet';
     }
@@ -4060,6 +4090,7 @@ export class Lobby {
       '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
       this._medalTimesHtml(d) +
       '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
+      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
       '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
   }
 
@@ -7706,14 +7737,20 @@ export class Lobby {
     }
     this._gpPrevY = y;
 
-    // LB/RB bumpers (buttons 4/5) — cycle bike color
+    // LB/RB bumpers (buttons 4/5) — cycle bike color; over the Achievements
+    // sheet they jump a section instead (and leave the bike alone).
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
     const rb = gp.buttons[5] && gp.buttons[5].pressed;
-    if (lb && !this._gpPrevLB && this._bikePrev) {
+    if (this._achievementsSheet && this._achievementsSheet.open) {
+      if (!this._achievementDetailOpen() && this._activeModal === 'achievements') {
+        if (lb && !this._gpPrevLB) this._achJumpSection(-1);
+        if (rb && !this._gpPrevRB) this._achJumpSection(1);
+      }
+    } else if (lb && !this._gpPrevLB && this._bikePrev) {
       this._bikePrev();
       this._flashBumper(document.getElementById('bike-prev'));
     }
-    if (rb && !this._gpPrevRB && this._bikeNext) {
+    if (rb && !this._gpPrevRB && this._bikeNext && !(this._achievementsSheet && this._achievementsSheet.open)) {
       this._bikeNext();
       this._flashBumper(document.getElementById('bike-next'));
     }
@@ -8505,7 +8542,7 @@ export class Lobby {
       this.selectedPresetKey = 'default';
       nameEl.style.color = 'rgba(255,255,255,0.3)';
       nameEl.textContent = '\uD83D\uDD12 ' + def.name;
-      hintEl.innerHTML = `<span class="bike-count" style="font-size:18px;font-weight:700;color:rgba(255,255,255,0.85)">${prog.have} of ${prog.need}</span>`
+      hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
@@ -8517,7 +8554,7 @@ export class Lobby {
     nameEl.textContent = def.icon + ' ' + def.name;
     if (!def.rideable) {
       this.selectedPresetKey = 'default';
-      hintEl.innerHTML = '<span style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.85)">Coming soon</span>';
+      hintEl.innerHTML = '<span style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">Coming soon</span>';
       hintEl.title = `${def.name} is earned; riding it comes in a later update`;
       hintEl.style.display = '';
       return;

@@ -17,6 +17,10 @@
 //    closest sideways. Left / right keep the kit's rule.
 // 2. The focused item scrolls into view, so a long list (Settings) or a
 //    scrolling sheet never leaves the highlight off-screen.
+// 3. Opt-in hold-to-repeat on up / down (`repeat`): a press moves one row, a
+//    held d-pad or left stick repeats after REPEAT.delay and speeds up, so a
+//    long sheet (the 100 achievements) runs top to bottom in a couple of
+//    seconds. See holdRepeatStep() for the curve.
 //
 // shared/ui is vendored from the controller lab (npm run check:ui guards it),
 // so this lives in the game until the rule is upstreamed to the kit.
@@ -24,6 +28,27 @@
 import { FocusController } from '../shared/ui/focus-controller.js';
 
 /** @typedef {{ left: number, right: number, top: number, bottom: number }} Box */
+
+/**
+ * Hold-to-repeat feel (ms). First repeat after `delay`; each gap then shrinks
+ * by `accel` down to `min`; from the `burstAfter`-th repeat on, every step moves
+ * `burst` rows. About 8 rows/s at first, 20 rows/s after ~1 s of holding, 40
+ * rows/s after ~1.5 s — the achievements sheet (about 32 rows) in about 2 s —
+ * and a release stops on the row you're on.
+ */
+export const REPEAT = { delay: 350, first: 120, accel: 0.82, min: 50, burstAfter: 20, burst: 2 };
+
+/**
+ * The repeat schedule, pure for the unit test: after `n` repeats (0-based),
+ * how long until the next one and how many rows it moves.
+ * @param {number} n @returns {{ gap: number, rows: number }}
+ */
+export function holdRepeatStep(n) {
+  return {
+    gap: Math.max(REPEAT.min, REPEAT.first * Math.pow(REPEAT.accel, n)),
+    rows: n >= REPEAT.burstAfter ? REPEAT.burst : 1,
+  };
+}
 
 /**
  * The item to move to from `from` going `dir` ('up' | 'down'), or null.
@@ -81,12 +106,79 @@ export class RowFocusController extends FocusController {
   /**
    * The kit's options, plus `onEdge(dir)`: up / down with nothing further that
    * way (a result screen's button row under a scrolling body) — scroll there.
-   * @param {ConstructorParameters<typeof FocusController>[0] & { onEdge?: ((dir: 'up'|'down') => void) | null }} opts
+   * And `repeat`: true (or a function checked each frame) turns on
+   * hold-to-repeat for up / down (REPEAT).
+   * @param {ConstructorParameters<typeof FocusController>[0] & { onEdge?: ((dir: 'up'|'down') => void) | null, repeat?: boolean | (() => boolean) }} opts
    */
   constructor(opts) {
     super(opts);
     this._onEdge = opts.onEdge || null;
     /** @type {HTMLElement | null} */ this._lastScrolled = null;
+    this._repeat = opts.repeat || false;
+    /** @type {'up'|'down'|null} */ this._holdDir = null;
+    this._holdBlocked = false;   // a direction already held when the scope opened: no repeat until it's released
+    this._holdNext = 0;
+    this._holdCount = 0;
+    this._repeating = false;     // a repeat step is moving: onEdge stays quiet (only a fresh press scrolls past the end)
+  }
+
+  /** @override @param {(HTMLElement | null | undefined)[]} items @param {HTMLElement | null} [initialEl] */
+  setSpatial(items, initialEl = null) { super.setSpatial(items, initialEl); this._blockHold(); return this; }
+
+  /** @override @param {(HTMLElement | null | undefined)[]} items @param {number} [initialIndex] */
+  setItems(items, initialIndex = 0) { super.setItems(items, initialIndex); this._blockHold(); return this; }
+
+  /** @override */
+  reprime() { super.reprime(); this._blockHold(); }
+
+  /** Move the focus straight to `el` (one of the items), e.g. a section jump. @param {HTMLElement | null} el */
+  focusElement(el) {
+    const i = el ? this.items.indexOf(el) : -1;
+    if (!el || i < 0) return;
+    if (this._spatial) {
+      if (this.focusedEl) this.focusedEl.classList.remove(this.focusClass);
+      this.focusedEl = el;
+      el.classList.add(this.focusClass);
+    } else {
+      this._clearFocus();
+      this.index = i;
+      this._applyFocus();
+    }
+    if (this._onChange) this._onChange(el, i);
+  }
+
+  _blockHold() {
+    this._holdDir = null;
+    this._holdCount = 0;
+    this._holdBlocked = !!(this._edge.up || this._edge.down);
+  }
+
+  _repeatOn() {
+    return typeof this._repeat === 'function' ? !!this._repeat() : !!this._repeat;
+  }
+
+  /** After the kit's edge-detected poll: repeat a held up / down. */
+  _pollRepeat() {
+    const e = this._edge;   // the kit keeps this frame's read here
+    const live = !!(this.input && this.input.gamepadConnected && this.input.getGamepadState());   // a dropped pad leaves _edge stale
+    const dir = !live ? null : e.up && !e.down ? 'up' : e.down && !e.up ? 'down' : null;
+    if (!dir) { this._holdDir = null; this._holdBlocked = false; return; }
+    if (this._holdBlocked || !this._repeatOn()) { this._holdDir = null; return; }
+    const now = performance.now();
+    if (dir !== this._holdDir) {   // a fresh press: the kit already moved one row
+      this._holdDir = dir; this._holdCount = 0; this._holdNext = now + REPEAT.delay;
+      return;
+    }
+    if (now < this._holdNext) return;
+    const { gap, rows } = holdRepeatStep(this._holdCount++);
+    this._holdNext = now + gap;
+    this._repeating = true;
+    try {
+      for (let k = 0; k < rows; k++) {
+        if (this._spatial) this._moveDir(dir);
+        else this.move(dir === 'up' ? -1 : 1);
+      }
+    } finally { this._repeating = false; }
   }
 
   /**
@@ -101,13 +193,14 @@ export class RowFocusController extends FocusController {
       return j < 0 ? null : others[j];
     }
     const i = nearestRowIndex(el.getBoundingClientRect(), dir, others.map((o) => o.getBoundingClientRect()));
-    if (i < 0 && this._onEdge) this._onEdge(dir);
+    if (i < 0 && this._onEdge && !this._repeating) this._onEdge(dir);
     return i < 0 ? null : others[i];
   }
 
   /** @override */
   poll() {
     super.poll();
+    this._pollRepeat();
     const el = this.focused;
     if (el && el !== this._lastScrolled) {
       this._lastScrolled = el;

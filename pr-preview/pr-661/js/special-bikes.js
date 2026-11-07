@@ -32,7 +32,7 @@ export const SPECIAL_BIKES = Object.freeze({
   [SOLO_FLIGHT_BIKE_KEY]: Object.freeze({ name: 'Solo Flight', model: SOLO_FLIGHT_BIKE_MODEL_PATH, reward: 'playerBots',
     unit: 'solo achievements', rideable: false, icon: '\uD83E\uDEB6', color: '#9fd8ff', fx: null }),
   [TIME_WARP_BIKE_KEY]: Object.freeze({ name: 'Time Warp', model: TIME_WARP_BIKE_MODEL_PATH, reward: 'timeWarp',
-    unit: 'achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
+    unit: 'non-calendar achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
 });
 
 /** Chooser keys of the special bikes, in carousel order. */
