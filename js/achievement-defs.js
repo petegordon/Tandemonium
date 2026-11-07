@@ -191,11 +191,11 @@ export const ACHIEVEMENTS = [
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
-  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: "Turn down ASSIST when it's offered, then finish",       condition: s => fin(s) && s.assistDeclined === true },
+  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash twice at one checkpoint, then finish without using ASSIST',       condition: s => fin(s) && s.assistDeclined === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
-  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h',                     condition: s => s.speed >= 13.9, ...best(50, 'km/h', s => n(s.speed) * 3.6) },
-  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h',                         condition: s => s.speed >= 65 / 3.6, ...best(65, 'km/h', s => n(s.speed) * 3.6) },
+  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9, ...best(50, 'km/h', s => n(s.speed) * 3.6) },
+  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h on a ride',                         condition: s => s.speed >= 65 / 3.6, ...best(65, 'km/h', s => n(s.speed) * 3.6) },
   { id: 'boost_25',       section: 'speed', name: 'Boost Junkie',        icon: '🔋', desc: 'Trigger 25 boosts',                   ...count('boosts', 25) },
   { id: 'afterburner',    section: 'speed', name: 'Afterburner',         icon: '🔥', desc: 'Chain pickups to keep boosting for 10 s straight', condition: s => n(s.boostBest) >= 10, ...best(10, 's', s => n(s.boostBest)) },
 
