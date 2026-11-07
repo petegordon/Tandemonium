@@ -252,23 +252,40 @@ export function coinPop(amount) {
   setTimeout(() => f.remove(), 900);
 }
 
-/** goal: the stage goal, or null on Today's Launch, where `best` is the day's best. */
-export function updateHud({ coins, distance, goal, best = 0 }) {
+/**
+ * goal: the stage goal, or null on Today's Launch, where `best` is the day's best.
+ * stage / stages: the stage being flown and how many have their own goal ("STAGE 3 / 7"; past the table the last
+ * goal repeats, so it reads "STAGE 9"). Pete, Steam playtest 2026-11-07: the stage was hidden.
+ */
+export function stageLabel(stage, stages) {
+  if (!stage) return '';
+  return stages && stage <= stages ? `STAGE ${stage} / ${stages}` : `STAGE ${stage}`;
+}
+
+export function updateHud({ coins, distance, goal, best = 0, stage = null, stages = 0 }) {
   const hud = $('sling-hud');
   // Built once, then only the text changes — rebuilding the spans would cut
   // the coin counter's pop animation off on the frame it starts.
   if (!hud.querySelector('.sling-coins')) {
-    hud.innerHTML = '<span class="sling-coins"></span><span class="sling-togo"></span>';
+    hud.innerHTML = '<span class="sling-stage"></span><span class="sling-coins"></span><span class="sling-togo"></span>'
+      + '<span class="sling-goalbar"><i></i></span>';
   }
+  const st = goal != null ? stageLabel(stage, stages) : '';
   const text = goal != null
-    ? `${COIN} ${coins}|🏁 ${fmt(Math.max(0, goal - distance))} m to go`
-    : `${COIN} ${coins}|📅 ${fmt(distance)} m${best ? ` · best ${fmt(best)} m` : ''}`;
+    ? `${COIN} ${coins}|🏁 ${fmt(Math.max(0, goal - distance))} m to go|${st}`
+    : `${COIN} ${coins}|📅 ${fmt(distance)} m${best ? ` · best ${fmt(best)} m` : ''}|`;
   if (text !== _hudText) {
-    const [c, g] = text.split('|');
+    const [c, g, s] = text.split('|');
     hud.querySelector('.sling-coins').textContent = c;
     hud.querySelector('.sling-togo').textContent = g;
+    const se = hud.querySelector('.sling-stage');
+    se.textContent = s;
+    se.hidden = !s;
     _hudText = text;
   }
+  const bar = hud.querySelector('.sling-goalbar');
+  bar.hidden = goal == null;
+  if (goal != null) bar.firstChild.style.width = `${Math.round(100 * Math.min(1, Math.max(0, distance) / goal))}%`;
   hud.classList.add('visible');
 }
 
