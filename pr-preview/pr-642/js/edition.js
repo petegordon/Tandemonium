@@ -66,7 +66,7 @@ export const DEMO_RULES = Object.freeze({
   versus: false,
   bikes: Object.freeze(['default', 'bike_orange']),
   achievements: DEMO_ACHIEVEMENTS,
-  postScores: false,   // as #400: the demo's level scores stay off the 🏆 leaderboard
+  postScores: true,    // #641 (Pete): demo level scores go on the 🏆 leaderboard too
 });
 
 /** #641 · may this edition award achievement `id`? */
