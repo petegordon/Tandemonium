@@ -23,6 +23,7 @@
     "smoke:insecure": "node scripts/smoke-lobby.mjs --insecure",
     "smoke:boot": "node scripts/smoke-boot-failure.mjs",
     "smoke:discord": "node scripts/smoke-discord-signin.mjs",
+    "smoke:seat-signin": "node scripts/smoke-seat-signin.mjs",
     "audit:first30": "node scripts/audit-first-30s.mjs",
     "smoke:ride": "node scripts/smoke-first-ride.mjs",
     "smoke:geese": "node scripts/smoke-goose-riders.mjs",

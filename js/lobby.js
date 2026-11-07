@@ -56,6 +56,13 @@ import * as records from './records.js';
 import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { AuthManager, identityPictures } from './auth.js';
 import qrcode from '../shared/ui/third_party/qrcode-generator.js';
+import { SeatAccounts } from './seat-accounts.js';
+import { SeatAchievements } from './seat-achievements.js';
+import { API_BASE } from './config.js';
+
+/** #612 · the Steam "Link Discord" prompt shows at most once a week. */
+const LINK_PROMPT_SNOOZE_KEY = 'tandemonium_link_discord_prompt_until';
+const LINK_PROMPT_SNOOZE_MS = 7 * 24 * 3600 * 1000;
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
@@ -3520,13 +3527,40 @@ export class Lobby {
     return ids.map((id) => document.getElementById(id)).filter((el) => el && el.style.display !== 'none');
   }
 
+  /**
+   * #612 · after a ride on Steam, a Player 1 without Discord linked gets the Profile card once
+   * with a short reason and LINK DISCORD focused; NOT NOW closes it. At most once a week.
+   */
+  maybePromptLinkDiscord() {
+    if (!this._linkPromptDue) return false;
+    this._linkPromptDue = false;
+    if (!this._isSteam || !this.auth.isLoggedIn() || this.auth.hasIdentity('discord')) return false;
+    if (this.profilePopup.classList.contains('visible') || this._room) return false;
+    let until = 0;
+    try { until = Number(localStorage.getItem(LINK_PROMPT_SNOOZE_KEY) || 0); } catch (e) {}
+    if (until > Date.now()) return false;
+    try { localStorage.setItem(LINK_PROMPT_SNOOZE_KEY, String(Date.now() + LINK_PROMPT_SNOOZE_MS)); } catch (e) {}
+    const pill = document.getElementById('bar-profile');
+    if (pill && this._tvQuery && this._tvQuery.matches) this._anchorPopup(this.profilePopup, pill);
+    this._linkPrompt = true;
+    this._toggleProfile();
+    return true;
+  }
+
   _toggleProfile() {
     const signedIn = this.auth.isLoggedIn();
+    const asPrompt = !!this._linkPrompt;   // opened by maybePromptLinkDiscord, this once
+    this._linkPrompt = false;
     document.querySelector('.profile-popup-content').style.display = signedIn ? '' : 'none';
     document.getElementById('profile-popup-signin').style.display = signedIn ? 'none' : '';
     this.profilePopup.classList.toggle('visible');
     const open = this.profilePopup.classList.contains('visible');
     this._showProfileError('');
+    // #612: on Steam without Discord, say why linking helps; the prompt's back button is NOT NOW.
+    const promptEl = document.getElementById('profile-popup-prompt');
+    if (promptEl) promptEl.hidden = !(signedIn && this._isSteam && !this.auth.hasIdentity('discord'));
+    const backEl = document.getElementById('profile-popup-back');
+    if (backEl) backEl.textContent = open && asPrompt ? 'NOT NOW' : 'RETURN TO LOBBY';
     // #612: a TV or the desktop app shows the QR steps as soon as the popup
     // opens (a phone is the easy way to type a Discord password). A phone or a
     // laptop browser just uses the button.
@@ -6057,6 +6091,9 @@ export class Lobby {
     this._localP2Type = null;
     this._localSeatedOnHost = false;
     this._localP2Name = null;
+    this._localP2NameBeforeAccount = null;
+    // #612: the seat is empty, so no account sits on it (the controller still remembers it).
+    try { this.seatAccounts.bindSeat(2, null); } catch (e) {}
     if (this._pendingMode === 'local') this._pendingMode = null;
     // Force the host page to re-render its join UI next time it is shown.
     this._localLastJoinState = null;
@@ -6194,6 +6231,13 @@ export class Lobby {
       const slotName = (sourceType !== 'keyboard' && p2Slot && p2Slot.state === 'claimed' && mgr && mgr.slotIdentity)
         ? slotIdentityHidFirst(p2Slot, (sl) => mgr.slotIdentity(sl)).shortName : null;
       this._localP2Name = opts.name || slotName || (sourceType === 'keyboard' ? 'Keyboard' : 'Player 2');
+      this._localP2NameBeforeAccount = null;
+      // #612: a controller that remembers its player (Steam: by serial) sits down signed in.
+      try {
+        const key = this._lookKeyFor({ n: 2, input: this._localP2InputManager, type: sourceType === 'keyboard' ? 'keyboard' : 'gamepad', slotId: p2Slot ? p2Slot.id : null });
+        this.seatAccounts.bindSeat(2, key);
+        this._refreshSeatNames();
+      } catch (e) {}
       this._refreshHostNext();
       return;
     }
@@ -7935,6 +7979,126 @@ export class Lobby {
     return out;
   }
 
+  /** #612 · players 2–4's own House Tandem sign-ins (js/seat-accounts.js), made on first use. */
+  get seatAccounts() {
+    if (!this._seatAccounts) {
+      let store = null;
+      try { store = window.localStorage; } catch (e) {}
+      this._seatAccounts = new SeatAccounts({ store });
+      // A seat that signs in or out renames its seat cards (P2's "Player 2" becomes their name),
+      // and a newly signed-in account's earned achievements come down so none is awarded twice.
+      this._seatSynced = new Set();
+      this._seatAccounts.onChange((n) => {
+        try { this._refreshSeatNames(); } catch (e) {}
+        const a = this._seatAccounts.get(n);
+        if (a && !this._seatSynced.has(a.user.id)) {
+          this._seatSynced.add(a.user.id);
+          fetch(`${API_BASE}/me`, { headers: { Authorization: `Bearer ${a.token}` } })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((me) => { if (me && me.achievements) this.seatAchievements.mergeEarned(a.user.id, me.achievements.map((x) => x.achievement_id)); })
+            .catch(() => { this._seatSynced.delete(a.user.id); });
+        }
+      });
+    }
+    return this._seatAccounts;
+  }
+
+  /** #612 · a signed-in seat's own achievements (js/seat-achievements.js). */
+  get seatAchievements() {
+    if (!this._seatAchievements) {
+      let store = null;
+      try { store = window.localStorage; } catch (e) {}
+      this._seatAchievements = new SeatAchievements({ store });
+    }
+    return this._seatAchievements;
+  }
+
+  /** The signed-in name for seat n (2–4), or null. */
+  seatAccountName(n) {
+    const a = n > 1 ? this.seatAccounts.get(n) : null;
+    return a && a.user ? a.user.name : null;
+  }
+
+  /** Seat names follow their sign-ins: local Player 2's seat card and the versus names. */
+  _refreshSeatNames() {
+    const name = this.seatAccountName(2);
+    if (this._localSeatedOnHost) {
+      if (name) { if (!this._localP2NameBeforeAccount) this._localP2NameBeforeAccount = this._localP2Name || 'Player 2'; this._localP2Name = name; }
+      else if (this._localP2NameBeforeAccount) { this._localP2Name = this._localP2NameBeforeAccount; this._localP2NameBeforeAccount = null; }
+    }
+    try { this._refreshHostNext(); } catch (e) {}
+  }
+
+  /**
+   * #612 · the Wardrobe's account row for each card. Player 1 is the game's own account (sign
+   * in, or Link Discord on Steam); seats 2–4 are SeatAccounts. A device code shows as a QR
+   * on the card; the desktop app also opens the system browser on it.
+   */
+  _wardrobeAccounts() {
+    const listeners = new Set();
+    const emit = (n) => { for (const fn of listeners) { try { fn(n); } catch (e) {} } };
+    const seats = this.seatAccounts;
+    const offSeats = seats.onChange(emit);
+    void offSeats;
+    const openBrowser = (url) => { if (url && window.electronApp && window.electronApp.openSignIn) window.electronApp.openSignIn(url); };
+    const p1 = () => {
+      const dev = this.auth._device;
+      if (dev && !dev.stopped) return { state: 'pending', code: dev.code, url: dev.url, status: this._p1DeviceStatus || 'pending' };
+      if (this.auth.isLoggedIn()) {
+        const u = this.auth.getUser();
+        return {
+          state: 'signed-in', name: u.name, pics: identityPictures(u),
+          linkable: !this.auth.hasIdentity('discord'), canSignOut: false,
+        };
+      }
+      return { state: 'signed-out', error: this._p1DeviceError || null };
+    };
+    return {
+      view: (n) => {
+        if (n === 1) return p1();
+        const dev = seats.pending(n);
+        if (dev) return { state: 'pending', code: dev.code, url: dev.url, status: dev.status };
+        const a = seats.get(n);
+        if (a) return { state: 'signed-in', name: a.user.name, pics: identityPictures(a.user), canSignOut: true };
+        const err = seats.lastError && seats.lastError.n === n ? seats.lastError.error : null;
+        return { state: 'signed-out', error: err === 'cancelled' ? 'Cancelled.' : err === 'expired' ? 'That code expired. Try again.' : err };
+      },
+      bind: (n, padKey) => { if (n > 1) seats.bindSeat(n, padKey); },
+      signIn: async (n) => {
+        if (n === 1) {
+          this._p1DeviceError = null;
+          try {
+            const dev = await this.auth.startDiscordDevice({
+              onStatus: (s) => { this._p1DeviceStatus = s; emit(1); },
+              onDone: (user, info) => {
+                this._p1DeviceStatus = null;
+                if (user) {
+                  if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
+                  if (this._profileUpdateUI) this._profileUpdateUI(user);
+                } else this._p1DeviceError = info && info.error === 'cancelled' ? 'Cancelled.' : 'That code expired. Try again.';
+                emit(1);
+              },
+            });
+            emit(1);
+            openBrowser(dev && dev.url);
+          } catch (e) { this._p1DeviceError = e.message || 'Discord sign-in is unavailable'; emit(1); }
+          return;
+        }
+        if (seats.lastError && seats.lastError.n === n) seats.lastError = null;
+        try {
+          const dev = await seats.startSignIn(n);
+          openBrowser(dev && dev.url);
+        } catch (e) { seats.lastError = { n, error: e.message || 'Discord sign-in is unavailable' }; emit(n); }
+      },
+      signOut: (n) => { if (n > 1) seats.signOut(n); },
+      cancel: (n) => {
+        if (n === 1) { this.auth.cancelDiscordDevice(); this._p1DeviceStatus = null; emit(1); return; }
+        seats.cancel(n);
+      },
+      onChange: (fn) => { listeners.add(fn); return () => listeners.delete(fn); },
+    };
+  }
+
   /** Open the Dressing Room with player n's card in Edit (everyone else Ready). */
   _openDressingRoom(n) {
     if (!this._roomSheet || this._room) return;
@@ -7949,6 +8113,7 @@ export class Lobby {
       makePreview: lowTier ? null : () => new DressingRoomPreview(),
       onLookChanged: (who, kind, val) => window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n: who, kind, val } })),
       onClose: () => this._onRoomClosed(),
+      accounts: this._wardrobeAccounts(),
     });
     this._room.show(n);
   }
