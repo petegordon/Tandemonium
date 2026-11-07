@@ -296,13 +296,20 @@
   /* Slingshot mode · in-ride strip, garage and results. */
   #sling-hud {
     position: fixed; top: 92px; left: 50%; transform: translateX(-50%);
-    display: none; gap: 10px; align-items: center;
-    padding: 4px 12px; border-radius: 999px; background: rgba(0,0,0,0.5);
-    color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap;
+    display: none; gap: 12px; align-items: center; flex-wrap: wrap; justify-content: center;
+    padding: 6px 14px 8px; border-radius: 18px; background: rgba(0,0,0,0.55);
+    color: #fff; font-size: var(--uf-size-sm, 13px); font-weight: 700; white-space: nowrap;
     pointer-events: none; z-index: 55;
   }
   #sling-hud.visible { display: flex; }
-  #sling-hud .sling-coins { color: var(--uf-color-accent-2); font-size: 17px; display: inline-block; }
+  /* The stage being flown, loud (Pete 2026-11-07: it was hidden), and how far through its goal. */
+  #sling-hud .sling-stage { background: var(--uf-color-accent-2, #ffd23f); color: #1a1a1a; padding: 2px 10px; border-radius: 999px;
+    font-size: var(--uf-size-md, 15px); font-weight: 900; letter-spacing: .06em; }
+  #sling-hud .sling-stage[hidden] { display: none; }
+  #sling-hud .sling-goalbar { flex-basis: 100%; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.18); overflow: hidden; }
+  #sling-hud .sling-goalbar[hidden] { display: none; }
+  #sling-hud .sling-goalbar i { display: block; height: 100%; width: 0; background: var(--uf-color-accent-2, #ffd23f); transition: width .2s linear; }
+  #sling-hud .sling-coins { color: var(--uf-color-accent-2); font-size: var(--uf-size-lg, 17px); display: inline-block; }
   #sling-hud .sling-coins.pop { animation: sling-coin-pop 0.45s ease-out; }
   #token-counter.pop { animation: sling-coin-pop 0.45s ease-out; color: var(--uf-color-accent-2); }
   @keyframes sling-coin-pop { 0% { transform: scale(1); } 35% { transform: scale(1.7); text-shadow: 0 0 12px var(--uf-color-accent-2); } 100% { transform: scale(1); } }
@@ -2567,6 +2574,7 @@
     color: rgba(255,255,255,0.7);
   }
   .ach-detail[data-state="earned"] .ach-detail-status { color: var(--uf-color-accent); }
+  .ach-detail-best { font-size: 0.85em; color: rgba(255,255,255,0.7); margin-top: 4px; }   /* where + when the best-so-far was set */
   .ach-detail[data-state="progress"] .ach-detail-status { color: rgba(255,220,120,0.95); }
   .ach-detail-bar {
     width: min(16em, 80%);

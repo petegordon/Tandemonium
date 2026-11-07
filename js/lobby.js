@@ -104,6 +104,14 @@ function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
 
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
 
+/** Pete 2026-11-07: the rider's last difficulty pick (the Daily Ride starts on it, else Adventurous). */
+const DIFFICULTY_PREF_KEY = 'tandemonium_difficulty';
+
+/** Mark one difficulty selected on every selector (solo + room). */
+function diffSelect(diff) {
+  document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.toggle('selected', b.dataset.difficulty === diff));
+}
+
 const BIKE_NAMES = {
   default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
@@ -327,6 +335,8 @@ export class Lobby {
         if (this._activeModal === 'leaderboard' && this._leaderboardSheet) scrollPage(this._leaderboardSheet.body, dir);
         else if (this._activeModal === 'achievements' && this._achievementsSheet) scrollPage(this._achievementsSheet.body, dir);   // #540
       },
+      // Steam playtest 2026-11-07: hold the d-pad / left stick to run down the 100 achievements.
+      repeat: () => this._activeModal === 'achievements',
     });
     this._activeModal = null; // 'profile' | 'volume' | 'leaderboard' | null
     this._modalBack = null;
@@ -2173,11 +2183,21 @@ export class Lobby {
    */
   _updateDifficultyVisibility(levelId) {
     const isTutorial = levelId === 'tutorial';
-    // C-2: Today's Road is one road at one difficulty for everyone — a shared
-    // road that each player tunes to taste is not a shared road.
+    // C-2 had Today's Road at one difficulty for everyone; Pete (2026-11-07) opened it up: the rider picks, and it
+    // starts on their last pick or Adventurous. A level may still pin one with `fixedDifficulty`.
     const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
     const roadDifficulty = daily && daily.fixedDifficulty;
     const forced = isTutorial ? 'chill' : (daily ? roadDifficulty : null);
+    if (!isTutorial && !forced) {
+      const chosen = this._savedDifficulty();
+      const want = chosen || (daily ? 'adventurous' : null);
+      if (want && want !== this.selectedDifficulty) {
+        this.selectedDifficulty = want;
+        diffSelect(want);
+        this._syncForcedDifficulty();
+        this._refreshRecordLines();
+      }
+    }
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
     if (forced && !isTutorial) {
       diffBtns.forEach(b => {
@@ -2210,6 +2230,14 @@ export class Lobby {
     }
   }
 
+  /** The rider's own last difficulty pick (not a forced one), or null. */
+  _savedDifficulty() {
+    try {
+      const v = localStorage.getItem(DIFFICULTY_PREF_KEY);
+      return ['chill', 'adventurous', 'daredevil'].includes(v) ? v : null;
+    } catch { return null; }
+  }
+
   /** PR #397 M1 · a forced difficulty (road, tutorial) goes to the stoker too. */
   _syncForcedDifficulty() {
     if (this._roomRole === 'captain' && this._pendingMode === 'multiplayer' && this.net && this.net.connected) {
@@ -2234,6 +2262,7 @@ export class Lobby {
           document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
             .forEach(b => b.classList.add('selected'));
           this.selectedDifficulty = btn.dataset.difficulty;
+          try { localStorage.setItem(DIFFICULTY_PREF_KEY, btn.dataset.difficulty); } catch { /* private mode */ }
           // B-3: bests and medals are per difficulty, so the card lines have to
           // follow the choice the player just made.
           this._refreshRecordLines();
@@ -3518,6 +3547,27 @@ export class Lobby {
     this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
   }
 
+  /**
+   * LB / RB over the Achievements sheet: the focus jumps to the first badge of
+   * the previous / next section, with that section's heading at the top.
+   * LB inside a section goes to its own first badge first.
+   * @param {-1|1} dir
+   */
+  _achJumpSection(dir) {
+    const secs = Array.from(document.querySelectorAll('#lb-achievements .lb-ach-section'))
+      .filter((sec) => sec.querySelector('.lb-ach-item'));
+    if (!secs.length) return;
+    const f = this._modalFocus.focused;
+    const cur = f ? secs.findIndex((sec) => sec.contains(f)) : -1;
+    let i;
+    if (cur < 0) i = dir > 0 ? 0 : secs.length - 1;   // on Close (or nothing): RB → top, LB → last section
+    else if (dir < 0 && f !== secs[cur].querySelector('.lb-ach-item')) i = cur;
+    else i = Math.max(0, Math.min(secs.length - 1, cur + dir));
+    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.lb-ach-item'));
+    this._modalFocus.focusElement(first);
+    secs[i].scrollIntoView({ block: 'start', inline: 'nearest' });
+  }
+
   _closeAchievements() {
     if (this._achievementsSheet.open) this._achievementsSheet.close();
     else this._onAchievementsClosed();
@@ -4009,6 +4059,7 @@ export class Lobby {
     const fmt = v => Math.floor(v).toLocaleString('en-US');
     const total = this._achievements.getAllDefinitions().length;
     let state, kicker, status;
+    let bestLine = '';
     if (d.earned) {
       state = 'earned'; kicker = 'Achievement unlocked';
       status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
@@ -4019,6 +4070,12 @@ export class Lobby {
     } else if (d.progress && d.progress[0] > 0) {
       state = 'progress'; kicker = 'In progress';
       status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
+      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+      if (d.bestAt && d.bestAt.at) {
+        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
+      }
     } else {
       state = 'locked'; kicker = 'Locked'; status = 'Not yet';
     }
@@ -4033,6 +4090,7 @@ export class Lobby {
       '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
       this._medalTimesHtml(d) +
       '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
+      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
       '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
   }
 
@@ -7679,14 +7737,20 @@ export class Lobby {
     }
     this._gpPrevY = y;
 
-    // LB/RB bumpers (buttons 4/5) — cycle bike color
+    // LB/RB bumpers (buttons 4/5) — cycle bike color; over the Achievements
+    // sheet they jump a section instead (and leave the bike alone).
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
     const rb = gp.buttons[5] && gp.buttons[5].pressed;
-    if (lb && !this._gpPrevLB && this._bikePrev) {
+    if (this._achievementsSheet && this._achievementsSheet.open) {
+      if (!this._achievementDetailOpen() && this._activeModal === 'achievements') {
+        if (lb && !this._gpPrevLB) this._achJumpSection(-1);
+        if (rb && !this._gpPrevRB) this._achJumpSection(1);
+      }
+    } else if (lb && !this._gpPrevLB && this._bikePrev) {
       this._bikePrev();
       this._flashBumper(document.getElementById('bike-prev'));
     }
-    if (rb && !this._gpPrevRB && this._bikeNext) {
+    if (rb && !this._gpPrevRB && this._bikeNext && !(this._achievementsSheet && this._achievementsSheet.open)) {
       this._bikeNext();
       this._flashBumper(document.getElementById('bike-next'));
     }
@@ -8478,7 +8542,7 @@ export class Lobby {
       this.selectedPresetKey = 'default';
       nameEl.style.color = 'rgba(255,255,255,0.3)';
       nameEl.textContent = '\uD83D\uDD12 ' + def.name;
-      hintEl.innerHTML = `<span class="bike-count" style="font-size:18px;font-weight:700;color:rgba(255,255,255,0.85)">${prog.have} of ${prog.need}</span>`
+      hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
@@ -8490,7 +8554,7 @@ export class Lobby {
     nameEl.textContent = def.icon + ' ' + def.name;
     if (!def.rideable) {
       this.selectedPresetKey = 'default';
-      hintEl.innerHTML = '<span style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.85)">Coming soon</span>';
+      hintEl.innerHTML = '<span style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">Coming soon</span>';
       hintEl.title = `${def.name} is earned; riding it comes in a later update`;
       hintEl.style.display = '';
       return;

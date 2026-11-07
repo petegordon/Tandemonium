@@ -113,10 +113,16 @@ check(aim.checkpoints === 0 && aim.flavor === '', 'no checkpoints and no countdo
 const rest = await pose();
 check(Math.abs(rest.d - 5.2) < 0.01 && Math.abs(rest.lateral) < 0.05, `the bike rests in the slingshot (${rest.d.toFixed(2)} m, centred)`);
 const aimCoins = await page.evaluate(() => {
-  const shown = window._game.collectibleManager._pool.filter(s => s.mesh.visible);
-  return { shown: shown.length, sparkles: shown.length ? shown[0].mesh.children.length : 0 };
+  const cm = window._game.collectibleManager;
+  const shown = cm._pool.filter(s => s.mesh.visible);
+  const inst = cm._instanced;
+  const mats = inst && Array.isArray(inst.body.material) ? inst.body.material : [];
+  return { shown: shown.length, drawn: inst ? inst.body.count : 0, halos: inst ? inst.fx.count : 0,
+           faces: mats.filter(m => m.map && m.bumpMap).length };
 });
-check(aimCoins.shown >= 5 && aimCoins.sparkles >= 4, `the coins are out while aiming (${aimCoins.shown} shown, ${aimCoins.sparkles} halo/sparkles each)`);
+// The Daily Ride's token (Pete, 2026-11-07): instanced gold disc, stamped faces, halo ring.
+check(aimCoins.shown >= 5 && aimCoins.drawn === aimCoins.shown && aimCoins.halos === aimCoins.shown && aimCoins.faces === 2,
+  `the Tandem Tokens are out while aiming (${aimCoins.shown} shown, ${aimCoins.halos} halos, ${aimCoins.faces} stamped faces)`);
 await pedal(3); await pedal(3); await pedal(0, true);
 await new Promise(r => setTimeout(r, 4000));
 const still = await pose();
@@ -264,6 +270,11 @@ await page.waitForFunction((end) => window._game.bike.distanceTraveled > end + 2
 const got = await page.evaluate(() => ({ all: window._game.collectibleManager._items.slice(0, 5).every(i => i.collected), coins: window._game._slingRun.coins, hud: document.querySelector('#sling-hud .sling-coins').textContent, fx: !!window._game._slingFx }));
 check(fan.fresh > 0 && got.all && got.coins - fan.before === fan.fresh && got.hud.includes(String(got.coins)) && got.fx,
   `rolling through a coin fan collects every coin in it (+${got.coins - fan.before}, HUD "${got.hud}"), with a sparkle burst`);
+
+// 11b. The stage is on screen (Pete 2026-11-07: "how do I tell what stage I'm in?"): a STAGE n / N badge and a goal bar.
+const st = await page.evaluate(() => { const h = document.getElementById('sling-hud'); const s = h.querySelector('.sling-stage'); const b = h.querySelector('.sling-goalbar i');
+  return { stage: s && !s.hidden ? s.textContent : '', want: window._game._slingPlayStage(), bar: b ? parseFloat(b.style.width) : -1, visible: h.classList.contains('visible') }; });
+check(st.visible && st.stage === `STAGE ${st.want} / 7` && st.bar > 0 && st.bar <= 100, `the HUD names the stage ("${st.stage}") with a goal bar (${st.bar}%)`);
 
 // 12. A ramp at speed: the bike takes off, sails over gate 2's hay bale, and a
 // long flight lands as Big Air.
