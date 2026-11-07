@@ -38,6 +38,8 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
+import { GOOSE_OUTFITS } from './goose-outfits.js';
+import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamTwinPad } from './input-manager.js';
@@ -8128,6 +8130,9 @@ export class Lobby {
       makePreview: lowTier ? null : () => new DressingRoomPreview(),
       onLookChanged: (who, kind, val) => window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n: who, kind, val } })),
       onClose: () => this._onRoomClosed(),
+      // #611: reward outfits (the robot) stay locked until this device's achievements earn them
+      lockedOutfits: () => lockedOutfits(GOOSE_OUTFITS, this._achievements ? this._achievements.getEarnedIds() : []),
+      lockHint: (k) => outfitLockHint(GOOSE_OUTFITS[k], this._achievements ? this._achievements.getEarnedIds() : []),
       accounts: this._wardrobeAccounts(),
     });
     this._room.show(n);

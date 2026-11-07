@@ -4287,7 +4287,8 @@
   .dr-label { font: 700 var(--uf-size-xs)/1.3 var(--uf-font-mono); letter-spacing: 1.4px; text-transform: uppercase; color: var(--uf-color-fg-muted); margin-bottom: 5px; }
   .dr-opts { display: flex; flex-wrap: wrap; gap: 6px; }
   .dr-card .opt-btn { min-width: 0; width: auto; padding: 6px 10px; font-size: 12.5px; }
-  .dr-card .opt-btn[data-locked] { opacity: .45; }
+  .dr-card .opt-btn[data-locked], #opt-outfit-row .opt-btn[data-locked] { opacity: .45; }
+  .opt-btn[data-locked]::before { content: 'F512 A0'; }
   .dr-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
   .dr-hint { margin: 0; text-align: center; }
   .dr-hint:empty { display: none; }
@@ -6128,7 +6129,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.388cda7 | 11-07-2026 09:51</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d28f112 | 11-07-2026 10:47</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6635,8 +6636,9 @@ ON</button>
         <button class="opt-btn" id="opt-outfit-cyclists">Cyclists</button>
         <button class="opt-btn" id="opt-outfit-fancy">Fancy</button>
         <button class="opt-btn" id="opt-outfit-georgian">Georgian</button>
+        <button class="opt-btn" id="opt-outfit-robot">Robot</button>
       </div>
-      <div class="options-note">What your goose wears — applies immediately</div>
+      <div class="options-note" id="opt-outfit-note">What your goose wears — applies immediately</div>
     </div>
     <div class="opt-section">
       <div class="label" id="opt-colour-label">Player 1's Colours</div>

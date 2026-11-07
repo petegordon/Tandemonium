@@ -42,6 +42,8 @@ import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { GOOSE_OUTFITS } from './goose-outfits.js';
+import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots, isSilentSteamControllerSlot, frozenTwinHidEntries } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
@@ -5976,7 +5978,7 @@ class Game {
     const soloOffBtn = document.getElementById('opt-solo-off');
     if (soloOnBtn)  soloOnBtn.addEventListener('click',  () => this._setShowSolo(true));
     if (soloOffBtn) soloOffBtn.addEventListener('click', () => this._setShowSolo(false));
-    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
+    for (const key of Object.keys(GOOSE_OUTFITS)) {
       const b = document.getElementById('opt-outfit-' + key);
       if (b) b.addEventListener('click', () => this._setGooseOutfit(key));
     }
@@ -6217,7 +6219,17 @@ class Game {
   }
 
   /** Player 1's outfit (Settings): saved to their look, then the geese follow on the next frame. */
+  /** #611 · reward outfits this device has not earned yet (the robot: player bots). */
+  _lockedOutfits() {
+    return lockedOutfits(GOOSE_OUTFITS, this.achievements ? this.achievements.getEarnedIds() : []);
+  }
+
   _setGooseOutfit(key) {
+    if (this._lockedOutfits().has(key)) {
+      const note = document.getElementById('opt-outfit-note');
+      if (note) note.textContent = 'Locked: ' + outfitLockHint(GOOSE_OUTFITS[key], this.achievements ? this.achievements.getEarnedIds() : []);
+      return;
+    }
     playerLooks.update(1, { outfit: key });
     this._updateOptionsGooseOutfitUI();
     this._syncRiderLooks(true);
@@ -6232,9 +6244,14 @@ class Game {
 
   _updateOptionsGooseOutfitUI() {
     const cur = getGooseOutfit();
-    for (const key of ['victorian', 'cyclists', 'fancy', 'georgian']) {
+    const locked = this._lockedOutfits();
+    const earned = this.achievements ? this.achievements.getEarnedIds() : [];
+    for (const key of Object.keys(GOOSE_OUTFITS)) {
       const b = document.getElementById('opt-outfit-' + key);
-      if (b) b.classList.toggle('active', key === cur);
+      if (!b) continue;
+      b.classList.toggle('active', key === cur);
+      if (locked.has(key)) { b.dataset.locked = '1'; b.title = outfitLockHint(GOOSE_OUTFITS[key], earned); }
+      else { delete b.dataset.locked; b.removeAttribute('title'); }
     }
     const body = playerLooks.get(1).body;
     for (const k of ['m', 'f']) {
@@ -6418,6 +6435,7 @@ class Game {
       document.getElementById('opt-outfit-cyclists'),
       document.getElementById('opt-outfit-fancy'),
       document.getElementById('opt-outfit-georgian'),
+      document.getElementById('opt-outfit-robot'),
       document.getElementById('opt-colour-0'),
       document.getElementById('opt-colour-1'),
       document.getElementById('opt-colour-2'),

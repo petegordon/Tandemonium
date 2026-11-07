@@ -3,10 +3,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import DATA from '../../js/goose-colourways-data.js';
-import { GOOSE_OUTFITS } from '../../js/goose-outfits.js';
+import { GOOSE_OUTFITS, BASE_OUTFITS } from '../../js/goose-outfits.js';
+import { colourwaysFor } from '../../js/goose-colourways.js';
 
-test('each Goose Outfits pair has Original + 3 colourways', () => {
-  for (const key of Object.keys(GOOSE_OUTFITS)) {
+test('each everyday Goose Outfits pair has Original + 3 colourways (the robot: Original only)', () => {
+  assert.deepEqual(colourwaysFor('robot'), [{ key: 'default', label: 'Original' }]);
+  for (const key of BASE_OUTFITS) {
     const ways = DATA[key] && DATA[key].ways;
     assert.ok(ways, key);
     assert.equal(ways.length, 4, key);
