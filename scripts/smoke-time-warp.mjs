@@ -10,6 +10,8 @@
 //          (cut to the clock + flame bones), the wheel measured, and sized exactly like the goose tandem
 //   TW-04  Show Riders off rides the plain frame; on again brings the Time Warp back
 //   TW-05  picking a paint preset again rides the goose tandem
+//   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
+//          achievements"; once earned it shows in colour as "Coming soon" and the ride stays on the default
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8974, outDir: 'tandemonium-time-warp' });
@@ -20,7 +22,7 @@ await until(page, () => window._game.lobby._presetKeys.length > 1 && !!window._g
 
 const chooser = () => page.evaluate(() => {
   const l = window._game.lobby;
-  const sp = l._specialPreview;
+  const sp = (l._specialPreviews || {}).time_warp;
   const hint = document.getElementById('bike-hint');
   return {
     key: l._presetKeys[l._presetIndex], picked: l.selectedPresetKey,
@@ -33,9 +35,38 @@ const chooser = () => page.evaluate(() => {
 
 console.log('TW-01 locked: the silhouette and its count');
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('time_warp'); l._applyPresetToPreview(); });
-await until(page, () => { const sp = window._game.lobby._specialPreview; return !!(sp && sp.model && sp.model.visible); });
+await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).time_warp; return !!(sp && sp.model && sp.model.visible); });
 let c = await chooser();
 check(c.key === 'time_warp' && /Time Warp/.test(c.name) && c.name.startsWith('🔒'), 'TW-01: the last chooser entry is the locked Time Warp', c);
+check(await page.evaluate(() => window._game.lobby._presetKeys.slice(-2).join(',')) === 'solo_flight,time_warp', 'TW-01: Solo Flight then Time Warp close the chooser (the reward ladder)');
+
+console.log('SF-01 Solo Flight: locked silhouette, "n of N solo achievements"; earned = coming soon, not ridden yet');
+const sf = async () => {
+  await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); });
+  await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible); });
+  return page.evaluate(() => {
+    const l = window._game.lobby, sp = l._specialPreviews.solo_flight, h = document.getElementById('bike-hint');
+    return { name: document.getElementById('bike-name').textContent, hint: h && h.style.display !== 'none' ? h.textContent.replace(/\s+/g, ' ').trim() : '',
+      dark: sp.dark, picked: l.selectedPresetKey, tandem: l._previewModel.visible,
+      others: Object.entries(l._specialPreviews).filter(([k, v]) => k !== 'solo_flight' && v.model && v.model.visible).map(([k]) => k) };
+  });
+};
+let s1 = await sf();
+const sfNeed = await page.evaluate(async () => (await import('/js/rewards.js')).playerBotsProgress([]).need);
+check(s1.name.startsWith('\uD83D\uDD12') && s1.name.includes('Solo Flight') && s1.dark && s1.picked === 'default', 'SF-01: Solo Flight is a locked dark silhouette; the ride stays on the default', s1);
+check(s1.hint.replace(/\s+/g, '') === `0of${sfNeed}soloachievements`, 'SF-01: "n of N solo achievements" over it (N = solo less 1: 80 once #608 lands)', [s1.hint, sfNeed]);
+check(s1.others.length === 0 && !s1.tandem, 'SF-01: only its own model shows', s1);
+await page.evaluate(async () => {
+  const { soloAchievementIds } = await import('/js/rewards.js');
+  const ach = window._game.lobby._achievements;
+  window.__sfBackup = new Map(ach._earned);
+  for (const id of soloAchievementIds().slice(1)) ach._earned.set(id, { id, earnedAt: 1 });
+});
+s1 = await sf();
+check(!s1.dark && /Coming soon/.test(s1.hint) && s1.picked === 'default', 'SF-01: earned, it shows in colour as coming soon and is not ridden yet', s1);
+await h.shot(page, 'sf01-coming-soon');
+await page.evaluate(() => { window._game.lobby._achievements._earned = window.__sfBackup; });
+await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('time_warp'); l._applyPresetToPreview(); });
 const need = await page.evaluate(async () => (await import('/js/rewards.js')).timeWarpProgress([]).need);
 check(c.hint.replace(/\s+/g, '') === `0of${need}achievements`, 'TW-01: "n of N" over the silhouette (N = non-calendar less 5)', [c.hint, need]);
 check(c.twShown && !c.tandemShown && c.dark, 'TW-01: its own model, dark', c);
