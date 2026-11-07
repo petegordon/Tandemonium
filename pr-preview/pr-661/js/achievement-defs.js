@@ -164,7 +164,7 @@ export const ACHIEVEMENTS = [
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
-  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: "Turn down ASSIST when it's offered, then finish",       condition: s => fin(s) && s.assistDeclined === true },
+  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash twice at one checkpoint, then finish without using ASSIST',       condition: s => fin(s) && s.assistDeclined === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
   { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9 },
