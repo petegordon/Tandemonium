@@ -10,6 +10,8 @@
 //   cyclists   1920s male cyclist (argyle vest, plus-fours) + 1920s lady cyclist (cardigan, pleated skirt)
 //   fancy      Victorian gent (swallowtail coat, top hat) + the lady in the red bustle dress
 //   georgian   1770s gentleman (navy frock coat, tricorne) + a lady in a blue damask robe a l'anglaise
+//   robot      the Canada Goose bot's suit (chrome, white plates, blue lights, visor helmet) -- a REWARD outfit:
+//              unlocked with player bots (#611, js/rewards.js); gander body only so far (`bodies: ['m']`)
 
 const DIR = 'tandem-3d/goose/';
 
@@ -18,7 +20,12 @@ export const GOOSE_OUTFITS = {
   cyclists: { label: 'Cyclists', Captain: DIR + 'goose_captain_cyclist.glb', Stoker: DIR + 'goose_stoker_cyclist.glb' },
   fancy: { label: 'Fancy', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
   georgian: { label: 'Georgian', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
+  robot: { label: 'Robot', Captain: DIR + 'goose_captain_robot_m.glb', Stoker: DIR + 'goose_stoker_robot_m.glb',
+    bodies: ['m'], reward: 'playerBots' },
 };
+
+/** The everyday outfits (no reward to unlock): versus team looks cycle through these. */
+export const BASE_OUTFITS = Object.keys(GOOSE_OUTFITS).filter(k => !GOOSE_OUTFITS[k].reward);
 
 export const DEFAULT_GOOSE_OUTFIT = 'victorian';
 
@@ -69,6 +76,7 @@ export const RIDER_FILES = new Set([
   DIR + 'goose_captain_cyclists_f.glb', DIR + 'goose_stoker_cyclists_m.glb',
   DIR + 'goose_captain_fancy_f.glb', DIR + 'goose_stoker_fancy_m.glb',
   DIR + 'goose_captain_georgian_f.glb', DIR + 'goose_stoker_georgian_m.glb',
+  DIR + 'goose_captain_robot_m.glb', DIR + 'goose_stoker_robot_m.glb',
 ]);
 
 /** The contract file name for a (seat, outfit, body). Pure; does not say whether the file exists. */
@@ -92,8 +100,10 @@ const _warned = new Set();
 export function resolveRider(seat, outfit, body, log = undefined) {
   const s = seat === 'Stoker' ? 'Stoker' : 'Captain';
   const o = normalizeGooseOutfit(outfit);
-  const b = body === 'f' ? 'f' : 'm';
-  const own = SEAT_BODY[s];
+  let b = body === 'f' ? 'f' : 'm';
+  const bodies = GOOSE_OUTFITS[o].bodies;
+  if (bodies && !bodies.includes(b)) b = bodies[0];           // (robot: one body so far, both seats wear it)
+  const own = bodies && bodies.length === 1 ? bodies[0] : SEAT_BODY[s];
   if (b === own) return { path: GOOSE_OUTFITS[o][s], body: b, wanted: null, fallback: false };
   const wanted = riderFileName(s, o, b);
   if (RIDER_FILES.has(wanted)) return { path: wanted, body: b, wanted, fallback: false };

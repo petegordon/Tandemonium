@@ -56,9 +56,10 @@ export class DressingRoom {
    * @param {() => void} [o.onClose]
    * @param {() => (import('./dressing-room-preview.js').DressingRoomPreview | null)} [o.makePreview] null = static cards (Low tier)
    * @param {() => Set<string>} [o.lockedOutfits] outfits the store has not unlocked (#574)
+   * @param {(outfit: string) => string} [o.lockHint] why a locked outfit is locked (#611: "Player Bots reward: 63 of 79 …")
    * @param {{ view: (n: number) => any, bind?: (n: number, padKey: string|null) => void, signIn: (n: number) => any, signOut: (n: number) => void, cancel: (n: number) => void, onChange?: (fn: (n: number) => void) => void }|null} [o.accounts] #612 the account row
    */
-  constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null, accounts = null }) {
+  constructor({ sheet, roster, padKeyFor, controllerManager, onLookChanged = null, onClose = null, makePreview = null, lockedOutfits = null, lockHint = null, accounts = null }) {
     this._sheet = sheet;
     this._roster = roster;
     this._padKeyFor = padKeyFor;
@@ -67,6 +68,7 @@ export class DressingRoom {
     this._onClose = onClose;
     this._makePreview = makePreview;
     this._lockedOutfits = lockedOutfits || (() => new Set());
+    this._lockHint = lockHint || (() => 'Coming to the store');
     this._accounts = accounts;
     this._offAccounts = null;
     /** @type {Map<number, any>} */ this.cards = new Map();   // n → card
@@ -342,7 +344,7 @@ export class DressingRoom {
     const btn = (kind, val, html, active, extra = '') => `<button class="opt-btn${active ? ' active' : ''}" data-pick="${kind}" data-val="${esc(val)}"${extra}>${html}</button>`;
     const row = (label, kind, opts) => `<div class="dr-group" data-group="${kind}"><div class="dr-label">${label}</div><div class="dr-opts" data-pick="${kind}">${opts}</div></div>`;
     const bodies = Object.entries(BODIES).map(([k, b]) => btn('body', k, `${esc(b.label)} <span class="dr-sub">(${esc(b.hint)})</span>`, look.body === k)).join('');
-    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ' data-locked="1" title="Coming to the store"' : '')).join('');
+    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ` data-locked="1" title="${esc(this._lockHint(k))}"` : '')).join('');
     const leds = LED_COLOURS.map((x) => btn('led', x.key, `<span class="led-swatch" style="background: rgb(${x.rgb.r},${x.rgb.g},${x.rgb.b})"></span>${esc(x.label)}`, look.led === x.key)).join('');
     return `<div class="dr-rows">`
       + row('Gander or goose', 'body', bodies)
@@ -460,7 +462,7 @@ export class DressingRoom {
     const hint = c.el.querySelector('.dr-hint');
     let look = playerLooks.get(c.n);
     if (kind === 'outfit') {
-      if (this._lockedOutfits(c.n).has(val)) { if (hint) hint.textContent = 'That outfit is coming to the store.'; return; }
+      if (this._lockedOutfits(c.n).has(val)) { if (hint) hint.textContent = `Locked: ${this._lockHint(val)}.`; return; }
       look = playerLooks.update(c.n, { outfit: val });
       const colours = c.el.querySelector('.dr-opts[data-pick="colourway"]');
       if (colours) colours.innerHTML = this._colourButtons(look);

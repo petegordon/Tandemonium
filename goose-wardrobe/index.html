@@ -104,7 +104,7 @@ const honker = new Honker('../assets/goose-honk.mp3');
 const cache = {};            // name -> Promise<GooseActor>
 let actor = null, clock = new THREE.Clock(), busyMove = false;
 
-const PAIR_LABEL = { victorian: 'Victorian', cyclists: 'Cyclists', fancy: 'Fancy', georgian: 'Georgian' };
+const PAIR_LABEL = { victorian: 'Victorian', cyclists: 'Cyclists', fancy: 'Fancy', georgian: 'Georgian', robot: 'Robot (player bots reward)' };
 const PIECE_LABEL = { hat: 'Hat', coat: 'Coat', jacket: 'Jacket', waistcoat: 'Waistcoat', shirt: 'Shirt',
   breeches: 'Breeches', boots: 'Boots', gloves: 'Gloves', bowtie: 'Bow tie', necktie: 'Necktie', socks: 'Socks',
   skirt: 'Skirt', bodice: 'Bodice', collar: 'Collar', cuffs: 'Cuffs', cardigan: 'Cardigan', pancollar: 'Collar',
@@ -144,7 +144,7 @@ async function show(name) {
   studio.setBackdrop(actor.info.pair);
   for (const b of geeseEl.querySelectorAll('button')) b.classList.toggle('on', b.dataset.name === name);
   $('gname').textContent = actor.info.label;
-  $('gtag').textContent = PAIR_LABEL[actor.info.pair] + ' pair · ' + (actor.info.seat === 'Captain' ? 'captain' : 'stoker');
+  $('gtag').textContent = PAIR_LABEL[actor.info.pair] + (actor.info.pair === 'robot' ? ' · ' : ' pair · ') + (actor.info.seat === 'Captain' ? 'captain' : 'stoker');
   buildPieces(); buildWays(); buildBorrow(); buildMoves();
   $('status').textContent = 'Drag to orbit · scroll to zoom · click the goose to honk';
 }
