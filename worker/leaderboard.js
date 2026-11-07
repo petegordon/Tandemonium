@@ -16,6 +16,7 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
 import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
+  handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback,
 } from './identity.js';
 
 /** What the identity module needs from this worker. */
@@ -70,6 +71,22 @@ export default {
         const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         return handleDiscordConfirm(request, env, url, identityDeps());
+      }
+      // #612 · Steam on the web ("Sign in through Steam"); the Steam build uses /auth/steam with a ticket.
+      if (path === '/auth/steam/begin' && request.method === 'POST') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebBegin(request, env, url, corsOrigin, identityDeps());
+      }
+      if (path === '/auth/steam/go' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebGo(request, env, url);
+      }
+      if (path === '/auth/steam/callback' && request.method === 'GET') {
+        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleSteamWebCallback(request, env, url, identityDeps());
       }
       if (path === '/auth/poll' && request.method === 'POST') {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
