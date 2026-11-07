@@ -354,6 +354,7 @@ export class AchievementManager {
         } else if (!earned && !secret && a.best) {
           progress = bestProgress(a, this._stats);
         }
+        const bestAt = a.best && this._stats.bestsAt ? this._stats.bestsAt[a.id] || null : null;
         return {
           id: a.id,
           n: i + 1,                                   // #540: "No. 12 of 100" on the detail card
@@ -368,7 +369,8 @@ export class AchievementManager {
           progress,
           unit: a.unit || '',
           demoLocked: demo && !a.demo,
-          medal: a.medal || null,                      // { level, rank }: the detail card prints the live times
+          medal: a.medal || null,
+          bestAt,                                      // { level, at }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
         };
       });
   }
