@@ -37,6 +37,8 @@ import { FocusController } from '../shared/ui/focus-controller.js';
  * and a release stops on the row you're on.
  */
 export const REPEAT = { delay: 350, first: 120, accel: 0.82, min: 50, burstAfter: 20, burst: 2 };
+/** Repeat steps one late frame may make up (the schedule is on the clock). */
+export const REPEAT_CATCHUP = 6;
 
 /**
  * The repeat schedule, pure for the unit test: after `n` repeats (0-based),
@@ -170,15 +172,20 @@ export class RowFocusController extends FocusController {
       return;
     }
     if (now < this._holdNext) return;
-    const { gap, rows } = holdRepeatStep(this._holdCount++);
-    this._holdNext = now + gap;
+    // On the clock, not per frame: a slow frame (a TV box, a phone, software GL) makes up the steps it
+    // missed, so the hold feels the same at 10 fps as at 60 (at most REPEAT_CATCHUP steps in one frame).
     this._repeating = true;
     try {
-      for (let k = 0; k < rows; k++) {
-        if (this._spatial) this._moveDir(dir);
-        else this.move(dir === 'up' ? -1 : 1);
+      for (let s = 0; s < REPEAT_CATCHUP && now >= this._holdNext; s++) {
+        const { gap, rows } = holdRepeatStep(this._holdCount++);
+        this._holdNext += gap;
+        for (let k = 0; k < rows; k++) {
+          if (this._spatial) this._moveDir(dir);
+          else this.move(dir === 'up' ? -1 : 1);
+        }
       }
     } finally { this._repeating = false; }
+    if (now >= this._holdNext) this._holdNext = now;   // never bank a backlog
   }
 
   /**
