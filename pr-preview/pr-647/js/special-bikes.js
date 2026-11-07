@@ -5,9 +5,13 @@
 // The bike chooser cycles paint presets on the one goose tandem. A special bike is its own GLB
 // built on the SAME rig (claude-3d make_time_warp.py on bike_rigged_goosefit26), so every goose
 // rider, socket and Pedal / WheelSpin clip fits it unchanged.
-//   time_warp  Pete's steampunk time-travel tandem: four rockets, a fast clock, blue flames with
-//              orange pops (its TimeWarpFX clip). Unlocks at any 90 of the 95 non-calendar
-//              achievements (js/rewards.js timeWarpProgress).
+//   solo_flight  the Penny-Farthing tandem (claude-3d make_pf_tandem.py), the player-bots reward: any 80
+//                of the 81 solo achievements (rewards.js playerBotsProgress). In the chooser only for now:
+//                a locked silhouette, and "coming soon" once earned. Riding it (its own rig, Pedal_PF clips,
+//                the Canada Goose bot on the back) is #644.
+//   time_warp    Pete's steampunk time-travel tandem: four rockets, a fast clock, blue flames with
+//                orange pops (its TimeWarpFX clip). Unlocks at any 90 of the 95 non-calendar
+//                achievements (rewards.js timeWarpProgress).
 // It rides only with Show Riders on: the plain frame model (riders off) has no rig to swap onto.
 // Versus keeps the paint presets (the team colours), so it rides the goose tandem.
 
@@ -15,9 +19,24 @@ import { BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH } from './co
 
 export const TIME_WARP_BIKE_KEY = 'time_warp';
 export const TIME_WARP_BIKE_MODEL_PATH = 'tandem-3d/goose/time_warp_tandem.glb';
+export const SOLO_FLIGHT_BIKE_KEY = 'solo_flight';
+export const SOLO_FLIGHT_BIKE_MODEL_PATH = 'tandem-3d/goose/solo_flight_tandem.glb';
 
-/** Chooser keys of the special bikes, in carousel order (after the paint presets). */
-export const SPECIAL_BIKE_KEYS = Object.freeze([TIME_WARP_BIKE_KEY]);
+/**
+ * The special bikes, in carousel order (after the paint presets): the reward ladder (#611).
+ *   reward    rewards.js rewardProgress key      unit      what the "n of N" counts
+ *   rideable  false = shown in the chooser, not ridden yet ("coming soon" once earned)
+ *   fx        the bike's own looping clip, if any
+ */
+export const SPECIAL_BIKES = Object.freeze({
+  [SOLO_FLIGHT_BIKE_KEY]: Object.freeze({ name: 'Solo Flight', model: SOLO_FLIGHT_BIKE_MODEL_PATH, reward: 'playerBots',
+    unit: 'solo achievements', rideable: false, icon: '\uD83E\uDEB6', color: '#9fd8ff', fx: null }),
+  [TIME_WARP_BIKE_KEY]: Object.freeze({ name: 'Time Warp', model: TIME_WARP_BIKE_MODEL_PATH, reward: 'timeWarp',
+    unit: 'achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
+});
+
+/** Chooser keys of the special bikes, in carousel order. */
+export const SPECIAL_BIKE_KEYS = Object.freeze(Object.keys(SPECIAL_BIKES));
 
 export function isSpecialBike(key) { return SPECIAL_BIKE_KEYS.includes(key); }
 
