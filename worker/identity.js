@@ -267,7 +267,8 @@ async function finish(env, row, profile, deps) {
     token, merged, linked: !!row.link_user_id,
     user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities },
   };
-  deps.writeMetric && deps.writeMetric(env, row.link_user_id ? 'link_discord' : 'auth_discord');
+  const p = profile.provider || 'discord';
+  deps.writeMetric && deps.writeMetric(env, (row.link_user_id ? 'link_' : 'auth_') + p + (p === 'steam' ? '_web' : ''));
   return result;
 }
 
@@ -352,7 +353,131 @@ export async function handleAuthPoll(request, env, corsOrigin, deps) {
   return deps.jsonResponse({ status: 'error', error: result.error || 'failed' }, 200, corsOrigin);
 }
 
-/** The small page the browser shows during a Discord sign-in. */
+// ------------------------------------------------------------
+// Steam on the web (#612): "Sign in through Steam" (OpenID 2.0)
+// ------------------------------------------------------------
+//
+// For websites (housetandem.com, the web game). The Steam build signs in with a
+// Steam ticket instead. Both land on the same identity: provider 'steam' with
+// the 17-digit SteamID64, so the web finds the account the game made.
+// Redirect only: the browser goes to steamcommunity.com and comes back here,
+// then to the site with the session in the URL fragment.
+
+const STEAM_OPENID = 'https://steamcommunity.com/openid/login';
+const OPENID_NS = 'http://specs.openid.net/auth/2.0';
+const STEAM_ID_RE = /^https:\/\/steamcommunity\.com\/openid\/id\/(7656119\d{10})$/;
+const STEAM_DEFAULT_AVATAR = 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg';
+
+function steamCallbackUrl(url, id) {
+  return `${url.origin}/auth/steam/callback?r=${encodeURIComponent(id)}`;
+}
+
+/**
+ * POST /auth/steam/begin  { return_to }
+ * With a Bearer token the Steam account is linked to that account.
+ * → { id, url, expires_in }
+ */
+export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
+  if (!env.STEAM_WEB_API_KEY) return deps.jsonResponse({ error: 'Steam sign-in is not set up yet' }, 503, corsOrigin);
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const returnTo = allowedReturnTo(body.return_to, env.CORS_ORIGIN, deps.pickCorsOrigin);
+  if (!returnTo) return deps.jsonResponse({ error: 'return_to not allowed' }, 400, corsOrigin);
+  const linkUserId = await deps.getUserFromRequest(request, env);
+  const id = randomId(12);
+  await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
+  await env.DB.prepare(
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
+     VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, 'pending', ?)`
+  ).bind(id, await sha256(randomId(24)), linkUserId || null, returnTo, nowS()).run();
+  return deps.jsonResponse({
+    id, expires_in: REQUEST_TTL_S,
+    url: `${url.origin}/auth/steam/go?r=${encodeURIComponent(id)}`,
+  }, 200, corsOrigin);
+}
+
+/** GET /auth/steam/go?r=<id> → Steam's sign-in page. */
+export async function handleSteamWebGo(request, env, url) {
+  const row = await liveRequest(env, url.searchParams.get('r'));
+  if (!row || row.provider !== 'steam' || row.status !== 'pending') {
+    return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410);
+  }
+  const auth = new URL(STEAM_OPENID);
+  auth.searchParams.set('openid.ns', OPENID_NS);
+  auth.searchParams.set('openid.mode', 'checkid_setup');
+  auth.searchParams.set('openid.return_to', steamCallbackUrl(url, row.id));
+  auth.searchParams.set('openid.realm', url.origin);
+  auth.searchParams.set('openid.identity', OPENID_NS + '/identifier_select');
+  auth.searchParams.set('openid.claimed_id', OPENID_NS + '/identifier_select');
+  return Response.redirect(auth.toString(), 302);
+}
+
+/**
+ * Check Steam's answer: it is for this request, and Steam itself confirms it
+ * (check_authentication). Returns the SteamID64 or throws.
+ */
+export async function verifySteamAssertion(url, rowId, fetchImpl = fetch) {
+  const q = url.searchParams;
+  if (q.get('openid.mode') !== 'id_res') throw new Error('Steam did not sign you in');
+  if (q.get('openid.op_endpoint') !== STEAM_OPENID) throw new Error('Not a Steam sign-in');
+  if (q.get('openid.return_to') !== steamCallbackUrl(url, rowId)) throw new Error('This sign-in was for a different request');
+  const m = STEAM_ID_RE.exec(q.get('openid.claimed_id') || '');
+  if (!m || q.get('openid.identity') !== q.get('openid.claimed_id')) throw new Error('Steam returned no account');
+  const signed = (q.get('openid.signed') || '').split(',');
+  for (const f of ['op_endpoint', 'claimed_id', 'identity', 'return_to', 'response_nonce', 'assoc_handle']) {
+    if (!signed.includes(f)) throw new Error('The Steam sign-in was not signed');
+  }
+  const check = new URLSearchParams();
+  for (const [k, v] of q) if (k.startsWith('openid.')) check.set(k, v);
+  check.set('openid.mode', 'check_authentication');
+  const res = await fetchImpl(STEAM_OPENID, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: check.toString(),
+    signal: AbortSignal.timeout(8000),
+  });
+  const text = res.ok ? await res.text() : '';
+  if (!/^is_valid\s*:\s*true\s*$/m.test(text)) throw new Error('Steam could not confirm the sign-in');
+  return m[1];
+}
+
+async function fetchSteamProfile(env, steamId, fetchImpl = fetch) {
+  let name = 'Steam Player';
+  let avatar = STEAM_DEFAULT_AVATAR;
+  try {
+    const r = await fetchImpl(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${env.STEAM_WEB_API_KEY}&steamids=${steamId}`,
+      { signal: AbortSignal.timeout(5000) });
+    if (r.ok) {
+      const p = (await r.json())?.response?.players?.[0];
+      if (p?.personaname) name = p.personaname;
+      if (p?.avatarmedium) avatar = p.avatarmedium;
+    }
+  } catch {}
+  return { provider: 'steam', providerId: steamId, name, avatar };
+}
+
+/** GET /auth/steam/callback?r=<id>&openid.* — Steam sends the browser back here. */
+export async function handleSteamWebCallback(request, env, url, deps) {
+  const row = await liveRequest(env, url.searchParams.get('r'));
+  if (!row || row.provider !== 'steam' || row.status !== 'pending') {
+    return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410);
+  }
+  // Single use, whatever happens next.
+  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
+  if (url.searchParams.get('openid.mode') === 'cancel') return Response.redirect(row.return_to, 302);
+  const fetchImpl = deps.fetchImpl || fetch;
+  let steamId;
+  try {
+    steamId = await verifySteamAssertion(url, row.id, fetchImpl);
+  } catch (e) {
+    return page('Steam sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back and try again.</p>`, 401);
+  }
+  const profile = await fetchSteamProfile(env, steamId, fetchImpl);
+  const result = await finish(env, row, profile, deps);
+  return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
+}
+
+/** The small page the browser shows during a sign-in. */
 function page(title, body, status = 200) {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

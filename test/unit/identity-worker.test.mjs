@@ -267,3 +267,116 @@ test('helpers: return URLs and default Discord avatars', () => {
   assert.equal(allowedReturnTo('https://tandemonium.housetandem.com.evil.example/', cors), null);
   assert.match(discordAvatarUrl({ id: '80351110224678912', avatar: null }), /embed\/avatars\/[0-5]\.png$/);
 });
+
+// ── Steam on the web: "Sign in through Steam" (OpenID 2.0) ──
+
+/** Steam's OpenID answers from a fixture: check_authentication says `valid`. */
+function mockSteamOpenId(valid = true) {
+  const restoreDiscord = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  const checks = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u === 'https://steamcommunity.com/openid/login') {
+      checks.push(new URLSearchParams(init.body));
+      return new Response(`ns:http://specs.openid.net/auth/2.0\nis_valid:${valid}\n`);
+    }
+    return inner(input, init);
+  };
+  return { checks, restore: () => { globalThis.fetch = inner; restoreDiscord(); } };
+}
+const jwtSub = (token) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub;
+
+/** Begin → go → Steam → callback. `tamper(params)` edits Steam's answer first. */
+async function steamWebSignIn(env, { token, steamId = '76561190000000001', tamper } = {}) {
+  const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account' }, token })).json();
+  const go = await call(env, '/auth/steam/go?r=' + encodeURIComponent(begin.id));
+  assert.equal(go.status, 302);
+  const login = new URL(go.headers.get('Location'));
+  assert.equal(login.origin + login.pathname, 'https://steamcommunity.com/openid/login');
+  assert.equal(login.searchParams.get('openid.realm'), 'https://api.test');
+  const returnTo = new URL(login.searchParams.get('openid.return_to'));
+  const claimed = 'https://steamcommunity.com/openid/id/' + steamId;
+  const p = {
+    'openid.ns': 'http://specs.openid.net/auth/2.0', 'openid.mode': 'id_res',
+    'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
+    'openid.claimed_id': claimed, 'openid.identity': claimed,
+    'openid.return_to': returnTo.toString(), 'openid.response_nonce': '2026-11-07T00:00:00Zabc',
+    'openid.assoc_handle': '1234567890', 'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
+    'openid.sig': 'c2ln',
+  };
+  if (tamper) tamper(p);
+  for (const [k, v] of Object.entries(p)) returnTo.searchParams.set(k, v);
+  return call(env, returnTo.pathname + returnTo.search);
+}
+
+test('Steam sign-in on the web finds the account the Steam game made; linking from Discord merges', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { checks, restore } = mockSteamOpenId(true);
+  try {
+    // The Steam build signed in by ticket first.
+    const game = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const cb = await steamWebSignIn(env);
+    assert.equal(cb.status, 302);
+    const loc = cb.headers.get('Location');
+    assert.ok(loc.startsWith('https://tandemonium.housetandem.com/account#ht_auth='), loc);
+    assert.equal(jwtSub(decodeURIComponent(loc.split('#ht_auth=')[1])), game.user.id, 'same account as the game');
+    assert.equal(checks.length, 1);
+    assert.equal(checks[0].get('openid.mode'), 'check_authentication', 'Steam itself confirms the answer');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+
+    // Someone signed in with Discord on the web links Steam: the game account merges in.
+    const discord = await deviceSignIn(env);
+    assert.notEqual(discord.user.id, game.user.id);
+    const link = await steamWebSignIn(env, { token: discord.token });
+    assert.equal(link.status, 302);
+    const after = await (await call(env, '/me', { token: discord.token })).json();
+    assert.deepEqual(Object.keys(after.user.identities).sort(), ['discord', 'steam']);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+  } finally { restore(); }
+});
+
+test('Steam web sign-in refuses forged, replayed or foreign answers', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const steam = mockSteamOpenId(true);
+  try {
+    // Return URL elsewhere.
+    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://evil.example/' } })).status, 400);
+    // An answer meant for another request, a non-Steam id, an unsigned field.
+    for (const tamper of [
+      (p) => { p['openid.return_to'] = 'https://api.test/auth/steam/callback?r=someoneelse'; },
+      (p) => { p['openid.claimed_id'] = p['openid.identity'] = 'https://evil.example/openid/id/76561190000000001'; },
+      (p) => { p['openid.op_endpoint'] = 'https://evil.example/openid/login'; },
+      (p) => { p['openid.signed'] = 'signed,op_endpoint,return_to'; },
+    ]) {
+      const r = await steamWebSignIn(env, { tamper });
+      assert.equal(r.status, 401);
+    }
+    assert.equal(steam.checks.length, 0, 'rejected before asking Steam');
+  } finally { steam.restore(); }
+
+  const bad = mockSteamOpenId(false);
+  try {
+    const r = await steamWebSignIn(env);
+    assert.equal(r.status, 401, 'Steam says not valid');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0);
+  } finally { bad.restore(); }
+
+  // A used request can't be replayed.
+  const ok = mockSteamOpenId(true);
+  try {
+    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const claimed = 'https://steamcommunity.com/openid/id/76561190000000001';
+    const q = new URLSearchParams({
+      r: begin.id, 'openid.mode': 'id_res', 'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
+      'openid.claimed_id': claimed, 'openid.identity': claimed,
+      'openid.return_to': 'https://api.test/auth/steam/callback?r=' + begin.id,
+      'openid.response_nonce': 'n', 'openid.assoc_handle': 'a',
+      'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle', 'openid.sig': 's',
+    });
+    assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 302);
+    assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 410);
+  } finally { ok.restore(); }
+});
