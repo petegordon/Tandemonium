@@ -403,6 +403,9 @@ export class AchievementManager {
 // Toast notification
 let _toastContainer = null;
 
+/** Unlocked-this-ride badges shown with their names; beyond this the end screen shows icons only. */
+export const END_LIST_NAMES_MAX = 10;
+
 export function showAchievementToast(achievement) {
   if (!_toastContainer) {
     _toastContainer = document.getElementById('achievement-toast-container');
@@ -421,7 +424,10 @@ export function showAchievementToast(achievement) {
   const endList = document.querySelector('#victory-overlay.visible #victory-unlocked, #gameover-overlay:not([style*="none"]) #gameover-unlocked');
   if (endList) {
     endList.hidden = false;
+    badge.title = achievement.name || '';
     endList.appendChild(badge);
+    // Pete (Steam playtest 2026-11-07): more than 10 unlocked in one ride shows icons only (the names in tooltips)
+    endList.classList.toggle('icons-only', endList.querySelectorAll('uf-achievement').length > END_LIST_NAMES_MAX);
     return;
   }
   const toast = document.createElement('div');
