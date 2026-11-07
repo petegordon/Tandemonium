@@ -2452,8 +2452,23 @@ export class Lobby {
       this._rebuildLevelCards();
     });
 
+    // Steam build, signed out: sign back in with this PC's Steam account.
+    const steamBtn = document.getElementById('profile-popup-steam');
+    if (steamBtn) {
+      steamBtn.style.display = this._isSteam ? '' : 'none';
+      steamBtn.addEventListener('click', async () => {
+        this._profileDiag('SIGN IN WITH STEAM');
+        const ok = await this.auth.loginWithSteam();
+        if (!ok) { this._showProfileError(this.auth.lastAuthError || 'Steam sign-in is unavailable'); return; }
+        updateUI(this.auth.getUser());
+        this._updateModeButtons();
+        this.profilePopup.classList.remove('visible');
+      });
+    }
+
     // Back buttons close the popup
     document.getElementById('profile-popup-back').addEventListener('click', () => {
+      this._profileDiag('RETURN TO LOBBY clicked');
       this.profilePopup.classList.remove('visible');
     });
     document.getElementById('profile-popup-signin-back').addEventListener('click', () => {
@@ -3529,7 +3544,7 @@ export class Lobby {
   _profileItems() {
     const ids = this.auth.isLoggedIn()
       ? ['profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
-      : ['profile-popup-discord', 'profile-popup-signin-back'];
+      : ['profile-popup-steam', 'profile-popup-discord', 'profile-popup-signin-back'];
     return ids.map((id) => document.getElementById(id)).filter((el) => el && el.style.display !== 'none');
   }
 
@@ -3561,6 +3576,7 @@ export class Lobby {
     document.getElementById('profile-popup-signin').style.display = signedIn ? 'none' : '';
     this.profilePopup.classList.toggle('visible');
     const open = this.profilePopup.classList.contains('visible');
+    this._profileDiag(open ? 'opened' : 'closed by toggle');
     this._showProfileError('');
     // #612: on Steam without Discord, say why linking helps; the prompt's back button is NOT NOW.
     const promptEl = document.getElementById('profile-popup-prompt');
@@ -3582,6 +3598,14 @@ export class Lobby {
     this.profilePopup.querySelectorAll('.gamepad-focus').forEach(el => el.classList.remove('gamepad-focus'));
     if (open && items[0]) items[0].classList.add('gamepad-focus');
     if (this._activeModal === 'profile') this._activeModal = null;   // rebuild the pad's list
+  }
+
+  /** One line in %USERPROFILE%\\tandemonium-diag.log (Steam build) / the console. */
+  _profileDiag(msg) {
+    try {
+      if (window.electronApp && window.electronApp.diag) window.electronApp.diag('[profile] ' + msg);
+      else console.debug('[profile]', msg);
+    } catch (e) { /* no diag */ }
   }
 
   _setProfileDeviceStatus(text) {
@@ -7682,9 +7706,17 @@ export class Lobby {
       const items = this._profileItems();
       if (this._activeModal !== 'profile') {
         this._activeModal = 'profile';
-        this._modalBack = () => this.profilePopup.classList.remove('visible');
+        this._modalBack = () => { this._profileDiag('closed by B'); this.profilePopup.classList.remove('visible'); };
         this._modalFocus.setItems(items);
+        this._profileDiag('pad list: ' + items.map((el) => el.id).join(', '));
       }
+      // Steam playtest (2026-11-07): RETURN TO LOBBY "did nothing" on the TV.
+      // Log what the pad sends while the popup is open, to the diag file.
+      if ((a && !this._profPrevA) || (b && !this._profPrevB)) {
+        const f = items.find((el) => el.classList.contains('gamepad-focus'));
+        this._profileDiag((a ? 'A' : 'B') + ' down · focus ' + (f ? f.id : 'none') + ' · pad ' + (gp.id || '?'));
+      }
+      this._profPrevA = a; this._profPrevB = b;
       this._modalFocus.poll();
       return;
     }
