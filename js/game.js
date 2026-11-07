@@ -162,6 +162,8 @@ const TUTORIAL_ITEMS = {
 const STOKER_TOO_SLOW_STUCK_MS = 12000;
 /** A partner's EVT_RETURN_ROOM copies land within ~0.5 s; later ones are not a new request. */
 const RETURN_ROOM_DEDUPE_MS = 2000;
+/** The same for the captain's EVT_START copies (a ride can't legitimately restart this fast). */
+const START_DEDUPE_MS = 1500;
 
 class Game {
   constructor() {
@@ -1291,6 +1293,15 @@ class Game {
           this._startCountdown();
         }
       } else if (eventType === EVT_START) {
+        // Sent reliably (several copies): act on the first. A later copy must not restart the
+        // race clock mid-ride, or pull a stoker who has since crashed back into 'playing'.
+        if (['playing', 'victory', 'finishCinematic', 'lobby'].includes(this.state)) return;
+        if (performance.now() - (this._lastStartAt || 0) < START_DEDUPE_MS) return;
+        this._lastStartAt = performance.now();
+        // The captain skipped to the next checkpoint from its Game Over screen (or reset):
+        // the stoker's own Game Over / TOO SLOW go with it.
+        this._hideGameOver();
+        this._clearStokerTimeout();
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
@@ -2653,9 +2664,10 @@ class Game {
         analytics.setInputMethod(methodMap[steerSrc] || steerSrc);
       }
 
-      // Captain sends EVT_START to stoker
+      // Captain sends EVT_START to stoker, reliably: after a checkpoint skip it is the only
+      // thing that takes the stoker off its Game Over screen.
       if (this.mode === 'captain' && this.net) {
-        this.net.sendEvent(EVT_START);
+        this.net.sendEventReliable(EVT_START);
       }
 
       setTimeout(() => {
