@@ -372,7 +372,7 @@ const FLAGS = ['pedalled', 'maxedAny', 'maxedAll'];
 const STRINGS = ['lastDay', 'lastDailyDay'];
 
 export function emptyStats() {
-  const L = { v: STATS_VERSION, bests: {} };
+  const L = { v: STATS_VERSION, bests: {}, bestsAt: {} };
   for (const k of NUMERIC) L[k] = 0;
   for (const k of LISTS) L[k] = [];
   for (const k of FLAGS) L[k] = false;
@@ -385,15 +385,18 @@ export function emptyStats() {
  * Fold the moment's best-so-far values into L.bests (pure). Returns the new stats, or the same object when
  * nothing improved. `earned` = ids already earned (their bests stop mattering).
  */
-export function foldBests(L, state, earned = new Set()) {
+export function foldBests(L, state, earned = new Set(), now = Date.now()) {
   let out = null;
+  const level = (state && (state.levelId || state.finishedLevel)) || null;
   for (const a of ACHIEVEMENTS) {
     if (!a.best || earned.has(a.id)) continue;
     let v = 0;
     try { v = a.best(state || {}, L); } catch (e) { v = 0; }
     if (!(Number.isFinite(v) && v > (L.bests[a.id] || 0) + 1e-6)) continue;
-    if (!out) out = { ...L, bests: { ...L.bests } };
+    if (!out) out = { ...L, bests: { ...L.bests }, bestsAt: { ...(L.bestsAt || {}) } };
     out.bests[a.id] = Math.round(Math.min(v, a.goal * 10) * 10) / 10;
+    // Pete 2026-11-07: "record top speed, what ride and date time" — where and when each best was set
+    out.bestsAt[a.id] = { level, at: now };
   }
   return out || L;
 }
@@ -415,6 +418,11 @@ export function migrateStats(raw) {
   for (const k of STRINGS) L[k] = typeof raw[k] === 'string' ? raw[k] : null;
   if (raw.bests && typeof raw.bests === 'object') {
     for (const [k, v] of Object.entries(raw.bests)) if (Number.isFinite(v) && v > 0) L.bests[k] = v;
+  }
+  if (raw.bestsAt && typeof raw.bestsAt === 'object') {
+    for (const [k, v] of Object.entries(raw.bestsAt)) {
+      if (v && Number.isFinite(v.at) && L.bests[k]) L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+    }
   }
   L.days = Math.max(L.days, L.dayList.length);
   return L;

@@ -4726,6 +4726,7 @@ class Game {
     state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
     state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
     state.finishedLevel = null;
+    state.levelId = this.lobby && this.lobby.selectedLevel ? this.lobby.selectedLevel.id : null;   // where a best was set
     state.isMultiplayer = this.mode !== 'solo';
     state.safePct = 0;
     Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands

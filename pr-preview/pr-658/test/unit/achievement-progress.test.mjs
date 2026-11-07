@@ -57,3 +57,14 @@ test('the garage ones read the wallet: closest upgrade to max, and how many are 
   assert.deepEqual(upgradeProgressAny(live), [u0.max, u0.max]);
   assert.deepEqual(upgradeProgressAll(live), [1, UPGRADES.length]);
 });
+
+test('each best remembers the ride and the time it was set (Pete: "what ride and date time")', () => {
+  let L = foldBests(emptyStats(), { speed: 45 / 3.6, levelId: 'daily' }, new Set(), 1000);
+  assert.deepEqual(L.bestsAt.terminal_goose, { level: 'daily', at: 1000 });
+  L = foldBests(L, { speed: 40 / 3.6, levelId: 'grandma' }, new Set(), 2000);
+  assert.deepEqual(L.bestsAt.terminal_goose, { level: 'daily', at: 1000 }, 'slower: unchanged');
+  L = foldBests(L, { speed: 50 / 3.6, finishedLevel: 'grandma' }, new Set(), 3000);
+  assert.deepEqual(L.bestsAt.terminal_goose, { level: 'grandma', at: 3000 });
+  const back = migrateStats(JSON.parse(JSON.stringify(L)));
+  assert.deepEqual(back.bestsAt.terminal_goose, { level: 'grandma', at: 3000 });
+});
