@@ -142,9 +142,14 @@ uf-system-bar#lobby-bar { display: none; }
   body > #profile-popup.bar-popup { min-width: 0 !important; width: min(22em, 36vw); padding: var(--uf-space-4) !important; border-radius: var(--uf-radius-lg) !important; font-size: var(--uf-size-sm); }
   body > #profile-popup.bar-popup .profile-popup-content { gap: var(--uf-space-2) !important; }
   body > #profile-popup.bar-popup .profile-popup-name { font-size: var(--uf-size-md) !important; }
-  body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-xs) !important; }
+  /* "Signed in with Steam + Discord": readable from the couch (was xs at 45%). */
+  body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-sm) !important; color: rgba(255,255,255,0.8) !important; }
   body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
   body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* The pad's ring sits inside the button here: the default ring is drawn 3px
+     outside it with a glow, which covered the "Signed in with…" line above and
+     ran over the system bar below. */
+  body > #profile-popup.bar-popup button.gamepad-focus { outline-offset: -4px !important; box-shadow: none !important; }
   /* Music levels (HIGH / MED / LOW / MUTE): readable from the couch. The phone
      sizes (38×28 buttons, 8px text) were unreadable on a TV. */
   body > #volume-picker.bar-popup { align-items: stretch; gap: var(--uf-space-2); padding: var(--uf-space-3); border-radius: var(--uf-radius-lg); }
