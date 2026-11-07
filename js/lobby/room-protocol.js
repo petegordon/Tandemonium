@@ -72,10 +72,18 @@ export const RoomProtocol = {
    * a stoker that receives nothing falls back to legacy placement, which is
    * what an older build already does.
    */
-  startRide: (placementSalt = 0, worldSeed = null, tourist = false) =>
-    (tourist
+  //
+  // #623: it also carries the ride's difficulty. The stoker otherwise kept its own (the last one
+  // it had, maybe from a solo ride) whenever the captain never touched the difficulty buttons,
+  // and disruptions (none on Chill), obstacles and pickups are planned from it: the cobbles
+  // showed on one screen and not the other. An old stoker ignores the extra field.
+  startRide: (placementSalt = 0, worldSeed = null, tourist = false, difficulty = null) => {
+    const m = tourist
       ? { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed, tourist: true }
-      : { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed }),
+      : { type: ROOM_MSG.START_RIDE, placementSalt, worldSeed };
+    if (difficulty) m.difficulty = difficulty;
+    return m;
+  },
 
   /**
    * #400 · the captain planned a Tourist route. Only the two end points travel:
