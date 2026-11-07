@@ -387,7 +387,7 @@ export class AuthManager {
     return res.ok ? res.json() : null;
   }
 
-  /** D-6 · submit the day's ranked run. 409 means it is already used. */
+  /** D-6 / #641 · submit a finished Daily Ride; the server keeps the day's best. */
   async submitDaily(data) {
     if (!this.token) return null;
     const res = await fetch(`${API_BASE}/daily`, {
@@ -398,7 +398,7 @@ export class AuthManager {
       },
       body: JSON.stringify(data),
     });
-    if (res.status === 409) return { alreadyRidden: true };
+    if (res.status === 409) return { alreadyRidden: true };   // a pre-#641 server
     return res.ok ? res.json() : null;
   }
 

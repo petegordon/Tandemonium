@@ -3,7 +3,7 @@
 // ============================================================
 //
 // #400 D4: every ride rewards you. Solo levels (tutorial included), Today's
-// Road (practice and ranked), co-op (each device pays its own wallet for the
+// Road (every ride counts, #641), co-op (each device pays its own wallet for the
 // shared ride), local versus (once per race) and Tourist all pay through
 // scoreRide() into the one wallet (js/wallet.js). Slingshot keeps its own
 // scoreRun (js/slingshot.js) and pays into the same wallet.
@@ -31,7 +31,7 @@ export const RIDE_PAY = Object.freeze({
   finish: 25,                           // reaching the finish (Tourist: arriving)
   medal: Object.freeze({ bronze: 25, silver: 50, gold: 100 }),
   newBest: 50,                          // beating your previous best on that road
-  dailyFirst: 50,                       // the first Daily Ride finished each day (ranked or practice)
+  dailyFirst: 50,                       // the first Daily Ride finished each day
   streakPerDay: 10,                     // + per day of the streak beyond the first…
   streakCap: 100,                       // …up to this
 });
