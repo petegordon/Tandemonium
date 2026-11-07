@@ -158,6 +158,13 @@ const TUTORIAL_ITEMS = {
   }
 };
 
+/** Stoker: on TOO SLOW with no word from the captain for this long, say so. */
+const STOKER_TOO_SLOW_STUCK_MS = 12000;
+/** A partner's EVT_RETURN_ROOM copies land within ~0.5 s; later ones are not a new request. */
+const RETURN_ROOM_DEDUPE_MS = 2000;
+/** The same for the captain's EVT_START copies (a ride can't legitimately restart this fast). */
+const START_DEDUPE_MS = 1500;
+
 class Game {
   constructor() {
     // Renderer — quality tier (js/quality.js): URL param > Options choice >
@@ -1256,9 +1263,13 @@ class Game {
         // A stale packet (it can arrive late on the unordered fast channel)
         // must not roll the timer or sync bar back either.
         if (!this.remoteBikeState.pushState(state)) return;
+        this._heardFromCaptain();
         // Use captain's authoritative timer to prevent drift
         if (state.timerRemaining !== undefined && this.raceManager) {
           this.raceManager.segmentTimeRemaining = state.timerRemaining;
+          // The captain's clock is running again (it reset the segment): its EVT_RESET is sent
+          // once, unreliably — if that copy was lost, this is how the stoker leaves TOO SLOW.
+          if (this._stokerTimeoutShown && state.timerRemaining > 1) this._clearStokerTimeout();
         }
         // A-4: the captain owns the sync score; mirror it on this screen.
         if (state.syncScore !== undefined) this.hud.setRemoteSync(state.syncScore);
@@ -1270,6 +1281,7 @@ class Game {
     };
 
     this.net.onEventReceived = (eventType) => {
+      if (this.mode === 'stoker') this._heardFromCaptain();
       if (eventType === EVT_COUNTDOWN) {
         // Tutorial stoker: scene already set up in _startTutorialRide —
         // just resume the countdown from captain's calibration finish
@@ -1281,6 +1293,15 @@ class Game {
           this._startCountdown();
         }
       } else if (eventType === EVT_START) {
+        // Sent reliably (several copies): act on the first. A later copy must not restart the
+        // race clock mid-ride, or pull a stoker who has since crashed back into 'playing'.
+        if (['playing', 'victory', 'finishCinematic', 'lobby'].includes(this.state)) return;
+        if (performance.now() - (this._lastStartAt || 0) < START_DEDUPE_MS) return;
+        this._lastStartAt = performance.now();
+        // The captain skipped to the next checkpoint from its Game Over screen (or reset):
+        // the stoker's own Game Over / TOO SLOW go with it.
+        this._hideGameOver();
+        this._clearStokerTimeout();
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
         if (this.raceManager) this.raceManager.start();
@@ -1320,8 +1341,12 @@ class Game {
         this._showCheckpointFlash();
       } else if (eventType === EVT_FINISH) {
         this._clearStokerTimeout();
-        // Idempotent: captain may retry-send FINISH for reliability.
-        if (this.state === 'victory' || this.state === 'finishCinematic') return;
+        // Idempotent: captain may retry-send FINISH for reliability. A copy that lands after
+        // the first was handled must do nothing: after the co-op tutorial the stoker sits on its
+        // complete screen ('gameover'), and back in the room ('lobby'); a late copy there used
+        // to start the finish cinematic and strand the stoker on VICTORY (smoke:online OC-13).
+        if (['victory', 'finishCinematic', 'lobby'].includes(this.state)) return;
+        if (this.state === 'gameover' && document.getElementById('tutorial-complete').classList.contains('visible')) return;
         // Tutorial: show completion screen instead of normal victory
         if (this._tutorialActive) {
           this._showStokerTutorialComplete();
@@ -1329,7 +1354,10 @@ class Game {
           this._startFinishCinematic(true);
         }
       } else if (eventType === EVT_RETURN_ROOM) {
-        this._returnToRoom();
+        // Sent reliably (several copies 200 ms apart): act on the first only. The later copies
+        // must not pull back a ride the captain has already started again.
+        const sinceRoom = performance.now() - (this._roomReturnAt || 0);
+        if (this.state !== 'lobby' && sinceRoom > RETURN_ROOM_DEDUPE_MS) this._returnToRoom(true);
       }
     };
 
@@ -1342,6 +1370,8 @@ class Game {
     this.net.onConnected = () => {
       this._hideReconnecting();
       this._netLost = false;
+      this._waitingForCaptain = false;
+      this._lastCaptainAt = performance.now();
       document.getElementById('disconnect-overlay').style.display = 'none';
       // PR #397 M1: profile messages sent while disconnected were dropped —
       // resend this side's room profile and the captain's helping-hand state.
@@ -1383,7 +1413,7 @@ class Game {
         disconnected_role: this.mode === 'captain' ? 'stoker' : 'captain',
         during_ride: this.state === 'playing',
       });
-      if (this.net.roomCode) {
+      if (this.net && this.net.roomCode) {
         analytics.trackRoomUpdate(this.net.roomCode, { disconnect_count_increment: 1 });
       }
       this._netLost = true;
@@ -2634,9 +2664,10 @@ class Game {
         analytics.setInputMethod(methodMap[steerSrc] || steerSrc);
       }
 
-      // Captain sends EVT_START to stoker
+      // Captain sends EVT_START to stoker, reliably: after a checkpoint skip it is the only
+      // thing that takes the stoker off its Game Over screen.
       if (this.mode === 'captain' && this.net) {
-        this.net.sendEvent(EVT_START);
+        this.net.sendEventReliable(EVT_START);
       }
 
       setTimeout(() => {
@@ -3168,6 +3199,8 @@ class Game {
 
   _endDropPause() {
     this._drop = null;
+    this._waitingForCaptain = false;   // a waiting sheet the pause covered is gone with it
+    this._lastCaptainAt = performance.now();
     this._dropCandidate = null;
     this._localP2Disconnected = false;
     document.getElementById('disconnect-overlay').style.display = 'none';
@@ -3594,6 +3627,15 @@ class Game {
    * "Ready" means the tiles renderer is built for the route with a Maps key;
    * tiles then stream in during the ride as they do solo.
    */
+  /** Stoker: a message from the captain arrived — note when, and lift a "Waiting for the captain…" sheet. */
+  _heardFromCaptain() {
+    this._lastCaptainAt = performance.now();
+    if (!this._waitingForCaptain) return;
+    this._waitingForCaptain = false;
+    const overlay = document.getElementById('disconnect-overlay');
+    if (overlay && !this._drop) { overlay.style.display = 'none'; this._clearOverlayButtons(); }
+  }
+
   /** PR #397 M1 · stoker: the captain passed a checkpoint / finished — drop TOO SLOW. */
   _clearStokerTimeout() {
     if (!this._stokerTimeoutShown) return;
@@ -5384,6 +5426,7 @@ class Game {
 
   _returnToLobby() {
     if (this._drop) this._endDropPause();
+    this._waitingForCaptain = false;
     this._closePause();   // #459
     if (this._intro) this._intro.close();
     if (this._helpSheet) this._helpSheet.close();
@@ -5540,7 +5583,13 @@ class Game {
     this._versusPaused = false;
   }
 
-  _returnToRoom() {
+  /** @param {boolean} [fromPartner] acting on the partner's EVT_RETURN_ROOM: don't send one back */
+  _returnToRoom(fromPartner = false) {
+    this._roomReturnAt = performance.now();
+    // Leave no disconnect pause or lost-link flag behind: the next ride would start paused.
+    if (this._drop) this._endDropPause();
+    this._netLost = false;
+    this._waitingForCaptain = false;
     this._closePause();      // #459
     this._payoutAbandon();   // #400 D4
     this._endRankedRun();   // #398
@@ -5558,8 +5607,10 @@ class Game {
 
     // Notify partner to return to room too (only if we're initiating,
     // not if we received EVT_RETURN_ROOM — prevents infinite loop)
-    if (this.state !== 'lobby' && this.net.connected) {
-      this.net.sendEvent(EVT_RETURN_ROOM);
+    // Reliably: a lost copy left the partner on the ride's last screen (TV playtest 2026-11-06).
+    // Only when this side starts it: an echo of the partner's would come back to them.
+    if (!fromPartner && this.state !== 'lobby' && this.net.connected) {
+      this.net.sendEventReliable(EVT_RETURN_ROOM);
     }
 
     if (!this.lobby.musicActive) {
@@ -8287,12 +8338,27 @@ class Game {
       if (this.raceManager.segmentTimeRemaining <= 0 && !this._stokerTimeoutShown && !this._reconnecting) {
         // Show TOO SLOW visual once — captain sends EVT_RESET to clear it
         this._stokerTimeoutShown = true;
+        this._stokerTimeoutAt = performance.now();
         const flash = document.getElementById('timeout-flash');
         flash.classList.remove('visible');
         void flash.offsetWidth;
         flash.classList.add('visible');
         this._playBeep(200, 0.3);
         setTimeout(() => this._playBeep(150, 0.2), 300);
+      }
+      // On TOO SLOW the stoker waits for the captain (its reset, game over or room). When nothing
+      // at all has come from the captain for this long (TV playtest 2026-11-06: the phone sat on
+      // TOO SLOW for good), say so and offer Try again / Return to Lobby. The sheet goes away by
+      // itself the moment the captain is heard from again (a paused captain, a slow link).
+      if (this._stokerTimeoutShown && this.state === 'playing' && !this._reconnecting && !this._drop && !this._waitingForCaptain
+          && performance.now() - Math.max(this._stokerTimeoutAt || 0, this._lastCaptainAt || 0) > STOKER_TOO_SLOW_STUCK_MS
+          && document.getElementById('disconnect-overlay').style.display !== 'flex') {
+        console.warn('[online] stoker: no word from the captain for ' + (STOKER_TOO_SLOW_STUCK_MS / 1000) + ' s on TOO SLOW');
+        this._waitingForCaptain = true;
+        this._showDisconnect('Waiting for the captain…');
+        // The link itself is up: Try again would tear it down (and drop the captain's ride too).
+        // Return to Lobby is the way out; the sheet lifts by itself when the captain is heard.
+        if (this.net && this.net.connected) document.getElementById('btn-try-reconnect').hidden = true;
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
       this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
