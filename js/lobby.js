@@ -104,6 +104,14 @@ function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
 
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
 
+/** Pete 2026-11-07: the rider's last difficulty pick (the Daily Ride starts on it, else Adventurous). */
+const DIFFICULTY_PREF_KEY = 'tandemonium_difficulty';
+
+/** Mark one difficulty selected on every selector (solo + room). */
+function diffSelect(diff) {
+  document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.toggle('selected', b.dataset.difficulty === diff));
+}
+
 const BIKE_NAMES = {
   default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
@@ -2173,11 +2181,21 @@ export class Lobby {
    */
   _updateDifficultyVisibility(levelId) {
     const isTutorial = levelId === 'tutorial';
-    // C-2: Today's Road is one road at one difficulty for everyone — a shared
-    // road that each player tunes to taste is not a shared road.
+    // C-2 had Today's Road at one difficulty for everyone; Pete (2026-11-07) opened it up: the rider picks, and it
+    // starts on their last pick or Adventurous. A level may still pin one with `fixedDifficulty`.
     const daily = LEVELS.find(l => l.id === levelId && l.isDaily);
     const roadDifficulty = daily && daily.fixedDifficulty;
     const forced = isTutorial ? 'chill' : (daily ? roadDifficulty : null);
+    if (!isTutorial && !forced) {
+      const chosen = this._savedDifficulty();
+      const want = chosen || (daily ? 'adventurous' : null);
+      if (want && want !== this.selectedDifficulty) {
+        this.selectedDifficulty = want;
+        diffSelect(want);
+        this._syncForcedDifficulty();
+        this._refreshRecordLines();
+      }
+    }
     const diffBtns = document.querySelectorAll('#difficulty-selector .difficulty-btn');
     if (forced && !isTutorial) {
       diffBtns.forEach(b => {
@@ -2210,6 +2228,14 @@ export class Lobby {
     }
   }
 
+  /** The rider's own last difficulty pick (not a forced one), or null. */
+  _savedDifficulty() {
+    try {
+      const v = localStorage.getItem(DIFFICULTY_PREF_KEY);
+      return ['chill', 'adventurous', 'daredevil'].includes(v) ? v : null;
+    } catch { return null; }
+  }
+
   /** PR #397 M1 · a forced difficulty (road, tutorial) goes to the stoker too. */
   _syncForcedDifficulty() {
     if (this._roomRole === 'captain' && this._pendingMode === 'multiplayer' && this.net && this.net.connected) {
@@ -2234,6 +2260,7 @@ export class Lobby {
           document.querySelectorAll('.difficulty-btn[data-difficulty="' + btn.dataset.difficulty + '"]')
             .forEach(b => b.classList.add('selected'));
           this.selectedDifficulty = btn.dataset.difficulty;
+          try { localStorage.setItem(DIFFICULTY_PREF_KEY, btn.dataset.difficulty); } catch { /* private mode */ }
           // B-3: bests and medals are per difficulty, so the card lines have to
           // follow the choice the player just made.
           this._refreshRecordLines();

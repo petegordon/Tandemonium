@@ -167,8 +167,8 @@ export const ACHIEVEMENTS = [
   { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: "Turn down ASSIST when it's offered, then finish",       condition: s => fin(s) && s.assistDeclined === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
-  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h',                     condition: s => s.speed >= 13.9 },
-  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h',                         condition: s => s.speed >= 65 / 3.6 },
+  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9 },
+  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h on a ride',                         condition: s => s.speed >= 65 / 3.6 },
   { id: 'boost_25',       section: 'speed', name: 'Boost Junkie',        icon: '🔋', desc: 'Trigger 25 boosts',                   ...count('boosts', 25) },
   { id: 'afterburner',    section: 'speed', name: 'Afterburner',         icon: '🔥', desc: 'Chain pickups to keep boosting for 10 s straight', condition: s => n(s.boostBest) >= 10 },
 

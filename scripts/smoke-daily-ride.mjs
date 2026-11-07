@@ -54,7 +54,7 @@ const b = await roadFingerprint(p2);
 console.log('player 1:', a.key, a.seed, JSON.stringify(a.road[1]));
 console.log('player 2:', b.key, b.seed, JSON.stringify(b.road[1]));
 
-// The card: visible in solo, difficulty locked to adventurous when picked.
+// The card: visible in solo; the rider picks the difficulty (Pete 2026-11-07), Adventurous until they have picked one.
 const card = await p1.evaluate(() => {
   const l = window._game.lobby;
   document.getElementById('tap-to-start')?.click();
@@ -67,12 +67,22 @@ const card = await p1.evaluate(() => {
   return {
     present: true, text,
     difficulty: l.selectedDifficulty,
-    allDisabled: diffBtns.every(b => b.disabled),
+    anyDisabled: diffBtns.some(b => b.disabled),
     selectedKey: l.selectedLevel?.key,
     versusHasDaily: null
   };
 });
 console.log('card:', JSON.stringify(card));
+
+// Their last pick sticks: Daredevil, then back to the Daily Ride card.
+const picked = await p1.evaluate(() => {
+  const l = window._game.lobby;
+  document.querySelector('#difficulty-selector .difficulty-btn[data-difficulty="daredevil"]').click();
+  document.querySelector('.level-card[data-level-id="grandma"]')?.click();
+  document.querySelector('.level-card[data-level-id="daily"]').click();
+  return { difficulty: l.selectedDifficulty, saved: localStorage.getItem('tandemonium_difficulty') };
+});
+console.log('last pick:', JSON.stringify(picked));
 
 // An expired link lands on today's road.
 const expired = await open('?daily=2020-01-01');
@@ -84,8 +94,9 @@ console.log('expired link:', JSON.stringify(linked));
 
 const ok = a.key === b.key && a.seed === b.seed && JSON.stringify(a.road) === JSON.stringify(b.road)
   && a.obstacleSeed === b.obstacleSeed && a.saltedSeed !== a.obstacleSeed
-  && card.present && card.difficulty === 'adventurous' && card.allDisabled
+  && card.present && card.difficulty === 'adventurous' && !card.anyDisabled
+  && picked.difficulty === 'daredevil' && picked.saved === 'daredevil'
   && linked.level === 'daily' && linked.key === a.key;
-console.log(ok ? "✔ same road for both players, difficulty locked, expired link recovered"
+console.log(ok ? "✔ same road for both players, difficulty picked (Adventurous first, then the last pick), expired link recovered"
                : '✖ Daily Ride did not hold');
 await browser.close(); server.close(); process.exit(ok?0:1);
