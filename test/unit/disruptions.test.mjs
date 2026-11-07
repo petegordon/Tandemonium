@@ -201,3 +201,15 @@ test('across many roads every kind still turns up about as often as the others',
     assert.ok(n > total * 0.4, `${kind} only appeared ${n} times in ${total}`);
   }
 });
+
+test('#623: two events never land on top of each other (short road, many checkpoints)', async () => {
+  const { planDisruptions: plan, MIN_EVENT_GAP_M } = await import('../../js/disruptions.js');
+  for (let seed = 1; seed <= 400; seed++) {
+    for (const difficulty of ['adventurous', 'daredevil']) {
+      const ev = plan({ seed, distance: 250, difficulty, checkpoints: [62, 125, 187] });
+      for (let i = 1; i < ev.length; i++) {
+        assert.ok(ev[i].atM - ev[i - 1].atM >= MIN_EVENT_GAP_M - 0.05, `seed ${seed} ${difficulty}: ${ev.map((e) => e.kind + '@' + e.atM).join(', ')}`);
+      }
+    }
+  }
+});

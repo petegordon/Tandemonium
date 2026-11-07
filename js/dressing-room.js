@@ -33,6 +33,9 @@ const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '
  * @typedef {{ n: number, input: any, type: 'gamepad'|'keyboard'|'phone', label: string, team: 'A'|'B'|null, seat: 'Captain'|'Stoker' }} RoomPlayer
  */
 
+/** How long "Buzzing Player N's controller…" stays up (the pulses take ~0.8 s). */
+const BUZZ_NOTE_MS = 2500;
+
 /** A card at least this wide (content box, CSS px) edits with the goose beside the pickers. */
 const WIDE_CARD_PX = 560;
 
@@ -179,6 +182,7 @@ export class DressingRoom {
 
   _dropCard(c) {
     clearTimeout(c.buzzTimer);
+    clearTimeout(c.hintTimer);
     if (c.focus) c.focus.clear();
     if (c.manual === this._keyInput) this._keyInput = null;
     if (this._preview) this._preview.remove('p' + c.n);
@@ -276,8 +280,22 @@ export class DressingRoom {
       + row('Gander or goose', 'body', bodies)
       + row('Outfit', 'outfit', outfits)
       + row('Colours', 'colourway', this._colourButtons(look))
-      + row('Controller light', 'led', leds)
+      + (this._hasLight(c) ? row('Controller light', 'led', leds) : '')
       + `</div>`;
+  }
+
+  /**
+   * #623 · does this player's controller have a light the game can colour? Only then is there a
+   * Controller light row. A Steam Controller's light can't be set from here (TV test), and a
+   * phone or a keyboard has none.
+   */
+  _hasLight(c) {
+    if (c.type !== 'gamepad') return false;
+    const input = c.player.input;
+    const driver = input && input._controllerDriver;
+    if (driver && driver.constructor && driver.constructor.needsSiblingFanout) return false;   // the Steam Controller driver
+    const name = String((input && input._gpName) || c.player.label || '');
+    return !/steam (controller|deck)/i.test(name);
   }
 
   _colourButtons(look) {
@@ -404,7 +422,13 @@ export class DressingRoom {
     const look = playerLooks.get(c.n);
     const r = findMe(this._mgr, c.n, look.led, c.type === 'gamepad' ? c.player.input : null);
     const hint = c.el.querySelector('.dr-hint');
-    if (hint) hint.textContent = r.rumbled || r.lit ? `Buzzing Player ${c.n}'s controller…` : 'This controller has no rumble or light we can reach.';
+    const text = r.rumbled || r.lit ? `Buzzing Player ${c.n}'s controller…` : 'This controller has no rumble or light we can reach.';
+    if (hint) {
+      hint.textContent = text;
+      // #623 · the note goes once the buzz is over (it stayed on the card for good).
+      clearTimeout(c.hintTimer);
+      c.hintTimer = setTimeout(() => { if (hint.textContent === text) hint.textContent = ''; }, BUZZ_NOTE_MS);
+    }
     c.lastFind = r;
     c.buzzCount = (c.buzzCount || 0) + 1;
   }

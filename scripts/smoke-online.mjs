@@ -385,6 +385,32 @@ try {
     check(gaveUp === 1 && /opened somewhere else/.test(evicted || ''), 'OC-16 a room on a given-up transport retries; a seat taken elsewhere says so', { gaveUp, evicted });
     await cap.close(); await sto.close();
   }
+
+  // ── OC-17 (#623) · same disruptions on both screens; the stoker's END RIDE TOGETHER ends it here ──
+  console.log('OC-17 — ride difficulty + END RIDE TOGETHER');
+  {
+    const { cap, sto } = await hostAndJoin('');
+    // The captain never touches the difficulty buttons (no difficultySync); the phone still
+    // holds another difficulty from before. The start message now carries the captain's.
+    await cap.evaluate(() => { window._game.lobby.selectedDifficulty = 'daredevil'; });
+    await sto.evaluate(() => { window._game.lobby.selectedDifficulty = 'chill'; });
+    const riding = await startRide(cap, sto, 'grandma');
+    const plan = (pg) => pg.evaluate(() => ({ diff: window._game.lobby.selectedDifficulty, events: (window._game._disruptions || []).map((e) => e.kind + '@' + e.atM).join(',') }));
+    const cp = await plan(cap), sp = await plan(sto);
+    check(riding && sp.diff === 'daredevil' && cp.events && cp.events === sp.events, "OC-17 the stoker rides the captain's difficulty: the same cobbles and gusts on both screens", { cap: cp, sto: sp });
+    // The phone ends the ride together (what END RIDE TOGETHER runs).
+    await sto.evaluate(() => window._game._returnToLobby());
+    const told = await waitFor(cap, () => document.getElementById('disconnect-overlay').style.display === 'flex' && /ended the ride together/.test(document.getElementById('disconnect-msg').textContent), null, 10000);
+    const capAfter = await cap.evaluate(() => ({ state: window._game.state, gameNet: !!window._game.net, lobbyNet: !!window._game.lobby.net, drop: !!window._game._drop, tryAgain: !document.getElementById('btn-try-reconnect').hidden }));
+    const stoAfter = await sto.evaluate(() => ({ state: window._game.state, gameNet: !!window._game.net, lobbyNet: !!window._game.lobby.net }));
+    check(told && !capAfter.gameNet && !capAfter.lobbyNet && !capAfter.drop && !capAfter.tryAgain && capAfter.state !== 'playing',
+      'OC-17 the phone ends the ride together: the captain is told, the session ends there (no drop pause, no reconnect)', { told, capAfter });
+    check(stoAfter.state === 'lobby' && !stoAfter.gameNet && !stoAfter.lobbyNet, 'OC-17 the phone keeps no session after END RIDE TOGETHER', stoAfter);
+    await clickId(cap, 'btn-return-lobby');
+    const capLobby = await waitFor(cap, () => window._game.state === 'lobby', null, 10000);
+    check(capLobby, 'OC-17 the captain goes back to the lobby from the notice');
+    await cap.close(); await sto.close();
+  }
 } catch (e) {
   check(false, 'smoke crashed: ' + (e && e.message));
 }

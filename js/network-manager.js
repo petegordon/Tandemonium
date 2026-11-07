@@ -13,6 +13,11 @@
 import { RoomTransport } from './net/room-transport.js';
 import { BikeCodec } from './net/bike-codec.js';
 
+/** #623 · the profile message a transport sends as it leaves on purpose. */
+export const PARTNER_LEFT_TYPE = 'partnerLeft';
+/** The onDisconnected reason when the partner left on purpose. */
+export const PARTNER_LEFT_REASON = 'Your partner ended the ride together';
+
 export class NetworkManager extends RoomTransport {
   constructor() {
     super();
@@ -46,7 +51,19 @@ export class NetworkManager extends RoomTransport {
         }
         if (this.onLeanReceived) this.onLeanReceived(v);
       },
-      onProfile: (p) => { if (this.onProfileReceived) this.onProfileReceived(p); },
+      onProfile: (p) => {
+        // #623 · the partner left on purpose (END RIDE TOGETHER, Back out of the room): end the
+        // session here too rather than treat the closing socket as a drop to wait out.
+        if (p && p.type === PARTNER_LEFT_TYPE) {
+          if (this._partnerLeft) return;
+          this._partnerLeft = true;
+          console.warn('NET: partner left the session');
+          if (this.onPartnerLeft) this.onPartnerLeft();
+          else if (this.onDisconnected) this.onDisconnected(PARTNER_LEFT_REASON);
+          return;
+        }
+        if (this.onProfileReceived) this.onProfileReceived(p);
+      },
     };
     // Wire the transport's opaque inbound frames into the game protocol.
     this.onMessage = (bytes) => this._codec.dispatch(bytes, this._msgHandlers);
@@ -101,6 +118,15 @@ export class NetworkManager extends RoomTransport {
     // Cancel any pending reliable-event retries, then tear down the transport.
     for (const t of this._reliableEventTimers) clearTimeout(t);
     this._reliableEventTimers.length = 0;
+    // #623 · leaving on purpose: tell the partner first, on every open path (a socket sends what
+    // it has queued before it closes). Otherwise they only saw the socket drop and waited for a
+    // reconnect, and "lost connection" later when this phone slept. Not when the partner is the
+    // one who left.
+    if (this.connected && !this._partnerLeft && !this._destroyed) {
+      const bye = this._codec.encodeProfile({ type: PARTNER_LEFT_TYPE });
+      try { if (this._relayWs && this._relayWs.readyState === 1) this._relayWs.send(bye); } catch (e) { /* closing */ }
+      try { if (this.conn && this.conn.open) this.conn.send(bye); } catch (e) { /* closing */ }
+    }
     super.destroy();
   }
 }
