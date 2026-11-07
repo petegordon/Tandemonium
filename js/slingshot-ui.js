@@ -145,7 +145,7 @@ export function renderGarage(save, wallet, opts = {}) {
     const r = btn('primary', label, 'sling-rebuild');
     let armed = false;
     r.addEventListener('click', () => {
-      if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0, tokens + stages kept'; return; }
+      if (!armed) { armed = true; r.textContent = 'PRESS AGAIN: upgrades back to 0 except the Token multiplier; tokens + stages kept'; return; }
       opts.onRebuild && opts.onRebuild();
     });
     const box = el('div', 'sling-buttons');

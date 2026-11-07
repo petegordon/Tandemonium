@@ -299,7 +299,7 @@ export class AchievementManager {
   /** Versus: the race is won. */
   versusFinish(winner, loser, raceDistance) {
     if (!winner || !loser) return [];
-    const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed });
+    const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed, crashes: r.crashCount || 0 });
     const halfLeader = this._versus && this._versus.key === winner.raceManager ? this._versus.halfLeader
       : (this._versus && this._versus.key === loser.raceManager ? this._versus.halfLeader : null);
     const res = versusResult({ winner: team(winner), loser: team(loser), raceDistance, halfLeader });
