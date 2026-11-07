@@ -456,6 +456,8 @@ body.pad-menus.remote-menus #bike-carousel uf-controller-glyph.pad-only { displa
   #dressing-room .dr-card > * { flex-shrink: 0; }
   #dressing-room .dr-preview { flex: 1 1 0; height: auto; min-height: 9em; }
   #dressing-room .dr-card[data-state="editing"] .dr-preview { min-height: 5em; }
+  /* #612 · a sign-in QR on the card: the goose gives up height so EDIT / DONE stay on the card. */
+  #dressing-room .dr-card:has(.dr-account[data-state="pending"]) .dr-preview { min-height: 3em; }
   #dressing-room .dr-preview--static { font-size: var(--uf-size-2xl); }
   #dressing-room .dr-who { font-size: var(--uf-size-lg); }
   #dressing-room .dr-pnum { font-size: var(--uf-size-sm); }
