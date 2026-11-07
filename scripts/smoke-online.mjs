@@ -258,6 +258,40 @@ try {
     await waitFor(sto, () => !!window._game.net.connected && !window._game._drop && !window._game._reconnecting, null, 60000);
     await h.shot(cap, '1-captain-riding');
 
+    // OC-14 (TV playtest 2026-11-06: the phone sat on TOO SLOW for good). The stoker's TOO SLOW
+    // clears by itself while the captain's clock streams (a lost EVT_RESET can't strand it); a
+    // silent captain gets a "Waiting for the captain…" sheet, never the drop pause, and the
+    // sheet lifts the moment the captain is heard from again.
+    const tooSlow = (ago) => sto.evaluate((a) => { const g = window._game; g._stokerTimeoutShown = true; g._stokerTimeoutAt = performance.now() - a; g._lastCaptainAt = performance.now() - a; document.getElementById('timeout-flash').classList.add('visible'); }, ago);
+    await cap.evaluate(() => { const g = window._game; g.raceManager.segmentTimeRemaining = Math.max(g.raceManager.segmentTimeRemaining, 30); });
+    await tooSlow(13000);
+    const healed = await waitFor(sto, () => !window._game._stokerTimeoutShown && !document.getElementById('timeout-flash').classList.contains('visible'), null, 5000);
+    const healedSheet = await sto.evaluate(() => document.getElementById('disconnect-overlay').style.display === 'flex');
+    check(healed && !healedSheet, "OC-14 a stuck TOO SLOW clears itself from the captain's running clock (no sheet)", { healed, healedSheet });
+    // Silence the captain: no state, no events (as if paused, or its messages lost).
+    await cap.evaluate(() => { const n = window._game.net; window.__mute = { s: n.sendState, e: n.sendEvent }; n.sendState = () => {}; n.sendEvent = () => {}; });
+    await sleep(1500);
+    await tooSlow(13000);
+    const waiting = await waitFor(sto, () => document.getElementById('disconnect-overlay').style.display === 'flex' && /Waiting for the captain/.test(document.getElementById('disconnect-msg').textContent), null, 5000);
+    const quiet = await sto.evaluate(() => ({ netLost: window._game._netLost, drop: !!window._game._drop, state: window._game.state, tryAgain: !document.getElementById('btn-try-reconnect').hidden, lobbyBtn: !document.getElementById('btn-return-lobby').hidden }));
+    check(waiting && !quiet.netLost && !quiet.drop && quiet.state === 'playing' && !quiet.tryAgain && quiet.lobbyBtn, 'OC-14 a silent captain: "Waiting for the captain…" sheet (Return to Lobby, no Try again on a live link), no drop pause, link not marked lost', { waiting, quiet });
+    await cap.evaluate(() => { const n = window._game.net; n.sendState = window.__mute.s; n.sendEvent = window.__mute.e; });
+    const lifted = await waitFor(sto, () => document.getElementById('disconnect-overlay').style.display !== 'flex' && !window._game._waitingForCaptain && !window._game._stokerTimeoutShown, null, 8000);
+    check(lifted, 'OC-14 the captain heard from again: the sheet lifts and TOO SLOW clears', await sto.evaluate(() => ({ overlay: document.getElementById('disconnect-overlay').style.display, waiting: window._game._waitingForCaptain, tooSlow: window._game._stokerTimeoutShown })));
+
+    // OC-15 · the captain skips to the next checkpoint from Game Over (its countdown, then
+    // EVT_START, now sent reliably): the stoker leaves its own Game Over, and the extra START
+    // copies never restart its race clock.
+    await sto.evaluate(() => { const g = window._game, n = g.net; window.__starts = 0; window.__events = 0; const h = n.onEventReceived; n.onEventReceived = (ev) => { window.__events++; const before = g._lastStartAt; h(ev); if (g._lastStartAt !== before) window.__starts++; }; g._showGameOver(true); });
+    await cap.bringToFront();   // a background page runs its frames throttled: the countdown would crawl
+    await cap.evaluate(() => window._game._resumeCountdown());
+    await waitFor(cap, () => window._game.state === 'playing', null, 20000);
+    await sto.bringToFront();
+    const backOn = await waitFor(sto, () => window._game.state === 'playing' && document.getElementById('gameover-overlay').style.display !== 'flex', null, 15000);
+    await sleep(1500);
+    const starts = await sto.evaluate(() => window.__starts);
+    check(backOn && starts === 1, "OC-15 the captain's checkpoint skip takes the stoker off Game Over; its START copies start the ride once", { backOn, starts, events: await sto.evaluate(() => window.__events) });
+
     // OC-11: finish, then BACK TO ROOM: both on level select, same room, connected.
     await cap.evaluate(() => { const g = window._game; g.bike.resetToDistance(g.lobby.selectedLevel.distance - 0.5); g.bike.speed = 10; });
     const won = await waitFor(cap, () => window._game.state === 'victory', null, 180000);
@@ -265,6 +299,9 @@ try {
     const roomBtn = await cap.evaluate(() => { const b = document.getElementById('btn-victory-room'); return !!b && b.offsetParent !== null; });
     check(won && roomBtn, 'OC-11 the captain finishes; BACK TO ROOM is offered', { won, roomBtn });
     const netBefore = await cap.evaluate(() => { window.__netObj = window._game.net; return window._game.net.roomCode; });
+    // The stoker must not echo the captain's (reliable) RETURN_ROOM back: the echo could pull a
+    // quickly restarted ride back to the room.
+    await sto.evaluate(() => { const n = window._game.net; window.__echo = 0; const r = n.sendEventReliable.bind(n), s = n.sendEvent.bind(n); n.sendEventReliable = (...x) => { window.__echo++; return r(...x); }; n.sendEvent = (...x) => { window.__echo++; return s(...x); }; });
     await clickId(cap, 'btn-victory-room');
     const capRoom = await waitFor(cap, () => window._game.state === 'lobby' && document.getElementById('lobby-flow').current === 'lobby-level', null, 60000);
     const stoRoom = await waitFor(sto, () => window._game.state === 'lobby' && document.getElementById('lobby-flow').current === 'lobby-level', null, 60000);
@@ -274,6 +311,15 @@ try {
     check(capRoom && stoRoom && after.same && after.code === netBefore && after.connected && stoWait.connected,
       'OC-11 BACK TO ROOM returns both to level select on the same room, still connected', { after, stoWait, code });
     check(after.start && stoWait.wait, 'OC-11 the captain picks the next level; the stoker waits for it', { start: after.start, wait: stoWait.wait });
+    await sleep(800);
+    const echoes = await sto.evaluate(() => window.__echo);
+    check(echoes === 0, "OC-11 the stoker follows the captain to the room without sending RETURN_ROOM back", { echoes });
+    // The Level screen is part of the online room: both see both seats and the partner connected.
+    const bar = (pg) => pg.evaluate(() => { const t = document.getElementById('level-room-team'); const s = (id) => { const e = document.getElementById(id); return { who: e.who, dev: e.dev, state: e.state }; };
+      return { shown: !!t && !t.hidden && t.getBoundingClientRect().height > 0, heading: t && t.heading, captain: s('level-room-captain'), stoker: s('level-room-stoker') }; });
+    const capBar = await bar(cap), stoBar = await bar(sto);
+    check(capBar.shown && stoBar.shown && /Online room TNDM-/.test(capBar.heading || '') && capBar.stoker.state === 'joined' && /connected/i.test(capBar.stoker.dev) && stoBar.captain.state === 'joined' && /connected/i.test(stoBar.captain.dev),
+      'OC-11 the Level screen shows the online room: both seats, the partner connected', { capBar, stoBar });
     await h.shot(cap, '2-captain-back-in-room');
     await cap.close(); await sto.close();
   }
@@ -331,6 +377,12 @@ try {
     const stoBack = await waitFor(sto, () => window._game.state === 'lobby' && !!window._game.lobby.net?.connected, null, 60000);
     const st = { cap: await net(cap), sto: await net(sto) };
     check(capBack && stoBack && st.cap.step === 'lobby-level' && st.sto.step === 'lobby-level', 'OC-13 both return to the room after the tutorial, still connected', st);
+
+    // OC-16 · back in the room on a transport that already gave up: it tries again instead of
+    // sitting on "Reconnecting…"; one whose seat was taken elsewhere says so (not "partner").
+    const gaveUp = await cap.evaluate(() => { const l = window._game.lobby, n = l.net; let retried = 0; const r = n.retryConnection.bind(n); n.retryConnection = () => { retried++; }; n.connected = false; n._gaveUp = true; l.showRoom(n, 'captain'); n.retryConnection = r; n.connected = true; n._gaveUp = false; return retried; });
+    const evicted = await sto.evaluate(() => { const l = window._game.lobby, n = l.net; n.connected = false; n._evicted = true; l.showRoom(n, 'stoker'); return document.getElementById('level-wait-text').textContent; });
+    check(gaveUp === 1 && /opened somewhere else/.test(evicted || ''), 'OC-16 a room on a given-up transport retries; a seat taken elsewhere says so', { gaveUp, evicted });
     await cap.close(); await sto.close();
   }
 } catch (e) {
