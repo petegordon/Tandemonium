@@ -407,6 +407,7 @@ export class RoomTransport {
         if (!this.connected && !this._destroyed) this._attemptReconnect();
       }, delay);
     } else {
+      this._gaveUp = true;   // no reconnect pending any more: only retryConnection dials again
       if (this.onDisconnected) this.onDisconnected('Connection lost');
     }
   }
@@ -415,6 +416,7 @@ export class RoomTransport {
   retryConnection() {
     if (this._destroyed) return;
     this._evicted = false;
+    this._gaveUp = false;
     this._lastReplacedAt = 0;
     this._reconnectAttempts = 0;
     this._ensureBrokerConnection();

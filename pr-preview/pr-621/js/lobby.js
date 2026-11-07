@@ -4646,8 +4646,10 @@ export class Lobby {
       if (this.net !== roomNet) return;   // a newer room already replaced this one
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
-      if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
-      if (hostStatus) { hostStatus.textContent = 'Partner disconnected'; hostStatus.className = 'conn-status error'; }
+      // This device lost its seat (the room was opened somewhere else): say that, not "partner".
+      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else') : 'Partner disconnected';
+      if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
+      if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
@@ -7095,8 +7097,10 @@ export class Lobby {
       if (this.net !== roomNet) return;   // a newer room already replaced this one
       const waitText = document.getElementById('level-wait-text');
       const hostStatus = document.getElementById('host-status');
-      if (waitText) { waitText.textContent = 'Partner disconnected'; waitText.style.display = ''; }
-      if (hostStatus) { hostStatus.textContent = 'Partner disconnected'; hostStatus.className = 'conn-status error'; }
+      // This device lost its seat (the room was opened somewhere else): say that, not "partner".
+      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else') : 'Partner disconnected';
+      if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
+      if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
       document.getElementById('btn-start-ride').style.display = 'none';
       this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
       setTimeout(() => {
@@ -7108,6 +7112,15 @@ export class Lobby {
         this._showStep(this.roleStep);
       }, 2000);
     };
+
+    // Back from a ride whose transport already gave up or lost its seat: its onDisconnected
+    // has fired (into the game) and will not fire again, so this room would sit on
+    // "Reconnecting…" for good. Lost the seat: say so and leave. Gave up: try once more —
+    // a fresh reconnect cycle that ends in this handler if it fails again.
+    if (!roomNet.connected) {
+      if (roomNet._evicted) roomNet.onDisconnected(`This room was opened somewhere else`);
+      else if (roomNet._gaveUp) roomNet.retryConnection();
+    }
 
     // Refresh carousel visual on re-entry
     this._applyPresetToPreview();

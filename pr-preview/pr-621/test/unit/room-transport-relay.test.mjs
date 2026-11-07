@@ -194,3 +194,17 @@ test('two P2P upgrade attempts close together leave one Peer, not a leaked one',
   assert.equal(peers.filter((p) => !p.destroyed).length, 1, 'exactly one live Peer');
   assert.equal(t.peer, peers.find((p) => !p.destroyed));
 });
+
+test('a transport that gave up says so (_gaveUp) until Try again starts a fresh cycle', () => {
+  const t = transport();
+  const lost = [];
+  t.onDisconnected = (why) => lost.push(why);
+  t.enterRoom('TNDM-AAAA', 'captain');
+  t._reconnectAttempts = t._maxReconnectAttempts;   // the last attempt failed
+  t._handleDisconnect();
+  assert.equal(t._gaveUp, true);
+  assert.deepEqual(lost, ['Connection lost']);
+  t.retryConnection();
+  assert.equal(t._gaveUp, false);
+  assert.equal(t._reconnectAttempts, 1, 'a fresh cycle started');
+});
