@@ -4032,6 +4032,7 @@ export class Lobby {
     const fmt = v => Math.floor(v).toLocaleString('en-US');
     const total = this._achievements.getAllDefinitions().length;
     let state, kicker, status;
+    let bestLine = '';
     if (d.earned) {
       state = 'earned'; kicker = 'Achievement unlocked';
       status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
@@ -4042,6 +4043,12 @@ export class Lobby {
     } else if (d.progress && d.progress[0] > 0) {
       state = 'progress'; kicker = 'In progress';
       status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
+      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+      if (d.bestAt && d.bestAt.at) {
+        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
+      }
     } else {
       state = 'locked'; kicker = 'Locked'; status = 'Not yet';
     }
@@ -4056,6 +4063,7 @@ export class Lobby {
       '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
       this._medalTimesHtml(d) +
       '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
+      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
       '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
   }
 
