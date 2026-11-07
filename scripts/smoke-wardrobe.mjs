@@ -140,23 +140,24 @@ const buzzN = await page.evaluate(() => window._game.lobby._room.cards.get(2).bu
 check(buzz2 && buzzN === 2, 'WD-03: two quick light picks buzz once more, not twice (debounced)', buzzN);
 const noteGone = await until(page, () => { const h = document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint'); return !!h && h.textContent === ''; }, null, 6000);
 check(noteGone, '#623: "Buzzing Player 2\'s controller…" clears once the buzz is over', await page.evaluate(() => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent));
-// #611 · the robot outfit: locked behind the player-bots reward (all solo achievements but one)
+// #611 · the robot outfit: locked behind the Time Warp reward (any non-calendar achievements but 5, #644)
 const robot = await page.evaluate(() => {
   const b = document.querySelector('#dr-cards .dr-card[data-n="2"] button[data-pick="outfit"][data-val="robot"]');
   return b ? { locked: b.dataset.locked === '1', title: b.title } : null;
 });
-check(!!robot && robot.locked && /^Player Bots reward: \d+ of \d+ solo achievements$/.test(robot.title), 'WD-03r: the Robot outfit shows locked with its player-bots progress', robot);
+check(!!robot && robot.locked && /^Time Warp reward: \d+ of \d+ achievements$/.test(robot.title), 'WD-03r: the Robot outfit shows locked with its Time Warp progress', robot);
 await cardClick(page, 2, 'button[data-pick="outfit"][data-val="robot"]');
 const lockedPick = await page.evaluate(() => ({ outfit: window.__playerLooks.get(2).outfit, hint: document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent }));
-check(lockedPick.outfit === 'georgian' && /^Locked: Player Bots reward/.test(lockedPick.hint || ''), 'WD-03r: picking the locked Robot keeps the outfit and says why', lockedPick);
+check(lockedPick.outfit === 'georgian' && /^Locked: Time Warp reward/.test(lockedPick.hint || ''), 'WD-03r: picking the locked Robot keeps the outfit and says why', lockedPick);
 await page.evaluate(async () => {
-  const { soloAchievementIds } = await import('/js/rewards.js');
+  const { isCalendarAchievement } = await import('/js/rewards.js');
+  const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
   const ach = window._game.lobby._achievements;
   window.__earnedBackup = new Map(ach._earned);
-  for (const id of soloAchievementIds().slice(1)) ach._earned.set(id, { id, earnedAt: 1 });
+  for (const a of ACHIEVEMENTS.filter(d => !isCalendarAchievement(d)).slice(5)) ach._earned.set(a.id, { id: a.id, earnedAt: 1 });
 });
 await cardClick(page, 2, 'button[data-pick="outfit"][data-val="robot"]');
-check(await until(page, () => window.__playerLooks.get(2).outfit === 'robot'), 'WD-03r: with all solo achievements but one, the Robot can be worn', await look(page, 2));
+check(await until(page, () => window.__playerLooks.get(2).outfit === 'robot'), 'WD-03r: with the Time Warp reward (all non-calendar but 5), the Robot can be worn', await look(page, 2));
 await cardClick(page, 2, 'button[data-pick="outfit"][data-val="georgian"]');
 await page.evaluate(() => { window._game.lobby._achievements._earned = window.__earnedBackup; });
 check(await until(page, () => window.__playerLooks.get(2).outfit === 'georgian'), 'WD-03r: back to Georgian for the rest of the run', await look(page, 2));

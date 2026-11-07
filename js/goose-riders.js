@@ -33,6 +33,11 @@ export function disposeTree(root) {
   });
 }
 
+/** Seconds on the wall clock (the effect loop runs whether or not the bike moves). */
+function fxClock() {
+  return (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+}
+
 function cutClip(clip) {
   const keep = boneFilterFor(clip.name);
   const c = clip.clone();
@@ -59,6 +64,8 @@ export class GooseRiders {
     // on one mixer average out (the cranks turned half as far as the geese's legs)
     this.pedal = byName('Pedal') ? scrub(this.bikeMixer, cutClip(byName('Pedal'))) : null;
     this.wheels = byName('WheelSpin') ? scrub(this.bikeMixer, cutClip(byName('WheelSpin'))) : null;
+    // #611 · a special bike's own loop (the Time Warp: clock hands + rocket flames), on the wall clock
+    this.fx = byName('TimeWarpFX') ? scrub(this.bikeMixer, cutClip(byName('TimeWarpFX'))) : null;
     this.wheelCircumference = 0;   // world units; set by BikeModel once the model is scaled
     this.riderClips = {};          // seat -> { pedal, ride, leanL, leanR } (already cut to their bones)
     this.riders = {};              // seat -> { root, mixer, pedal, ride, leanL, leanR }
@@ -69,7 +76,8 @@ export class GooseRiders {
 
   /** Measure the wheel in world units (call after the model is scaled and placed). */
   measureWheel() {
-    const tyre = this.model.getObjectByName('Cylinder008_cycle_0') || this.model.getObjectByName('tyre_rear_low_cycle_0');
+    const tyre = this.model.getObjectByName('Cylinder008_cycle_0') || this.model.getObjectByName('tyre_rear_low_cycle_0')
+      || this.model.getObjectByName('TW_Wheel_R');   // #611 · the Time Warp's rear wheel (one mesh, tyre outermost)
     if (!tyre) return;
     this.model.updateMatrixWorld(true);
     const size = new THREE.Box3().setFromObject(tyre, true).getSize(new THREE.Vector3());
@@ -204,6 +212,7 @@ export class GooseRiders {
     if (this.wheels && this.wheelCircumference > 0) {
       this.wheels.time = turnTime(2 * Math.PI * this._dist / this.wheelCircumference, this.wheels.getClip().duration);
     }
+    if (this.fx) this.fx.time = turnTime(2 * Math.PI * fxClock() / this.fx.getClip().duration, this.fx.getClip().duration);
     this.bikeMixer.update(0);
     for (const [seat, r] of Object.entries(this.riders)) {
       if (r.ragdoll) continue;   // #484: a crash's rag doll owns this goose's bones (physics/crash-scene.js)

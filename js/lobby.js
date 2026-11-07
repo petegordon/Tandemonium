@@ -39,7 +39,9 @@
 
 import * as THREE from 'three';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
-import { lockedOutfits, outfitLockHint } from './rewards.js';
+import { lockedOutfits, outfitLockHint, rewardProgress } from './rewards.js';
+import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike } from './special-bikes.js';
+import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamTwinPad } from './input-manager.js';
@@ -114,6 +116,8 @@ const BIKE_NAMES = {
   bike_christmas: 'Christmas Cruiser',
   bike_newyears: 'New Year Rider',
   bike_birthday: 'Birthday Express',
+  solo_flight: 'Solo Flight',   // #611 · special bikes (their own models, js/special-bikes.js)
+  time_warp: 'Time Warp',
 };
 
 const BIKE_COLORS = {
@@ -127,6 +131,8 @@ const BIKE_COLORS = {
   bike_christmas: '#2eff46',
   bike_newyears: '#fbff00',
   bike_birthday: '#66ff00',
+  solo_flight: '#9fd8ff',
+  time_warp: '#f0b860',
 };
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
@@ -8250,7 +8256,7 @@ export class Lobby {
     } catch (e) {
       console.warn('Failed to load holiday bike presets:', e);
     }
-    this._presetKeys = ['default', ...Object.keys(this._presetData)];
+    this._presetKeys = ['default', ...Object.keys(this._presetData), ...SPECIAL_BIKE_KEYS];
 
     // Setup mini 3D preview
     const canvas = document.getElementById('bike-preview-canvas');
@@ -8394,9 +8400,142 @@ export class Lobby {
     }, { passive: true });
   }
 
+  /** Earned achievement ids (the AchievementManager when the lobby has it, else its store). */
+  _earnedAchievementIds() {
+    if (this._achievements) return this._achievements.getEarnedIds();
+    try {
+      const raw = localStorage.getItem('tandemonium_achievements');
+      return raw ? JSON.parse(raw).map(a => a.id) : [];
+    } catch { return []; }
+  }
+
+  /**
+   * #611 · a special bike's own model in the chooser, loaded the first time it is shown: sized like the
+   * tandem preview, its own loop (the Time Warp's TimeWarpFX) on a mixer, materials kept so a locked
+   * silhouette can be undone.
+   */
+  _loadSpecialPreview(key, onReady) {
+    this._specialPreviews = this._specialPreviews || {};
+    const have = this._specialPreviews[key];
+    if (have) { if (have.model) onReady(have); return; }
+    const def = SPECIAL_BIKES[key];
+    const sp = this._specialPreviews[key] = { model: null };
+    new GLTFLoader().load(def.model, (gltf) => {
+      const model = gltf.scene;
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      model.scale.setScalar(3.0 / Math.max(size.x, size.y, size.z));
+      model.updateMatrixWorld(true);
+      const b2 = new THREE.Box3().setFromObject(model);
+      const c = b2.getCenter(new THREE.Vector3());
+      model.position.set(-c.x, -b2.min.y, -c.z);
+      const mats = [];
+      model.traverse((o) => {
+        if (!o.isMesh) return;
+        o.material = o.material.clone();
+        o.castShadow = true;
+        mats.push([o.material, o.material.clone()]);
+      });
+      const mixer = new THREE.AnimationMixer(model);
+      const clip = def.fx && gltf.animations.find(x => x.name === def.fx);
+      let fx = null;
+      if (clip) {
+        const cut = clip.clone();
+        const keep = boneFilterFor(def.fx);
+        cut.tracks = cut.tracks.filter(t => keep(trackBone(t.name)));
+        fx = mixer.clipAction(cut);
+        fx.play();
+        fx.paused = true;
+      }
+      model.visible = false;
+      if (this._previewPivot) this._previewPivot.add(model);
+      Object.assign(sp, { model, mats, mixer, fx, dark: false });
+      onReady(sp);
+    }, undefined, (err) => console.warn(def.name + ' preview failed to load:', err));
+  }
+
+  /** Dark silhouette (locked) or its own colours (unlocked). */
+  _setSpecialDark(sp, dark) {
+    if (!sp || !sp.model || sp.dark === dark) return;
+    sp.dark = dark;
+    for (const [m, orig] of sp.mats) {
+      if (dark) {
+        if (m.color) m.color.set(0x050505);
+        if (m.emissive) m.emissive.set(0x000000);
+        if (m.map) m.map = null;
+        m.metalness = 0; m.roughness = 1;
+      } else {
+        m.copy(orig);
+      }
+      m.needsUpdate = true;
+    }
+    if (dark && sp.fx) { sp.fx.time = 0; sp.mixer.update(0); }   // (the orange pops tucked away)
+  }
+
+  /** Hide every special bike's preview model (a paint preset or another special bike is showing). */
+  _hideSpecialPreviews(exceptKey = null) {
+    for (const [k, sp] of Object.entries(this._specialPreviews || {})) if (k !== exceptKey && sp.model) sp.model.visible = false;
+  }
+
+  /**
+   * #611 · a special bike in the chooser: its own model; locked = a dark silhouette with "n of N" over it;
+   * earned = its colours (and its loop); a bike not rideable yet says so and leaves the ride on the default.
+   */
+  _applySpecialToPreview(key, nameEl) {
+    const def = SPECIAL_BIKES[key];
+    const prog = rewardProgress(def.reward, this._earnedAchievementIds());
+    const locked = !prog.unlocked;
+    if (this._previewModel) this._previewModel.visible = false;
+    this._hideSpecialPreviews(key);
+    this._loadSpecialPreview(key, (sp) => {
+      if (this._presetKeys[this._presetIndex] !== key) return;   // moved on while it loaded
+      sp.model.visible = true;
+      this._setSpecialDark(sp, locked);
+    });
+    let hintEl = document.getElementById('bike-hint');
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.id = 'bike-hint';
+      hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
+      nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
+    }
+    this.selectedPreset = null;
+    hintEl.dataset.special = key;
+    if (locked) {
+      this.selectedPresetKey = 'default';
+      nameEl.style.color = 'rgba(255,255,255,0.3)';
+      nameEl.textContent = '\uD83D\uDD12 ' + def.name;
+      hintEl.innerHTML = `<span class="bike-count" style="font-size:18px;font-weight:700;color:rgba(255,255,255,0.85)">${prog.have} of ${prog.need}</span>`
+        + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
+      hintEl.title = def.reward === 'timeWarp'
+        ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
+        : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
+      hintEl.style.display = '';
+      return;
+    }
+    nameEl.style.color = def.color;
+    nameEl.textContent = def.icon + ' ' + def.name;
+    if (!def.rideable) {
+      this.selectedPresetKey = 'default';
+      hintEl.innerHTML = '<span style="font-size:13px;font-weight:700;color:rgba(255,255,255,0.85)">Coming soon</span>';
+      hintEl.title = `${def.name} is earned; riding it comes in a later update`;
+      hintEl.style.display = '';
+      return;
+    }
+    this.selectedPresetKey = key;
+    hintEl.style.display = 'none';
+    hintEl.title = '';
+    delete hintEl.dataset.special;
+    analytics.trackEvent('bike_color_change', { preset_key: key });
+  }
+
   _applyPresetToPreview() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
+    if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
+    if (this._previewModel) this._previewModel.visible = true;
+    this._hideSpecialPreviews();
+    { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }
     const locked = HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key);
     nameEl.style.color = locked ? 'rgba(255,255,255,0.3)' : (BIKE_COLORS[key] || 'rgba(68, 255, 102, 0.7)');
 
@@ -8525,6 +8664,12 @@ export class Lobby {
       if (frame++ % step !== 0) return;
       if (this._previewPivot) {
         this._previewPivot.rotation.y += 0.008 * step;
+      }
+      // #611 · the Time Warp's clock and flames run in the chooser too (not while it's a locked silhouette)
+      for (const sp of Object.values(this._specialPreviews || {})) {
+        if (!sp.model || !sp.model.visible || !sp.fx || sp.dark) continue;
+        sp.fx.time = (performance.now() / 1000) % sp.fx.getClip().duration;
+        sp.mixer.update(0);
       }
       this._previewRenderer.render(this._previewScene, this._previewCamera);
     };
