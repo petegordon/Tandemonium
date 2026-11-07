@@ -41,7 +41,8 @@ export const LEVELS = [
     icon: '📅',        // 📅
     description: 'A new road every day. Same for everyone.',
     isDaily: true,
-    fixedDifficulty: 'adventurous',
+    // Pete 2026-11-07: the rider picks the difficulty (it was fixed at Adventurous), and gold is Grandma's pace.
+    medalPace: 'grandma',
     treeCollision: true
   }
 ];
@@ -163,6 +164,18 @@ export function timerBudgetMs(level, difficulty) {
 
 function medalsFor(level, difficulty) {
   const budget = timerBudgetMs(level, difficulty);
+  if (level.medalPace) {
+    // Gold at another level's pace per metre (the Daily Ride: Grandma's; its own clock made gold ~26 km/h against
+    // Grandma's ~20, with trees in the way). Bronze stays inside this level's clock (every medal reachable),
+    // silver halfway.
+    const ref = getLevelById(level.medalPace);
+    const per = medalsFor(ref, difficulty);
+    const k = level.distance / ref.distance;
+    const gold = Math.round(per.gold * k);
+    const bronze = Math.round(Math.min(per.bronze * k, budget * MEDAL_FRACTION.bronze));
+    const silver = Math.round(Math.min(per.silver * k, (gold + bronze) / 2));
+    return { gold, silver: Math.max(gold + 1000, silver), bronze: Math.max(gold + 2000, bronze) };
+  }
   return {
     gold: Math.round(budget * MEDAL_FRACTION.gold),
     silver: Math.round(budget * MEDAL_FRACTION.silver),
