@@ -94,8 +94,11 @@ jobs:
       - name: Ad-hoc sign
         run: |
           APP="out/Tandemonium-darwin-universal/Tandemonium.app"
-          find "$APP" -type f -name '*.node' -print0 | xargs -0 -n1 codesign --force --sign -
-          find "$APP" -type f -name '*.dylib' -print0 | xargs -0 -n1 codesign --force --sign -
+          # Only Mach-O files: koffi also ships Linux/Windows .node files, and
+          # signing those stores the signature in xattrs, which Steam drops.
+          find "$APP/Contents/Resources" -type f \( -name '*.node' -o -name '*.dylib' \) | while read -r f; do
+            if file "$f" | grep -q Mach-O; then codesign --force --sign - "$f"; fi
+          done
           codesign --force --deep --sign - "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           lipo -archs "$APP/Contents/MacOS/Tandemonium"
