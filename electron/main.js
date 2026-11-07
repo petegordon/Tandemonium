@@ -126,8 +126,11 @@ try {
   // nothing to relaunch, so the app spins forever on "eglCreateContext:
   // Context lost" (seen after a versus race with Steam exited). Non-Steam
   // sessions don't need the overlay and keep the recoverable GPU process.
-  app.commandLine.appendSwitch('in-process-gpu');
-  app.commandLine.appendSwitch('disable-direct-composition');
+  // Windows only: both switches are about D3D / DirectComposition (#192).
+  if (process.platform === 'win32') {
+    app.commandLine.appendSwitch('in-process-gpu');
+    app.commandLine.appendSwitch('disable-direct-composition');
+  }
 } catch (err) {
   console.warn('Steamworks unavailable, running without Steam:', err.message);
   steam = null;
@@ -631,10 +634,10 @@ app.whenReady().then(async () => {
   });
 });
 
+// Quit on every platform, macOS included: a game that lingers with no window
+// keeps Steam showing "Running" (#192).
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
 
 app.on('will-quit', () => {
