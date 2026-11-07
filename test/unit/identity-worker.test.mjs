@@ -482,3 +482,86 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
     assert.equal((await call(env, '/me/discord')).status, 401);
   } finally { globalThis.fetch = inner; restore(); }
 });
+
+// ── House Tandem games: achievements + stats for dice and later games ──
+import { houseTandemGames } from '../../worker/leaderboard.js';
+import { mergeStats } from '../../worker/games.js';
+
+test('game stats merge: add, max, or, union (capped), junk ignored', () => {
+  let s = mergeStats({}, { add: { rolls: 1 }, max: { bestStreak: 3 }, or: { doubles: 0b1 }, union: { partners: ['7'] } });
+  s = mergeStats(s, { add: { rolls: 2, bad: 'x' }, max: { bestStreak: 2 }, or: { doubles: 0b100000 }, union: { partners: ['7', '9'] } });
+  assert.deepEqual(s, { rolls: 3, bestStreak: 3, doubles: 0b100001, partners: ['7', '9'] });
+  assert.equal(mergeStats({}, { add: { 'bad key!': 1 } })['bad key!'], undefined);
+  const many = mergeStats({}, { union: { p: Array.from({ length: 300 }, (_, i) => String(i)) } });
+  assert.equal(many.p.length, 200);
+});
+
+test('a dice player from Discord gets an account; achievements and stats land once; profile and /me/games show them', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const a = await houseTandemGames.resolveDiscord(env, { discordId: DISCORD_PETE.id, name: 'Pete', avatar: 'https://evil.example/x.png' });
+    assert.ok(a.userId);
+    assert.match(a.avatar, /^https:\/\/cdn\.discordapp\.com\//, 'only Discord CDN pictures');
+    // Signing in with Discord later lands on the same account.
+    const web = await deviceSignIn(env);
+    assert.equal(web.user.id, a.userId);
+    assert.equal((await houseTandemGames.resolveDiscord(env, { discordId: DISCORD_PETE.id, name: 'Pete' })).userId, a.userId);
+    await assert.rejects(houseTandemGames.resolveDiscord(env, { discordId: 'nope' }));
+
+    let r = await houseTandemGames.recordGame(env, a.userId, 'dice', { add: { rolls: 1 } }, ['first_roll', 'snake_eyes', 'BAD ID']);
+    assert.deepEqual(r.newlyEarned, ['first_roll', 'snake_eyes']);
+    r = await houseTandemGames.recordGame(env, a.userId, 'dice', { add: { rolls: 1 } }, ['first_roll', 'boxcars']);
+    assert.deepEqual(r.newlyEarned, ['boxcars'], 'never twice');
+    const p = await houseTandemGames.gameProfile(env, a.userId, 'dice');
+    assert.deepEqual(p.earned.sort(), ['boxcars', 'first_roll', 'snake_eyes']);
+    assert.equal(p.stats.rolls, 2);
+    await assert.rejects(houseTandemGames.recordGame(env, a.userId, 'Bad Game', {}, []));
+    await assert.rejects(houseTandemGames.recordGame(env, 99999, 'dice', {}, ['first_roll']));
+
+    const me = await (await call(env, '/me/games', { token: web.token })).json();
+    assert.deepEqual(me.games.dice.earned.map((e) => e.id).sort(), ['boxcars', 'first_roll', 'snake_eyes']);
+    assert.equal(me.games.dice.stats.rolls, 2);
+
+    // verifySession: the website's session, with the Discord picture.
+    const v = await houseTandemGames.verifySession(env, web.token);
+    assert.equal(v.userId, a.userId);
+    assert.equal(await houseTandemGames.verifySession(env, web.token.slice(0, -3) + 'abc'), null);
+
+    // Deleting the account takes the game records too.
+    assert.equal((await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' }, token: web.token })).status, 200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM game_achievements').get().n, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM game_stats').get().n, 0);
+    assert.equal(await houseTandemGames.verifySession(env, web.token), null);
+  } finally { restore(); }
+});
+
+test('handoff: a signed-in link opens another site signed in, once, within a minute', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const web = await deviceSignIn(env);
+    assert.equal((await call(env, '/auth/handoff', { method: 'POST' })).status, 401);
+    const { code, expires_in } = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
+    assert.equal(expires_in, 60);
+    const bad = await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: code.split('.')[0] + '.wrong' } });
+    assert.equal(bad.status, 410);
+    // A wrong guess burns the code.
+    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code } })).status, 410);
+
+    const fresh = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
+    const ok = await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: fresh.code } });
+    assert.equal(ok.status, 200);
+    const out = await ok.json();
+    assert.equal(out.user.id, web.user.id);
+    assert.equal(jwtSub(out.token), web.user.id);
+    assert.ok(out.user.identities.discord);
+    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: fresh.code } })).status, 410, 'single use');
+
+    const old = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
+    db.prepare('UPDATE auth_requests SET created_at = created_at - 61').run();
+    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: old.code } })).status, 410, 'expired');
+  } finally { restore(); }
+});

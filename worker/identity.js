@@ -509,6 +509,48 @@ export async function handleDiscordMembership(request, env, corsOrigin, userId, 
   return deps.jsonResponse({ linked: true, member, invite }, 200, corsOrigin);
 }
 
+// ------------------------------------------------------------
+// Handoff: open another House Tandem site already signed in (#612)
+// ------------------------------------------------------------
+//
+// Each site keeps its own session (localStorage is per origin). A signed-in
+// link from housetandem.com to dice.housetandem.com carries a one-time code
+// instead of the session itself: single use, a minute long, and only good
+// for a fresh session on the same account.
+
+const HANDOFF_TTL_S = 60;
+
+/** POST /auth/handoff (signed in) → { code, expires_in } */
+export async function handleHandoffCreate(request, env, corsOrigin, userId, deps) {
+  const id = randomId(12);
+  const secret = randomId(18);
+  await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
+  await env.DB.prepare(
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
+     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, NULL, 'done', ?)`
+  ).bind(id, await sha256(secret), userId, nowS()).run();
+  return deps.jsonResponse({ code: `${id}.${secret}`, expires_in: HANDOFF_TTL_S }, 200, corsOrigin);
+}
+
+/** POST /auth/handoff/redeem { code } → { token, user } */
+export async function handleHandoffRedeem(request, env, corsOrigin, deps) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const [id, secret] = String(body.code || '').split('.');
+  const gone = () => deps.jsonResponse({ error: 'This sign-in link has expired' }, 410, corsOrigin);
+  if (!id || !secret) return gone();
+  const row = await env.DB.prepare("SELECT * FROM auth_requests WHERE id = ? AND provider = 'handoff'").bind(id).first();
+  if (!row) return gone();
+  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(id).run();
+  if (row.created_at < nowS() - HANDOFF_TTL_S || (await sha256(secret)) !== row.secret_hash) return gone();
+  const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(row.link_user_id).first();
+  if (!user) return gone();
+  const token = await deps.createJWT({ sub: user.id, name: user.display_name, picture: user.avatar_url }, env.JWT_SECRET);
+  const identities = await listIdentities(env, user.id);
+  deps.writeMetric && deps.writeMetric(env, 'auth_handoff');
+  return deps.jsonResponse({ token, user: { id: user.id, name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
+}
+
 /** The small page the browser shows during a sign-in. */
 function page(title, body, status = 200) {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
