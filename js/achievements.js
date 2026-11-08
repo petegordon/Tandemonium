@@ -17,12 +17,19 @@ import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot
 import { WALLET_KEY, sanitizeWallet, canRebuild } from './wallet.js';
 import {
   ACHIEVEMENTS, SECTIONS, STATS_VERSION,
-  migrateStats, applyEvent, seedStats, RideTracker, versusResult, migrateEarned, foldBests, bestProgress } from './achievement-defs.js';
+  migrateStats, applyEvent, seedStats, RideTracker, versusResult, migrateEarned, foldBests, bestProgress, emptyStats } from './achievement-defs.js';
+import {
+  ACCOUNT_GAME, toAccountDelta, mergeAfterSync, baseFromAccount, baseAfterSend, cleanBase, emptyBase, hasCounters, tokenUser,
+} from './account-stats.js';
 
 export { ACHIEVEMENTS, SECTIONS };
 
 const STORAGE_KEY = 'tandemonium_achievements';
 const STATS_KEY = 'tandemonium_achievement_stats';
+/** housetandem-web #37 · how much of each counter the account already has (js/account-stats.js). */
+const STATS_BASE_KEY = 'tandemonium_achievement_stats_base';
+/** After a stats change, wait this long for more before pushing (a ride's crashes, boosts, finish). */
+const STATS_SYNC_DEBOUNCE_MS = 8000;
 const ECONOMY_EVENT = 'tandemonium:economy';
 
 export class AchievementManager {
@@ -51,6 +58,11 @@ export class AchievementManager {
     this._identity = null;
     this._load();
     this._loadStats();
+    this._base = this._loadBase();
+    this._statsSyncTimer = null;
+    this._statsSync = null;      // the sync in flight (a promise)
+    this._statsSent = null;      // the stats it was taken from
+    this._beaconSent = null;     // stats a page-hide beacon sent while it was out (already counted)
   }
 
   /** The demo never awards the full-game-only achievements (defs `demo: false`). */
@@ -174,6 +186,136 @@ export class AchievementManager {
     try {
       localStorage.setItem(STATS_KEY, JSON.stringify(this._stats));
     } catch (e) {}
+    this._scheduleStatsSync();
+  }
+
+  // ── Lifetime stats on the House Tandem account (housetandem-web #37) ──
+  //
+  // Signed in, every change is pushed (debounced) as a delta from the synced
+  // baseline; the answer is the account's totals, which the device takes.
+  // Sign-in = a sync (the device's unsynced counts are added once, then it
+  // has the account's numbers); sign-out = a sync, then resetStats().
+
+  _loadBase() {
+    try { return cleanBase(JSON.parse(localStorage.getItem(STATS_BASE_KEY) || 'null')); } catch (e) { return emptyBase(); }
+  }
+
+  _saveBase() {
+    try { localStorage.setItem(STATS_BASE_KEY, JSON.stringify(this._base)); } catch (e) {}
+  }
+
+  _token() {
+    try { return (this._identity && this._identity.getToken && this._identity.getToken()) || null; } catch (e) { return null; }
+  }
+
+  _scheduleStatsSync() {
+    if (!this._token() || typeof setTimeout === 'undefined') return;
+    if (this._statsSyncTimer) clearTimeout(this._statsSyncTimer);
+    this._statsSyncTimer = setTimeout(() => { this._statsSyncTimer = null; this.syncStats(); }, STATS_SYNC_DEBOUNCE_MS);
+  }
+
+  /**
+   * Push this device's stats to the signed-in account and take the account's
+   * back. Resolves { ok, newlyEarned }: newlyEarned are badges the merged
+   * stats earn that this list didn't have, awarded quietly (no toast each;
+   * the caller may show one summary). Signed out: { ok: false }.
+   */
+  async syncStats() {
+    // One at a time: a call while one is out waits for it, then sends what's new since.
+    if (this._statsSync) {
+      try { await this._statsSync; } catch (e) {}
+      return this.syncStats();
+    }
+    const token = this._token();
+    const user = tokenUser(token);
+    if (!token || !user) return { ok: false, newlyEarned: [] };
+    if (this._statsSyncTimer) { clearTimeout(this._statsSyncTimer); this._statsSyncTimer = null; }
+    this._statsSync = (async () => {
+      // Another account's numbers (it signed in here without a sign-out): not this player's to add.
+      // base.user null = counted signed out since the last sign-out: this sign-in claims them.
+      if (this._base.user && this._base.user !== user) this._resetDeviceStats(user);
+      const sent = migrateStats(this._stats);
+      const delta = toAccountDelta(sent, this._base);
+      this._statsSent = sent;
+      this._beaconSent = null;
+      let res;
+      try {
+        res = await fetch(`${API_BASE}/games/${ACCOUNT_GAME}/sync`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ delta }),
+        });
+      } catch (e) { return { ok: false, newlyEarned: [] }; }
+      if (!res || !res.ok) return { ok: false, newlyEarned: [] };
+      let data = null;
+      try { data = await res.json(); } catch (e) {}
+      if (!data || !data.stats) return { ok: false, newlyEarned: [] };
+      if (this._token() !== token) return { ok: false, newlyEarned: [] };   // signed out or switched meanwhile
+      // A beacon that went out meanwhile already sent the counts up to its snapshot.
+      this._stats = mergeAfterSync(data.stats, this._stats, this._beaconSent || sent);
+      this._base = baseFromAccount(data.stats, user);
+      this._saveBase();
+      try { localStorage.setItem(STATS_KEY, JSON.stringify(this._stats)); } catch (e) {}
+      const newlyEarned = this._evaluate({}, { quiet: true });
+      if (newlyEarned.length) this.syncToServer();
+      return { ok: true, newlyEarned };
+    })();
+    try {
+      return await this._statsSync;
+    } finally {
+      this._statsSync = null;
+      this._statsSent = null;
+      this._beaconSent = null;
+    }
+  }
+
+  /**
+   * The page is going away: send what's unsynced without waiting for an
+   * answer (a beacon), and count it as sent. A lost beacon loses a little;
+   * it never counts twice.
+   */
+  flushStatsBeacon() {
+    const token = this._token();
+    const user = tokenUser(token);
+    if (!token || !user || (this._base.user && this._base.user !== user)) return false;
+    const sent = migrateStats(this._stats);
+    // A sync is out: its counts are on their way, so the beacon sends only what came after.
+    const from = this._statsSync && this._statsSent ? baseAfterSend(this._base, this._statsSent) : this._base;
+    const delta = toAccountDelta(sent, from);
+    if (!hasCounters(delta) && !this._statsSyncTimer) return false;
+    if (this._statsSyncTimer) { clearTimeout(this._statsSyncTimer); this._statsSyncTimer = null; }
+    const url = `${API_BASE}/games/${ACCOUNT_GAME}/sync`;
+    const body = JSON.stringify({ token, delta });
+    let ok = false;
+    try {
+      ok = typeof navigator !== 'undefined' && !!navigator.sendBeacon && navigator.sendBeacon(url, new Blob([body], { type: 'text/plain' }));
+    } catch (e) {}
+    if (!ok) {
+      try { fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body, keepalive: true }).catch(() => {}); ok = true; } catch (e) {}
+    }
+    if (ok) {
+      this._base = { ...baseAfterSend(from, sent), user };
+      if (this._statsSync) this._beaconSent = sent;
+      this._saveBase();
+    }
+    return ok;
+  }
+
+  _resetDeviceStats(user = null) {
+    this._stats = emptyStats();
+    this._base = emptyBase(user);
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(this._stats)); } catch (e) {}
+    this._saveBase();
+  }
+
+  /**
+   * Sign-out: the device starts again from empty stats (written as an empty
+   * v2, so the m21 seeding doesn't refill them from the device's other saves).
+   * Call after syncStats() pushed them to the account.
+   */
+  resetStats() {
+    if (this._statsSyncTimer) { clearTimeout(this._statsSyncTimer); this._statsSyncTimer = null; }
+    this._resetDeviceStats(null);
   }
 
   /** Re-read earned achievements and stats from localStorage (e.g. after a ride). */
@@ -217,7 +359,11 @@ export class AchievementManager {
     return this._evaluate({});
   }
 
-  _evaluate(state) {
+  /**
+   * `quiet`: award without the per-badge toast (onEarned). After a sign-in
+   * brings the account's stats, the caller shows one summary instead.
+   */
+  _evaluate(state, { quiet = false } = {}) {
     const newlyEarned = [];
     const demo = this.demo;
     const guestPass = demo && this.guestPass;   // #666: once per check, not per achievement
@@ -237,7 +383,7 @@ export class AchievementManager {
         if (ach.condition(state, this._stats)) {
           const record = { id: ach.id, name: ach.name, icon: ach.icon, earnedAt: Date.now() };
           this._earned.set(ach.id, record);
-          this._newThisSession.push(record);
+          if (!quiet) this._newThisSession.push(record);
           newlyEarned.push(record);
         }
       } catch (e) {}
@@ -252,7 +398,7 @@ export class AchievementManager {
           window.steam.activateAchievement(a.id.toUpperCase());
         }
       }
-      if (this.onEarned) {
+      if (this.onEarned && !quiet) {
         for (const a of newlyEarned) {
           try { this.onEarned(a); } catch (e) {}
         }

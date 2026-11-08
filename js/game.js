@@ -45,6 +45,7 @@ import {   // #657 parts 2 + 3 · the TV's QR to the phone page, the House Tande
   cardUploadBlob, fetchShareConfig, uploadCard, postCardToDiscord,
 } from './share-result.js';
 import { API_BASE } from './config.js';
+import { createPlaytime } from './playtime.js';   // housetandem-web #37 · time in game on the account
 import { toast } from './slingshot-ui.js';
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
@@ -900,6 +901,7 @@ class Game {
       onGarage: () => this._openGarageFromLobby(),   // #400 D4
       input: this.input,
       controllerManager: this.controllerManager,
+      achievements: this.achievements,   // one shared list (sign-in merge, sign-out clear, ride unlocks)
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
     // #672 · the partner's look arrived in the room: the bike's partner seat follows on the next frame.
@@ -916,6 +918,20 @@ class Game {
     // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
     this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
     this.lobby.padRoom = this.phonePad;
+    // housetandem-web #37 · time in game on the House Tandem account (signed in only; a ride counts
+    // as active, the lobby after 3 minutes without input doesn't), and the lifetime stats' last delta
+    // when the page goes away.
+    this.playtime = createPlaytime({
+      game: 'tandemonium', apiBase: API_BASE,
+      getToken: () => (this.lobby.auth && this.lobby.auth.isLoggedIn() && !this.lobby.auth.isTokenExpired() ? this.lobby.auth.getToken() : null),
+      idleMs: 3 * 60 * 1000, watchGamepads: true,
+      busy: () => this.state === 'playing',
+    });
+    this.playtime.start();
+    this.lobby.playtime = this.playtime;
+    const flushStats = () => { try { this.achievements.flushStatsBeacon(); } catch (e) {} };
+    window.addEventListener('pagehide', flushStats);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushStats(); });
 
     // Background music
     // #567: an <audio> element that falls back to the AudioContext when the
