@@ -900,6 +900,7 @@ class Game {
       onGarage: () => this._openGarageFromLobby(),   // #400 D4
       input: this.input,
       controllerManager: this.controllerManager,
+      achievements: this.achievements,   // one shared list (sign-in merge, sign-out clear, ride unlocks)
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
     // #672 · the partner's look arrived in the room: the bike's partner seat follows on the next frame.
