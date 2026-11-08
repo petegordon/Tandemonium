@@ -11,7 +11,7 @@
 //   TW-04  Show Riders off rides the plain frame; on again brings the Time Warp back
 //   TW-05  picking a paint preset again rides the goose tandem
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
-//          achievements"; once earned it shows in colour as "Coming soon" and the ride stays on the default
+//          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8974, outDir: 'tandemonium-time-warp' });
@@ -40,7 +40,7 @@ let c = await chooser();
 check(c.key === 'time_warp' && /Time Warp/.test(c.name) && c.name.startsWith('🔒'), 'TW-01: the last chooser entry is the locked Time Warp', c);
 check(await page.evaluate(() => window._game.lobby._presetKeys.slice(-2).join(',')) === 'solo_flight,time_warp', 'TW-01: Solo Flight then Time Warp close the chooser (the reward ladder)');
 
-console.log('SF-01 Solo Flight: locked silhouette, "n of N solo achievements"; earned = coming soon, not ridden yet');
+console.log('SF-01 Solo Flight: locked silhouette, "n of N solo achievements"; earned = in colour, the pick');
 const sf = async () => {
   await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); });
   await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible); });
@@ -63,8 +63,8 @@ await page.evaluate(async () => {
   for (const id of soloAchievementIds().slice(1)) ach._earned.set(id, { id, earnedAt: 1 });
 });
 s1 = await sf();
-check(!s1.dark && /Coming soon/.test(s1.hint) && s1.picked === 'default', 'SF-01: earned, it shows in colour as coming soon and is not ridden yet', s1);
-await h.shot(page, 'sf01-coming-soon');
+check(!s1.dark && !s1.hint && s1.picked === 'solo_flight', 'SF-01: earned, it shows in colour and is the pick (#644)', s1);
+await h.shot(page, 'sf01-earned');
 await page.evaluate(() => { window._game.lobby._achievements._earned = window.__sfBackup; });
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('time_warp'); l._applyPresetToPreview(); });
 const need = await page.evaluate(async () => (await import('/js/rewards.js')).timeWarpProgress([]).need);

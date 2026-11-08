@@ -2638,6 +2638,43 @@
     letter-spacing: 2px;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
   }
+  /* #644 · Solo Flight's bot picker: Bolt, Rivet, Sprocket */
+  #bot-picker {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .bot-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1.5px solid rgba(255,255,255,0.22);
+    background: rgba(0,0,0,0.55);
+    color: rgba(255,255,255,0.75);
+    font: 700 11px/1.2 system-ui, sans-serif;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .bot-pick .bot-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--bot-color);
+    box-shadow: 0 0 6px var(--bot-color);
+  }
+  .bot-pick[aria-checked="true"] {
+    border-color: var(--bot-color);
+    color: #fff;
+    background: color-mix(in srgb, var(--bot-color) 28%, rgba(0,0,0,0.6));
+  }
+  #bot-picker .bot-label {
+    align-self: center;
+    font: 600 10px/1 system-ui, sans-serif;
+    color: rgba(255,255,255,0.55);
+    margin-right: 2px;
+    white-space: nowrap;
+  }
   #bike-hint {
     position: absolute;
     top: 50%;
@@ -4413,6 +4450,23 @@
       font-size: calc(14 * var(--ls));
       line-height: calc(18 * var(--ls));
     }
+    #bot-picker {
+      position: absolute;
+      bottom: calc(5 * var(--ls));
+      left: 50%;
+      transform: translateX(-50%);
+      gap: calc(4 * var(--ls));
+      margin: 0;
+      white-space: nowrap;
+    }
+    .bot-pick {
+      padding: calc(2.5 * var(--ls)) calc(7 * var(--ls));
+      font-size: calc(9 * var(--ls));
+      gap: calc(4 * var(--ls));
+      border-width: calc(1.2 * var(--ls));
+    }
+    .bot-pick .bot-dot { width: calc(7 * var(--ls)); height: calc(7 * var(--ls)); }
+    #bot-picker .bot-label { font-size: calc(8 * var(--ls)); }
     #bike-hint {
       position: absolute !important;
       top: calc(12 * var(--ls));
@@ -5521,6 +5575,8 @@ ON</button>
     <div id="bike-preview-wrap">
       <canvas id="bike-preview-canvas"></canvas>
       <div id="bike-name">Default</div>
+      <!-- #644 · Solo Flight: the player bot who rides the back seat (filled by lobby.js) -->
+      <div id="bot-picker" role="radiogroup" aria-label="Bot on the back seat" style="display:none"></div>
     </div>
     <button id="bike-next" class="bike-carousel-nav" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span><uf-controller-glyph button="rb" size="lg" class="pad-only"></uf-controller-glyph></button>
   </div>
