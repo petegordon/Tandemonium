@@ -1,17 +1,11 @@
 // ============================================================
-// GHOST (pure) — the rider you were yesterday
+// GHOST (pure) — a recorded ride, played back
 // ============================================================
 //
-// D-4. A best time is a number; a ghost is an opponent. Mario Kart has done
-// this since 1992 for the same reason it works here: the fastest way to teach
-// somebody a road is to show them a better line down it, and the cheapest
-// possible multiplayer is a recording.
-//
-// Two sources, both local:
-//   - your own personal best on this level (B-3 already stores the time; this
-//     stores the line);
-//   - your partner's last run on Today's Road, so you can chase each other
-//     without both being free at the same moment.
+// D-4 (removed in #400), back for #644: the bot ghost team race. A recorded
+// ride is an opponent with no live AI: the player bots' ghost tandem replays a
+// shipped recording of a real ride (js/bot-ghost-runs.js, recorded with this
+// recorder by scripts/record-bot-ghosts.mjs), so beating it is a versus race.
 //
 // This module holds only the recording and the interpolation. The mesh, the
 // scene and the frame loop live in game.js — nothing here imports three or
