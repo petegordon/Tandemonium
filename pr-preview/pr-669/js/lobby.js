@@ -3592,7 +3592,7 @@ export class Lobby {
     // The QR's OPEN ON THIS COMPUTER sits just above CLOSE while the code is showing.
     const box = document.getElementById('profile-popup-device');
     if (box && !box.hidden) ids.splice(ids.length - 1, 0, 'profile-popup-open-browser');
-    return ids.map((id) => document.getElementById(id)).filter((el) => el && el.style.display !== 'none');
+    return ids.map((id) => document.getElementById(id)).filter((el) => el && !el.hidden && el.style.display !== 'none');
   }
 
   /**
@@ -3690,6 +3690,8 @@ export class Lobby {
     this._profileDevUrl = null;
     const openBtn = document.getElementById('profile-popup-open-browser');
     if (openBtn) openBtn.style.display = 'none';
+    // The QR replaces the button that asked for it (LINK DISCORD / SIGN IN WITH DISCORD).
+    this._setDiscordTriggersHidden(true);
     const section = this.auth.isLoggedIn()
       ? document.querySelector('.profile-popup-content')
       : document.getElementById('profile-popup-signin');
@@ -3730,15 +3732,22 @@ export class Lobby {
     document.getElementById('profile-popup-code').textContent = dev.code || '';
     this._setProfileDeviceStatus('Waiting for Discord…');
     this._profileDevUrl = dev.url;
-    if (openBtn && this._hasDesktopBrowser()) {
-      openBtn.style.display = '';
-      // The pad list gains the button; focus lands on it (A opens the browser, B closes).
-      if (this._activeModal === 'profile') {
-        const items = this._profileItems();
-        this._modalFocus.setItems(items, Math.max(0, items.indexOf(openBtn)));
-      }
+    if (openBtn && this._hasDesktopBrowser()) openBtn.style.display = '';
+    // The pad list loses the hidden trigger and gains OPEN ON THIS COMPUTER; focus lands
+    // on it (A opens the browser, B closes).
+    if (this._activeModal === 'profile') {
+      const items = this._profileItems();
+      this._modalFocus.setItems(items, Math.max(0, items.indexOf(openBtn)));
     }
     return dev;
+  }
+
+  /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
+  _setDiscordTriggersHidden(hide) {
+    for (const id of ['profile-popup-discord', 'profile-popup-link-discord']) {
+      const el = document.getElementById(id);
+      if (el) el.hidden = hide;
+    }
   }
 
   /** The desktop app can open this computer's browser on a sign-in page. */
@@ -3750,6 +3759,7 @@ export class Lobby {
   _hideProfileDevice(stop = true) {
     const box = document.getElementById('profile-popup-device');
     if (box) box.hidden = true;
+    this._setDiscordTriggersHidden(false);
     // Closing the popup keeps the code alive: the player may be mid-sign-in on
     // their phone. It is stopped on success, logout or expiry.
     if (stop) this.auth.cancelDiscordDevice();
