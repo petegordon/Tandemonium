@@ -290,10 +290,15 @@ export function versusSeatLooks(team, members, p1Outfit) {
 
 // ── Wire format (online profile) ──
 
-/** The look as the room profile carries it: {outfit, colourway, body} (small, no LED). */
+/**
+ * The look as the room profile carries it: {outfit, colourway, body, led}. The light only shows
+ * as a swatch on the partner's room screen (#672): each player lights their own pad.
+ */
 export function lookToWire(look) {
   const s = seatLook(look);
-  return { outfit: s.outfit, colourway: s.colourway, body: s.body };
+  const w = { outfit: s.outfit, colourway: s.colourway, body: s.body };
+  if (look && LED_COLOURS.some((c) => c.key === look.led)) w.led = look.led;
+  return w;
 }
 
 /** A partner's look from their profile; null when they sent none (an older build). */
@@ -303,7 +308,8 @@ export function lookFromWire(wire) {
   const colours = {};
   const way = normalizeColourway(outfit, wire.colourway);
   if (way !== DEFAULT_COLOURWAY) colours[outfit] = way;
-  return { outfit, colours, body: normalizeBody(wire.body, 'f'), led: 'off' };
+  const led = LED_COLOURS.some((c) => c.key === wire.led) ? wire.led : 'off';   // an older peer sends none
+  return { outfit, colours, body: normalizeBody(wire.body, 'f'), led };
 }
 
 // ── The game's singleton (localStorage-backed when there is one) ──
