@@ -10,7 +10,7 @@
 
 import { API_BASE, TUNE } from './config.js';
 import { getEditionRules } from './edition.js';
-import { dailyKey } from './daily-seed.js';
+import { playDayKey } from './time-warp.js';   // #611 · the warped day while in time warp, else the real day
 import { computeStreak, browserStore, STORAGE_KEY as DAILY_KEY } from './daily-ride.js';
 import { STORAGE_KEY as RECORDS_KEY } from './records.js';
 import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot.js';
@@ -36,6 +36,15 @@ export class AchievementManager {
     /** Called with each newly earned record (the game toasts it). */
     this.onEarned = null;
     this._demo = null;
+    /**
+     * #666 · this side is the demo riding in a full-game host's room: the
+     * full-game achievements can be earned, and are HELD (kept here and on the
+     * House Tandem account, never pushed to the demo's Steam app) until the
+     * full game claims them (mergeFromServer + syncToSteam). The game sets
+     * guestPassSource (true while in such a room); `guestPass = true` forces it.
+     */
+    this._guestPass = false;
+    this.guestPassSource = null;
     this._versus = null;
     // Injected identity ({ getToken() }) — lets achievements push to the
     // backend without knowing about auth. Set via setIdentity(). (#318 Step 4)
@@ -52,6 +61,34 @@ export class AchievementManager {
     return this._demo;
   }
   set demo(v) { this._demo = !!v; }
+
+  /** #666 · is this side riding in a full-game host's room on the demo? */
+  get guestPass() {
+    if (this._guestPass) return true;
+    try { return !!(this.guestPassSource && this.guestPassSource()); } catch (e) { return false; }
+  }
+  set guestPass(v) { this._guestPass = !!v; }
+
+  /**
+   * #666 · is `id` held on this build? The demo holds every full-game
+   * achievement it has (earned in a full host's room, or pulled from the
+   * account): they never go to the demo's Steam app.
+   */
+  isHeld(id) {
+    if (!this.demo) return false;
+    const def = ACHIEVEMENTS.find(a => a.id === id);
+    return !def || !def.demo;
+  }
+
+  /** #666 · the earned ids this build holds (always [] on the full game). */
+  getHeldIds() {
+    return this.demo ? this.getEarnedIds().filter(id => this.isHeld(id)) : [];
+  }
+
+  /** The earned ids this build may put on its Steam profile (#666: not the held ones). */
+  steamIds() {
+    return this.getEarnedIds().filter(id => !this.isHeld(id));
+  }
 
   /** Inject the identity provider used to authorize server sync. */
   setIdentity(identity) {
@@ -175,7 +212,7 @@ export class AchievementManager {
 
   /** Fold an event into the lifetime stats, save, and check. */
   record(type, detail = {}) {
-    this._stats = applyEvent(this._stats, type, detail, dailyKey());
+    this._stats = applyEvent(this._stats, type, detail, playDayKey());
     this._saveStats();
     return this._evaluate({});
   }
@@ -183,6 +220,7 @@ export class AchievementManager {
   _evaluate(state) {
     const newlyEarned = [];
     const demo = this.demo;
+    const guestPass = demo && this.guestPass;   // #666: once per check, not per achievement
     // Best-so-far values (top speed, longest steady stretch, …): kept for the lobby's progress (Pete 2026-11-07).
     // Saved when a whole unit improves or at a finish, not every frame.
     const folded = foldBests(this._stats, state, new Set(this._earned.keys()));
@@ -194,7 +232,7 @@ export class AchievementManager {
     }
     for (const ach of ACHIEVEMENTS) {
       if (this._earned.has(ach.id)) continue;
-      if (demo && !ach.demo) continue;
+      if (demo && !ach.demo && !guestPass) continue;   // #666: a full host's room opens them (held)
       try {
         if (ach.condition(state, this._stats)) {
           const record = { id: ach.id, name: ach.name, icon: ach.icon, earnedAt: Date.now() };
@@ -207,9 +245,10 @@ export class AchievementManager {
 
     if (newlyEarned.length > 0) {
       this._save();
-      // Mirror newly earned achievements to Steam
+      // Mirror newly earned achievements to Steam (#666: never a held one to the demo's app)
       if (typeof window !== 'undefined' && window.steam) {
         for (const a of newlyEarned) {
+          if (this.isHeld(a.id)) continue;
           window.steam.activateAchievement(a.id.toUpperCase());
         }
       }
@@ -288,7 +327,7 @@ export class AchievementManager {
     const s = { ...ride, ...state };
     s.crashes = Math.max(s.crashes || 0, ride.rideCrashes || 0);
     this.lastFinishState = s;   // #612: a signed-in seat's achievements read the same finish
-    this._stats = applyEvent(this._stats, 'finish', s, dailyKey());
+    this._stats = applyEvent(this._stats, 'finish', s, playDayKey());
     this._saveStats();
     return this._evaluate(s);
   }
@@ -341,7 +380,7 @@ export class AchievementManager {
     const demo = this.demo;
     // The day-streak badges read the streak held today (m6).
     let live = { dailyStreak: 0, wallet: null };
-    try { live.dailyStreak = computeStreak(browserStore(), dailyKey()).current; } catch (e) {}
+    try { live.dailyStreak = computeStreak(browserStore(), playDayKey()).current; } catch (e) {}
     try { const w = localStorage.getItem(WALLET_KEY); live.wallet = w ? sanitizeWallet(JSON.parse(w)) : null; } catch (e) {}
     return ACHIEVEMENTS
       .map((a, i) => {
@@ -369,6 +408,7 @@ export class AchievementManager {
           progress,
           unit: a.unit || '',
           demoLocked: demo && !a.demo,
+          held: earned && demo && !a.demo,             // #666: earned with a friend, claimed by the full game
           medal: a.medal || null,
           bestAt,                                      // { level, at }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
         };
@@ -383,11 +423,15 @@ export class AchievementManager {
       .filter(sec => sec.items.length > 0);
   }
 
-  /** Push all earned achievements to Steam profile (catches web/mobile unlocks). */
+  /**
+   * Push all earned achievements to Steam profile (catches web/mobile unlocks).
+   * #666: the demo pushes only its own 20; the full game pushes everything,
+   * which is how a guest's held achievements reach Steam once they buy.
+   */
   async syncToSteam() {
     if (!window.steam) return;
     try {
-      for (const id of this._earned.keys()) {
+      for (const id of this.steamIds()) {
         await window.steam.activateAchievement(id.toUpperCase());
       }
       await window.steam.storeStats();

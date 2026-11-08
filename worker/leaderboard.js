@@ -17,9 +17,10 @@ import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
-  handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl,
+  handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
 } from './identity.js';
 import { gameProfile, recordGame, handleMeGames } from './games.js';
+import { handleShareRoute } from './share.js';   // #657
 
 /**
  * #612 · what other House Tandem game Workers may do, through the private
@@ -52,7 +53,7 @@ export const houseTandemGames = {
 
 /** What the identity module needs from this worker. */
 const identityDeps = () => ({
-  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey,
+  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey, mergeGuestPairs,
 });
 
 export default {
@@ -169,6 +170,13 @@ export default {
       if (path === '/relay-token' && request.method === 'POST') return withAuth(request, env, corsOrigin, issueRelayToken);
 
       // Public routes (rate limited by IP)
+      // #657 · share a result: the card for the TV's QR, the #daily-ride post.
+      if (path === '/share' || path.startsWith('/share/')) {
+        const res = await handleShareRoute(request, env, { path, url, clientIP, corsOrigin },
+          { jsonResponse, corsHeaders, getUserFromRequest, checkRateLimit, listIdentities, writeMetric });
+        if (res) return res;
+      }
+
       if (path === '/leaderboard') {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
@@ -285,6 +293,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
 
   // #612: Google is a legacy sign-in; its users keep their account.
   const { userId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
+  await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
   // Create server JWT (include email for dashboard access control)
   const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
@@ -359,6 +368,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
   const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
+  await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
   const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
 
@@ -657,6 +667,7 @@ async function handlePair(request, env, corsOrigin, userId) {
 async function handleDailySubmit(request, env, corsOrigin, userId) {
   const body = await request.json();
   const { dayKey, mode, timeMs, dnf, distance, collectibles, crashes, safetyUsed, syncPct, partnerUserId } = body;
+  const warp = body.warp === true;   // #611 · ridden in time warp (ahead of the real date)
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) {
     return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
@@ -665,9 +676,10 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Bad mode' }, 400, corsOrigin);
   }
   // Today or yesterday only — a client whose clock is a week out is not
-  // submitting a result anyone can compare against.
+  // submitting a result anyone can compare against. #611: a time-warp ride
+  // (flagged) may be up to WARP_MAX_DAYS ahead; an unflagged future day is not.
   const today = dailyKeyUTC();
-  if (dayKey !== today && dayGap(dayKey, today) !== 1) {
+  if (!dailyDayAllowed(dayKey, today, warp)) {
     return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
   }
   if (!dnf && !(timeMs >= 30000 && timeMs <= 900000)) {
@@ -678,7 +690,7 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
     userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
     distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
     typeof syncPct === 'number' ? Math.round(syncPct) : null,
-    partnerUserId || null
+    partnerUserId || null, warp ? 1 : 0
   ).run();
   const improved = !dnf && !!(res && res.meta && res.meta.changes > 0);
 
@@ -693,8 +705,8 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
  */
 export function dailyUpsertSql(dnf) {
   const insert = `INSERT INTO daily_results
-       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id, warp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   if (dnf) return insert + `
        ON CONFLICT(user_id, day_key, mode) DO NOTHING`;
   return insert + `
@@ -702,9 +714,23 @@ export function dailyUpsertSql(dnf) {
          time_ms = excluded.time_ms, dnf = 0, distance = excluded.distance,
          collectibles = excluded.collectibles, crashes = excluded.crashes,
          safety_used = excluded.safety_used, sync_pct = excluded.sync_pct,
-         partner_user_id = excluded.partner_user_id
+         partner_user_id = excluded.partner_user_id, warp = excluded.warp
        WHERE daily_results.dnf = 1 OR daily_results.time_ms IS NULL
           OR excluded.time_ms < daily_results.time_ms`;
+}
+
+/** #611 · how far ahead of the real date a time-warp ride may post. */
+export const WARP_MAX_DAYS = 7;
+
+/**
+ * May a Daily result for `dayKey` post when the server's day is `today`?
+ * Today or yesterday always; with the time-warp flag, up to WARP_MAX_DAYS ahead.
+ */
+export function dailyDayAllowed(dayKey, today, warp = false) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) return false;
+  const ahead = dayGap(today, dayKey);
+  if (ahead === 0 || ahead === -1) return true;
+  return !!warp && ahead >= 1 && ahead <= WARP_MAX_DAYS;
 }
 
 /**
@@ -725,7 +751,7 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
   const me = String(userId);
   const rows = await env.DB.prepare(
     `SELECT d.user_id, d.mode, d.time_ms, d.dnf, d.distance, d.collectibles,
-            d.crashes, d.safety_used, d.sync_pct, u.display_name, u.avatar_url
+            d.crashes, d.safety_used, d.sync_pct, d.warp, u.display_name, u.avatar_url
      FROM daily_results d
      JOIN users u ON u.id = d.user_id
      WHERE d.day_key = ?
@@ -753,9 +779,9 @@ function dailyKeyUTC(now = Date.now()) {
 }
 
 /**
- * D-9 · when a guest signs in, the history they built as a guest becomes
- * theirs. Called from the auth success path with the device id the client has
- * been carrying.
+ * D-9 / #678 · when a guest signs in, the history they built as a guest
+ * becomes theirs. Called on sign-in (/auth/steam, /auth/google, and the
+ * Discord / Steam-web finish) with the device id the game sent.
  */
 async function mergeGuestPairs(env, deviceId, userId) {
   if (!deviceId || !userId) return;
@@ -765,6 +791,17 @@ async function mergeGuestPairs(env, deviceId, userId) {
 /**
  * Fold every pair row keyed by `fromKey` into `toKey`: a guest who signed in,
  * or (#612) an account merged into another when a sign-in was linked.
+ *
+ *   - no row for the new pair yet: the guest row moves over as it is;
+ *   - a row already there: rides and distance add up, the better time per
+ *     level wins, the later last ride wins, the best streak is the larger;
+ *   - a row between `fromKey` and `toKey` themselves (this device's guest rode
+ *     with the account now signing in on it) would become a pair with
+ *     yourself, so it is dropped.
+ *
+ * Each row's write and the guest row's delete go in one batch (a D1
+ * transaction), so a retry after a failure never counts a ride twice, and a
+ * second sign-in finds nothing left to move.
  */
 async function mergePairKey(env, fromKey, toKey) {
   const guestKey = String(fromKey);
@@ -777,40 +814,44 @@ async function mergePairKey(env, fromKey, toKey) {
 
   for (const row of rows.results || []) {
     const other = row.user_lo === guestKey ? row.user_hi : row.user_lo;
-    if (other === real) continue;                       // riding with yourself
+    const dropGuestRow = env.DB.prepare(
+      'DELETE FROM pairs WHERE user_lo = ? AND user_hi = ?'
+    ).bind(row.user_lo, row.user_hi);
+    if (other === real) {                               // riding with yourself
+      await dropGuestRow.run();
+      continue;
+    }
     const [lo, hi] = pairKey(real, other);
 
     const target = await env.DB.prepare(
       'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
     ).bind(lo, hi).first();
 
+    let write;
     if (!target) {
-      await env.DB.prepare(
+      write = env.DB.prepare(
         `INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride,
                             daily_streak, daily_best_streak, daily_last_key)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(lo, hi, row.rides, row.distance, row.best_json, row.last_ride,
-             row.daily_streak, row.daily_best_streak, row.daily_last_key).run();
+             row.daily_streak, row.daily_best_streak, row.daily_last_key);
     } else {
       // Both rows exist: add the rides together and keep the better times.
       let a = {}, b = {};
       try { a = target.best_json ? JSON.parse(target.best_json) : {}; } catch {}
       try { b = row.best_json ? JSON.parse(row.best_json) : {}; } catch {}
       for (const [level, t] of Object.entries(b)) {
-        if (!a[level] || t < a[level]) a[level] = t;
+        if (typeof t === 'number' && t > 0 && (!a[level] || t < a[level])) a[level] = t;
       }
-      await env.DB.prepare(
+      write = env.DB.prepare(
         `UPDATE pairs SET rides = rides + ?, distance = distance + ?, best_json = ?,
-                          last_ride = MAX(COALESCE(last_ride, ''), COALESCE(?, '')),
-                          daily_best_streak = MAX(daily_best_streak, ?)
+                          last_ride = NULLIF(MAX(COALESCE(last_ride, ''), COALESCE(?, '')), ''),
+                          daily_best_streak = MAX(COALESCE(daily_best_streak, 0), ?)
          WHERE user_lo = ? AND user_hi = ?`
-      ).bind(row.rides, row.distance, JSON.stringify(a), row.last_ride,
-             row.daily_best_streak, lo, hi).run();
+      ).bind(row.rides || 0, row.distance || 0, JSON.stringify(a), row.last_ride,
+             row.daily_best_streak || 0, lo, hi);
     }
-
-    await env.DB.prepare(
-      'DELETE FROM pairs WHERE user_lo = ? AND user_hi = ?'
-    ).bind(row.user_lo, row.user_hi).run();
+    await env.DB.batch([write, dropGuestRow]);
   }
 }
 

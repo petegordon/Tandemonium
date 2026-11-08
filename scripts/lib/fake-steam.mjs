@@ -2,7 +2,8 @@
 //
 // electron/preload.js exposes three globals the game reads:
 //   window.steam              isAvailable / isSubscribed / getPlayerName / getSteamId /
-//                             getAuthTicket / activateAchievement / storeStats, and
+//                             getAuthTicket / activateAchievement / storeStats /
+//                             saveScreenshot (#657, recorded; init.screenshot = 'fail' refuses), and
 //                             steam.input { isAvailable, getXInputMap, getFullDiag }
 //   window.electronApp        toggleDevTools / setHeldHidDevices / diag
 //   window.tandemoniumSteam   { isDemo }
@@ -26,6 +27,8 @@ function browserFake(init) {
     available: init.available !== false,
     subscribed: init.subscribed !== false,
     achievements: [],
+    screenshots: [],                 // #657: what saveScreenshot received
+    screenshotMode: init.screenshot || 'ok',
   };
   const ok = (v) => Promise.resolve(v);
   window.steam = {
@@ -37,6 +40,21 @@ function browserFake(init) {
     activateAchievement: (id) => { state.achievements.push(id); return ok(true); },
     isAchievementActivated: (id) => ok(state.achievements.includes(id)),
     storeStats: () => ok(true),
+    // #657 · main.js's steam:saveScreenshot, recorded: the PNG's size and its
+    // IHDR dimensions, the RGB buffer's length, the caption.
+    saveScreenshot: (req) => {
+      const png = req && req.png ? new Uint8Array(req.png) : new Uint8Array(0);
+      const be32 = (o) => ((png[o] << 24) >>> 0) + (png[o + 1] << 16) + (png[o + 2] << 8) + png[o + 3];
+      const isPng = png.length > 24 && png[0] === 0x89 && png[1] === 0x50 && png[2] === 0x4e && png[3] === 0x47;
+      state.screenshots.push({
+        pngBytes: png.length, isPng,
+        pngWidth: isPng ? be32(16) : 0, pngHeight: isPng ? be32(20) : 0,
+        rgbBytes: req && req.rgb ? req.rgb.length : 0,
+        width: req && req.width, height: req && req.height, caption: req && req.caption,
+      });
+      if (state.screenshotMode === 'fail') return ok({ ok: false, error: 'fake-fail' });
+      return ok({ ok: true, handle: state.screenshots.length, method: 'write', captioned: true });
+    },
     input: {
       isAvailable: () => ok(state.available),
       getXInputMap: () => state.xinput,
@@ -54,6 +72,7 @@ function browserFake(init) {
   window.__fakeSteam = {
     state,
     setXInput(map) { state.xinput = map; },
+    setScreenshotMode(mode) { state.screenshotMode = mode; },
   };
 }
 
@@ -74,6 +93,10 @@ export function fakeSteam(page) {
   return {
     setXInput: (map) => call('setXInput', map),
     achievements: () => page.evaluate(() => window.__fakeSteam.state.achievements.slice()),
+    /** #657 · every saveScreenshot call: { pngBytes, isPng, pngWidth, pngHeight, rgbBytes, width, height, caption }. */
+    screenshots: () => page.evaluate(() => window.__fakeSteam.state.screenshots.slice()),
+    /** 'ok' | 'fail' — a failing save makes SHARE RESULT fall back to the clipboard. */
+    setScreenshotMode: (mode) => call('setScreenshotMode', mode),
     /** How many times the page asked electronApp.quit() (#172). */
     quitCalls: () => page.evaluate(() => window.__fakeSteam.state.quitCalls || 0),
   };

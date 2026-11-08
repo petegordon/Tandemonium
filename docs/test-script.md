@@ -136,8 +136,12 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-27 | Every end screen (game over, victory, tutorial complete, demo end, partner left, versus results) is the result-screen shell: a headline kit sheet, one action row in the shared order, the primary first and focused (#459) | A | `smoke:flows`, `smoke:versus`, `smoke:solo-extras`, `smoke:tutorial`, `smoke:layout` (fits at phone, desktop, TV; screenshots) |
 | SR-28 | First-time SOLO shows the tutorial intro before the countdown: START begins the tutorial (SKIP TUTORIAL on screen, Y / △ on a pad), SKIP / B / Esc skip to the level list (#459) | A | `smoke:tutorial`, `smoke:solo-extras` |
 | SR-29 | Pause menu (#459): Start / Esc / the quick menu's PAUSE mid-ride opens it and the ride (physics + race clock) stops; B / Start / Esc / RESUME continue; SETTINGS opens Options over it and B returns to the menu; View opens Help over it and B returns; RESTART rides again; END RIDE returns to the lobby; in versus P1's Start freezes both teams | A | `smoke:flows`, `smoke:versus`, `test/unit/race-manager` |
-| SR-30 | Reward bikes (#611): Solo Flight (Penny-Farthing, player bots) then Time Warp close the chooser. Solo Flight: a locked silhouette with "n of N solo achievements"; earned = in colour, "Coming soon", not ridden yet. Time Warp: locked it is a dark silhouette with "n of N" over it (N = non-calendar achievements less 5) and the ride stays on the default bike; unlocked it shows in colour with its clock and flames running and is the pick; a solo ride loads `time_warp_tandem.glb` with both geese seated, the TimeWarpFX loop playing and the tandem's size; Show Riders off rides the plain frame; a paint preset rides the goose tandem again | A | `smoke:time-warp`, `test/unit/special-bikes` |
+| SR-30 | Reward bikes (#611): Solo Flight (Penny-Farthing, player bots) then Time Warp close the chooser. Solo Flight: a locked silhouette with "n of N solo achievements"; earned = in colour and the pick (it rides: SR-31). Time Warp: locked it is a dark silhouette with "n of N" over it (N = non-calendar achievements less 5) and the ride stays on the default bike; unlocked it shows in colour with its clock and flames running and is the pick; a solo ride loads `time_warp_tandem.glb` with both geese seated, the TimeWarpFX loop playing and the tandem's size; Show Riders off rides the plain frame; a paint preset rides the goose tandem again | A | `smoke:time-warp`, `test/unit/special-bikes` |
 | SR-30h | SR-30 looks right: the silhouette reads as "something to earn", the flames are blue with orange pops now and then, the clock spins fast, the geese sit as on the tandem | M | — |
+| SR-31 | Solo Flight with a player bot (#644): earned (any 80 of the 81 solo achievements), its card shows a "Back seat" row of Bolt, Rivet and Sprocket (mouse, touch, or pad: D-pad along the row, A picks; saved per device). A SOLO ride loads `solo_flight_tandem.glb` at the tandem's size with the player's goose up front and the picked bot (a robot goose in its own colour) on the back; both pedal with `Pedal_PF` (the bot backwards), the bot never leans and Show Solo never hides it; the sync row shows the bot's sync (the player's own steady pedalling). The finish credits `bot:<name>` as the partner: The Two of Us, Social Goose after all three, each bot's rides and metres on this device (Regulars, 5K Together), Team Player at the finish only; it pays Tandem Tokens like any ride and posts no Daily board time. Co-op modes with Solo Flight picked ride the goose tandem, no bot | A | `smoke:solo-flight`, `test/unit/player-bots` |
+| SR-31h | SR-31 looks right: the three bots read apart at a glance, the geese sit on the saddles with their feet on the hub pedals, the selfie cam frames the captain | M | — |
+| SR-32 | Bot ghost team race (#644 step 2): the Solo Flight card has a Race row (Off, Easy, Medium, Hard; mouse or pad, saved) and a "Nobody" seat. A race rides a see-through Penny-Farthing ghost with the two bots not on your seat (Nobody: Bolt + Rivet), in their colours, in its own lane, replaying a shipped recorded ride (`js/bot-ghost-runs.js`) that finishes on the tier's medal time (Easy bronze, Medium silver, Hard gold); the race line (top right) names them and the gap. Finish first to win. Medium/Hard count as a versus race: Rivals (any finish), Crown the Goose, House Champion (10), Royal Court (with a bot: 2v2), Underdog (Nobody: 1v2), Comeback Geese (behind at halfway), Clean Sweep (no crash), Full House's versus; Easy is a warm-up. The bot is still the partner; tokens as any ride; no Daily board time. The Penny-Farthing's chase camera sits higher so the captain shows above the bot | A | `smoke:bot-race`, `test/unit/bot-race` |
+| SR-32h | SR-32 looks right: the ghost reads as a ghost team (not a bug), the race line reads from the sofa, the captain reads in the chase camera | M | — |
 
 ## 3. Ride feel (manual only)
 
@@ -234,6 +238,20 @@ real-hardware rows stay manual.
 | VS-09 | Versus: the two teams' geese wear different outfits, each in its team's colourway (blue / red) (#538); the lobby bike keeps its saved colours after | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
+### Players (#646, replaces Controls)
+
+| ID | Check | Tag | Covered by |
+|---|---|---|---|
+| PL-01 | The bar's Players pill opens Players: one row per seat on this screen, each with its controller (model, light, Buzz) and that controller's Stick / Gyro / Button prompts; Use your phone instead below | A | `smoke:players` |
+| PL-02 | Steering feel on P2's row changes only P2's controller (P1's and TUNE keep theirs); P2's balance controller rides with it; old screen-wide settings migrate as every pad's start | A | `smoke:players`, `test/unit/controller-settings` |
+| PL-03 | P2's Stick steering flips only P2's stick | A | `smoke:players` |
+| PL-04 | P2 signs in from their row (QR + code), then Sign out: back to Guest | A | `smoke:players` |
+| PL-05 | Web: a signed-in P1 can Sign out from Players | A | `smoke:players` |
+| PL-06 | TV: P1's pad reaches every row's controls, A toggles, B closes | A | `smoke:players` |
+| PL-07 | Versus: an unseated controller under Available controllers becomes Player 3 when selected | A | `smoke:players` |
+| PL-08 | Steam build: P1 has no Sign out | A | `smoke:players` |
+| PL-09 | On the TV with two real pads (one with a gyro): set P2's Steering feel to Responsive, ride, feel P2 steer quicker while P1 is unchanged; relaunch: each pad keeps its own | M | — |
+
 ## 6. Online co-op (TOGETHER → online)
 
 Two devices on different networks for the M rows.
@@ -327,11 +345,11 @@ Two devices on different networks for the M rows.
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 | LY-14 | Desktop/TV bike chooser is 51.5vh tall, clear of the bar, and the whole bike stays in view as it turns (#521, #553) | A | `smoke:lobby-layout` |
-| LY-15 | Controls sheet on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
+| LY-15 | Players sheet (was Controls, #646) on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
 | LY-16 | Leaderboard on TV: a focused tab in the top row shows its whole green ring, not clipped by the sheet (#534) | A | `smoke:tv-nav` |
 | LY-17 | Tutorial finish with a pad: ↑/↓ between the Steering Feel slider and the buttons, ←/→ along the buttons, ←/→ move the slider only while it is focused (#544) | A | `smoke:tv-nav` |
 | TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
-| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
+| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in each controller's row in Players (#542, #646) | A | `smoke:tv-sizes` |
 | TV-03 | TV (1080p) first page: dimmed geese-from-behind art fills the stage, the right panel fades into it, the bike chooser sits low with its top level with RIDE TOGETHER, and its arrows read L1 / R1 (LB / RB …) at TV size with a pad (#553) | A | `smoke:tv-sizes` |
 | TV-04 | A TV's built-in browser (Android TV / webOS / Tizen / Fire TV, no touch, 960×540) gets the TV lobby laid out 1920 wide, Phone as controller (Pair hidden: no WebHID on a TV), Auto at Low; on a first visit the boot veil says Press any button to start and a remote key lifts it; the perf readout's display line names the device; a phone is still a phone | A | `smoke:tv-sizes` |
 | TV-04h | Same on a real TV browser: TV lobby, Phone as controller pairs, no Pair link, Low tier, perf readout shows the TV model | M | — |
