@@ -315,7 +315,10 @@ class Game {
     window.addEventListener('tandemonium:look-changed', (e) => {
       const n = e && e.detail ? e.detail.n : 0;
       if (n === 1) this._updateOptionsGooseOutfitUI();
+      // #672: in the room (before the first ride) the session is the lobby's, not the game's yet.
+      const roomNet = this.lobby && this.lobby.net;
       if (n === 1 && this.net && this.net.connected) this._sendProfile();
+      else if (n === 1 && roomNet && roomNet.connected && this.lobby._roomRole) this.lobby._sendRoomProfile();
     });
     // Fire-and-forget: pair approved HID devices, auto-request any
     // remaining via Electron (gated by env detection inside the manager),
@@ -889,6 +892,8 @@ class Game {
       controllerManager: this.controllerManager,
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
+    // #672 · the partner's look arrived in the room: the bike's partner seat follows on the next frame.
+    this.lobby.onPartnerLook = (look) => { this._partnerLook = look; this._partnerLookKey = JSON.stringify(look); };
     // #563 · "Play on this phone": a phone on the host step's QR asks for the
     // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
     this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
@@ -1233,8 +1238,10 @@ class Game {
   _onMultiplayerReady(net, mode) {
     this.mode = mode;
     this.net = net;
-    this._partnerLook = null;   // #548: set when the partner's profile carries their look
-    this._partnerLookKey = '';
+    // #548: set when the partner's profile carries their look; #672: the one they sent in the room
+    // (the Wardrobe there) rides from the start.
+    this._partnerLook = (this.lobby && this.lobby._partnerLook) || null;
+    this._partnerLookKey = this._partnerLook ? JSON.stringify(this._partnerLook) : '';
     this._partnerTouristReady = null;   // #400: this ride's ready barrier starts empty
     this._lobbyBtn.textContent = 'ROOM';
     this._applyBikeChoice();
@@ -1569,7 +1576,10 @@ class Game {
       if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
       // #548 · the partner's goose look (outfit, colourway, body); an older build sends none,
       // and their goose then mirrors mine (seatLooks).
-      if (profile.look) { this._partnerLook = lookFromWire(profile.look); this._partnerLookKey = JSON.stringify(this._partnerLook); }
+      if (profile.look) {
+        this._partnerLook = lookFromWire(profile.look); this._partnerLookKey = JSON.stringify(this._partnerLook);
+        if (this.lobby && this.lobby._setPartnerLook) this.lobby._setPartnerLook(profile.look);   // #672: the room screen keeps it
+      }
       // Partner bike color for arch indicator
       if (profile.bikeColor) {
         this._partnerBikeColor = profile.bikeColor;

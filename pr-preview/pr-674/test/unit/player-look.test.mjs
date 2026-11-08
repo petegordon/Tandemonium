@@ -129,8 +129,11 @@ test('seatLooks by mode: solo mirrors P1 on the stoker; local = P1 + P2; online 
 test('wire format round-trips and tolerates garbage / an older peer', () => {
   const l = withColourway({ ...defaultLook(2), outfit: 'fancy' }, 'f_royal');
   const w = lookToWire(l);
-  assert.deepEqual(w, { outfit: 'fancy', colourway: 'f_royal', body: 'f' });
+  assert.deepEqual(w, { outfit: 'fancy', colourway: 'f_royal', body: 'f', led: 'red' });
   assert.deepEqual(seatLook(lookFromWire(w)), { outfit: 'fancy', colourway: 'f_royal', body: 'f' });
+  assert.equal(lookFromWire(w).led, 'red', "#672: the light travels, for the partner's swatch");
+  assert.equal(lookFromWire({ outfit: 'fancy' }).led, 'off', 'an older peer sends no light');
+  assert.equal(lookFromWire({ outfit: 'fancy', led: 'rainbow' }).led, 'off');
   assert.equal(lookFromWire(undefined), null);
   assert.equal(lookFromWire('x'), null);
   assert.deepEqual(seatLook(lookFromWire({ outfit: 'nope', colourway: 'zzz', body: 'q' })), { outfit: 'victorian', colourway: 'default', body: 'f' });

@@ -86,7 +86,9 @@ import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
-import { playerLooks, padKeyFor, vidPidFromGamepadId } from './player-look.js';   // #548
+import { playerLooks, padKeyFor, vidPidFromGamepadId, lookToWire, lookFromWire, lookColourway, LED_COLOURS } from './player-look.js';   // #548
+import { colourwaysFor } from './goose-colourways.js';   // #672
+import { getP1Look } from './config.js';   // #672
 import { DressingRoom } from './dressing-room.js';   // #548
 import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
@@ -939,6 +941,7 @@ export class Lobby {
   _setRoomSeat(which, v) {
     // The partner's name, shown in the captain's host-step stoker seat.
     if (which === 'partner' && v.who !== undefined) this._roomPartnerName = v.who;
+    if (which === 'partner' && v.who === 'LEFT') this._partnerDressing = false;   // #672
     this._renderRoomPlayers();
     if (this._roomRole === 'captain') this._refreshHostNext();
     this._syncLevelRoomBar();
@@ -967,11 +970,20 @@ export class Lobby {
     const code = on ? (this.net.roomCode || '') : '';
     // #666 · "Full game room" / "Demo room": the host's edition, so both players know why a level is (not) there.
     const badge = on ? roomBadge(this.roomRules()) : '';
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, badge].join('|') : 'off';
+    // #672 · each seat shows its goose (outfit · colours · light swatch); the partner's, while
+    // their Wardrobe is open, carries a "dressing…" tag, and the captain's START RIDE says so.
+    const dressing = connected && !left && !!this._partnerDressing;
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
+    const wardrobe = document.getElementById('level-room-wardrobe');
+    if (wardrobe) wardrobe.hidden = !on;
+    const note = document.getElementById('start-dressing-note');
+    if (note) note.hidden = !(on && role === 'captain' && dressing);
     if (!on) return;
+    me.hint = this._roomSeatHint(me.dev, getP1Look(), false);
+    them.hint = them.state === 'joined' ? this._roomSeatHint(them.dev, this._partnerLook, dressing) : '';
     team.heading = (code ? 'Online room ' + code : 'Online room') + ' · ' + badge;
     team.dataset.roomBadge = badge;
     const cap = /** @type {any} */ (document.getElementById('level-room-captain'));
@@ -979,6 +991,30 @@ export class Lobby {
     const [mine, theirs] = role === 'captain' ? [cap, sto] : [sto, cap];
     if (mine) Object.assign(mine, me);
     if (theirs) Object.assign(theirs, { pic: '', source: '' }, them);
+  }
+
+  /**
+   * #672 · a room seat's second line: its device / connection line, then the goose it rides in
+   * (outfit · colourway, with a swatch of its controller light), then "dressing…" while that
+   * player's Wardrobe is open. A partner on an older build sends no look: just the line.
+   * @param {string} dev @param {any} look @param {boolean} dressing
+   */
+  _roomSeatHint(dev, look, dressing) {
+    const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    let html = dev ? `<span class="room-look__dev">${esc(dev)}</span>` : '';
+    if (look && GOOSE_OUTFITS[look.outfit]) {
+      const way = colourwaysFor(look.outfit).find((w) => w.key === lookColourway(look));
+      const led = LED_COLOURS.find((x) => x.key === look.led);
+      const sw = led ? `<span class="room-look__led${led.key === 'off' ? ' room-look__led--off' : ''}" style="background: rgb(${led.rgb.r},${led.rgb.g},${led.rgb.b})" title="${esc(led.label)} controller light"></span>` : '';
+      html += `<span class="room-look">${sw}<span class="room-look__name">${esc(GOOSE_OUTFITS[look.outfit].label)} · ${esc(way ? way.label : 'Original')}</span></span>`;
+    }
+    if (dressing) html += '<span class="room-look__dressing">dressing…</span>';
+    return html;
+  }
+
+  /** #672 · this screen is on an online room's level screen, before the ride. */
+  _inOnlineRoom() {
+    return !!(this.net && this._roomRole && this._pendingMode === 'multiplayer' && this._currentStep === this.levelStep);
   }
 
   /** Both room seats from current state: me in my seat, the partner's seat open until they arrive. */
@@ -1158,7 +1194,7 @@ export class Lobby {
       // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
       if (this.net) { this.net.destroy(); this.net = null; }
       this._leaveLocalP2('back from host page');
-      this._roomPartnerName = null;
+      this._roomPartnerName = null; this._resetPartnerLook();
       this._refreshHostNext();
       const hostStatus = document.getElementById('host-status');
       if (hostStatus) { hostStatus.textContent = ''; hostStatus.className = 'conn-status'; }
@@ -2123,6 +2159,9 @@ export class Lobby {
 
     // Register for gamepad navigation
     const navItems = isClickable ? [...buttons, backBtn] : [backBtn];
+    // #672 · online, both players can reach the room's WARDROBE (△ / Y opens it from anywhere here).
+    const wardrobeBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-room-wardrobe') : null;
+    if (wardrobeBtn) navItems.splice(navItems.length - 1, 0, wardrobeBtn);
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
@@ -2548,6 +2587,9 @@ export class Lobby {
     this._achDetailSheet.addEventListener('uf-sheet:close', () => this._onAchievementDetailClosed());
     // #548: the Dressing Room shell (cards are built per open by js/dressing-room.js).
     this._roomSheet = /** @type {any} */ (document.getElementById('dressing-room'));
+    // #672: the online room's WARDROBE (both sides; △ / Y does the same from a pad).
+    const roomWardrobeBtn = document.getElementById('btn-room-wardrobe');
+    if (roomWardrobeBtn) roomWardrobeBtn.addEventListener('click', () => { if (this._inOnlineRoom()) this._openDressingRoom(1); });
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -4451,7 +4493,7 @@ export class Lobby {
 
   async _createRoom() {
     this._replaceNet();
-    this._roomPartnerName = null;   // a new room: no partner yet (the room bar, the host seat)
+    this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
     this._hostRoomCode = null;   // #563: set once the relay has us in the room
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
     const netEpoch = this._netSession.epoch;
@@ -4548,7 +4590,7 @@ export class Lobby {
 
   async _joinRoom(code) {
     this._replaceNet();
-    this._roomPartnerName = null;
+    this._roomPartnerName = null; this._resetPartnerLook();
     this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1
     const netEpoch = this._netSession.epoch;
     this.net._fallbackUrl = RELAY_URL;
@@ -4708,7 +4750,7 @@ export class Lobby {
       this._showStep(this.hostStep);
       // Re-use _createRoom logic but with saved code
       this._replaceNet();
-      this._roomPartnerName = null;
+      this._roomPartnerName = null; this._resetPartnerLook();
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -4768,7 +4810,7 @@ export class Lobby {
       this._applyStepSpatialFocus(this.joinStep);
       // Re-use _joinRoom logic with saved code
       this._replaceNet();
-      this._roomPartnerName = null;
+      this._roomPartnerName = null; this._resetPartnerLook();
       const netEpoch = this._netSession.epoch;
       this.net._fallbackUrl = RELAY_URL;
       this.net.cameraEnabled = this.cameraActive;
@@ -5190,7 +5232,7 @@ export class Lobby {
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
     if (sto) {
       if (!sto._openHint) sto._openHint = sto.hint;
-      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: '', pic: '', source: '' });
+      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: this._roomSeatHint('Online', this._partnerLook, !!this._partnerDressing), pic: '', source: '' });
       else if (local) Object.assign(sto, { dev: '', state: 'joined', hint: '' }, this._seatWho(2, this._localP2NameBeforeAccount || this._localP2Name || 'Player 2'));
       else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '', pic: '', source: '' });
       // P2 in the corner once someone sits there, like the captain's P1.
@@ -5289,10 +5331,18 @@ export class Lobby {
         this._renderRoomPlayers();
       }
       if (profile) this._notePartnerRoom(profile);   // PR #397 M1
+      if (profile && profile.look) this._setPartnerLook(profile.look);   // #672
+      // #672: both sides send their profile as their room opens, and one that opens first can send
+      // before the other listens (the stoker then showed "Partner" and no look). The first profile
+      // heard from the partner is answered once with this side's own.
+      if (profile && !this._partnerProfileSeen) { this._partnerProfileSeen = true; this._sendRoomProfile(); }
+      if (profile && typeof profile.dressing === 'boolean') this._setPartnerDressing(profile.dressing);
       return;
     }
 
-    if (profile.type === ROOM_MSG.BIKE_SYNC) {
+    if (profile.type === ROOM_MSG.DRESSING) {
+      this._setPartnerDressing(!!profile.open);   // #672
+    } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
@@ -5387,6 +5437,43 @@ export class Lobby {
     }
   }
 
+  /**
+   * #672 · the partner's goose look arrived (their room or ride profile): kept here so the room
+   * screen shows it and the next ride starts with it; the game's bike follows (onPartnerLook).
+   * @param {any} wire
+   */
+  _setPartnerLook(wire) {
+    const look = lookFromWire(wire);
+    if (!look) return;
+    const key = JSON.stringify(look);
+    if (key === this._partnerLookKey) return;
+    this._partnerLook = look;
+    this._partnerLookKey = key;
+    if (this.onPartnerLook) { try { this.onPartnerLook(look); } catch (e) {} }
+    if (this._roomRole === 'captain' && this._currentStep === this.hostStep) this._refreshHostNext();
+  }
+
+  /** #672 · a new room (or none): no partner look, not dressing, no profile heard yet. */
+  _resetPartnerLook() {
+    this._partnerLook = null;
+    this._partnerLookKey = '';
+    this._partnerDressing = false;
+    this._partnerProfileSeen = false;
+  }
+
+  /** #672 · the partner's Wardrobe opened or closed. @param {boolean} open */
+  _setPartnerDressing(open) {
+    if (!!this._partnerDressing === open) return;
+    this._partnerDressing = open;
+    if (this._roomRole === 'captain' && this._currentStep === this.hostStep) this._refreshHostNext();
+  }
+
+  /** #672 · tell the partner my Wardrobe opened / closed (no-op outside an online room). */
+  _sendDressing(open) {
+    if (!this.net || !this.net.connected || !this._roomRole) return;
+    try { this.net.sendProfile(RoomProtocol.dressing(open)); } catch (e) {}
+  }
+
   /** Stoker: show and keep the captain's difficulty. */
   _adoptDifficulty(difficulty) {
     this.selectedDifficulty = difficulty;
@@ -5439,12 +5526,16 @@ export class Lobby {
     // give the partner a friendly label instead of a blank. (Issue #312)
     if (!profile.name) profile.name = GUEST_NAME;
     Object.assign(profile, this.roomProfileFields());   // PR #397 M1: { edition, caps }
+    profile.look = lookToWire(getP1Look());   // #672: my goose, for the partner's room screen
+    profile.dressing = !!this._room;          // #672: a resent profile restores the "dressing…" tag
     this.net.sendProfile(profile);
   }
 
   _transitionToGame() {
     // Stop media call retry timer
     if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
+    // #672: the captain started while this side was still dressing; every pick is already saved.
+    if (this._room) this._room.close('ride');
     // Remove lobby mode from PiP elements
     this._removePipLobbyMode();
     // Detect input method before hiding lobby
@@ -6538,10 +6629,12 @@ export class Lobby {
     const stokerSeat = { team: 'coop', role: 'stoker', label: 'Stoker', tone: 'stoker' };
     const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|') +
       '§' + (online ? 'online:' + (this._roomPartnerName || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '') +
-      '§' + this._personKey(1) + '§' + (p2Im ? this._personKey(2) : '');
+      '§' + this._personKey(1) + '§' + (p2Im ? this._personKey(2) : '') + '§' + (online ? playerLooks.version : '');
     if (key === this._hostSeatsKey) return;
     this._hostSeatsKey = key;
     Object.assign(cap, { dev: '' }, this._seatWho(1, p1 ? p1.shortName : 'You'));
+    // #672 · online, each seat shows its goose (the partner's in _refreshHostNext).
+    cap.hint = online ? this._roomSeatHint(cap.dev || '', getP1Look(), false) : '';
     const rows = [];
     if (p1) rows.push({ key: 'p1', name: p1.name, shortName: p1.shortName, glyphFamily: p1.glyphFamily, swapAB: p1.swapAB, state: 'seated', player: 1, person: this.seatPerson(1), seat: { team: 'coop', role: 'captain', label: 'Captain', tone: 'captain' } });
     let p2Listed = false;
@@ -6570,7 +6663,8 @@ export class Lobby {
       rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
     }
     strip.rows = rows;
-    // #548 · WARDROBE for Player 1 and, once seated locally, Player 2 (an online partner dresses on their own screen).
+    // #548 · WARDROBE for Player 1 and, once seated locally, Player 2. An online partner dresses on
+    // their own screen (#672: the level screen's WARDROBE, on both sides); their look shows on their seat.
     const wardrobePlayers = [{ n: 1, input: this.input, type: this.input && this.input.gamepadConnected ? 'gamepad' : 'keyboard', slotId: 'P1' }];
     if (p2Im) wardrobePlayers.push({ n: 2, input: p2Im, type: this._localP2Type || 'gamepad', slotId: p2Slot });
     this._renderWardrobeButtons('host-wardrobe', wardrobePlayers, this.hostStep);
@@ -7762,7 +7856,8 @@ export class Lobby {
 
     // #548 · △ / Y on the seat screens: Player 1 opens the Dressing Room (their card in Edit).
     const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
-    if (y && !this._gpPrevY && !this._activeModal && (this._currentStep === this.hostStep || this._currentStep === this.versusStep)) {
+    if (y && !this._gpPrevY && !this._activeModal && (this._currentStep === this.hostStep || this._currentStep === this.versusStep
+      || this._inOnlineRoom())) {   // #672: both online players dress on the room's level screen
       this._gpPrevY = y;
       this._openDressingRoom(1);
       return;
@@ -8070,7 +8165,7 @@ export class Lobby {
   /**
    * The seated players for the Dressing Room, read every frame: {n, input, type, label, team, seat}.
    * Versus: each team's first member is its captain, the second its stoker. Co-op: P1 captain,
-   * a locally seated P2 stoker (an online partner dresses on their own screen).
+   * a locally seated P2 stoker (an online partner dresses on their own screen, #672).
    */
   _roomPlayers() {
     const out = [];
@@ -8279,6 +8374,7 @@ export class Lobby {
       accounts: this._wardrobeAccounts(),
     });
     this._room.show(n);
+    if (n === 1) this._sendDressing(true);   // #672: the partner's screen tags my card "dressing…"
   }
 
   /** The room closed: every seated pad goes back to its screen with its edges primed. */
@@ -8292,6 +8388,7 @@ export class Lobby {
     this._localP2PrevB = true;
     this._gpPrevY = true;
     if (room) for (const n of room.cards.keys()) window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n, closed: true } }));
+    this._sendDressing(false);   // #672
   }
 
   /** Host step: a seated local Player 2's △ / Y opens the Dressing Room with their card in Edit. */

@@ -27,6 +27,7 @@ export const ROOM_MSG = {
   TOURIST_PLAN:    'touristPlan',    // #400 · co-op Tourist route, captain → stoker
   TOURIST_READY:   'touristReady',   // #400 · in-ride: my tiles world is up (or not)
   LEVEL_REFUSED:   'levelRefused',   // PR #397 M1/m17 · stoker → captain: my edition can't ride that
+  DRESSING:        'dressing',       // #672 · my Wardrobe opened / closed (a "dressing…" tag on my card)
 };
 
 export const RoomProtocol = {
@@ -105,6 +106,13 @@ export const RoomProtocol = {
 
   /** #400 · in-ride ready barrier for co-op Tourist. */
   touristReady: (ok) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok }),
+
+  /**
+   * #672 · this player's Wardrobe opened (true) or closed (false). The partner's room screen tags
+   * this player's card "dressing…" and the captain's START RIDE says "Partner is still dressing"
+   * (it never blocks). An old peer drops the unknown type.
+   */
+  dressing: (open) => ({ type: ROOM_MSG.DRESSING, open: !!open }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),
