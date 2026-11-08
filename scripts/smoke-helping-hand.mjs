@@ -220,6 +220,37 @@ check('passing checkpoint 2 resets the count, the tier, the badge, gusts and saf
   passed.event === 'checkpoint' && after.tier === 0 && after.failures === 0 && after.badge === ''
   && after.push > 0 && after.timeScale === 1 && after.safety === base.safety);
 
+// ── 1b. RESTART WITH ASSIST (Pete 2026-11-07): offered at the first Game Over, ends at the checkpoint ──
+const raShown = () => page.evaluate(() => {
+  const b = document.getElementById('btn-restart-assist');
+  return { ra: !!b && b.style.display !== 'none', overlay: document.getElementById('gameover-overlay').style.display };
+});
+const freshGo = await (async () => { await failByCrash(page); return raShown(); })();
+check('the first Game Over at a checkpoint offers RESTART WITH ASSIST', freshGo.overlay === 'flex' && freshGo.ra, freshGo);
+const ra = await page.evaluate(() => {
+  const g = window._game;
+  document.getElementById('btn-restart-assist').click();
+  return { weight: g._assistWeight, helped: g._helpFlags().helped, overlay: document.getElementById('gameover-overlay').style.display,
+           btn: document.getElementById('assist-btn').className, ach: g.achievements.ride.assistOffered };
+});
+check('RESTART WITH ASSIST restarts with ASSIST on, and the ride counts as helped',
+  ra.weight > 0 && ra.helped && ra.overlay === 'none' && /assist-on/.test(ra.btn) && ra.ach, ra);
+const raAgain = await (async () => { await failByCrash(page); return raShown(); })();
+check('a Game Over with ASSIST already on does not offer it again', raAgain.overlay === 'flex' && !raAgain.ra, raAgain);
+await retryFromModal(page);
+const raEnd = await page.evaluate(() => {
+  const g = window._game;
+  const cp3 = g.raceManager.checkpoints[2];
+  g.bike.resetToDistance(cp3 + 5);
+  const ev = g.raceManager.update(cp3 + 5, 0);
+  if (ev) g._handleRaceEvent(ev);
+  g.state = 'countdown'; g.countdownTimer = 1e9;
+  return { event: ev && ev.event, weight: g._assistWeight, shown: document.getElementById('assist-btn').style.display !== 'none',
+           status: document.getElementById('status').textContent };
+});
+check('ASSIST switches off at the next checkpoint and leaves the ride controls',
+  raEnd.event === 'checkpoint' && raEnd.weight === 0 && !raEnd.shown && /ASSIST OFF/.test(raEnd.status), raEnd);
+
 // ── 2. The assisted finish: bronze at most, 🛟, never over a real best ─────
 const fin = await page.evaluate(async () => {
   const g = window._game;
