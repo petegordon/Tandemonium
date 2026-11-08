@@ -58,6 +58,8 @@ export class RoomTransport {
     this.onReconnecting = null;
     this.onRemoteStream = null;
     this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
+    this.onRoomWaiting = null; // #346: the relay says the room is open and the partner is NOT in it
+    this.partnerAbsent = false; // #346: last relay word was "waiting" (cleared by partner-ready)
     this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
     this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
     this.cameraEnabled = true; // set false to suppress local camera in calls
@@ -210,6 +212,7 @@ export class RoomTransport {
         } else if (parsed.type === 'partner-ready') {
           // Relay: partner has connected — now safe to start heartbeat
           this._relayPartnerReady = true;
+          this.partnerAbsent = false;
           if (this.transport === 'relay' && !this._heartbeatInterval) {
             this._startHeartbeat();
           }
@@ -221,7 +224,10 @@ export class RoomTransport {
           this._attemptP2PUpgrade();
           return;
         } else if (parsed.type === 'waiting') {
-          // Relay confirms room is valid, waiting for partner
+          // Relay confirms room is valid, waiting for partner (#346: say so — a rejoin into a
+          // room whose partner is gone offers "New Room" sooner)
+          this.partnerAbsent = true;
+          if (this.onRoomWaiting) this.onRoomWaiting();
           return;
         } else if (parsed.type === 'disconnect') {
           // Relay: partner disconnected — immediate notification

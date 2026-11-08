@@ -2,8 +2,9 @@
 // leave lifecycle, with fake transports, a fake host (the lobby's side) and manual timers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RoomSession, CONNECT_SETTLE_MS, STALE_ROOM_MS } from '../../js/lobby/room-session.js';
-import { NetSession } from '../../js/lobby/net-session.js';
+import { RoomSession, CONNECT_SETTLE_MS, STALE_ROOM_MS, STALE_WAITING_MS } from '../../js/lobby/room-session.js';
+import { NetSession, NET_CALLBACKS } from '../../js/lobby/net-session.js';
+const noop = () => {};
 
 let codeSeq = 0;
 class FakeNet {
@@ -266,4 +267,152 @@ test('queueProfiles hands a moved room\'s early messages to the room screen', ()
   assert.deepEqual(rs.takeQueued(), [{ name: 'G' }]);
   rs.queueProfiles([]);
   assert.deepEqual(rs.takeQueued(), []);
+});
+
+// ── #346 hardening ───────────────────────────────────────────
+
+test('NetSession retires a transport fully: every callback (the ride\'s too) detached, onRetire told', () => {
+  const retired = [];
+  const ns = new NetSession(() => new FakeNet());
+  ns.onRetire = (n) => retired.push(n);
+  const a = ns.replace();
+  for (const k of NET_CALLBACKS) a[k] = () => { throw new Error(k + ' ran on a retired transport'); };
+  const b = ns.replace();
+  assert.ok(a._destroyed);
+  for (const k of NET_CALLBACKS) assert.equal(a[k], null, k);
+  assert.deepEqual(retired, [a]);
+  const e = ns.epoch;
+  for (const k of NET_CALLBACKS) b[k] = noop;
+  ns.clear();
+  assert.equal(ns.net, null);
+  assert.ok(b._destroyed);
+  for (const k of NET_CALLBACKS) assert.equal(b[k], null, k);
+  assert.ok(!ns.isCurrent(e), 'clear bumps the epoch');
+  assert.deepEqual(retired, [a, b]);
+  ns.clear();   // nothing to clear: no throw, no retire
+  assert.equal(retired.length, 2);
+  const c = ns.replace(); const d = new FakeNet();
+  ns.adopt(d);
+  assert.ok(c._destroyed && c._partnerLeft === true, 'adopt closes quietly');
+  assert.deepEqual(retired, [a, b, c]);
+});
+
+test('every callback a consumer sets on a NetworkManager is in NET_CALLBACKS', async () => {
+  const fs = await import('node:fs');
+  const src = ['js/game.js', 'js/lobby.js', 'js/lobby/room-session.js', 'js/lobby/room-move.js']
+    .map((f) => fs.readFileSync(new URL('../../' + f, import.meta.url), 'utf8')).join('\n');
+  const set = new Set([...src.matchAll(/\b(?:net|Net|this\.net|rideNet|roomNet|old)\.(on[A-Z]\w+)\s*=(?!=)/g)].map((m) => m[1]));
+  set.delete('onMessage');   // the transport's own codec hook, never a consumer's
+  for (const k of set) assert.ok(NET_CALLBACKS.includes(k), k + ' is set by a consumer but not detached on retire');
+});
+
+test('a create superseded while its token is on its way never touches the newer room', async () => {
+  const s = setup();
+  let release;
+  s.auth.getRelayToken = () => new Promise((r) => { release = r; });
+  const first = s.rs.create();
+  const firstNet = s.ns.net;
+  const releaseFirst = release;
+  const second = s.rs.create();
+  const secondNet = s.ns.net;
+  releaseFirst('old-token');
+  assert.equal(await first, null);
+  assert.deepEqual(secondNet.entered, [], 'the first create did not dial the second room');
+  assert.equal(secondNet.onRoomJoined, null, 'nor wire its callbacks onto it');
+  assert.ok(firstNet._destroyed);
+  release(null);
+  const code = await second;
+  assert.deepEqual(secondNet.entered, [[code, 'captain']]);
+});
+
+test('a join that is left while its token is on its way does not dial', async () => {
+  const s = setup({ step: 'join' });
+  let release;
+  s.auth.getRelayToken = () => new Promise((r) => { release = r; });
+  const p = s.rs.join('TNDM-WXYZ');
+  const net = s.ns.net;
+  s.rs.leave();
+  release(null);
+  await p;
+  assert.deepEqual(net.entered, []);
+  assert.equal(s.ns.net, null);
+});
+
+test('Back within the settle second: the room screen never opens over the role screen', async () => {
+  const { rs, ns, calls, t } = setup();
+  await rs.create();
+  ns.net.open();
+  ns.net.partnerReady();
+  rs.leave();
+  t.advance(CONNECT_SETTLE_MS * 2);
+  assert.ok(!calls.some((c) => c[0] === 'partnerConnected'));
+});
+
+test('create and join hold the partner\'s first messages for the room screen too', async () => {
+  for (const kind of ['create', 'join']) {
+    const { rs, ns, t } = setup({ step: kind === 'create' ? 'host' : 'join' });
+    if (kind === 'create') await rs.create(); else await rs.join('TNDM-WXYZ');
+    ns.net.open();
+    ns.net.partnerReady();
+    ns.net.profile({ type: 'cameraToggle', enabled: false });
+    t.advance(CONNECT_SETTLE_MS);
+    assert.deepEqual(rs.takeQueued(), [{ type: 'cameraToggle', enabled: false }], kind);
+  }
+});
+
+test('stale rejoin: a relay that never opens still offers New Room (from the attempt, not the open)', async () => {
+  const { rs, calls, t } = setup();
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
+  t.advance(STALE_ROOM_MS);
+  assert.deepEqual(calls.at(-1), ['staleRoom', 'join']);
+});
+
+test('stale rejoin: the relay saying the partner is not there offers New Room after STALE_WAITING_MS', async () => {
+  const { rs, ns, calls, t } = setup();
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
+  ns.net.open();
+  t.advance(1000);
+  ns.net.onRoomWaiting();
+  t.advance(STALE_WAITING_MS - 1);
+  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
+  t.advance(1);
+  assert.deepEqual(calls.at(-1), ['staleRoom', 'host']);
+  assert.ok(STALE_WAITING_MS < STALE_ROOM_MS);
+});
+
+test('stale rejoin: the timer never shows over a room opened since, or after leaving', async () => {
+  const { rs, ns, calls, t } = setup();
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
+  ns.net.open();
+  rs.leave();
+  t.advance(STALE_ROOM_MS);
+  await rs.rejoin({ roomCode: 'TNDM-WXYZ', role: 'captain' });
+  const stale = ns.net;
+  await rs.create();
+  stale.onRoomWaiting && stale.onRoomWaiting();
+  t.advance(STALE_ROOM_MS * 2);
+  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
+  assert.equal(t.count, 0, 'no timers left behind');
+});
+
+test('repeated room in / out leaves nothing behind', async () => {
+  const retired = [];
+  const s = setup({ step: 'join' });
+  s.ns.onRetire = (n) => retired.push(n);
+  const nets = [];
+  for (let i = 0; i < 5; i++) {
+    await s.rs.join('TNDM-WXYZ'); nets.push(s.ns.net); s.ns.net.open(); s.ns.net.partnerReady();
+    await s.rs.rejoin({ roomCode: 'TNDM-WXYZ', role: 'stoker' }); nets.push(s.ns.net); s.ns.net.open();
+    await s.rs.create(); nets.push(s.ns.net);
+    s.rs.leave();
+  }
+  s.t.advance(STALE_ROOM_MS * 2);
+  assert.equal(s.ns.net, null);
+  assert.equal(retired.length, nets.length);
+  for (const n of nets) {
+    assert.equal(n.destroyCount, 1, 'destroyed exactly once');
+    for (const k of NET_CALLBACKS) assert.equal(n[k], null, k);
+  }
+  assert.ok(!s.calls.some((c) => c[0] === 'partnerConnected' || c[0] === 'staleRoom'));
+  assert.equal(s.t.count, 0);
 });

@@ -195,6 +195,8 @@ export class Lobby {
     // callback epoch guard. `this.net` is a getter/setter over it, so every
     // existing `this.net.*` read/write is unchanged. (#318 Step 3)
     this._netSession = new NetSession();
+    // #346: a retired room transport (left, replaced, moved) is handed to the game to let go of.
+    this._netSession.onRetire = (net) => { if (this.onRoomNetRetired) this.onRoomNetRetired(net); };
     // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
     this._roomStore = new RoomStore();
     // The online room's lifecycle (create / join / rejoin / leave), behind a small host
