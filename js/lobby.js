@@ -46,7 +46,7 @@ import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, 
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { InputManager, isSteamTwinPad } from './input-manager.js';
+import { InputManager } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
@@ -76,7 +76,7 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { mergedPollGp, withoutHeldTwins, isJoinPress } from './lobby/join-poll.js';
+import { isJoinPress } from './lobby/join-poll.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
@@ -6460,9 +6460,9 @@ export class Lobby {
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (!gp || i === p1GpIndex) continue;
-      // Steam's XInput twin of P1's WebHID Steam Controller is the same
-      // physical pad (#362) — never offer it as a second player.
-      if (isSteamTwinPad(gp)) continue;
+      // Steam's XInput twin of a WebHID controller is the same physical pad
+      // (#362) — never offer it as a second player (controller-core units).
+      if (this.controllerManager && this.controllerManager.isTwinPad(gp)) continue;
       const stickMag = Math.max(
         Math.abs(gp.axes[0] || 0), Math.abs(gp.axes[1] || 0),
         Math.abs(gp.axes[2] || 0), Math.abs(gp.axes[3] || 0));
@@ -6533,7 +6533,6 @@ export class Lobby {
       for (const s of mgr.slots || []) {
         if (s === p1Slot || s.state === 'empty') continue;
         if (s.gamepadIndex != null && s.gamepadIndex === p1GpIndex) continue;
-        if (s.gamepadIndex != null && isSteamTwinPad(gamepads[s.gamepadIndex])) continue;
         const hid = s._hidEntry || null;
         if (hid && !isPresentableEntry(hid)) continue;
         if (this._isP1HidEntry(hid, p1Slot)) continue;
@@ -7435,62 +7434,44 @@ export class Lobby {
     const ownedDevices = owned.devices;
     const ownedIndices = owned.indices;
     const ownedSlotIds = owned.slotIds;
-    // Gamepad API pads. A controller Steam has captured arrives here too, as
-    // Steam's virtual XInput pad (emulation mode, docs/steam-input.md).
-    const gpCands = [];
-    for (const gp of pads) {
-      if (!gp || ownedIndices.has(gp.index)) continue;
-      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-      gpCands.push({
-        kind: 'gamepad',
-        key: 'gp:' + gp.index,
-        gpIndex: gp.index,
-        gp,
-        name: this._prettyGamepadName(gp.id),
-        pollGp: gp,
-      });
-    }
-    // A pad a slot already holds over WebHID is listed through that slot (or
-    // not at all, when its owner is seated): drop its Gamepad twin (#581).
-    out.push(...withoutHeldTwins(gpCands, mgr ? mgr.slots : []));
-
     if (mgr) {
-      // Pool entries (unclaimed HID pads — synthetics live pre-claim).
+      // One candidate per physical controller (controller-core units, #607):
+      // a pad's WebHID source, its live or frozen Gamepad entry and Steam's
+      // XInput twin are ONE unit, so a DualSense switched on after launch is one
+      // card whose poll reads a press on either source (#581), a seated pad's
+      // frozen entry is no second card, and a Steam twin is never a card.
       const now = performance.now();
-      for (const entry of mgr._hidPool.values()) {
-        if (ownedDevices.has(entry.device)) continue;
-        // Only interfaces that are actively streaming input reports are
-        // real, joinable controllers. Wireless dongles pool every HID
-        // interface they expose — the Steam Controller Puck has FIVE, of
-        // which exactly one emits STATE reports — and a single connected
-        // controller was showing as three join cards. Silent interfaces
-        // (and powered-off pads) never/no longer emit, so a freshness
-        // window filters them; a sleeping pad's card appears the moment
-        // a button press wakes it, which matches the join hint anyway.
-        if (!entry.hidActiveSince || now - entry.hidActiveSince > 5000) continue;
-        // Dual-interface pads: a visible unclaimed Gamepad API pad that
-        // shares this device's productName is the SAME pad — one card. Its
-        // Gamepad entry may be frozen (a DualSense switched on after launch:
-        // Chromium listed it from its compat-mode reports, then the driver
-        // flipped it to 0x31 and only the synthetic sees presses, #581), so
-        // the card polls both sources; the join claims the pad and the
-        // manager attaches this entry to the seat (claimPadForSlot).
-        const hidName = (entry.device.productName || '').trim().toLowerCase();
-        const twin = hidName ? out.find(c => c.kind === 'gamepad' && !c.device && c.gp.id.toLowerCase().includes(hidName)) : null;
-        if (twin) {
-          twin.device = entry.device;
-          twin.name = prettyHidName(entry.device);
-          twin.pollGp = mergedPollGp(twin.gp, entry.synthetic);
+      for (const u of mgr.units()) {
+        if (u.slot) continue;   // seated: listed through its slot below
+        const gp = u.padIndex != null ? pads[u.padIndex] : null;
+        if (u.entry) {
+          if (ownedDevices.has(u.entry.device)) continue;
+          if (u.padIndex != null && ownedIndices.has(u.padIndex)) continue;
+          // A pad that hasn't reported for a while (asleep, switched off) shows
+          // again the moment a press wakes it, which matches the join hint.
+          if (!u.lastReportAt || now - u.lastReportAt > 5000) continue;
+          const pollGp = u.frame(pads);
+          if (gp) {
+            // The join claims the pad and the manager attaches this WebHID source.
+            out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, device: u.entry.device, name: prettyHidName(u.entry.device), pollGp });
+          } else {
+            out.push({ kind: 'hid', key: 'hid:' + this._deviceKeyId(u.entry.device), device: u.entry.device, name: prettyHidName(u.entry.device), pollGp });
+          }
           continue;
         }
-        out.push({
-          kind: 'hid',
-          key: 'hid:' + this._deviceKeyId(entry.device),
-          device: entry.device,
-          name: prettyHidName(entry.device),
-          pollGp: entry.synthetic,
-        });
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        // Gamepad API pads. A controller Steam has captured and we can't read
+        // over WebHID arrives here too, as Steam's virtual XInput pad.
+        out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, name: this._prettyGamepadName(gp.id), pollGp: gp });
       }
+    } else {
+      for (const gp of pads) {
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, name: this._prettyGamepadName(gp.id), pollGp: gp });
+      }
+    }
+
+    if (mgr) {
       // Claimed slots holding a device no member owns — a pad that
       // activity-claimed a slot while navigating menus BEFORE this screen
       // suspended auto-claim. Joining adopts that slot.
@@ -7503,8 +7484,8 @@ export class Lobby {
           device: s.hidDevice,
           slotId: s.id,
           name: prettyHidName(s.hidDevice, s.controllerLabel),
-          // Its adopted Gamepad entry too, when it has one: a press on either counts.
-          pollGp: s.gamepadIndex != null ? mergedPollGp(pads[s.gamepadIndex], s.synthetic) : s.synthetic,
+          // Its unit's input: a press on any of its sources counts.
+          pollGp: s.unit ? s.unit.frame(pads) : s.synthetic,
         });
       }
     }

@@ -10,15 +10,11 @@ import { addHapticSource, removeHapticSource } from './haptics.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 
 /**
- * #596 · at-rest yaw return of the WebHID fusion, in seconds of half-life.
- * Gravity correction anchors pitch and roll but has no reference for yaw, so
- * yaw gyro bias integrates without bound and the controller overlay's model
- * slowly turns away from the pad. The fusion bleeds the DISPLAYED heading
- * back to centre once the pad has been still for 0.75 s (lab issue #88); it
- * ships disabled (0), and the game never turned it on. Steering is untouched:
- * it reads the gravity roll, never yaw.
+ * #596 · at-rest yaw return of the WebHID fusion, in seconds of half-life. The
+ * lab ships it on since controller-core 0.7 (2 s, what the game used to set
+ * here). Steering is untouched: it reads the gravity roll, never yaw.
  */
-export const YAW_RETURN_HALF_LIFE_S = 2;
+export { DEFAULT_YAW_RETURN_HALF_LIFE_S as YAW_RETURN_HALF_LIFE_S } from '../shared/yaw-return.js';
 /** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
 const CALIB_STILL_DEG = 4;
 /** ...or, after this many samples without a still window, the median is taken. */
@@ -36,337 +32,102 @@ export function setControllerManager(mgr) {
   if (typeof window !== 'undefined') window.__controllerManager = mgr;
 }
 
-// Debug: explain why the Steam XInput twin filter (isSteamTwinPad) did or
-// didn't fire. Run `__whyNotHid()` in DevTools while a pad is missing. Reports each condition
-// separately so a false result names its own cause instead of being inferred.
+// Debug: what the ControllerManager thinks each physical controller is. Run
+// `__whyNotHid()` in DevTools while a pad is missing: one row per unit with its
+// sources and presence (controller-core 0.7, docs/controller-units.md in the lab).
 if (typeof window !== 'undefined') {
   window.__whyNotHid = () => {
     const mgr = _controllerManager;
     if (!mgr) return { managerWired: false, hint: 'setControllerManager() never ran' };
+    if (typeof mgr.allUnits !== 'function') return { managerWired: true, units: null };
     const now = performance.now();
-    const describe = (entry, where) => ({
-      where,
-      product: entry.device?.productName || null,
-      driver: entry.driver?.constructor?.name || null,
-      isSteamController: !!entry.driver?.constructor?.needsSiblingFanout,
-      msSinceReport: entry.hidActiveSince > 0 ? Math.round(now - entry.hidActiveSince) : null,
-    });
-    const entries = [];
-    if (mgr._hidPool) for (const e of mgr._hidPool.values()) entries.push(describe(e, 'pool'));
-    for (const s of (mgr.slots || [])) if (s._hidEntry) entries.push(describe(s._hidEntry, 'slot:' + s.id));
-    return { managerWired: true, liveSteamControllers: liveWebHidSteamControllers(), entries };
+    return {
+      managerWired: true,
+      units: mgr.allUnits().map((u) => ({
+        key: u.key,
+        name: u.identity.name,
+        presence: u.presence,
+        slot: u.slot ? u.slot.id : null,
+        sources: u.sources.map((s) => s.kind + (s.index != null ? ':' + s.index : '') + (s.frozen ? ' (frozen)' : '')),
+        msSinceReport: u.lastReportAt > 0 ? Math.round(now - u.lastReportAt) : null,
+        steamSlot: u.steamSlot,
+      })),
+    };
   };
 }
 
 // Steam-family controller types. `getInputTypeForHandle` returns the raw
 // ESteamInputType enum, and main.js stringifies it — so this arrives as "14",
-// NOT "SteamDeckController". Matching on the name alone silently never fires
-// (the bug that made the first version of this filter a no-op). Accept both
-// forms: 1 = SteamController, 14 = SteamDeckController, which is what the 2026
-// Puck reports as.
+// NOT "SteamDeckController". Accept both forms: 1 = SteamController,
+// 14 = SteamDeckController, which is what the 2026 Puck reports as.
 const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
 export function isSteamFamilyType(type) {
   const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
   return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
 }
 
-/** How many Steam Controllers are streaming on WebHID right now (pooled or
- *  claimed). `needsSiblingFanout` is the Steam-Controller marker (only that
- *  driver sets it); the 5 s window matches the manager's join-candidate
- *  freshness — the Puck pools five HID interfaces and only one ever streams. */
-function liveWebHidSteamControllers() {
-  const mgr = _controllerManager;
-  if (!mgr) return 0;
-  const now = performance.now();
-  const live = (entry) => !!entry
-    && !!entry.driver?.constructor?.needsSiblingFanout
-    && entry.hidActiveSince > 0
-    && (now - entry.hidActiveSince) < 5000;
-  const seen = new Set();
-  if (mgr._hidPool) { for (const entry of mgr._hidPool.values()) if (live(entry)) seen.add(entry); }
-  for (const s of (mgr.slots || [])) if (live(s._hidEntry)) seen.add(s._hidEntry);
-  return seen.size;
-}
-
-// ── Steam virtual XInput pads (#362) ──
+// ── Steam's virtual XInput pads (#362, #581) ──
 // Under Steam every captured controller reaches Chromium as a generic
-// "Xbox 360 Controller (XInput STANDARD GAMEPAD)". main.js probes Steam's
-// getControllerForGamepadIndex each tick, so for the i-th XInput pad we can
-// ask Steam which physical controller it is. Chromium hands XInput pads
-// ascending Gamepad indices in enumeration order, so the k-th XInput pad by
-// Gamepad index is the k-th occupied XInput slot.
+// "Xbox 360 Controller (XInput STANDARD GAMEPAD)". Which physical controller
+// each one is, and whether it is just the echo of a controller we already read
+// over WebHID (its "twin"), is controller-core's job since 0.7: the game feeds
+// Steam's XInput slot map in each frame (steamXInputMap → setSteamInputMap) and
+// asks the manager's units. See docs/steam-input.md.
 const XINPUT_ID = /xinput/i;
 export function isXInputPadId(id) { return XINPUT_ID.test(String(id || '')); }
 
+/** Steam's XInput slot map, as main.js pushes it (null when not under Steam / empty). */
+export function steamXInputMap() {
+  const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
+  const map = steamApi && typeof steamApi.getXInputMap === 'function' ? steamApi.getXInputMap() : null;
+  return Array.isArray(map) && map.length ? map : null;
+}
+
 /** Steam's controller type ('13' = PS5, '14' = Steam Controller, …) behind a
  *  virtual XInput pad, or null when unknown / not under Steam. */
-export function steamTypeForGamepad(gp, padsOverride = null) {
-  const slot = steamSlotForGamepad(gp, padsOverride);
-  return slot ? String(slot.type) : null;
-}
-
-function steamXInputMap() {
-  const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
-  return steamApi && typeof steamApi.getXInputMap === 'function' ? (steamApi.getXInputMap() || []) : [];
-}
-
-/** Steam's XInput slot ({ index, handle, type }) behind a virtual XInput pad, or null. */
-function steamSlotForGamepad(gp, padsOverride = null) {
-  if (!gp || !isXInputPadId(gp.id)) return null;
-  const map = steamXInputMap();
-  if (!map.length) return null;
-  const pads = padsOverride || (navigator.getGamepads ? navigator.getGamepads() : []) || [];
-  const xinputPads = [];
-  for (const p of pads) if (p && isXInputPadId(p.id)) xinputPads.push(p);
-  xinputPads.sort((a, b) => a.index - b.index);
-  const k = xinputPads.findIndex((p) => p.index === gp.index);
-  if (k < 0) return null;
-  const slots = [...map].sort((a, b) => a.index - b.index);
-  // Rank-matching is only sound when every XInput pad Chromium sees is one
-  // Steam emitted. A real Xbox pad that Steam is NOT capturing is XInput too
-  // and would shift the ranks — refuse to guess rather than mislabel.
-  if (xinputPads.length !== slots.length) return null;
-  return slots[k] || null;
-}
-
-/** Steam has not said what this pad is: getInputTypeForHandle gives 0 (#535). */
-function isUnknownSteamType(type) {
-  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
-  return t === '' || t === '0' || /^unknown$/i.test(t);
-}
-
-/**
- * Is this Gamepad-API pad the Steam-side twin of a Steam Controller we are
- * already reading over WebHID? Seating it would drive two seats from one
- * controller. True only when Steam names it as Steam-family AND a Steam
- * Controller is live on WebHID — if WebHID does not hold one, the XInput pad
- * is that controller's only presence and must stay eligible.
- */
-// Twins found by their presses (#581), keyed by Gamepad index → pad id. Sticky
-// until that index empties or holds another pad: the rank match below refuses to
-// guess whenever Chromium's XInput pad count differs from Steam's slot list,
-// and Chromium reveals a pad only after its first press, so the counts drift
-// exactly while players press A / B on the seat screens.
-const _pressTwins = new Map();
-// Each streaming Steam Controller's buttons over the last TWIN_WINDOW_MS, seated
-// or pooled (the manager keeps history for pooled entries only). Steam's virtual
-// press lands a moment after the hardware's, so on a quick tap the seated pad's
-// synthetic already reads released by the time the twin reads pressed (#581).
-const TWIN_WINDOW_MS = 500;
-const _scHistory = new Map();   // HidEntry → Map(button index → last pressed ms)
-// #617 · which Steam Controller each XInput twin belongs to, keyed by Gamepad index →
-// { id, entry }: learned when the twin's presses mirror exactly one streaming
-// Steam Controller. Rumble for a Steam Controller goes to its twin (Steam turns
-// the virtual pad's rumble into the controller's haptics; the WebHID driver has
-// no rumble command of its own).
-const _twinLinks = new Map();
-/** Tests: forget every press-identified twin and press history. */
-export function resetSteamTwinMemory() { _pressTwins.clear(); _scHistory.clear(); _twinLinks.clear(); }
-
-function isLiveSteamControllerEntry(e, now) {
-  return !!e && !!e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0 && (now - e.hidActiveSince) < 5000;
-}
-
-/** Once per frame, after ControllerManager.ingestFrame: note what every live Steam Controller presses. */
-export function noteSteamControllerPresses(now = performance.now()) {
-  const mgr = _controllerManager;
-  if (!mgr) return;
-  const remember = (e) => { if (e && e.driver?.constructor?.needsSiblingFanout && e.hidActiveSince > 0) _lastStateAt.set(e, e.hidActiveSince); };
-  if (mgr._hidPool) for (const e of mgr._hidPool.values()) remember(e);
-  for (const s of (mgr.slots || [])) remember(s._hidEntry);
-  const live = new Set();
-  if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (isLiveSteamControllerEntry(e, now)) live.add(e);
-  for (const s of (mgr.slots || [])) if (isLiveSteamControllerEntry(s._hidEntry, now)) live.add(s._hidEntry);
-  for (const e of _scHistory.keys()) if (!live.has(e)) _scHistory.delete(e);
-  for (const e of live) {
-    let m = _scHistory.get(e);
-    if (!m) { m = new Map(); _scHistory.set(e, m); }
-    const btns = (e.synthetic && e.synthetic.buttons) || [];
-    for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) m.set(i, now);
-  }
-  if (live.size) linkSteamTwins(live);
-}
-
-/**
- * #581 · a Steam Controller switched off stays "connected": the Puck receiver is
- * still plugged in, so its HID device never disconnects — the body just stops
- * sending STATE reports. A Steam Controller streams continuously, IMU included,
- * even lying still, so this much silence means it is off.
- */
-export const PUCK_SILENT_MS = 4000;
-
-// The last STATE report each Steam Controller entry has delivered. The manager
-// zeroes hidActiveSince once a pad has been stale a moment (slot.effectiveGamepad),
-// which reads the same as "never streamed" — so remember the last real value.
-const _lastStateAt = new WeakMap();
-function lastStateAt(e) { return Math.max(e.hidActiveSince || 0, _lastStateAt.get(e) || 0); }
-
-/** Is this claimed slot holding a Steam Controller that has stopped reporting (switched off)? */
-export function isSilentSteamControllerSlot(slot, now = performance.now()) {
-  const e = slot && slot.state === 'claimed' ? slot._hidEntry : null;
-  if (!e || !e.driver?.constructor?.needsSiblingFanout) return false;
-  const last = lastStateAt(e);
-  return last > 0 && now - last > PUCK_SILENT_MS;
-}
-
-/**
- * #581 · pooled WebHID pads that a button press should seat but the
- * ControllerManager will not: it leaves a HID claim to the Gamepad API when an
- * unclaimed Gamepad pad has the same product name, and a DualSense switched on
- * after launch has exactly that — its compat-mode Gamepad entry, frozen once
- * the driver switched it to full reports (#590). That entry never shows a
- * press, so neither side claimed it ("seen but can't become Player 1").
- * Returned when every such Gamepad twin shows no press while the HID pad does.
- * @returns {any[]} HidEntry objects
- */
-export function frozenTwinHidEntries(pads) {
-  const mgr = _controllerManager;
-  if (!mgr || !mgr._hidPool || typeof mgr._recentPressed !== 'function') return [];
-  const claimedIdx = new Set((mgr.slots || []).filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
-  const out = [];
-  for (const e of mgr._hidPool.values()) {
-    if (typeof e.hasFreshButtonPress !== 'function' || !e.hasFreshButtonPress()) continue;
-    const name = String((e.device && e.device.productName) || '').trim().toLowerCase();
-    if (!name) continue;
-    const twins = (pads || []).filter((gp) => gp && !claimedIdx.has(gp.index) && String(gp.id || '').toLowerCase().includes(name));
-    if (!twins.length) continue;   // the manager claims it itself
-    const pressed = (gp) => mgr._recentPressed(mgr._recentPadBtns && mgr._recentPadBtns.get(gp.index)).size > 0
-      || (gp.buttons || []).some((b) => b && b.pressed);
-    if (twins.some(pressed)) continue;   // a live twin: the manager's Gamepad claim takes it
-    out.push(e);
-  }
-  return out;
-}
-
-/**
- * Slots holding a Steam Controller's XInput twin through the Gamepad API (no
- * WebHID entry of their own): a twin claimed on a press that beat the hardware's
- * own report to us, before it could be recognised. The caller releases them.
- * @returns {string[]} slot ids
- */
-export function claimedSteamTwinSlots(pads) {
-  const mgr = _controllerManager;
-  if (!mgr) return [];
-  const out = [];
-  for (const s of (mgr.slots || [])) {
-    if (s.state !== 'claimed' || s._hidEntry || s.gamepadIndex == null) continue;
-    const gp = pads[s.gamepadIndex];
-    if (gp && isSteamTwinPad(gp, pads)) out.push(s.id);
-  }
-  return out;
-}
-
-export function isSteamTwinPad(gp, padsOverride = null) {
-  if (!gp || !isXInputPadId(gp.id)) return false;
-  const bodies = liveWebHidSteamControllers();
-  if (!bodies) return false;
-  const pads = padsOverride || (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
-  for (const [i, id] of _pressTwins) {
-    const p = pads[i];
-    if (!p || p.id !== id) _pressTwins.delete(i);
-  }
-  if (_pressTwins.get(gp.index) === gp.id) return true;
-  if (steamSlotTwin(gp, padsOverride, bodies)) return true;
-  // The twin mirrors its Steam Controller: the same buttons, at the same time.
-  // Never more press-twins than Steam Controllers streaming on WebHID.
-  if (_pressTwins.size < bodies && pressesMirrorSteamController(gp)) {
-    _pressTwins.set(gp.index, gp.id);
-    return true;
-  }
-  return false;
-}
-
-/** The XInput-slot (rank) rule: Steam names the slot Steam-family, or #535. */
-function steamSlotTwin(gp, padsOverride, bodies) {
-  const slot = steamSlotForGamepad(gp, padsOverride);
-  if (!slot) return false;
-  if (isSteamFamilyType(slot.type)) return true;
-  // #535: a Steam Controller switched on after launch keeps type 0 in Steam
-  // (getInputTypeForHandle never names it). When WebHID holds more Steam
-  // Controllers than Steam has named, the first unnamed slots are their
-  // twins; a pad Steam names as something else is never touched.
-  if (!isUnknownSteamType(slot.type)) return false;
-  const map = steamXInputMap();
-  const unnamedTwins = bodies - map.filter((e) => isSteamFamilyType(e.type)).length;
-  if (unnamedTwins <= 0) return false;
-  const unknown = map.filter((e) => isUnknownSteamType(e.type)).sort((a, b) => a.index - b.index);
-  const rank = unknown.findIndex((e) => e.index === slot.index);
-  return rank >= 0 && rank < unnamedTwins;
-}
-
-/**
- * Has this XInput pad's every recent press also shown up on a Steam Controller
- * streaming over WebHID (pooled or seated)? The manager keeps each pad's and
- * each pooled entry's buttons over its fold window; a seated entry adds what
- * its synthetic shows now.
- */
-function pressesMirrorSteamController(gp) {
-  return mirroredSteamControllers(gp).length > 0;
-}
-
-/** The streaming Steam Controllers (HidEntry) whose recent presses include every one of this pad's. */
-function mirroredSteamControllers(gp) {
-  const mgr = _controllerManager;
-  if (!mgr || !mgr._recentPadBtns || typeof mgr._recentPressed !== 'function') return [];
-  const padSet = mgr._recentPressed(mgr._recentPadBtns.get(gp.index));
-  if (!padSet.size) return [];
-  const now = performance.now();
-  const fanout = (e) => isLiveSteamControllerEntry(e, now);
-  const setOf = (e) => {
-    const out = mgr._recentPressed(e._recentBtns);
-    const btns = (e.synthetic && e.synthetic.buttons) || [];
-    for (let i = 0; i < btns.length; i++) if (btns[i] && btns[i].pressed) out.add(i);
-    const hist = _scHistory.get(e);
-    if (hist) for (const [i, ts] of hist) if (now - ts <= TWIN_WINDOW_MS) out.add(i);
-    return out;
-  };
-  const entries = [];
-  if (mgr._hidPool) for (const e of mgr._hidPool.values()) if (fanout(e)) entries.push(e);
-  for (const s of (mgr.slots || [])) if (fanout(s._hidEntry)) entries.push(s._hidEntry);
-  return entries.filter((e) => { const sc = setOf(e); return [...padSet].every((i) => sc.has(i)); });
-}
-
-/** Once per frame: link each XInput twin to the one Steam Controller its presses mirror (#617). */
-function linkSteamTwins(live) {
-  const pads = (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
-  for (const [i, l] of _twinLinks) {
-    const p = pads[i];
-    if (!p || p.id !== l.id || !live.has(l.entry)) _twinLinks.delete(i);
-  }
-  for (const gp of pads) {
-    if (!gp || !isXInputPadId(gp.id) || _twinLinks.has(gp.index)) continue;
-    if (!(gp.buttons || []).some((b) => b && b.pressed)) continue;
-    const hits = mirroredSteamControllers(gp);
-    if (hits.length === 1) _twinLinks.set(gp.index, { id: gp.id, entry: hits[0] });
-  }
+export function steamTypeForGamepad(gp) {
+  if (!gp || !isXInputPadId(gp.id) || !_controllerManager || typeof _controllerManager.unitForPad !== 'function') return null;
+  const u = _controllerManager.unitForPad(gp.index);
+  return u && u.steamSlot ? String(u.steamSlot.type) : null;
 }
 
 /**
  * #617 · where to send rumble for the Steam Controller behind `entry`: its XInput
  * twin's Gamepad index (vibrationActuator) and/or Steam Input's handle for it
- * (TriggerVibration / SetLEDColor), or null when neither is known. With one Steam
- * Controller there is nothing to tell apart, so its single twin / Steam slot is
- * taken even before a press has linked them.
+ * (TriggerVibration / SetLEDColor), or null when neither is known. The manager
+ * links the twin to its controller (by Steam's slot map or by mirrored presses).
+ * With one Steam Controller and one Steam-family slot, that slot's handle is
+ * taken even before the twin is linked.
  * @param {any} entry a Steam Controller HidEntry
  * @returns {{ padIndex: number|null, handle: string|null }|null}
  */
-export function steamTargetForEntry(entry, padsOverride = null) {
+export function steamTargetForEntry(entry) {
   if (!entry || !entry.driver?.constructor?.needsSiblingFanout) return null;
-  const pads = padsOverride || (typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : []) || [];
-  let padIndex = null;
-  for (const [i, l] of _twinLinks) if (l.entry === entry && pads[i] && pads[i].id === l.id) padIndex = i;
-  const single = liveWebHidSteamControllers() <= 1;
-  if (padIndex == null && single) {
-    const twins = [...pads].filter((p) => p && isXInputPadId(p.id) && isSteamTwinPad(p, pads));
-    if (twins.length === 1) padIndex = twins[0].index;
-  }
-  let handle = null;
-  if (padIndex != null) { const s = steamSlotForGamepad(pads[padIndex], pads); handle = s ? String(s.handle) : null; }
-  if (!handle && single) {
-    const fam = steamXInputMap().filter((e) => isSteamFamilyType(e.type));
-    if (fam.length === 1) handle = String(fam[0].handle);
+  const mgr = _controllerManager;
+  const u = mgr && typeof mgr.unitForDevice === 'function' ? mgr.unitForDevice(entry.device) : null;
+  const padIndex = u && u.twinPadIndex != null ? u.twinPadIndex : null;
+  let handle = u && u.steamSlot ? String(u.steamSlot.handle) : null;
+  if (!handle && mgr && typeof mgr.allUnits === 'function') {
+    const steamUnits = mgr.allUnits().filter((x) => x.entry && x.entry.driver?.constructor?.needsSiblingFanout && x.presence === 'present');
+    const fam = (steamXInputMap() || []).filter((e) => isSteamFamilyType(e.type));
+    if (steamUnits.length <= 1 && fam.length === 1) handle = String(fam[0].handle);
   }
   return padIndex == null && !handle ? null : { padIndex, handle };
+}
+
+/**
+ * #499 · is this slot's left stick Steam's gyro? A Steam Controller that only
+ * reaches us through Steam (no WebHID) is a virtual XInput pad, and the Steam
+ * layout routes its gyro onto the left stick ("Gyro To Joystick Deflection"),
+ * so "Stick steering: Off" must not zero it. True for a seat on a pad-only
+ * unit whose Steam slot is Steam-family, or one Steam has not named yet (#535).
+ */
+export function slotStickIsSteamGyro(slot) {
+  if (!slot || slot.state !== 'claimed' || slot._hidEntry) return false;
+  const u = slot.unit;
+  if (!u || u.entry || !u.steamSlot) return false;
+  const t = String(u.steamSlot.type ?? '').trim();
+  return isSteamFamilyType(t) || t === '' || t === '0';
 }
 
 /**
@@ -610,10 +371,11 @@ export class InputManager {
   // owns the lifecycle; InputManager is a pure consumer.
   get gamepadConnected() {
     if (this.remoteOnly) return this.remotePresent;
-    // A switched-off Steam Controller keeps its slot (the Puck stays plugged in)
-    // but is not connected (#581): the ride's disconnect pause and the versus
-    // freeze read this, and its first report back reconnects it.
-    if (this._slot?.state === 'claimed') return !isSilentSteamControllerSlot(this._slot);
+    // A switched-off Steam Controller keeps its slot mid-ride (the Puck stays
+    // plugged in) but is not connected (#581): the ride's disconnect pause and
+    // the versus freeze read this, and its first report back reconnects it.
+    // controller-core 0.7 tracks that presence (slot.connected).
+    if (this._slot?.state === 'claimed') return this._slot.connected !== false;
     // A phone remote showing its menu pad (#421) is a gamepad to the menus.
     if (this._remoteMenu) return true;
     return false;
@@ -652,6 +414,8 @@ export class InputManager {
   get _controllerDriver() { return this._slot?.driver ?? null; }
   /** #617 · this player's Steam Controller twin / Steam Input handle (haptics.js rumbles it), or null. */
   steamRumbleTarget() { return steamTargetForEntry(this._slot?._hidEntry ?? null); }
+  /** #499 · this seat's left stick carries Steam's gyro (a Steam Controller seen only through Steam). */
+  get stickIsSteamGyro() { return slotStickIsSteamGyro(this._slot); }
   get _gyroConnType() { return this._slot?.driver?.connectionType ?? null; }
 
   /**
@@ -674,8 +438,6 @@ export class InputManager {
   _onSlotChange(slot, reason) {
     const connected = !!slot && slot.state === 'claimed';
     const hidBound = !!slot && !!slot._hidEntry;
-    // The slot's fusion is the lab's SensorFusion with yaw return off (#596).
-    if (slot && slot.fusion && !(slot.fusion.yawReturnHalfLife > 0)) slot.fusion.yawReturnHalfLife = YAW_RETURN_HALF_LIFE_S;
 
     // Update Cyclone A/B quirk from the claimed controller label.
     if (connected && slot.controllerLabel) {
@@ -1192,7 +954,9 @@ export class InputManager {
       // stickResponseCurve; #399: the linear 0.08 stick was far too twitchy).
       const rawX = gp.axes[0] || 0;
       this._gpRawStickX = rawX;
-      this.gamepadLean = this.suppressGamepadLean ? 0 : stickResponse(rawX);
+      // #499: Stick steering Off never zeroes Steam's gyro, which a Steam-only
+      // Steam Controller delivers on this stick.
+      this.gamepadLean = (this.suppressGamepadLean && !this.stickIsSteamGyro) ? 0 : stickResponse(rawX);
 
       // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
       const THRESHOLD = 0.5;
@@ -1314,7 +1078,7 @@ export class InputManager {
   }
 
   getGamepadLean() {
-    if (this.suppressGamepadLean) return 0;
+    if (this.suppressGamepadLean && !this.stickIsSteamGyro) return 0;
     return this.gamepadConnected ? this.gamepadLean : 0;
   }
 

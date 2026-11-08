@@ -47,9 +47,13 @@ What the game keeps from Steam Input (`electron/main.js`):
 - `steam.input.init(true)` + `runFrame()` each tick, so that
 - `getControllerForGamepadIndex(i)` / `getInputTypeForHandle` can say which
   physical controller sits behind each virtual XInput pad (#362). The renderer
-  uses that map (`window.steam.input.getXInputMap()`) to hide the XInput twin of
-  a Steam Controller it already reads over WebHID (`isSteamTwinPad`) and to name
-  a virtual pad by its real type in the controller overlay.
+  feeds that map (`window.steam.input.getXInputMap()`) to the ControllerManager
+  each frame (`setSteamInputMap`). Since controller-core 0.7 (#607) core folds a
+  virtual pad into the controller it echoes (one unit, one seat; the twin is
+  never listed or seated), names a virtual pad by its real type in the
+  controller overlay (`unit.steamSlot`), and tells the game when a seat's stick
+  is a Steam-only Steam Controller's gyro (#499: Stick steering Off keeps it).
+  See the lab's `docs/controller-units.md`.
 - A heartbeat in `tandemonium-diag.log`: `[SteamInput diag] heartbeat: N
   captured pad(s)`. In emulation mode N is normally **0** even while virtual
   pads exist. Non-zero means Steam is treating the game as an API-mode game —

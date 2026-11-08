@@ -24,6 +24,17 @@ export {
 } from './manager.js';
 
 export {
+  ControllerUnit,
+  DEFAULT_SILENT_AFTER_MS,
+  mergeGamepads,
+  isXInputPadId,
+  steamTypeFamily,
+  hidPresence,
+} from './units.js';
+
+export { DEFAULT_YAW_RETURN_HALF_LIFE_S } from './yaw-return.js';
+
+export {
   SensorFusion,
   FUSION_CALIB_COUNT,
   FUSION_CALIB_COUNT_BT,

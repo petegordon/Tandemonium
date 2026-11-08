@@ -21,6 +21,10 @@
 
 import { ControllerRegistry } from './drivers/controller-registry.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, connectionOf, KEYBOARD_IDENTITY } from './device-identity.js';
+import {
+  ControllerUnit, DEFAULT_SILENT_AFTER_MS, hidPresence, lastReportOf,
+  isSteamControllerEntry, isXInputPadId, steamSlotForPadIndex, steamTypeFamily, isUnknownSteamType,
+} from './units.js';
 // NOTE: SensorFusion (and its `three` dependency) is loaded lazily in
 // poolDevice — the only place a real fusion is constructed — so importing
 // this module for its slot/claim/reconnect logic doesn't drag in `three`.
@@ -51,10 +55,12 @@ export function playerSlotIds(n = MAX_CONTROLLERS) {
  * are always presentable. This is the single source of truth for the filter the
  * overlay / multi / lobby controller lists all share.
  */
-export function isPresentableEntry(entry) {
+export function isPresentableEntry(entry, now = performance.now(), silentAfterMs = DEFAULT_SILENT_AFTER_MS) {
   if (!entry) return false;
-  const fanout = entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout;
-  return fanout ? entry.hidActiveSince > 0 : true;
+  // 0.7: presence, not the old freshness token. A fan-out interface that never
+  // streamed is latent; a controller that streams while idle and has gone quiet
+  // for silentAfterMs is switched off. Neither is a controller worth listing.
+  return hidPresence(entry, now, silentAfterMs) === 'present';
 }
 
 const DEFAULTS = {
@@ -71,6 +77,29 @@ const DEFAULTS = {
   // Gamepad pad to its WebHID handle. The claiming press often lands on the two
   // faces a frame or two apart, so a same-frame match misses it.
   foldWindowMs: 350,
+  // ── Controller units (docs/controller-units.md) ──
+  // A controller that streams while idle (driver static streamsWhileIdle: the
+  // Steam Controller reports STATE + IMU continuously, even lying still) and has
+  // sent nothing for this long is switched off: its unit is 'silent', its slot
+  // reads connected=false, and (releaseSilentSeats) its seat is freed. A Puck
+  // stays plugged in while its bodies are off, so no 'disconnect' ever fires.
+  silentAfterMs: DEFAULT_SILENT_AFTER_MS,
+  // Free the seat of a silent controller. The manager also exposes this as the
+  // writable `releaseSilentSeats` property, so an app can keep seats mid-game
+  // (and pause on slot.connected) but free them on its seat screens.
+  releaseSilentSeats: true,
+  // Steam's virtual XInput pad mirrors the hardware's presses a few ms late (or,
+  // across a frame boundary, early); a quick tap can be fully released on WebHID
+  // before the twin reads pressed. A press on an XInput pad counts as the twin
+  // of a unit that pressed the same buttons within this window.
+  twinWindowMs: 500,
+  // An XInput pad's first press waits this long for the hardware's report before
+  // it may claim a seat, while some WebHID controller that Steam could be
+  // mirroring has no twin yet. Only XInput pads (no vid:pid) ever wait.
+  twinClaimHoldMs: 200,
+  // `(device) => fusion`: build the per-device sensor fusion. Default: a
+  // SensorFusion (lazy-loaded; it needs `three`). Tests pass a stub.
+  createFusion: null,
   // Host veto over Gamepad-API pads: `(gamepad) => boolean`, consulted before
   // ANY Gamepad-API claim (boot claim, activity claim, explicit seat claim).
   // Return false to keep a pad out of every seat. The motivating case is a
@@ -252,6 +281,11 @@ class HidEntry {
     // a granted-but-absent / spoof-dragged-in handle stays at 0.
     this.pooledAt = performance.now();
     this.lastRawReportAt = 0;
+    // When the driver last / first parsed a report (0 = never). Unlike
+    // hidActiveSince these are NEVER zeroed (staleness, release), so "switched
+    // off" (lastReportAt old) and "never streamed" (0) stay distinguishable.
+    this.lastReportAt = 0;
+    this.firstReportAt = 0;
     // Rolling window of recently-pressed buttons (index → timestamp), used to
     // fold this handle to the Gamepad pad showing the same press. Populated by
     // the manager each frame from `synthetic`.
@@ -345,6 +379,8 @@ class HidEntry {
       for (const b of this.synthetic.buttons) { if (b && (b.pressed || (b.value || 0) > 0.5)) { this._everPressed = true; break; } }
     }
     this.hidActiveSince = performance.now();
+    this.lastReportAt = this.hidActiveSince;
+    if (!this.firstReportAt) this.firstReportAt = this.lastReportAt;
     if (parsed.gyro) {
       const a = parsed.accel;
       const rawGx = parsed.gyro.x, rawGy = parsed.gyro.y, rawGz = parsed.gyro.z;
@@ -444,7 +480,23 @@ export class Slot {
     this._opts = opts || DEFAULTS;
 
     this._wasCalibrating = false;
+    /** Set by the ControllerManager that owns this slot. */
+    this._mgr = null;
+    this._connected = true;
+    /** Why the slot was last released: 'released' | 'gesture' | 'silent' | 'twin'. */
+    this.releaseReason = null;
   }
+
+  /**
+   * Is the controller in this slot connected? False while its unit is silent
+   * (a Steam Controller switched off on a Puck that stays plugged in); its
+   * first report back makes it true again. An app's disconnect pause reads
+   * this. Empty slots read false.
+   */
+  get connected() { return this.state === 'claimed' && this._connected !== false; }
+
+  /** The ControllerUnit (physical controller) in this slot, or null. */
+  get unit() { return this._mgr ? this._mgr.unitForSlot(this) : null; }
 
   // ── HID passthrough getters ──
   get hidDevice()       { return this._hidEntry?.device || null; }
@@ -467,6 +519,7 @@ export class Slot {
 
   claim(gamepad, { controllerTypeHint, silent = false } = {}) {
     this.state = 'claimed';
+    this._connected = true;
     this.gamepadIndex = gamepad.index >= 0 ? gamepad.index : null;
     this.controllerId = stableIdFor(gamepad);
     this.controllerLabel = gamepad.id;
@@ -477,7 +530,8 @@ export class Slot {
     if (!silent) this._emit('claimed');
   }
 
-  release() {
+  release(reason = 'released') {
+    this.releaseReason = reason;
     this.state = 'empty';
     this.gamepadIndex = null;
     this.controllerId = null;
@@ -517,10 +571,11 @@ export class Slot {
     const realGp = this.gamepadIndex != null ? pads[this.gamepadIndex] : null;
     const entry = this._hidEntry;
     if (entry && entry.hidActiveSince > 0 && entry._everPressed) {
-      const staleFor = performance.now() - entry.hidActiveSince;
+      // 0.7: staleness is read from the last report; nothing is zeroed here
+      // (zero also meant "never streamed", so "switched off" read the same).
+      const staleFor = performance.now() - lastReportOf(entry);
       if (staleFor > this._opts.hidStaleMs) {
         resetSynthetic(entry.synthetic);
-        entry.hidActiveSince = 0;
         return realGp;
       }
       return entry.synthetic;
@@ -556,6 +611,7 @@ export class ControllerManager {
     this.opts = { ...DEFAULTS, ...options };
     const slotIds = options.slotIds || ['P1', 'P2'];
     this.slots = slotIds.map((id) => new Slot(id, this.opts));
+    for (const s of this.slots) s._mgr = this;
     this._slotById = Object.fromEntries(this.slots.map((s) => [s.id, s]));
     this._hidPool = new Map(); // HIDDevice -> HidEntry
     // HIDDevice -> Promise<HidEntry|null> while its driver is still connecting.
@@ -591,6 +647,19 @@ export class ControllerManager {
     // pad half of the fold correlation (the HID half lives on each HidEntry).
     this._recentPadBtns = new Map();
     this._frameNow = 0;
+    // ── Controller units (src/units.js, docs/controller-units.md) ──
+    /** @type {ControllerUnit[]} every unit, latent and silent included, oldest first */
+    this._units = [];
+    /** HidEntry → its unit */
+    this._unitByEntry = new Map();
+    /** Gamepad index → what that pad is: { id, role, unit, … } (see _classifyPad) */
+    this._padInfo = new Map();
+    /** Steam's XInput slot map as the app last fed it (null = not under Steam). */
+    this._steamMap = null;
+    /** Last pads snapshot ingestFrame saw (unit.frame() default). */
+    this._lastPads = [];
+    /** Writable: free the seat of a silent controller (see DEFAULTS.releaseSilentSeats). */
+    this.releaseSilentSeats = this.opts.releaseSilentSeats !== false;
     this._hidConnectHandler = null;
     this._hidDisconnectHandler = null;
   }
@@ -634,7 +703,8 @@ export class ControllerManager {
   }
 
   presentablePoolEntries() {
-    return [...this._hidPool.values()].filter(isPresentableEntry);
+    const now = this._frameNow || performance.now();
+    return [...this._hidPool.values()].filter((e) => isPresentableEntry(e, now, this.opts.silentAfterMs));
   }
 
   /**
@@ -687,6 +757,16 @@ export class ControllerManager {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
       if (!this._padAllowed(gp)) continue;
+      // Units: never boot-claim Steam's twin, a press waiting for its hardware,
+      // or a pad whose controller already sits. And never an unconfirmed XInput
+      // pad while a WebHID controller Steam could be mirroring has no twin yet:
+      // with no press there is no evidence it isn't that controller's echo.
+      const info = this._padInfo.get(gp.index);
+      if (info && info.id === gp.id) {
+        if (info.role === 'twin' || info.role === 'pending' || info.role === 'ambiguous') continue;
+        if (info.unit && info.unit.entry && info.unit.slot) continue;
+      }
+      if (isXInputPadId(gp.id) && this._twinEligibleUnits().length) continue;
       const stickMag = Math.max(
         Math.abs(gp.axes[0] || 0),
         Math.abs(gp.axes[1] || 0),
@@ -724,6 +804,12 @@ export class ControllerManager {
     const slot = this.getSlot(slotId);
     if (!slot || slot.state !== 'empty' || slot._awaitingSilence || !gp) return false;
     if (this.slots.some((s) => s.gamepadIndex != null && s.gamepadIndex === gp.index)) return false;
+    // Steam's twin is its controller: seat the controller, never the twin.
+    const pinfo = this._padInfo.get(gp.index);
+    if (pinfo && pinfo.id === gp.id && pinfo.role === 'twin') {
+      return !!(pinfo.unit && this.claimUnitForSlot(slotId, pinfo.unit));
+    }
+    if (pinfo && pinfo.unit && pinfo.unit.entry && pinfo.unit.slot) return false;   // its controller already sits
     if (!this._padAllowed(gp)) return false;
     const info = ControllerRegistry.identifyFromGamepadId(gp.id);
     slot.claim(gp, {
@@ -800,10 +886,15 @@ export class ControllerManager {
   async _poolDeviceNow(device) {
     try {
       const driver = await ControllerRegistry.connect(device);
-      // Lazy-load SensorFusion (pulls in `three`) only here, where a real
-      // fusion is actually needed — see the import note at the top.
-      const { SensorFusion } = await import('./sensor-fusion.js');
-      const entry = new HidEntry(device, driver, new SensorFusion());
+      let fusion;
+      if (typeof this.opts.createFusion === 'function') fusion = this.opts.createFusion(device);
+      else {
+        // Lazy-load SensorFusion (pulls in `three`) only here, where a real
+        // fusion is actually needed — see the import note at the top.
+        const { SensorFusion } = await import('./sensor-fusion.js');
+        fusion = new SensorFusion();
+      }
+      const entry = new HidEntry(device, driver, fusion);
       this._hidPool.set(device, entry);
       return entry;
     } catch (err) {
@@ -920,10 +1011,34 @@ export class ControllerManager {
       if (!m) { m = new Map(); this._recentPadBtns.set(gp.index, m); }
       for (const i of ControllerManager._pressedSet(gp)) m.set(i, now);
     }
-    for (const entry of this._hidPool.values()) {
+    // Every WebHID entry, seated or pooled (0.6.x kept pooled only, so a seated
+    // controller could not be correlated with its Steam twin after the fact).
+    for (const entry of this._allEntries()) {
       if (!entry._recentBtns) entry._recentBtns = new Map();
       for (const i of ControllerManager._pressedSet(entry.synthetic)) entry._recentBtns.set(i, now);
     }
+  }
+
+  /** Every HidEntry the manager holds, pooled or seated. */
+  _allEntries() {
+    const entries = new Set(this._hidPool.values());
+    for (const s of this.slots) if (s._hidEntry) entries.add(s._hidEntry);
+    return entries;
+  }
+
+  /** Buttons pressed within `ms` of this frame. */
+  _pressedWithin(map, ms) {
+    const s = new Set();
+    if (!map) return s;
+    for (const [i, ts] of map) if (this._frameNow - ts <= ms) s.add(i);
+    return s;
+  }
+
+  /** When any button on this entry was last pressed (0 = never). */
+  _lastPressOf(entry) {
+    let t = 0;
+    if (entry && entry._recentBtns) for (const ts of entry._recentBtns.values()) if (ts > t) t = ts;
+    return t;
   }
 
   /** Buttons pressed within the fold window as of this frame. */
@@ -1113,11 +1228,452 @@ export class ControllerManager {
     return null;
   }
 
+
+  // ════════════════════════════════════════════════════════════
+  // Controller units — one physical controller across its sources
+  // (src/units.js, docs/controller-units.md)
+  // ════════════════════════════════════════════════════════════
+
+  /**
+   * Feed Steam's XInput slot map ([{ index, handle, type }], from the Steamworks
+   * bridge's getControllerForGamepadIndex / getInputTypeForHandle), or null when
+   * the page is not running under Steam. Call it every frame before
+   * ingestFrame; core never talks to Steam itself. Under Steam any captured
+   * WebHID controller (not only a Steam Controller) can have an XInput twin.
+   * @param {Array<{index:number, handle:string|number, type:string|number}>|null|undefined} map
+   */
+  setSteamInputMap(map) { this._steamMap = Array.isArray(map) ? map : null; }
+
+  /**
+   * The physical controllers a player could use right now, oldest first: one
+   * per controller whatever it arrives through (WebHID, a live or frozen
+   * Gamepad pad, Steam's XInput twin). Seated ones included. Latent receiver
+   * interfaces, silent (switched-off) controllers, Steam twins and pads the
+   * host's padFilter rejects are not units here.
+   * @returns {ControllerUnit[]}
+   */
+  units() {
+    return this._units.filter((u) => u.presence === 'present' && (u.entry || this._padUnitListed(u)));
+  }
+
+  /** Every unit, latent and silent ones included (diagnostics). */
+  allUnits() { return this._units.slice(); }
+
+  /** @param {Slot|string} slotOrId */
+  unitForSlot(slotOrId) {
+    const s = typeof slotOrId === 'string' ? this.getSlot(slotOrId) : slotOrId;
+    if (!s || s.state !== 'claimed') return null;
+    if (s._hidEntry) return this._unitByEntry.get(s._hidEntry) || null;
+    if (s.gamepadIndex != null) {
+      const info = this._padInfo.get(s.gamepadIndex);
+      return (info && info.unit) || null;
+    }
+    return null;
+  }
+
+  /** The unit a Gamepad index belongs to (its own pad, or Steam's twin of it). */
+  unitForPad(index) {
+    const info = this._padInfo.get(index);
+    return (info && info.unit) || null;
+  }
+
+  /** The unit of a WebHID device (pooled or seated). */
+  unitForDevice(device) {
+    if (!device) return null;
+    for (const [e, u] of this._unitByEntry) if (e.device === device) return u;
+    return null;
+  }
+
+  /**
+   * Is this Gamepad pad Steam's virtual XInput twin of a controller the
+   * manager already reads over WebHID? A twin never claims and is never
+   * listed; its presses belong to its unit.
+   * @param {Gamepad|number|null} gpOrIndex
+   */
+  isTwinPad(gpOrIndex) {
+    if (gpOrIndex == null) return false;
+    const i = typeof gpOrIndex === 'number' ? gpOrIndex : gpOrIndex.index;
+    const info = this._padInfo.get(i);
+    if (!info) return false;
+    if (typeof gpOrIndex === 'object' && gpOrIndex.id !== info.id) return false;
+    return info.role === 'twin';
+  }
+
+  /**
+   * Seat a unit (the app chose it, e.g. a seat screen with autoClaimSuspended):
+   * binds its WebHID source when it has one (plus its own Gamepad pad, never
+   * Steam's twin), else its pad. Returns the slot, or null when the slot is
+   * busy or the unit is already seated.
+   * @param {string} slotId
+   * @param {ControllerUnit} unit
+   * @returns {Slot|null}
+   */
+  claimUnitForSlot(slotId, unit) {
+    const slot = this.getSlot(slotId);
+    if (!slot || !unit || slot.state !== 'empty' || slot._awaitingSilence) return null;
+    if (unit.slot) return null;
+    const pads = this._lastPads || [];
+    if (unit.entry) {
+      if (!this.claimHidDeviceForSlot(slotId, unit.entry.device)) return null;
+      if (unit.padIndex != null && pads[unit.padIndex] && !this.slots.some((o) => o !== slot && o.gamepadIndex === unit.padIndex)) slot.gamepadIndex = unit.padIndex;
+      return slot;
+    }
+    const gp = unit.padIndex != null ? pads[unit.padIndex] : null;
+    return gp && this.claimPadForSlot(slotId, gp, pads) ? slot : null;
+  }
+
+  _slotForUnit(u) {
+    for (const s of this.slots) {
+      if (s.state !== 'claimed') continue;
+      if (u.entry && s._hidEntry === u.entry) return s;
+      if (!u.entry && u.padIndex != null && s.gamepadIndex === u.padIndex && !s._hidEntry) return s;
+    }
+    return null;
+  }
+
+  /** A pad-only unit is listed unless the host's padFilter vetoes it or its sticks sit pinned (a BT ghost). */
+  _padUnitListed(u) {
+    const gp = u.padIndex != null ? (this._lastPads || [])[u.padIndex] : null;
+    if (!gp || !this._padAllowed(gp)) return false;
+    if (u.slot) return true;
+    const axes = gp.axes || [];
+    return !(Math.max(0, ...Array.from(axes).slice(0, 4).map((a) => Math.abs(a || 0))) > 0.5);
+  }
+
+  /** WebHID units Steam could be mirroring as an XInput pad and that have no twin yet. */
+  _twinEligibleUnits() {
+    const underSteam = this._steamMap !== null;
+    return this._units.filter((u) => u.entry && u.presence === 'present' && u.twinPadIndex == null
+      && (isSteamControllerEntry(u.entry) || underSteam));
+  }
+
+  /** Our protocol family for a unit ('steam', 'dualsense', …). */
+  static _familyOf(u) {
+    if (!u.entry) return null;
+    if (isSteamControllerEntry(u.entry)) return 'steam';
+    return (u.entry.driver && u.entry.driver.entry && u.entry.driver.entry.protocol) || null;
+  }
+
+  /**
+   * Rebuild the unit picture for this frame: one unit per WebHID entry (with
+   * its presence), then every Gamepad pad classified as a unit's own pad, a
+   * Steam twin, pending (an XInput press waiting for its hardware report), or
+   * a pad-only unit. Runs every frame, before any claim.
+   */
+  _reconcileUnits(pads, now) {
+    const entries = this._allEntries();
+    for (const e of entries) {
+      let u = this._unitByEntry.get(e);
+      if (!u) {
+        u = new ControllerUnit(this);
+        u.entry = e; u.createdAt = now; u.presenceSince = now;
+        this._unitByEntry.set(e, u);
+        this._units.push(u);
+      }
+      const p = hidPresence(e, now, this.opts.silentAfterMs);
+      if (p !== u.presence) { u.presence = p; u.presenceSince = now; }
+    }
+    // WebHID units whose entry left (disconnect / phantom eviction).
+    for (const u of this._units) {
+      if (u.entry && !entries.has(u.entry)) {
+        this._unitByEntry.delete(u.entry);
+        u.presence = 'gone';
+        if (u.padIndex != null) { this._padInfo.delete(u.padIndex); u.padIndex = null; }
+        if (u.twinPadIndex != null) { this._padInfo.delete(u.twinPadIndex); u.twinPadIndex = null; }
+      }
+    }
+
+    const live = new Map();
+    for (const gp of pads) if (gp) live.set(gp.index, gp);
+    for (const [i, info] of [...this._padInfo]) {
+      const gp = live.get(i);
+      if (!gp || gp.id !== info.id) this._forgetPad(i, info);
+    }
+    this._units = this._units.filter((u) => u.presence !== 'gone');
+
+    for (const gp of live.values()) {
+      let info = this._padInfo.get(gp.index);
+      if (!info) {
+        info = { id: gp.id, role: 'new', unit: null, prev: new Set(), onsetAt: 0, checkAt: 0, holdUntil: 0, claimPress: false, lastTs: gp.timestamp, changedAt: now };
+        this._padInfo.set(gp.index, info);
+      }
+      const pressed = ControllerManager._pressedSet(gp);
+      let onset = false;
+      for (const b of pressed) if (!info.prev.has(b)) { onset = true; break; }
+      info.prev = pressed;
+      if (gp.timestamp !== info.lastTs) { info.lastTs = gp.timestamp; info.changedAt = now; }
+      if (onset) info.onsetAt = now;
+      this._classifyPad(gp, info, pads, now, onset);
+    }
+  }
+
+  _forgetPad(i, info) {
+    const u = info.unit;
+    if (u) {
+      if (u.padIndex === i) { u.padIndex = null; u.padId = null; u.padFrozen = false; }
+      if (u.twinPadIndex === i) { u.twinPadIndex = null; u.twinPadId = null; u.steamSlot = null; }
+      if (!u.entry && u.padIndex == null) u.presence = 'gone';
+    }
+    this._padInfo.delete(i);
+  }
+
+  _setRole(gp, info, role, unit) {
+    const prev = info.unit;
+    if (prev && prev !== unit) {
+      if (prev.padIndex === gp.index) { prev.padIndex = null; prev.padId = null; prev.padFrozen = false; }
+      if (prev.twinPadIndex === gp.index) { prev.twinPadIndex = null; prev.twinPadId = null; }
+      if (!prev.entry && prev.padIndex == null) prev.presence = 'gone';
+    }
+    info.role = role;
+    info.unit = unit;
+    if (role === 'linked' && unit) { unit.padIndex = gp.index; unit.padId = gp.id; }
+    if (role === 'twin' && unit) { unit.twinPadIndex = gp.index; unit.twinPadId = gp.id; }
+    if (role === 'twin' || role === 'pending' || role === 'ambiguous') {
+      if (prev && !prev.entry && prev !== unit) prev.presence = 'gone';
+    }
+    if (role === 'twin') { info.claimPress = false; info.holdUntil = 0; }
+  }
+
+  _standalone(gp, info, now) {
+    let u = info.unit;
+    if (!u || u.entry || u.presence === 'gone') {
+      u = new ControllerUnit(this);
+      u.createdAt = now; u.presenceSince = now;
+      this._units.push(u);
+    }
+    this._setRole(gp, info, 'standalone', u);
+    u.padIndex = gp.index; u.padId = gp.id; u.presence = 'present';
+    return u;
+  }
+
+  _linkTwin(gp, info, unit, steamSlot) {
+    this._setRole(gp, info, 'twin', unit);
+    if (unit && steamSlot) unit.steamSlot = steamSlot;
+  }
+
+  /**
+   * What is this pad? The rules, in order (docs/controller-units.md §Merging):
+   *   1. a slot holds it together with a WebHID entry → that unit's own pad
+   *   2. it carries a vid:pid (or a product name a WebHID entry has) → that
+   *      unit's own pad; two identical candidates → the one whose recent
+   *      presses match, else 'ambiguous' (hidden until a press decides)
+   *   3. an XInput pad (no vid:pid) → Steam's twin of a unit when Steam's slot
+   *      map says so by rank, or when its presses mirror that unit's within
+   *      twinWindowMs; a press nothing mirrors yet waits twinClaimHoldMs
+   *      ('pending') while some unit could still be mirrored
+   *   4. otherwise a pad-only unit
+   * A twin whose later press has no matching hardware press is let go.
+   */
+  _classifyPad(gp, info, pads, now, onset) {
+    const owner = this.slots.find((s) => s.state === 'claimed' && s.gamepadIndex === gp.index);
+    if (owner && owner._hidEntry) {
+      const u = this._unitByEntry.get(owner._hidEntry);
+      if (u && !(info.role === 'linked' && info.unit === u)) this._setRole(gp, info, 'linked', u);
+      if (u) this._updateFrozen(u, info);
+      return;
+    }
+
+    // Sticky links.
+    if (info.role === 'linked' && info.unit && info.unit.entry && info.unit.presence !== 'gone' && info.unit.padIndex === gp.index) {
+      this._updateFrozen(info.unit, info);
+      return;
+    }
+
+    const vp = ControllerRegistry.parseGamepadVendorProduct(gp.id);
+    const xinput = !vp && isXInputPadId(gp.id);
+
+    if (!xinput) {
+      // Same candidate rule as binding a seat (_entryMatchesSlot): vid:pid OR
+      // product name. Not vid:pid alone: a GameSir Super Nova shows 054c:0ce6
+      // to the Gamepad API while its real HID handle is 054c:09cc, and an idle
+      // DualSense 0ce6 may be pooled too.
+      const id = String(gp.id || '').toLowerCase();
+      const cands = this._units.filter((u) => {
+        if (!u.entry || u.presence === 'gone' || u.padIndex != null) return false;
+        const d = u.entry.device;
+        if (vp && d.vendorId === vp.vendorId && d.productId === vp.productId) return true;
+        const n = (d.productName || '').trim().toLowerCase();
+        return !!n && id.includes(n);
+      });
+      if (cands.length === 1) { this._setRole(gp, info, 'linked', cands[0]); return; }
+      if (cands.length > 1) {
+        // Two or more look alike: the same Tier 1 / Tier 2 rules a seat binds by,
+        // and only on a press (an idle pad gives no evidence).
+        const padSet = this._recentPressed(this._recentPadBtns.get(gp.index));
+        if (padSet.size) {
+          const pressers = cands.filter((u) => u.entry._everPressed);
+          const corr = this._correlateEntryByInput(pressers.map((u) => u.entry), gp);
+          let pick = corr ? cands.find((u) => u.entry === corr) : null;
+          if (!pick) {
+            const silent = cands.filter((u) => !u.entry._everPressed);
+            const inFlight = pressers.some((u) => this._recentPressed(u.entry._recentBtns).size > 0);
+            if (silent.length === 1 && !inFlight) pick = silent[0];
+          }
+          if (pick) { this._setRole(gp, info, 'linked', pick); return; }
+        }
+        if (owner) { this._standalone(gp, info, now); return; }
+        this._setRole(gp, info, 'ambiguous', null);
+        return;
+      }
+      this._standalone(gp, info, now);
+      return;
+    }
+
+    // ── XInput pad ──
+    const steamSlot = steamSlotForPadIndex(pads, gp.index, this._steamMap);
+    if (info.role === 'twin') {
+      // Contradiction: the twin pressed and its unit did not, around that press.
+      if (onset) info.checkAt = now + this.opts.twinClaimHoldMs;
+      if (info.checkAt && now >= info.checkAt) {
+        info.checkAt = 0;
+        const u = info.unit;
+        const lastPress = u ? this._lastPressOf(u.entry) : now;
+        if (u && !(lastPress >= info.onsetAt - this.opts.twinWindowMs)) {
+          this._standalone(gp, info, now);
+          return;
+        }
+      }
+      if (info.unit) { if (steamSlot) info.unit.steamSlot = steamSlot; return; }
+      // An unassigned twin: settle which unit once a press is unique.
+    }
+
+    const eligible = this._twinEligibleUnits();
+    if (!eligible.length) {
+      if (info.role !== 'twin') {
+        const u = this._standalone(gp, info, now);
+        u.steamSlot = steamSlot;
+      }
+      return;
+    }
+
+    // Rank evidence from Steam's slot map (sound only when the counts agree).
+    if (steamSlot) {
+      const fam = steamTypeFamily(steamSlot.type);
+      let famUnits = fam ? eligible.filter((u) => ControllerManager._familyOf(u) === fam) : [];
+      if (!fam && isUnknownSteamType(steamSlot.type)) {
+        // #535: a Steam Controller switched on after launch keeps type 0. When
+        // WebHID holds more Steam Controllers than Steam has named, the first
+        // unnamed slots are their twins.
+        const steamUnits = this._units.filter((u) => u.entry && u.presence === 'present' && isSteamControllerEntry(u.entry));
+        const named = this._steamMap.filter((e) => steamTypeFamily(e.type) === 'steam').length;
+        const unknown = this._steamMap.filter((e) => isUnknownSteamType(e.type)).sort((a, b) => a.index - b.index);
+        const rank = unknown.findIndex((e) => e.index === steamSlot.index);
+        if (rank >= 0 && rank < steamUnits.length - named) famUnits = eligible.filter((u) => isSteamControllerEntry(u.entry));
+      }
+      if (famUnits.length === 1) { this._linkTwin(gp, info, famUnits[0], steamSlot); return; }
+      if (famUnits.length > 1 && info.role !== 'twin') {
+        // A twin of one of them; which one, a press will tell.
+        const mirrored = this._mirroredUnits(gp, famUnits);
+        this._linkTwin(gp, info, mirrored.length === 1 ? mirrored[0] : null, steamSlot);
+        return;
+      }
+    }
+
+    const mirrored = this._mirroredUnits(gp, eligible);
+    if (mirrored.length === 1) { this._linkTwin(gp, info, mirrored[0], steamSlot); return; }
+    if (mirrored.length > 1) {
+      const twins = [...this._padInfo.values()].filter((x) => x !== info && x.role === 'twin').length;
+      if (info.role === 'twin' || twins < eligible.length) { this._linkTwin(gp, info, null, steamSlot); return; }
+    }
+    if (info.role === 'twin') return;
+
+    // A press nothing mirrors yet: hold its claim for the hardware's report.
+    // A pad never seen before stays unlisted while it waits (a twin must not
+    // flash up as a controller); a pad already listed keeps its unit and row.
+    if (onset && !owner) { info.holdUntil = now + this.opts.twinClaimHoldMs; info.claimPress = true; }
+    const holding = info.holdUntil > now;
+    if (holding && (info.role === 'new' || info.role === 'pending')) { this._setRole(gp, info, 'pending', null); return; }
+    const u = (info.role === 'standalone' && info.unit && info.unit.presence !== 'gone') ? info.unit : this._standalone(gp, info, now);
+    u.steamSlot = steamSlot;
+  }
+
+  /** Units whose recent presses include every button this pad pressed recently. */
+  _mirroredUnits(gp, units) {
+    const padSet = this._pressedWithin(this._recentPadBtns.get(gp.index), this.opts.twinWindowMs);
+    if (!padSet.size) return [];
+    return units.filter((u) => {
+      const es = this._pressedWithin(u.entry._recentBtns, this.opts.twinWindowMs);
+      for (const b of padSet) if (!es.has(b)) return false;
+      return true;
+    });
+  }
+
+  /** A linked pad that stopped changing while its WebHID source keeps pressing is frozen. */
+  _updateFrozen(u, info) {
+    if (!u.entry) return;
+    const lastPress = this._lastPressOf(u.entry);
+    if (lastPress > info.changedAt + 250) u.padFrozen = true;
+    else if (info.changedAt > lastPress && u.padFrozen && info.prev.size) u.padFrozen = false;
+  }
+
+  /**
+   * A slot holding a pad that turned out to be Steam's twin: move the seat to
+   * the twin's unit when that controller has no seat (same player, the real
+   * source), else release it. Runs whether or not auto-claim is suspended: a
+   * twin never holds a seat.
+   */
+  _resolveTwinSeats(now, released, why) {
+    for (const s of this.slots) {
+      if (s.state !== 'claimed' || s._hidEntry || s.gamepadIndex == null) continue;
+      const info = this._padInfo.get(s.gamepadIndex);
+      if (!info || info.role !== 'twin') continue;
+      const u = info.unit;
+      if (u && u.entry && !u.slot && this._hidPool.has(u.entry.device)) {
+        const d = u.entry.device;
+        s.gamepadIndex = null;
+        s.controllerLabel = `HID::${d.productName || ''} Vendor: ${d.vendorId.toString(16)} Product: ${d.productId.toString(16)}`;
+        s.controllerId = `${s.controllerLabel}::standard`;
+        const ident = ControllerRegistry.identifyFromGamepadId(s.controllerLabel);
+        s.controllerType = ident?.controllerProfile || ident?.protocol || s.controllerType;
+        this._attachEntryToSlot(s, u.entry);
+        s._emit('rebound');
+        console.log(`[manager] ${s.id}: held Steam's XInput twin; moved to its controller (${d.productName || 'WebHID'})`);
+        continue;
+      }
+      const freedIndex = s.gamepadIndex;
+      s.release('twin');
+      this._recentlyReleasedByIndex.set(freedIndex, now);
+      this._recentlyReleasedBySlot.set(s.id, now);
+      released.push(s.id);
+      why[s.id] = 'twin';
+      console.log(`[manager] ${s.id}: held Steam's XInput twin of a seated controller; released`);
+    }
+  }
+
+  /** slot.connected follows its unit's presence; a silent seat is freed when releaseSilentSeats. */
+  _applyPresence(now, released, why) {
+    for (const s of this.slots) {
+      if (s.state !== 'claimed' || !s._hidEntry) continue;
+      const u = this._unitByEntry.get(s._hidEntry);
+      if (!u) continue;
+      const connected = u.presence !== 'silent';
+      if (connected !== s._connected) { s._connected = connected; s._emit('presence', { connected, presence: u.presence }); }
+      if (!connected && this.releaseSilentSeats) {
+        const freedIndex = s.gamepadIndex;
+        this._detachEntryFromSlot(s);
+        s.release('silent');
+        // No reclaim cooldown: that guards a release gesture from re-grabbing
+        // the seat while the button is still down. Nothing is pressing a
+        // switched-off controller, and its first press back should seat it.
+        void freedIndex;
+        released.push(s.id);
+        why[s.id] = 'silent';
+        console.log(`[manager] ${s.id}: its controller went silent for ${this.opts.silentAfterMs} ms (switched off); seat released`);
+      }
+    }
+  }
+
   ingestFrame(pads, now) {
     const claimedThisFrame = [];
     const releasedThisFrame = [];
+    /** slot id → why it was released this frame ('gesture' | 'silent' | 'twin') */
+    const why = {};
     this._frameNow = now;
+    this._lastPads = pads;
     this._recordInput(pads, now);   // fold-correlation windows (pad + HID button history)
+    this._reconcileUnits(pads, now);  // units: one per physical controller, with presence
+    this._resolveTwinSeats(now, releasedThisFrame, why);
+    this._applyPresence(now, releasedThisFrame, why);
 
     // Orphan check (Gamepad-API-backed claims only)
     // Note: _prevAxesByIndex is updated at the END of the frame so the
@@ -1199,14 +1755,22 @@ export class ControllerManager {
       if (!gp) continue;
       if (claimedIndices.has(gp.index)) continue;
       if (!this._padAllowed(gp)) continue;
+      // Units: a Steam twin never claims; an XInput press still waiting for
+      // its hardware report doesn't yet; a pad whose controller is already
+      // seated (over WebHID) is that seat, not a new one.
+      const info = this._padInfo.get(gp.index);
+      if (info && (info.role === 'twin' || info.role === 'pending' || info.holdUntil > now)) continue;
+      if (info && info.unit && info.unit.entry && info.unit.slot) continue;
       const releasedAt = this._recentlyReleasedByIndex.get(gp.index);
       if (releasedAt != null && (now - releasedAt) < this.opts.reclaimCooldownMs) continue;
-      if (!gamepadHasButtonPress(gp)) continue;
+      const heldPress = !!(info && info.claimPress && now - info.onsetAt < this.opts.twinClaimHoldMs + 500);
+      if (!gamepadHasButtonPress(gp) && !heldPress) continue;
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
-      const info = ControllerRegistry.identifyFromGamepadId(gp.id);
+      if (info) info.claimPress = false;
+      const ident = ControllerRegistry.identifyFromGamepadId(gp.id);
       empty.claim(gp, {
-        controllerTypeHint: info?.controllerProfile || info?.protocol || null,
+        controllerTypeHint: ident?.controllerProfile || ident?.protocol || null,
         silent: true,
       });
       claimedThisFrame.push(empty.id);
@@ -1252,6 +1816,8 @@ export class ControllerManager {
       // over Bluetooth — invisible to the Gamepad API in 0x31 mode — become
       // active when the user moves the stick, matching its lit "in use" dot.
       if (!entry.hasFreshInput()) continue;
+      const unit = this._unitByEntry.get(entry);
+      if (unit && unit.presence !== 'present') continue;
       // Dedupe: if this physical controller is already claimed via the
       // Gamepad API path (same vid:pid), attach the HID entry to that slot
       // for gyro/touchpad rather than spawning a second slot. Fixes pads
@@ -1264,18 +1830,11 @@ export class ControllerManager {
         this._attachEntryToSlot(existing, entry);
         continue;
       }
-      // Also skip spawning a new slot if any unclaimed live Gamepad API pad
-      // shares this HID device's productName — the Gamepad API claim path
-      // will pick it up on its own button press, and we don't want to beat
-      // it to a second slot. Covers multi-interface pads like GameSir Super
-      // Nova where Gamepad API and WebHID report different vid:pid for the
-      // same physical device.
-      const claimedIdx = new Set(this.slots.filter((s) => s.gamepadIndex != null).map((s) => s.gamepadIndex));
-      const hidName = (entry.device.productName || '').trim().toLowerCase();
-      if (hidName) {
-        const dupeUnclaimed = pads.some((gp) => gp && !claimedIdx.has(gp.index) && gp.id.toLowerCase().includes(hidName));
-        if (dupeUnclaimed) continue;
-      }
+      // 0.7: no "a Gamepad pad shares this productName, leave it to the
+      // Gamepad claim" skip. That pad is this unit's own source (live or
+      // frozen); the unit is claimed once, from whichever source pressed. The
+      // skip deadlocked a DualSense whose Gamepad entry froze (Tandemonium
+      // #581 bug 6): the frozen entry never shows the press it waited for.
       const empty = this.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
       if (!empty) break;
       const releasedAt = this._recentlyReleasedBySlot.get(empty.id);
@@ -1303,7 +1862,8 @@ export class ControllerManager {
       if (s._advanceReleaseRing(now, ps)) {
         const freedIndex = s.gamepadIndex;
         if (s._hidEntry) this._detachEntryFromSlot(s);
-        s.release();
+        s.release('gesture');
+        why[s.id] = 'gesture';
         if (freedIndex != null) this._recentlyReleasedByIndex.set(freedIndex, now);
         this._recentlyReleasedBySlot.set(s.id, now);
         releasedThisFrame.push(s.id);
@@ -1341,7 +1901,7 @@ export class ControllerManager {
       this._prevAxesByIndex.set(gp.index, [...gp.axes]);
     }
 
-    return { claimed: claimedThisFrame, released: releasedThisFrame };
+    return { claimed: claimedThisFrame, released: releasedThisFrame, why };
   }
 
   /**
@@ -1350,6 +1910,12 @@ export class ControllerManager {
    */
   _attachMatchingPoolEntry(slot, pads) {
     if (slot._hidEntry) return;
+    // The pad's own unit knows its WebHID source (vid:pid, name, or press match).
+    if (slot.gamepadIndex != null) {
+      const info = this._padInfo.get(slot.gamepadIndex);
+      const u = info && info.role === 'linked' ? info.unit : null;
+      if (u && u.entry && this._hidPool.has(u.entry.device)) { this._attachEntryToSlot(slot, u.entry); return; }
+    }
     const entry = this._pickPoolEntryForSlot(slot, pads);
     if (entry) this._attachEntryToSlot(slot, entry);
   }
@@ -1542,6 +2108,8 @@ export class ControllerManager {
         hwName: (dev && dev.productName) || '',
         active: gamepadHasActivity(s.effectiveGamepad(list), 0.5),
         device: dev || null,
+        connected: s.connected,
+        unitKey: s.unit ? s.unit.key : null,
       };
       rows.push(withSeat(row, typeof seatOf === 'function' ? seatOf(s.id) : null));
     }
@@ -1564,12 +2132,20 @@ export class ControllerManager {
         hwName: (dev && dev.productName) || '',
         active: gamepadHasActivity(entry.synthetic, 0.5),
         device: dev,
+        connected: true,
+        unitKey: this._unitByEntry.get(entry)?.key ?? null,
       });
     }
 
     for (const gp of list) {
       if (!gp || claimedIdx.has(gp.index)) continue;
       if (!this._padAllowed(gp)) continue;
+      // Units: only a pad that IS a controller of its own gets a row. A pad
+      // that belongs to a WebHID unit (its own live/frozen entry) is that
+      // unit's row; Steam's twin and a press still waiting for its hardware
+      // aren't controllers; two identical pads not yet told apart wait.
+      const pinfo = this._padInfo.get(gp.index);
+      if (pinfo && pinfo.id === gp.id && pinfo.role !== 'standalone' && pinfo.role !== 'new') continue;
       const axes = gp.axes || [];
       if (Math.max(0, ...axes.slice(0, 4).map((a) => Math.abs(a || 0))) > 0.5) continue;   // stuck-stick BT ghost
       const vp = ControllerRegistry.parseGamepadVendorProduct(gp.id);
@@ -1582,6 +2158,7 @@ export class ControllerManager {
         connection: 'gamepad',
         vendorId: vp ? vp.vendorId : null, productId: vp ? vp.productId : null,
         hwName: '', active: gamepadHasActivity(gp, 0.5), device: null,
+        connected: true, unitKey: pinfo && pinfo.unit ? pinfo.unit.key : null,
       });
     }
 
