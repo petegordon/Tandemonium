@@ -1,0 +1,19 @@
+"AppBuild"
+{
+  "AppID" "4482940"
+  "Desc" "Tandemonium build"
+  "BuildOutput" "../steam_output/"
+  "ContentRoot" "../builds/"
+  "Depots"
+  {
+    "4482941"
+    {
+      "FileMapping"
+      {
+        "LocalPath" "windows/*"
+        "DepotPath" "."
+        "recursive" "1"
+      }
+    }
+  }
+}
