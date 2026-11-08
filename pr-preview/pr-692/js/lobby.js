@@ -3823,6 +3823,16 @@ export class Lobby {
     if (track) track.enabled = enabled;
   }
 
+  /** #567: music is on but the browser hasn't let it play yet (it starts on the next key, click or touch). */
+  setMusicBlocked(blocked) {
+    for (const el of [this.toggleMusic, this._barPills && this._barPills.music]) {
+      if (!el) continue;
+      el.classList.toggle('music-blocked', !!blocked);
+      if (blocked) el.setAttribute('title', 'Music: press any key to start it');
+      else if (el.getAttribute('title') === 'Music: press any key to start it') el.setAttribute('title', 'Music');
+    }
+  }
+
   _toggleMusic() {
     this.musicActive = !this.musicActive;
     // When toggling on from muted volume, bump to Low so audio is audible
