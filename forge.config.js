@@ -19,6 +19,21 @@ module.exports = {
       path.join(__dirname, 'steamworks_sdk'),
     ],
     name: 'Tandemonium',
+    // macOS (#192). icon above resolves to assets/icon.icns there; CI makes it
+    // from the 512 px Steam icon (scripts/make-icns.sh): iconutil is macOS-only.
+    appBundleId: 'com.housetandem.tandemonium',
+    appCategoryType: 'public.app-category.games',
+    // Universal merge: koffi ships both darwin_arm64 and darwin_x64 prebuilts and
+    // the Steam dylib is already universal, so these files are the same in both
+    // halves; let them through as-is.
+    osxUniversal: { x64ArchFiles: '**/{koffi,steamworks_sdk}/**' },
+    extendInfo: {
+      NSCameraUsageDescription: 'Tandemonium uses your camera for the partner video in online rides and for ride clips.',
+      NSMicrophoneUsageDescription: 'Tandemonium uses your microphone for voice in online rides and for ride clips.',
+      NSCameraUseContinuityCameraDeviceType: true,
+      NSBluetoothAlwaysUsageDescription: 'Tandemonium reads Bluetooth controllers for steering and gyro.',
+      LSMinimumSystemVersion: '11.0',
+    },
     // Dev-only pages and rendered output that must not ship (#505 fit viewer).
     ignore: [/^\/tools\/fit-viewer(\/|$)/, /^\/renders(\/|$)/],
   },
