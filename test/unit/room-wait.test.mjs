@@ -103,3 +103,25 @@ test('ActivityPinger: at most one ping per period, and only after a change', () 
   assert.equal(a.pump(), false, 'no change, no ping');
   assert.equal(sent, 2);
 });
+
+// #694 · what the room server remembers (on "waiting")
+test('B with the room record: a never-opened or long-unused room says "check the code" and offers another at once', () => {
+  const s = base({ seat: 'join', kind: 'join', role: 'stoker', openAt: 0, absentAt: 0 });
+  const never = roomWaitView({ ...s, relay: { fresh: true, lastUsedAt: null, partnerSeenAt: null, partnerName: null } }, 0);
+  assert.equal(never.text, 'No one has opened room ABCD yet. Check the code · 0:00');
+  assert.deepEqual(never.actions.map((a) => a.id), ['keep', 'other-code']);
+  assert.equal(never.focus, 'keep');
+  const old = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -2 * 3600000, partnerSeenAt: null, partnerName: null } }, 0);
+  assert.equal(old.text, "Room ABCD hasn't been used for 2 h. Check the code · 0:00");
+  const recent = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: -60000, partnerName: 'Pete' } }, 0);
+  assert.match(recent.text, /^No one else is in room ABCD yet/, 'used a minute ago: the ordinary B');
+});
+
+test('C/D with no local history use the room record (name and last seen)', () => {
+  const s = base({ kind: 'rejoin', partner: { name: null, seenAt: null }, startedAt: 0, openAt: 0 });
+  assert.match(roomWaitView(s, 0).text, /^No one else has been in room ABCD/);
+  const c = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -180000, partnerSeenAt: -180000, partnerName: 'Pat' } }, 0);
+  assert.match(c.text, /^Pat \(your Stoker\) was here 3 min ago/);
+  const later = roomWaitView({ ...s, partner: { name: 'Pat', seenAt: -3 * 3600000 }, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: -60000, partnerName: 'Pat' } }, 0);
+  assert.equal(later.kind, 'C', 'the later sighting (on the server) wins');
+});

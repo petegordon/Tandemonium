@@ -4967,6 +4967,7 @@ export class Lobby {
       },
       onStep: (name) => this._currentStep === (name === 'host' ? this.hostStep : this.joinStep),
       wait: (seat, view) => this._renderRoomWait(seat, view),
+      myName: () => { const u = this.auth && this.auth.isLoggedIn() && this.auth.getUser(); return (u && u.name) || null; },
     };
   }
 

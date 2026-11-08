@@ -36,6 +36,7 @@
 //   connectFailed(role, code)          stoker: the join failed (spinners, retry code)
 //   onStep(name)                       is the lobby on step 'host' | 'join'?
 //   wait(seat, view|null)              #694 · the waiting line (who, how long, what you can do); null clears it
+//   myName()                           #694 · this player's display name for the relay (optional)
 //
 // Every attempt captures its epoch and its transport; after each await, and in
 // every callback, a superseded attempt (another create/join/rejoin, or a leave)
@@ -116,6 +117,8 @@ export class RoomSession {
     const m = this._host.media();
     net._fallbackUrl = this._relayUrl;
     net.cameraEnabled = m.camera;
+    // #694: the relay remembers this seat by name (a signed-in player's; none for a guest)
+    net._displayName = (this._host.myName && this._host.myName()) || null;
     net.audioEnabled = m.audio;
     return { epoch, net };
   }
@@ -149,7 +152,7 @@ export class RoomSession {
       this._store.save(code, 'captain');   // for rejoin after a refresh
       this.wait.roomOpen();
     };
-    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(); };
+    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(net.roomInfo || null); };
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
@@ -233,7 +236,7 @@ export class RoomSession {
       this._store.save(code, 'stoker');
       this.wait.roomOpen();
     };
-    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(); };
+    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(net.roomInfo || null); };
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
@@ -316,7 +319,7 @@ export class RoomSession {
     // #346 · the relay says the room is open but the partner is not in it.
     net.onRoomWaiting = () => {
       if (!this._live(epoch) || net.connected) return;
-      this.wait.partnerAbsent();
+      this.wait.partnerAbsent(net.roomInfo || null);
     };
 
     net.onConnected = () => {
