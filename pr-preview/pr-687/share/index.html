@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1d1029">
+<meta name="robots" content="noindex">
+<title>Tandemonium · Share your ride</title>
+<!-- #657 part 2 · the page a phone opens from the TV's SHARE RESULT QR:
+     /share/?id=<share id>. It shows the result card the game uploaded (held
+     7 days by the API Worker, worker/share.js) and the road link, and the
+     Share button hands the card to the phone's own share sheet (Discord,
+     Messages, Instagram…). Falls back to copying the link. -->
+<style>
+  :root {
+    --bg-top: #2a1638; --bg-bottom: #120a1c; --cream: #fff4dc; --dim: #cdb9d9;
+    --gold: #ffd23f; --panel: rgba(255,255,255,0.07); --line: rgba(255,255,255,0.14);
+    --accent: #2ef33c; --accent-ink: #0c2a10;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom)) fixed, var(--bg-bottom);
+    color: var(--cream); font: 16px/1.45 "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    padding: max(20px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  }
+  main { max-width: 560px; margin: 0 auto; display: grid; gap: 16px; }
+  #result { display: grid; gap: 14px; }
+  #result .caption { margin-top: 6px; text-align: center; }
+  header { display: flex; align-items: center; gap: 10px; }
+  header img { height: 34px; width: auto; }
+  header .kicker { color: var(--dim); font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { margin: 0; font: 900 21px/1.25 "Arial Black", "Segoe UI Black", system-ui, sans-serif; }
+  .card { width: 100%; aspect-ratio: 16 / 9; border-radius: 14px; overflow: hidden; background: var(--panel);
+    border: 1px solid var(--line); box-shadow: 0 18px 40px rgba(0,0,0,.45); display: grid; place-items: center; }
+  .card img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .card .wait { color: var(--dim); }
+  .caption { margin: 0; color: var(--dim); }
+  .actions { display: grid; gap: 10px; }
+  .btn { appearance: none; display: block; width: 100%; padding: 15px 18px; border-radius: 12px; text-align: center;
+    font-family: inherit; font-size: 17px; font-weight: 800; line-height: 1.2; text-decoration: none; cursor: pointer; border: 1px solid var(--line);
+    background: var(--panel); color: var(--cream); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .note { margin: 0; color: var(--dim); font-size: 14px; text-align: center; min-height: 1.4em; }
+  .gone { display: grid; gap: 12px; text-align: center; padding: 24px 8px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="../images/logo.png" alt="Tandemonium" onerror="this.remove()">
+    <span class="kicker">Share your ride</span>
+  </header>
+
+  <section id="result" hidden>
+    <h1 id="title">Your ride</h1>
+    <div class="card" id="card"><span class="wait">Loading the card…</span></div>
+    <div class="actions">
+      <button class="btn primary" id="btn-share" type="button">Share</button>
+      <a class="btn" id="btn-save" download="tandemonium-ride.jpg" hidden>Save the picture</a>
+    </div>
+    <p class="note" id="note"></p>
+    <p class="caption" id="caption"></p>
+    <a class="btn" id="btn-road" href="https://tandemonium.housetandem.com/" hidden>Ride this road</a>
+  </section>
+
+  <section class="gone" id="gone" hidden>
+    <h1>This ride has rolled on</h1>
+    <p class="caption">Shared results last 7 days. Ride today's road and share a new one.</p>
+    <a class="btn primary" href="https://tandemonium.housetandem.com/">Play Tandemonium</a>
+  </section>
+</main>
+
+<script type="module">
+  import { SHARE_API_BASE, SHARE_SITE_URL } from '../js/share-result.js';
+
+  const $ = (id) => document.getElementById(id);
+  const id = new URLSearchParams(location.search).get('id') || '';
+  let meta = null;
+  let file = null;   // the card as a File, fetched ahead so Share runs inside the tap (iOS)
+
+  function gone() { $('result').hidden = true; $('gone').hidden = false; }
+
+  function shareText() {
+    return [meta && meta.caption, meta && meta.link].filter(Boolean).join('\n');
+  }
+
+  async function copyLink() {
+    const text = (meta && meta.link) || SHARE_SITE_URL;
+    try { await navigator.clipboard.writeText(shareText() || text); $('note').textContent = 'Copied · paste it anywhere'; }
+    catch { $('note').textContent = text; }
+  }
+
+  async function share() {
+    const text = shareText();
+    try {
+      if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], text, title: 'Tandemonium' });
+      } else if (navigator.share) {
+        await navigator.share({ text, url: (meta && meta.link) || undefined, title: 'Tandemonium' });
+      } else {
+        await copyLink();
+        return;
+      }
+      $('note').textContent = 'Shared!';
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;   // closed the share sheet
+      await copyLink();
+    }
+  }
+
+  async function load() {
+    if (!/^[A-Za-z0-9]{12}$/.test(id)) return gone();
+    let res;
+    try { res = await fetch(SHARE_API_BASE + '/share/' + id); } catch { res = null; }
+    if (!res || !res.ok) return gone();
+    meta = await res.json();
+    $('result').hidden = false;
+    const cap = meta.caption || 'Tandemonium';
+    $('title').textContent = cap.replace(/^Tandemonium · /, '');
+    $('caption').textContent = meta.link ? 'Grandma’s waiting. Ride the same road:' : '';
+    if (meta.link) { $('btn-road').href = meta.link; $('btn-road').hidden = false; }
+    $('btn-share').textContent = navigator.share ? 'Share' : 'Copy the link';
+
+    const img = new Image();
+    img.alt = cap;
+    img.src = meta.imageUrl;
+    img.onload = () => { $('card').replaceChildren(img); };
+    img.onerror = () => { $('card').innerHTML = '<span class="wait">The picture would not load</span>'; };
+    $('btn-save').href = meta.imageUrl;
+    $('btn-save').hidden = false;
+
+    try {
+      const blob = await (await fetch(meta.imageUrl)).blob();
+      const ext = /png/.test(blob.type) ? 'png' : 'jpg';
+      file = new File([blob], 'tandemonium-ride.' + ext, { type: blob.type || 'image/jpeg' });
+      $('btn-save').href = URL.createObjectURL(blob);
+      $('btn-save').download = file.name;
+    } catch { /* Share sends the link instead */ }
+  }
+
+  $('btn-share').addEventListener('click', share);
+  load();
+</script>
+</body>
+</html>
