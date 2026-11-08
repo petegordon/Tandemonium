@@ -11,7 +11,7 @@
 // The clip contract (bones per clip, weights, times) lives in goose-rider-clips.js.
 
 import * as THREE from 'three';
-import { SEATS, trackBone, boneFilterFor, leanWeights, turnTime, seatOffset } from './goose-rider-clips.js';
+import { SEATS, trackBone, boneFilterFor, leanWeights, turnTime, seatOffset, PF_RIDE_CLIP, PF_PEDAL_CLIP, pfClipPackFor, pfPedalTime } from './goose-rider-clips.js';
 
 function scrub(mixer, clip) {
   const a = mixer.clipAction(clip);
@@ -51,7 +51,14 @@ export class GooseRiders {
     const anims = gltf.animations || [];
     let socket = false;
     gltf.scene.traverse(o => { if (o.name === 'Seat_Captain') socket = true; });
-    return socket && anims.some(c => c.name === 'Pedal');
+    return socket && (anims.some(c => c.name === 'Pedal') || GooseRiders.isPennyFarthing(gltf));
+  }
+
+  /** #644 · the Solo Flight (Penny-Farthing tandem): seat sockets and its one bike clip, Ride (no Pedal). */
+  static isPennyFarthing(gltf) {
+    const anims = gltf.animations || [];
+    return !anims.some(c => c.name === 'Pedal') && anims.some(c => c.name === PF_RIDE_CLIP)
+      && !!gltf.scene.getObjectByName('Seat_Captain') && !!gltf.scene.getObjectByName('Crank_F');
   }
 
   /** @param {THREE.Object3D} model the bike scene; @param {THREE.AnimationClip[]} animations its clips */
@@ -66,6 +73,9 @@ export class GooseRiders {
     this.wheels = byName('WheelSpin') ? scrub(this.bikeMixer, cutClip(byName('WheelSpin'))) : null;
     // #611 · a special bike's own loop (the Time Warp: clock hands + rocket flames), on the wall clock
     this.fx = byName('TimeWarpFX') ? scrub(this.bikeMixer, cutClip(byName('TimeWarpFX'))) : null;
+    // #644 · the Penny-Farthing: its Ride clip turns the hub cranks and the wheels together, by the crank angle
+    // (feet stay on the pedals); each goose pedals with its outfit's Pedal_PF (the stoker's reversed)
+    this.pf = !this.pedal && byName(PF_RIDE_CLIP) ? scrub(this.bikeMixer, byName(PF_RIDE_CLIP)) : null;
     this.wheelCircumference = 0;   // world units; set by BikeModel once the model is scaled
     this.riderClips = {};          // seat -> { pedal, ride, leanL, leanR } (already cut to their bones)
     this.riders = {};              // seat -> { root, mixer, pedal, ride, leanL, leanR }
@@ -90,21 +100,34 @@ export class GooseRiders {
    * @param {{Captain?: string, Stoker?: string}} paths
    */
   async loadRiders(loader, paths) {
-    const loaded = await GooseRiders._fetch(loader, paths);
+    const loaded = await GooseRiders._fetch(loader, paths, !!this.pf);
     for (const [seat, l] of Object.entries(loaded)) {
       this.riderClips[seat] = l.clips;
       this._seat(seat, l.scene);
     }
   }
 
-  static async _fetch(loader, paths) {
+  /** @param {boolean} [pf] the Penny-Farthing: each goose's legs come from its outfit's Pedal_PF clip pack */
+  static async _fetch(loader, paths, pf = false) {
     const out = {};
     await Promise.all(SEATS.filter(s => paths[s]).map(async (seat) => {
-      const gltf = await loader.loadAsync(paths[seat]);
+      const pack = pf ? pfClipPackFor(paths[seat]) : null;
+      const [gltf, packGltf] = await Promise.all([loader.loadAsync(paths[seat]),
+        pack ? loader.loadAsync(pack).catch((err) => { console.warn('Penny-Farthing pedal clip failed to load:', pack, err); return null; }) : null]);
       const clips = {};
       for (const [key, prefix] of [['pedal', 'Pedal_'], ['ride', 'Ride_'], ['leanL', 'Lean_L_'], ['leanR', 'Lean_R_']]) {
         const c = gltf.animations.find(a => a.name === prefix + seat);
         if (c) clips[key] = cutClip(c);
+      }
+      const pfClip = packGltf && packGltf.animations.find(a => a.name === PF_PEDAL_CLIP);
+      if (pfClip) {
+        // only the bones this goose has (the pack's armature can carry a cloth chain the delivered goose lacks)
+        const have = new Set();
+        gltf.scene.traverse(o => { if (o.name) have.add(o.name); });
+        const c = cutClip(pfClip);
+        c.tracks = c.tracks.filter(t => have.has(trackBone(t.name)));
+        clips.pedal = c;
+        clips.pedalPF = true;
       }
       out[seat] = { scene: gltf.scene, clips };
     }));
@@ -120,7 +143,7 @@ export class GooseRiders {
    * @param {boolean} [disposeOld]
    */
   async swapRiders(loader, paths, disposeOld = true) {
-    const loaded = await GooseRiders._fetch(loader, paths);
+    const loaded = await GooseRiders._fetch(loader, paths, !!this.pf);
     for (const seat of Object.keys(loaded)) {
       const old = this.riders[seat];
       if (old) {
@@ -188,7 +211,7 @@ export class GooseRiders {
   _bindRider(seat, root) {
     const clips = this.riderClips[seat] || {};
     const mixer = new THREE.AnimationMixer(root);
-    const r = { root, mixer, pedal: null, ride: null, leanL: null, leanR: null };
+    const r = { root, mixer, pedal: null, ride: null, leanL: null, leanR: null, pedalPF: !!clips.pedalPF };
     for (const k of ['pedal', 'ride', 'leanL', 'leanR']) if (clips[k]) r[k] = scrub(mixer, clips[k]);
     this.riders[seat] = r;
   }
@@ -213,10 +236,12 @@ export class GooseRiders {
       this.wheels.time = turnTime(2 * Math.PI * this._dist / this.wheelCircumference, this.wheels.getClip().duration);
     }
     if (this.fx) this.fx.time = turnTime(2 * Math.PI * fxClock() / this.fx.getClip().duration, this.fx.getClip().duration);
+    if (this.pf) this.pf.time = turnTime(this._crank, this.pf.getClip().duration);
     this.bikeMixer.update(0);
     for (const [seat, r] of Object.entries(this.riders)) {
       if (r.ragdoll) continue;   // #484: a crash's rag doll owns this goose's bones (physics/crash-scene.js)
-      if (r.pedal) r.pedal.time = turnTime(this._crank, r.pedal.getClip().duration);
+      if (r.pedal) r.pedal.time = r.pedalPF ? pfPedalTime(seat, this._crank, r.pedal.getClip().duration)
+        : turnTime(this._crank, r.pedal.getClip().duration);
       const w = leanWeights(this._lean[seat]);
       if (r.ride) r.ride.setEffectiveWeight(w.ride);
       if (r.leanL) r.leanL.setEffectiveWeight(w.left);

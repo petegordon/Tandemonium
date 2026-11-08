@@ -35,7 +35,7 @@ jobs:
           - group: ride-2
             smokes: achievements quality layout geese physics no-media controller-overlay clip-share
           - group: modes
-            smokes: slingshot slingshot-aim tourist host-room grandma props time-warp
+            smokes: slingshot slingshot-aim tourist host-room grandma props time-warp solo-flight
           - group: controllers
             smokes: disconnect local-coop versus wardrobe
           - group: controllers-2
@@ -45,7 +45,7 @@ jobs:
           - group: ui
             smokes: options lobby-layout tv-nav rejoin
           - group: online
-            smokes: online
+            smokes: online host-instead
           - group: phone
             smokes: phone-pad phone-coop
     steps:

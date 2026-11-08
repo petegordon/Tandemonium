@@ -40,12 +40,13 @@
 import * as THREE from 'three';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
-import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike } from './special-bikes.js';
+import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
+import { BOTS, BOT_IDS, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamTwinPad } from './input-manager.js';
-import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
@@ -81,6 +82,10 @@ import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole b
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
+import { isRoomCode } from './lobby/room-protocol.js';   // #667
+import { RoomMove, watchMoveNet, closeQuietly } from './lobby/room-move.js';   // #667 HOST INSTEAD
+import { NetworkManager } from './network-manager.js';   // #667: the new room's transport, opened beside the old
+import { canHostInstead } from './edition.js';   // #667
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
@@ -91,6 +96,8 @@ import { playerLooks, padKeyFor, vidPidFromGamepadId, lookToWire, lookFromWire, 
 import { colourwaysFor } from './goose-colourways.js';   // #672
 import { getP1Look } from './config.js';   // #672
 import { DressingRoom } from './dressing-room.js';   // #548
+import { ControllerSettings, settingsKeyFor } from './controller-settings.js';   // #646
+import { PlayersSheet, applyPadSettings } from './players-sheet.js';   // #646
 import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
@@ -439,6 +446,8 @@ export class Lobby {
     this._previewModel = null;
     this._previewPivot = null;
     this._previewOriginalMats = null;
+    // #644 · the player bot on Solo Flight's back seat (Bolt / Rivet / Sprocket), saved per device
+    this.selectedBot = loadBotChoice(typeof localStorage !== 'undefined' ? localStorage : null);
 
     // Leaderboard state
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
@@ -974,10 +983,13 @@ export class Lobby {
     // #672 · each seat shows its goose (outfit · colours · light swatch); the partner's, while
     // their Wardrobe is open, carries a "dressing…" tag, and the captain's START RIDE says so.
     const dressing = connected && !left && !!this._partnerDressing;
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge].join('|') : 'off';
+    // #667 · HOST INSTEAD: a full-game guest in a demo host's room, whose build follows a move.
+    const rehost = connected && !left ? (this._roomMove ? 'moving' : this._hostInsteadOffered() ? 'offer' : '') : '';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge, rehost].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
+    this._syncHostInsteadRow(on ? rehost : '');
     const wardrobe = document.getElementById('level-room-wardrobe');
     if (wardrobe) wardrobe.hidden = !on;
     const note = document.getElementById('start-dressing-note');
@@ -1449,8 +1461,9 @@ export class Lobby {
       this._toggleCamera();
       analytics.trackEvent('video_toggle', { enabled: this.cameraActive });
     });
-    this.toggleMotion.addEventListener('click', () => this._toggleMotion());
-    this.toggleJoystick.addEventListener('click', () => this._toggleJoystick());
+    // #646: a choice made here is P1's controller's (js/controller-settings.js).
+    this.toggleMotion.addEventListener('click', () => { const want = !this.motionActive; this._toggleMotion(); this._rememberP1Steering({ gyro: want }); });
+    this.toggleJoystick.addEventListener('click', () => { const want = !this.joystickActive; this._toggleJoystick(); this._rememberP1Steering({ stick: want }); });
     this.toggleAudio.addEventListener('click', () => {
       this._toggleAudio();
       analytics.trackEvent('audio_toggle', { enabled: this.audioActive });
@@ -2272,6 +2285,9 @@ export class Lobby {
     // #672 · online, both players can reach the room's WARDROBE (△ / Y opens it from anywhere here).
     const wardrobeBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-room-wardrobe') : null;
     if (wardrobeBtn) navItems.splice(navItems.length - 1, 0, wardrobeBtn);
+    // #667 · HOST INSTEAD (shown only to a full guest in a Demo room; hidden items are skipped).
+    const hostInsteadBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-host-instead') : null;
+    if (hostInsteadBtn) navItems.splice(wardrobeBtn ? navItems.indexOf(wardrobeBtn) : navItems.length - 1, 0, hostInsteadBtn);
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
@@ -2700,6 +2716,9 @@ export class Lobby {
     // #672: the online room's WARDROBE (both sides; △ / Y does the same from a pad).
     const roomWardrobeBtn = document.getElementById('btn-room-wardrobe');
     if (roomWardrobeBtn) roomWardrobeBtn.addEventListener('click', () => { if (this._inOnlineRoom()) this._openDressingRoom(1); });
+    // #667: HOST INSTEAD (a full-game guest in a demo host's room).
+    const hostInsteadBtn = document.getElementById('btn-host-instead');
+    if (hostInsteadBtn) hostInsteadBtn.addEventListener('click', () => { this._hostInstead(); });
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -3151,9 +3170,18 @@ export class Lobby {
    * choice (tandemonium_joystick in localStorage).
    */
   _joystickOffForGyro() {
-    let saved = null;
-    try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
-    if (saved !== null || !this.joystickActive) return;
+    // #646: the choice is P1's controller's. A pad with its own Stick or Gyro
+    // choice (or the migrated screen-wide one) rides with that instead.
+    const padKey = this._p1SettingsKey();
+    if (padKey) {
+      const s = this.controllerSettings.get(padKey);
+      if (s.stick !== null || s.gyro === false) { this._applyP1ControllerSettings(); return; }
+    } else {
+      let saved = null;
+      try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
+      if (saved !== null) return;
+    }
+    if (!this.joystickActive) return;
     // Never leave a rider with nothing to steer by: only once the gyro is live.
     if (!this.input || !this.input.motionEnabled) return;
     this.joystickActive = false;
@@ -3282,15 +3310,15 @@ export class Lobby {
   // At ≥1024px the round toggle columns, the Back hint and the credits footer
   // give way to <uf-system-bar id="lobby-bar"> (css/lobby-tv.css). Its pills
   // run the same handlers as the toggles; Stick / Gyro steering live in the
-  // Controls sheet (<uf-sheet id="controls-sheet">) behind one pill that names
+  // Players sheet (#646, <uf-sheet id="players-sheet">) behind one pill that names
   // the controller in use. Below 1024px none of this shows and the toggles
   // work as before.
 
   _initSystemBar() {
     const $ = (id) => document.getElementById(id);
     this._bar = $('lobby-bar');
-    this._controlsSheet = $('controls-sheet');
-    if (!this._bar || !this._controlsSheet) return;
+    this._playersSheet = $('players-sheet');   // #646: Players replaces Controls
+    if (!this._bar || !this._playersSheet) return;
     this._tvQuery = window.matchMedia('(min-width: 1024px)');
     const pill = (id, fn) => {
       const el = $(id);
@@ -3304,7 +3332,7 @@ export class Lobby {
       leaderboard: pill('bar-leaderboard', () => this._openLeaderboard()),
       achievements: pill('bar-achievements', () => this._openAchievements()),   // #540
       profile: pill('bar-profile', (el) => { this._anchorPopup(this.profilePopup, el); this._toggleProfile(); }),
-      controls: pill('bar-controls', () => this._openControlsSheet()),
+      players: pill('bar-players', () => this._openPlayersSheet()),   // #646
       music: pill('bar-music', (el) => {
         if (this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); return; }
         this._anchorPopup(this._volumePicker, el);
@@ -3321,7 +3349,7 @@ export class Lobby {
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
     this._modeColumns[0].push(p.help, p.leaderboard, p.achievements, p.profile);
-    this._modeColumns[2].push(p.controls, p.music, p.settings, p.quit);   // #517: Quit on the far right
+    this._modeColumns[2].push(p.players, p.music, p.settings, p.quit);   // #517: Quit on the far right
     // The bike chooser's ‹ › join the D-pad focus too: a phone remote or a TV
     // remote has no L1 / R1, so ← from RIDE TOGETHER lands on › and OK changes
     // the bike. Hidden off the first page, where the focus skips them.
@@ -3403,16 +3431,12 @@ export class Lobby {
       });
     }
 
-    // ── Controls sheet ──
-    const sheet = this._controlsSheet;
+    // ── Players sheet (#646) ── who is playing, their controllers and each controller's settings.
+    const sheet = this._playersSheet;
     sheet.attachFocus(this._stepFocus);
-    $('controls-done')?.addEventListener('click', () => sheet.close());
-    $('set-stick')?.addEventListener('change', () => { this._toggleJoystick(); this._syncSystemBar(); });
-    $('set-gyro')?.addEventListener('change', () => { this._toggleMotion(); this._syncSystemBar(); });
+    this._players = new PlayersSheet(this, sheet);
+    $('players-done')?.addEventListener('click', () => sheet.close());
     $('set-phone')?.addEventListener('uf-setting:open', () => { sheet.close(); $('btn-mode-phone')?.click(); });
-    const slider = /** @type {HTMLInputElement|null} */ ($('set-feel-slider'));
-    if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
-    $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
     sheet.addEventListener('uf-sheet:close', () => { this._stepFocus.setSlider(null); this._syncSystemBar(); });
 
     // ── Quit confirm (#172) ── desktop app only. The kit sheet handles B /
@@ -3446,20 +3470,16 @@ export class Lobby {
     popup.style.bottom = `${Math.round(window.innerHeight - r.top + 12)}px`;
   }
 
-  _openControlsSheet() {
+  _openPlayersSheet() {
     this._syncSystemBar();
-    const slider = /** @type {HTMLInputElement|null} */ (document.getElementById('set-feel-slider'));
-    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel) * 100));
-    // #430: on a controller, left/right moves the Steering feel slider (the
-    // sheet is a vertical list, so up/down still moves between rows).
-    if (slider) this._stepFocus.setSlider(slider);
-    this._controlsSheet.show();
+    this._players.show();
   }
 
-  /** Steering feel, shared by the Motion popup's slider and the Controls sheet's. */
+  /** Player 1's steering feel, from the Motion popup's slider or P1's row in Players. */
   _applySteeringFeel(feel) {
     const oldFeel = TUNE.steeringFeel;
     applySteeringFeel(feel);
+    this._rememberP1Steering({ feel });   // #646: Player 1's controller's feel
     saveSteeringFeelPref(feel);   // #430: kept even with no calibration saved
     analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
     try {
@@ -3501,11 +3521,18 @@ export class Lobby {
     const id = this._p1Identity();
     const stick = !!this.joystickActive, gyro = !!this.motionActive;
     const mode = [stick && 'stick', gyro && 'gyro'].filter(Boolean).join(' + ') || 'buttons';
-    const label = document.getElementById('bar-controls-label');
+    void mode;
+    // #646: the pill opens Players; it counts this screen's seats once there is more than one.
+    const label = document.getElementById('bar-players-label');
     if (label) {
-      const text = id ? `${id.shortName} · ${mode}` : 'Controls';
+      let count = 1;
+      try { count = this.playersOnScreen().length; } catch (e) {}
+      const text = count > 1 ? `Players · ${count}` : 'Players';
       if (label.textContent !== text) label.textContent = text;
     }
+    // #646: P1's controller brings its own settings when it changes.
+    const p1Key = this._p1SettingsKey();
+    if (p1Key !== this._p1SettingsKeyApplied) { this._p1SettingsKeyApplied = p1Key; if (p1Key) this._applyP1ControllerSettings(); }
     // #540: the Achievements pill reads "earned / total" (Pete: the count, not the word).
     const count = document.getElementById('bar-achievements-count');
     if (count && this._achievements) {
@@ -3514,10 +3541,13 @@ export class Lobby {
       if (count.textContent !== text) count.textContent = text;
     }
     const Glyph = customElements.get('uf-controller-glyph');
-    const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
+    // #646: P1's controller may have its Button prompts set by hand (Players).
+    const promptPick = p1Key ? this.controllerSettings.get(p1Key).prompts : 'auto';
+    const family = promptPick && promptPick !== 'auto' ? promptPick : (id ? id.glyphFamily : 'generic');
+    const key = `${family}${id && id.swapAB ? '/swap' : ''}`;
     if (Glyph && key !== this._glyphKey) {
       this._glyphKey = key;
-      Glyph.setDefault({ family: id ? id.glyphFamily : 'generic', swap: !!(id && id.swapAB) });
+      Glyph.setDefault({ family, swap: !!(id && id.swapAB) });
     }
     this._barPills?.music?.classList.toggle('active', !!this.musicActive);
     // Back shows on every step but the first.
@@ -3530,36 +3560,234 @@ export class Lobby {
       const want = this._canQuit && flow && flow.current === 'lobby-mode' ? '' : 'none';
       if (quit.style.display !== want) quit.style.display = want;
     }
-    // The sheet, when open.
-    const sheet = this._controlsSheet;
-    if (!sheet || !sheet.open) return;
-    const seat = document.getElementById('controls-seat');
-    if (seat) {
-      const me = id ? this.seatPerson(1) : null;
-      Object.assign(seat, { who: me ? me.name : id ? id.shortName : 'No controller yet', pic: me ? me.pic : '', source: me ? me.source : '' });
-      seat.dev = id ? `Player 1 · ${id.name}` : 'Press a button on a controller';
-      seat.state = id ? 'joined' : 'open';
-      seat.badge = id ? 'P1' : '';
+    // Players, when open (#646).
+    if (this._players) this._players.sync();
+  }
+
+  // ============================================================
+  // PLAYERS (#646) — per-controller steering settings + this screen's seats
+  // ============================================================
+  // Stick / gyro / steering feel / button prompts follow the controller
+  // (js/controller-settings.js: serial in the desktop app, model in a browser).
+  // Player 1's ride through the lobby's own toggles + TUNE; players 2–4's are
+  // set on their InputManager (applyPadSettings), read by their BalanceController.
+
+  /** The per-controller settings store, made on first use. */
+  get controllerSettings() {
+    if (!this._controllerSettings) {
+      let store = null;
+      try { store = window.localStorage; } catch (e) {}
+      this._controllerSettings = new ControllerSettings({ store, defaultFeel: BALANCE_DEFAULTS.steeringFeel });
     }
-    const set = (sid, prop, v) => { const el = document.getElementById(sid); if (el && el[prop] !== v) el[prop] = v; };
-    set('set-stick', 'checked', stick);
-    set('set-gyro', 'checked', gyro);
-    // Gyro defaults on whenever the controller's motion sensors are bound
-    // (the desktop app grants every controller, so that's automatic there).
-    // A browser that hasn't granted this controller yet needs one click.
-    const gyroCapable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro);
-    set('set-gyro', 'description', !gyroCapable ? 'Not available on this controller'
-      : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
-      : 'Turn on to connect the gyro (your browser asks once)');
-    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
-    const roster = document.getElementById('controls-roster');
-    if (roster && this.controllerManager?.controllerRoster) {
-      // fixRosterRow: a slot row's WebHID vid:pid names it (#458 item 14).
-      roster.rows = this.controllerManager.controllerRoster(pads, {
-        seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
-        keyboard: true,
-      }).map(fixRosterRow).map((r) => (r.player === 1 ? { ...r, person: this.seatPerson(1) } : r));
+    return this._controllerSettings;
+  }
+
+  /**
+   * This screen's seats for Players: the Dressing Room's (versus, or P1 + a seated local P2),
+   * plus a local Player 2 the narrow layout seated straight onto the level step.
+   * An online partner is not here (they stay on the room screen).
+   */
+  playersOnScreen() {
+    let out = [];
+    try { out = this._roomPlayers(); } catch (e) { out = []; }
+    const im = this._localP2InputManager;
+    if (this._currentStep !== this.versusStep && im && !out.some((p) => p.n === 2) && !(this.net && this.net.connected)) {
+      out.push({ n: 2, input: im, type: this._localP2Type || 'gamepad', slotId: im._slot ? im._slot.id : null, label: this._localP2Name || 'Player 2', team: null, seat: 'Stoker' });
     }
+    return out;
+  }
+
+  /** Seat n's player ({n, input, type, slotId}), from this screen's seats. */
+  _seatPlayer(n) {
+    if (n === 1) return { n: 1, input: this.input, type: this.input && this.input.gamepadConnected ? 'gamepad' : 'keyboard', slotId: 'P1' };
+    return this.playersOnScreen().find((p) => p.n === n) || null;
+  }
+
+  /** The settings key of the controller a player holds, or null (keyboard, phone, nothing). */
+  _padSettingsKey(p) {
+    if (!p || p.type === 'keyboard' || !p.input || p.input.remoteOnly) return null;
+    if (p.n === 1 && !(p.input.gamepadConnected || p.input.steamInputHandle != null)) return null;
+    try { return settingsKeyFor(this._lookKeyFor(p)); } catch (e) { return null; }
+  }
+
+  _p1SettingsKey() { return this._padSettingsKey(this._seatPlayer(1)); }
+
+  /** Seat n's controller settings, or null without a controller. */
+  seatPadSettings(n) {
+    const key = this._padSettingsKey(this._seatPlayer(n));
+    return key ? this.controllerSettings.get(key) : null;
+  }
+
+  /** The controller identity of a seat (name, glyphs, capabilities), or null. */
+  seatIdentity(p) {
+    if (!p || p.type === 'keyboard') return null;
+    if (p.n === 1) return this._p1Identity();
+    if (p.input && p.input.remoteOnly) return null;
+    try { return this._versusIdentity({ ...p, kind: undefined }); } catch (e) { return null; }
+  }
+
+  /** Does this seat's controller have motion sensors we can steer with? */
+  _inputHasGyro(input) {
+    return !!(input && ((input._slot && input._slot._hidEntry) || input.gyroConnected || input.steamInputHandle != null));
+  }
+
+  /** What seat n's steering does right now: {stick, gyro, gyroCapable, gyroHint}. */
+  seatSteering(n) {
+    if (n === 1) {
+      const id = this._p1Identity();
+      const capable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro) || this._inputHasGyro(this.input);
+      const gyro = !!this.motionActive;
+      return { stick: !!this.joystickActive, gyro, gyroCapable: capable,
+        // Gyro defaults on whenever the controller's motion sensors are bound
+        // (the desktop app grants every controller, so that's automatic there).
+        // A browser that hasn't granted this controller yet needs one click.
+        gyroHint: !capable ? 'Not available on this controller'
+          : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
+          : 'Turn on to connect the gyro (your browser asks once)' };
+    }
+    const p = this._seatPlayer(n);
+    const input = p && p.input;
+    const capable = this._inputHasGyro(input);
+    return { stick: !!(input && !input.suppressGamepadLean), gyro: !!(input && input.motionEnabled && capable), gyroCapable: capable,
+      gyroHint: capable ? 'Tilt the controller to lean' : 'Not available on this controller' };
+  }
+
+  /**
+   * Change seat n's controller settings (Players): saved on the controller, applied at once.
+   * @param {number} n @param {{stick?: boolean, gyro?: boolean, feel?: number, prompts?: string}} patch
+   */
+  setSeatSteering(n, patch) {
+    const p = this._seatPlayer(n);
+    const key = this._padSettingsKey(p);
+    if (n === 1) {
+      // Player 1 goes through the lobby's own toggles (WebHID grant, "keyboard only" guard).
+      if (patch.stick != null && patch.stick !== !!this.joystickActive) this._toggleJoystick();
+      if (patch.gyro != null && patch.gyro !== !!this.motionActive) this._toggleMotion();
+      if (patch.feel != null) { this._applySteeringFeel(patch.feel); return; }
+      if (key) this.controllerSettings.set(key, patch);
+      this._syncSystemBar();
+      return;
+    }
+    if (!key) return;
+    this.controllerSettings.set(key, patch);
+    this._reapplyControllerSettings(key);
+    analytics.trackEvent('controller_setting_change', { seat: n, ...patch });
+  }
+
+  /** P1 changed a steering choice somewhere: it is now that controller's. */
+  _rememberP1Steering(patch) {
+    const key = this._p1SettingsKey();
+    if (key) this.controllerSettings.set(key, patch);
+  }
+
+  /** Bring Player 1's toggles and TUNE in line with the controller P1 holds now. */
+  _applyP1ControllerSettings() {
+    const key = this._p1SettingsKey();
+    if (!key) return;
+    const s = this.controllerSettings.get(key);
+    if (!(Math.abs((TUNE.steeringFeel ?? -1) - s.feel) < 1e-6)) applySteeringFeel(s.feel);
+    if (s.stick !== null && s.stick !== !!this.joystickActive) {
+      this.joystickActive = s.stick;
+      if (this.input) this.input.suppressGamepadLean = !s.stick;
+      this._setToggleActive('joystick', s.stick);
+    }
+    if (s.gyro === false && this.motionActive) {
+      this.motionActive = false;
+      if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
+      this._setToggleActive('motion', false);
+    } else if (s.gyro === true && !this.motionActive && this._motionPermitted) {
+      this.motionActive = true;
+      if (this.input) { this.input.motionEnabled = true; this.input.startTiltCalibration(); }
+      this._setToggleActive('motion', true);
+    }
+  }
+
+  /** Player 1's controller's steering feel (game._loadSavedTuning), or null without a controller. */
+  p1SteeringFeel() {
+    const key = this._p1SettingsKey();
+    return key ? this.controllerSettings.get(key).feel : null;
+  }
+
+  /**
+   * Put a seat's controller settings on its InputManager (players 2–4): joins, ride starts
+   * (game.js), and every change in Players. Keyboard and phone seats have none.
+   * @param {{n?: number, input: any, type?: string, slotId?: string|null}} p
+   */
+  applySeatControllerSettings(p) {
+    if (!p || !p.input || p.input === this.input) return;
+    const key = this._padSettingsKey({ type: 'gamepad', ...p });
+    if (!key) return;
+    const s = this.controllerSettings.get(key);
+    applyPadSettings(p.input, s, feelTuning(s.feel), this._inputHasGyro(p.input));
+  }
+
+  /** Re-apply settings to every live seat holding the controller with this key. */
+  _reapplyControllerSettings(key) {
+    const seen = new Set();
+    const each = (p) => {
+      if (!p || !p.input || seen.has(p.input) || p.input === this.input) return;
+      seen.add(p.input);
+      if (this._padSettingsKey({ type: 'gamepad', ...p }) === key) this.applySeatControllerSettings(p);
+    };
+    for (const p of this.playersOnScreen()) each(p);
+    const g = typeof window !== 'undefined' ? window._game : null;
+    if (g) {
+      if (g.inputP2) each({ n: 2, input: g.inputP2, type: 'gamepad', slotId: g.inputP2._slot ? g.inputP2._slot.id : null });
+      for (const rig of g.versusRigs || []) for (const m of rig.members || []) {
+        if (!m.isP1 && m.type === 'gamepad' && m.input) each({ n: m.n, input: m.input, type: 'gamepad', slotId: m.slotId || (m.input._slot ? m.input._slot.id : null) });
+      }
+    }
+  }
+
+  /**
+   * Players' Available controllers: connected, not seated. `assign` seats one where this
+   * step can (the co-op stoker seat, the next versus seat) through the step's own join,
+   * which claims a ControllerManager slot like any join.
+   * @returns {{ list: Array<{key: string, name: string, connection: string, detail: string, glyphFamily?: string, assign: (() => void)|null}>, note: string }}
+   */
+  availableControllers(players) {
+    const seatedSlots = new Set(players.map((p) => p.slotId || (p.input && p.input._slot && p.input._slot.id)).filter(Boolean));
+    const seatedIdx = new Set(players.map((p) => p.input && p.input.gamepadIndex).filter((x) => x != null));
+    const versus = this._currentStep === this.versusStep;
+    let cands = [];
+    try { cands = versus ? (this._versusCandidates || []) : (this._detectLocalJoinCandidates() || []); } catch (e) { cands = []; }
+    cands = cands.filter((c) => c.kind !== 'phone' && !(c.slotId && seatedSlots.has(c.slotId)) && !(c.gpIndex != null && seatedIdx.has(c.gpIndex)));
+    const online = !!(this.net && this.net.connected);
+    let join = null, note = '';
+    if (versus) {
+      if (players.length < 4) join = (c) => this._versusJoinCandidate(c);
+      else note = 'All four seats are taken.';
+    } else if (this._currentStep === this.hostStep && !online && !this._localSeatedOnHost) {
+      join = (c) => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry });
+    } else if (this._localSeatedOnHost || online) note = 'Both seats on the tandem are taken.';
+    else note = 'Choose RIDE TOGETHER or VERSUS to seat another player.';
+    let seatN = 2;
+    if (versus) seatN = lowestFreePlayerNumber(this._versusPlayers) ?? players.length + 1;
+    const list = cands.map((c) => {
+      let id = null;
+      try { id = this._versusIdentity(c); } catch (e) {}
+      return {
+        key: c.key, name: (id && id.name) || c.name || 'Controller',
+        connection: c.kind === 'hid' ? 'webhid' : 'gamepad',
+        glyphFamily: id ? id.glyphFamily : 'generic',
+        detail: join ? `Select to make it Player ${seatN}` : 'Not seated',
+        assign: join ? () => join(c) : null,
+      };
+    });
+    return { list, note: list.length ? note : '' };
+  }
+
+  /**
+   * Sign seat n out of everything on this device: P1 the game's own account (not on Steam:
+   * they launched from their own Steam library), P2–4 their seat session.
+   */
+  signOutSeat(n) {
+    if (n === 1) {
+      if (this._isSteam) return;
+      document.getElementById('profile-popup-logout')?.click();
+      return;
+    }
+    try { this.seatAccounts.signOut(n); } catch (e) {}
   }
 
   _applyVideoTrackState(enabled) {
@@ -3681,7 +3909,7 @@ export class Lobby {
   // toggle (phone). The badges + the sheet's Close are the pad's focus set.
   _achFocusables() {
     return [
-      ...document.querySelectorAll('#lb-achievements .lb-ach-item'),
+      ...document.querySelectorAll('#lb-achievements .uag-item'),
       this._achievementsSheet.querySelector('.uf-sheet__close'),
     ].filter(Boolean);
   }
@@ -3689,14 +3917,18 @@ export class Lobby {
   _openAchievements() {
     this._renderAchievements();
     this._achievementsSheet.show();
-    if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
-    this._achResetFocus();
+    // #634: <uf-achievement-grid> renders on a microtask; this one runs after it.
+    queueMicrotask(() => {
+      if (!this._achievementsSheet.open) return;
+      if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
+      this._achResetFocus();
+    });
   }
 
   _achResetFocus(initial = null) {
     this._activeModal = 'achievements';
     this._modalBack = () => this._closeAchievements();
-    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
+    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .uag-item'));
   }
 
   /**
@@ -3706,16 +3938,16 @@ export class Lobby {
    * @param {-1|1} dir
    */
   _achJumpSection(dir) {
-    const secs = Array.from(document.querySelectorAll('#lb-achievements .lb-ach-section'))
-      .filter((sec) => sec.querySelector('.lb-ach-item'));
+    const secs = Array.from(document.querySelectorAll('#lb-achievements .uag-section'))
+      .filter((sec) => sec.querySelector('.uag-item'));
     if (!secs.length) return;
     const f = this._modalFocus.focused;
     const cur = f ? secs.findIndex((sec) => sec.contains(f)) : -1;
     let i;
     if (cur < 0) i = dir > 0 ? 0 : secs.length - 1;   // on Close (or nothing): RB → top, LB → last section
-    else if (dir < 0 && f !== secs[cur].querySelector('.lb-ach-item')) i = cur;
+    else if (dir < 0 && f !== secs[cur].querySelector('.uag-item')) i = cur;
     else i = Math.max(0, Math.min(secs.length - 1, cur + dir));
-    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.lb-ach-item'));
+    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.uag-item'));
     this._modalFocus.focusElement(first);
     secs[i].scrollIntoView({ block: 'start', inline: 'nearest' });
   }
@@ -4192,46 +4424,36 @@ export class Lobby {
   /**
    * #401 · the badge screen: all 100 achievements grouped by section,
    * counters with their progress (3/7 days), hidden ones as ??? until earned.
+   * #634: rendered by the kit's <uf-achievement-grid> (#ach-grid).
    */
   _renderAchievements() {
-    const container = document.getElementById('lb-achievements');
-    if (!container) return;
+    const grid = /** @type {any} */ (document.getElementById('ach-grid'));
+    if (!grid) return;
     const sections = this._achievements.getSections();
-    const defs = sections.flatMap(s => s.items);
-    const earnedCount = defs.filter(d => d.earned).length;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
+    grid.sections = sections.map(sec => ({ id: sec.id, title: sec.title }));
+    grid.achievements = sections.flatMap(sec => sec.items).map(d => this._achItem(d));
+    if (!grid.dataset.achClicks) {
+      grid.dataset.achClicks = '1';
+      // a tap, Enter, or the pad's A (the focus controller clicks) opens the detail card
+      grid.addEventListener('uf-achievement-grid:select', (e) => this._openAchievementDetail(e.detail.id));
+    }
+  }
 
-    let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
-    for (const sec of sections) {
-      const got = sec.items.filter(d => d.earned).length;
-      html += '<div class="lb-ach-section" data-section="' + sec.id + '">' +
-        '<div class="lb-ach-section-title">' + this._escapeHtml(sec.title) +
-        ' <span class="lb-ach-section-count">' + got + '/' + sec.items.length + '</span></div>';
-      html += '<div class="lb-achievement-grid">';
-      sec.items.forEach(d => {
-        const cls = (d.earned ? 'earned' : 'locked') + (d.secret ? ' secret' : '') + (d.demoLocked ? ' demo-locked' : '');
-        const prog = d.progress && d.progress[0] > 0
-          ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
-          : '';
-        const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
-        // #540: a button — a tap, Enter, or the pad's A opens the detail card.
-        html += '<button type="button" class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '"' +
-          ' aria-label="' + this._escapeHtml(d.name + (d.earned ? ', unlocked' : ', locked')) + '">' +
-          '<span class="lb-ach-icon">' + d.icon + '</span>' +
-          '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
-          prog +
-        '</button>';
-      });
-      html += '</div></div>';
-    }
-    container.innerHTML = html;
-    if (!container.dataset.achClicks) {
-      container.dataset.achClicks = '1';
-      container.addEventListener('click', (e) => {
-        const tile = /** @type {HTMLElement} */ (e.target).closest('.lb-ach-item');
-        if (tile) this._openAchievementDetail(tile.dataset.ach);
-      });
-    }
+  /**
+   * One of getAllDefinitions() as the kit's AchievementItem (#634). Hidden ones
+   * already carry ??? / ❔; full-game-only ones read "Full game" in the demo.
+   */
+  _achItem(d) {
+    return {
+      id: d.id, name: d.name, description: d.desc, icon: d.icon, section: d.section,
+      earned: d.earned, earnedAt: d.earnedAt, progress: d.progress, unit: d.unit, secret: d.secret,
+      unavailable: d.demoLocked ? 'Full game' : '', unavailableNote: 'Unlocks in the full game',
+      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
+      ...(d.earned && d.held ? {
+        kicker: 'Earned with a friend',
+        status: (d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked') + ' · get the full game to claim it',
+      } : {}),
+    };
   }
 
   // ── #540 · one achievement's detail card ──
@@ -4250,7 +4472,7 @@ export class Lobby {
     if (!d) return;
     this._achDetailId = id;
     this._renderAchievementDetail(d);
-    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]'));
+    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]'));
     const show = () => {
       this._achDetailSheet.heading = this._achievementSectionTitle(d.section);
       this._achDetailSheet.show();
@@ -4269,13 +4491,13 @@ export class Lobby {
   /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
   _onAchievementDetailClosed() {
     this._clearAchievementDim();
-    const lift = document.getElementById('ach-lift');
+    const lift = document.getElementById('ach-lift-host');
     if (lift) lift.remove();
-    document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
+    document.querySelectorAll('#lb-achievements .uag-item.lifting').forEach(el => el.classList.remove('lifting'));
     const id = this._achDetailId;
     this._achDetailId = null;
     if (!this._achievementsSheet.open) return;
-    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
+    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]') : null);
     this._achResetFocus(tile);
     if (tile) tile.focus({ preventScroll: true });
   }
@@ -4294,47 +4516,27 @@ export class Lobby {
     return sec ? sec.title : 'Achievement';
   }
 
+  /**
+   * #634: the card is the kit's <uf-achievement-detail> (#ach-detail-card): it
+   * works out the kicker, the status and the progress bar. The game adds its
+   * own lines: the medal times (extraHtml, under the description) and where +
+   * when a best-so-far was set (footHtml, under the bar).
+   */
   _renderAchievementDetail(d) {
-    const card = document.getElementById('ach-detail-card');
+    const card = /** @type {any} */ (document.getElementById('ach-detail-card'));
     if (!card) return;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
-    const total = this._achievements.getAllDefinitions().length;
-    let state, kicker, status;
     let bestLine = '';
-    if (d.earned) {
-      state = 'earned'; kicker = 'Achievement unlocked';
-      status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
-      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
-      if (d.held) { kicker = 'Earned with a friend'; status += ' · get the full game to claim it'; }
-    } else if (d.secret) {
-      state = 'secret'; kicker = 'Hidden'; status = 'Revealed when you earn it';
-    } else if (d.demoLocked) {
-      state = 'full'; kicker = 'Full game'; status = 'Unlocks in the full game';
-    } else if (d.progress && d.progress[0] > 0) {
-      state = 'progress'; kicker = 'In progress';
-      status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
-      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
-      if (d.bestAt && d.bestAt.at) {
-        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
-        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
-      }
-    } else {
-      state = 'locked'; kicker = 'Locked'; status = 'Not yet';
+    // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+    if (!d.earned && !d.secret && !d.demoLocked && d.progress && d.progress[0] > 0 && d.bestAt && d.bestAt.at) {
+      const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+      const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
     }
-    const bar = state === 'progress'
-      ? '<div class="ach-detail-bar"><i style="width:' + Math.round(100 * d.progress[0] / Math.max(1, d.progress[1])) + '%"></i></div>'
-      : '';
-    card.dataset.state = state;
-    card.innerHTML =
-      '<div class="ach-detail-kicker">' + kicker + '</div>' +
-      '<div class="ach-detail-badge"><span>' + d.icon + '</span></div>' +
-      '<div class="ach-detail-name">' + this._escapeHtml(d.name) + '</div>' +
-      '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
-      this._medalTimesHtml(d) +
-      '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
-      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
-      '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
+    card.achievement = this._achItem(d);
+    card.number = d.n;
+    card.total = this._achievements.getAllDefinitions().length;
+    card.extraHtml = this._medalTimesHtml(d);
+    card.footHtml = bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '';
   }
 
   /**
@@ -4375,13 +4577,18 @@ export class Lobby {
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const r = tile ? tile.getBoundingClientRect() : null;
     if (!tile || !r || !r.width || reduce || typeof tile.animate !== 'function') { done(); return; }
-    const old = document.getElementById('ach-lift');
+    const old = document.getElementById('ach-lift-host');
     if (old) old.remove();
     const c = /** @type {HTMLElement} */ (tile.cloneNode(true));
     c.id = 'ach-lift';
     c.classList.remove('gamepad-focus');
     c.style.left = r.left + 'px'; c.style.top = r.top + 'px'; c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
-    document.body.appendChild(c);
+    // #634: the copy sits in a .uag-host so the kit's badge styles reach it outside the grid
+    const host = document.createElement('div');
+    host.id = 'ach-lift-host';
+    host.className = 'uag-host';
+    host.appendChild(c);
+    document.body.appendChild(host);
     tile.classList.add('lifting');
     const W = window.innerWidth, H = window.innerHeight;
     const S = Math.min(0.6 * W / r.width, 0.45 * H / r.height);
@@ -4394,7 +4601,7 @@ export class Lobby {
     if (body) body.classList.add('ach-dim');
     this._achLifting = true;
     let fired = false;
-    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; host.remove(); tile.classList.remove('lifting'); done(); };
     anim.finished.then(finish, finish);
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
@@ -4846,6 +5053,134 @@ export class Lobby {
     };
 
     this.net.enterRoom(code, 'stoker');
+  }
+
+  // ── HOST INSTEAD (#667) ──────────────────────────────────────
+  // A full-game guest in a demo host's room moves the room to a new code with itself as host;
+  // the demo host (and its phones, whose pad room never moves) follows. The sequence, and why
+  // nobody is stranded, is in js/lobby/room-move.js.
+
+  /** Offer HOST INSTEAD here? A full-game stoker, a demo captain whose build follows a move. */
+  _hostInsteadOffered() {
+    return !!(this.net && this.net.connected && this._pendingMode === 'multiplayer') &&
+      canHostInstead(getEditionRules(), this._partnerRoom || null, this._roomRole);
+  }
+
+  /** Still on a room screen (a move stops when a ride starts or the room is left). */
+  _onRoomScreen() {
+    return !!(this.lobbyEl && this.lobbyEl.style.display !== 'none' && this._pendingMode === 'multiplayer' && this._roomRole &&
+      (this._currentStep === this.levelStep || this._currentStep === this.hostStep));
+  }
+
+  /** The room bar's HOST INSTEAD row: '' hidden, 'offer' the line + button, 'moving' a status line. */
+  _syncHostInsteadRow(state) {
+    const row = document.getElementById('level-room-rehost');
+    if (!row) return;
+    const line = document.getElementById('level-room-rehost-line');
+    const btn = /** @type {any} */ (document.getElementById('btn-host-instead'));
+    const was = !row.hidden && btn && !btn.hidden;
+    row.hidden = !state;
+    if (!state) return;
+    const lead = !this._roomMove || this._roomMove.side === 'lead';
+    if (line) {
+      line.textContent = state === 'moving'
+        ? (lead ? 'Opening your room… your friend will follow.' : 'Your friend is hosting now. Moving to their room…')
+        : 'Your friend has the demo. Host the room yourself to unlock every level and Versus. They can still join free.';
+    }
+    if (btn) btn.hidden = state !== 'offer';
+    // The button just appeared: on a pad, it is this screen's one action for the guest.
+    if (state === 'offer' && !was && this._currentStep === this.levelStep) this._applyStepSpatialFocus(this.levelStep);
+  }
+
+  /** A transport into the new room, beside the old one (RoomMove's openNet). */
+  async _openMoveNet(code, role) {
+    const net = new NetworkManager();
+    net._fallbackUrl = RELAY_URL;
+    net.cameraEnabled = this.cameraActive;
+    net.audioEnabled = this.audioActive;
+    const moveNet = watchMoveNet(net);
+    try { const t = await this.auth.getRelayToken(code, role); if (t) net._relayToken = t; } catch (e) { /* the relay takes no token */ }
+    net.enterRoom(code, role);
+    return moveNet;
+  }
+
+  /** G · the full-game guest pressed HOST INSTEAD: open a new room as its captain, then tell the host. */
+  async _hostInstead() {
+    if (this._roomMove || !this._hostInsteadOffered() || !this._onRoomScreen()) return;
+    const old = this.net;
+    const code = old.generateRoomCode();
+    analytics.trackEvent('room_rehost', { from: old.roomCode, to: code });
+    const move = new RoomMove({
+      side: 'lead', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      sendMoved: () => { if (old.connected) old.sendProfile(RoomProtocol.roomMoved(code)); },
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;   // the row says "Opening your room…"
+    await this._runRoomMove(move);
+  }
+
+  /** H · the partner opened `code` and hosts it now: follow as the stoker. */
+  async _followRoomMove(code) {
+    if (!isRoomCode(code) || this._roomMove || this._roomRole !== 'captain' || !this.net || !this._onRoomScreen()) return;
+    const old = this.net;
+    if (code === old.roomCode) return;
+    showInfoToast('🏠', 'Moving to your friend’s room', 'Room ' + code.slice(-4) + '…');
+    const move = new RoomMove({
+      side: 'follow', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;
+    await this._runRoomMove(move);
+  }
+
+  /** Run a move; on success make the new room this lobby's room, else stay in the old one. */
+  async _runRoomMove(move) {
+    let res;
+    try { res = await move.run(); } catch (e) { console.warn('LOBBY: room move failed', e); res = { ok: false, reason: 'error' }; }
+    if (this._roomMove === move) this._roomMove = null;
+    this._levelRoomKey = null;
+    if (!res.ok) {
+      if (move.moveNet) closeQuietly(move.moveNet.net);
+      // Still in the old room (both sides kept it). Say so, unless the move stopped for a ride.
+      if (res.reason !== 'cancelled' && this.net === move.old && this._onRoomScreen()) {
+        showInfoToast('⚠️', 'The room didn’t move', 'Still in room ' + String(move.oldCode || '').slice(-4) + '. Try HOST INSTEAD again.');
+      }
+      this._lastRoomMove = { ok: false, reason: res.reason, from: move.oldCode, to: move.code };   // read by smoke:host-instead
+      return;
+    }
+    const { net, queue } = res.moveNet;
+    const role = move.role;
+    this._netSession.adopt(net);   // closes the old room quietly: the partner is here already
+    net.onConnected = null;
+    net.onRoomJoined = null;
+    this._roomStore.clear(move.oldCode);
+    this._roomStore.save(move.code, role, this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : null);
+    // The new captain's host step shows the new code and QR (a phone's "Play on this phone" gets it too).
+    this._hostRoomCode = role === 'captain' ? move.code : null;
+    if (role === 'captain') {
+      const codeEl = document.getElementById('room-code-display');
+      if (codeEl) codeEl.textContent = move.code;
+      const statusEl = document.getElementById('host-status');
+      if (statusEl) { statusEl.textContent = 'Partner connected!'; statusEl.className = 'conn-status connected'; }
+      try { renderRoomQR(move.code); this._syncHostJoinQr(); } catch (e) { /* QR is cosmetic */ }
+    }
+    // Same partner, same seats: keep their name, look and edition; replay what they sent early.
+    this._rejoinMessageQueue = queue;
+    this._partnerProfileSeen = false;
+    this._showRoomStep(role);
+    if (role === 'captain') {
+      // Both were on level select: stay there, with the new host picking.
+      net.sendProfile(RoomProtocol.playGame());
+      net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
+      this._showRoomLevelsStep();
+    }
+    this._lastRoomMove = { ok: true, from: move.oldCode, to: move.code, role };   // read by smoke:host-instead
+    showInfoToast('🏠', role === 'captain' ? 'You’re hosting now' : 'Your friend is hosting now',
+      'Room ' + move.code.slice(-4) + ' · ' + roomBadge(this.roomRules()));
   }
 
   // ── NetworkManager lifecycle ─────────────────────────────────
@@ -5512,6 +5847,8 @@ export class Lobby {
 
     if (profile.type === ROOM_MSG.DRESSING) {
       this._setPartnerDressing(!!profile.open);   // #672
+    } else if (profile.type === ROOM_MSG.ROOM_MOVED) {
+      this._followRoomMove(profile.code);   // #667 · the partner hosts now: follow to the new code
     } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
@@ -6580,6 +6917,8 @@ export class Lobby {
       if (this.motionActive || hidDevice) {
         this._localP2InputManager.motionEnabled = true;
       }
+      // #646: then P2's own controller's settings (stick / gyro / feel) on top.
+      this.applySeatControllerSettings({ n: 2, input: this._localP2InputManager, type: 'gamepad', slotId: slot ? slot.id : null });
 
     } else {
       // Keyboard P2: no slot needed.
@@ -7323,6 +7662,8 @@ export class Lobby {
     }
 
     input.suppressGamepadLean = !this.joystickActive;
+    // #646: the joiner's own controller's settings (stick / gyro / feel) on top.
+    if (c.kind !== 'phone') this.applySeatControllerSettings({ n: seat.n ?? this._versusPlayers.length + 1, input, type: 'gamepad', slotId });
 
     const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
     const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
@@ -7969,7 +8310,7 @@ export class Lobby {
   _pollGamepadNav() {
     // Bar label / glyph family / an open Controls sheet: a few times a second is plenty.
     const nowSync = performance.now();
-    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
+    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._players && this._players.open ? 200 : 1000)) {
       this._lastBarSync = nowSync;
       this._syncSystemBar();
       // #576: a gyro that shows up late (Steam Input, a later HID grant) still turns the stick default off.
@@ -8204,6 +8545,12 @@ export class Lobby {
     // fresh press.
     if (!ranLast) this._stepFocus.reprime();
     this._stepNavRanLastFrame = true;
+    // #646: in Players, the focused Steering feel slider (one per controller) takes left/right.
+    if (this._players && this._players.open) {
+      const f = this._stepFocus.focusedEl;
+      const want = f && f.tagName === 'INPUT' && f.type === 'range' ? f : null;
+      if (this._stepFocus._slider !== want) this._stepFocus.setSlider(want);
+    }
     this._stepFocus.poll();
 
     // _gpPrev* are still maintained for the LB/RB bumpers + the modal branches.
@@ -8250,6 +8597,11 @@ export class Lobby {
     if (step === this.versusStep) {
       const cont = document.getElementById('btn-versus-continue');
       if (shown(cont)) return cont;
+    }
+    // #667: HOST INSTEAD, while offered, is the guest's one action on the room's level screen.
+    if (step === this.levelStep) {
+      const hi = document.getElementById('btn-host-instead');
+      if (hi && !hi.hidden && usable(hi)) return hi;
     }
     const preferred = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
     if (usable(preferred)) return preferred;
@@ -8716,6 +9068,7 @@ export class Lobby {
       this._applyPresetToPreview();
       this._sendBikeSyncIfInRoom();
     };
+    this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
     prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
@@ -8837,6 +9190,7 @@ export class Lobby {
     }
     this.selectedPreset = null;
     hintEl.dataset.special = key;
+    this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
       nameEl.style.color = 'rgba(255,255,255,0.3)';
@@ -8862,7 +9216,58 @@ export class Lobby {
     hintEl.style.display = 'none';
     hintEl.title = '';
     delete hintEl.dataset.special;
+    this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
     analytics.trackEvent('bike_color_change', { preset_key: key });
+  }
+
+  /**
+   * #644 · Solo Flight's bot picker: a row of the three player bots (Bolt, Rivet, Sprocket) under the bike. Mouse,
+   * touch or a pad (the buttons join the lobby's spatial focus, next to the chooser's ‹ ›) picks who rides the back
+   * seat on a solo ride. Each is its own partner for the partner achievements (js/player-bots.js).
+   */
+  _buildBotPicker() {
+    const el = document.getElementById('bot-picker');
+    if (!el || el.childElementCount) return;
+    const label = document.createElement('span');
+    label.className = 'bot-label';
+    label.textContent = 'Back seat';
+    el.appendChild(label);
+    this._botButtons = BOT_IDS.map((id) => {
+      const b = document.createElement('button');
+      b.className = 'bot-pick';
+      b.type = 'button';
+      b.dataset.bot = id;
+      b.setAttribute('role', 'radio');
+      b.style.setProperty('--bot-color', BOTS[id].color);
+      b.innerHTML = `<span class="bot-dot"></span>${BOTS[id].name}`;
+      b.title = `${BOTS[id].name} rides the back seat (a robot goose; counts as a partner)`;
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
+      el.appendChild(b);
+      return b;
+    });
+    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
+    // a pad already driving the mode step picks them up now, not on the next step change
+    if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
+      this._stepFocus.refreshSpatial(this._stepNavItems());
+    }
+    this._syncBotPicker();
+  }
+
+  /** Pick the player bot for Solo Flight (saved on this device). */
+  pickBot(id) {
+    this.selectedBot = saveBotChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
+    this._syncBotPicker();
+    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
+  }
+
+  _syncBotPicker() {
+    for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
+  }
+
+  _showBotPicker(on) {
+    const el = document.getElementById('bot-picker');
+    if (el) el.style.display = on ? '' : 'none';
+    if (on) this._syncBotPicker();
   }
 
   _applyPresetToPreview() {
@@ -8870,6 +9275,7 @@ export class Lobby {
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
     if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
+    this._showBotPicker(false);
     if (this._previewModel) this._previewModel.visible = true;
     this._hideSpecialPreviews();
     { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }

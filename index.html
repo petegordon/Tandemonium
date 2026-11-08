@@ -2472,66 +2472,35 @@
     padding: 4px 10px;
     border-width: 1px;
   }
-  /* Achievement grid */
-  .lb-achievement-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 12px;
-  }
-  .lb-ach-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    width: 64px;
-    padding: 6px 4px;
-    border-radius: 10px;
-    border: 1.5px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.04);
-    transition: all 0.2s;
-  }
-  .lb-ach-icon {
-    font-size: 22px;
-    line-height: 1;
-    margin-bottom: 3px;
-  }
-  .lb-ach-name {
-    font-size: 8px;
-    color: rgba(255,255,255,0.5);
-    text-align: center;
-    line-height: 1.2;
-    word-break: break-word;
-  }
-  .lb-ach-item.earned {
+  /* #634: the Achievements sheet and detail card render through the kit's
+     <uf-achievement-grid> (.uag-*) and <uf-achievement-detail> (.uad-*). The
+     kit's own styles carry most of the look; these are only where the game's
+     values differ, plus the lift and the game's own lines (medal times, Best).
+     Scoped by id so they win over the kit's (injected later) rules. */
+  #lb-achievements .uag-item, #ach-lift { border-color: rgba(255,255,255,0.15); transition: all 0.2s; }
+  #lb-achievements .uag-item.earned {
     background: rgba(60,200,80,0.18);
     border-color: rgba(60,200,80,0.5);
     box-shadow: 0 0 8px rgba(60,200,80,0.25);
   }
-  .lb-ach-item.earned .lb-ach-name {
-    color: var(--uf-color-accent);
-  }
-  .lb-ach-item.locked {
-    opacity: 0.35;
-    border-color: rgba(255,255,255,0.08);
-  }
-  /* #540: each badge is a button (tap / Enter / the pad's A opens its card). */
-  .lb-ach-item {
-    font-family: inherit;
-    color: inherit;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .lb-ach-item:focus { outline: none; }
-  .lb-ach-item:focus-visible,
-  .lb-ach-item.gamepad-focus {
+  #lb-achievements .uag-item.locked { border-color: rgba(255,255,255,0.08); }
+  #lb-achievements .uag-item.locked:not(.gamepad-focus, :focus-visible):hover { opacity: 0.35; }   /* the kit lights a hovered badge; the game never did */
+  #lb-achievements .uag-item.locked:has(.uag-progress):not(.gamepad-focus, :focus-visible):hover { opacity: 0.6; }
+  #lb-achievements .uag-item:focus-visible,
+  #lb-achievements .uag-item.gamepad-focus {
     opacity: 1;
     outline: 2px solid var(--uf-color-accent);
     outline-offset: 2px;
     box-shadow: 0 0 10px rgba(68, 255, 102, 0.4);
   }
-  .lb-ach-item.lifting { visibility: hidden; }
-  /* the lifting copy of a badge, on its way to the card */
+  #lb-achievements .uag-item.lifting { visibility: hidden; }
+  /* #401: counter progress, hidden + full-game-only badges */
+  #lb-achievements .uag-progress, #ach-lift .uag-progress { color: rgba(255,220,120,0.9); }
+  #lb-achievements .uag-item.locked:has(.uag-progress) { opacity: 0.6; }
+  #lb-achievements .uag-item.secret .uag-name, #ach-lift.secret .uag-name { font-style: italic; }
+  #lb-achievements .uag-item.unavailable, #ach-lift.unavailable { border-style: dashed; }
+  #lb-achievements .uag-count { font-size: 11px; }
+  /* the lifting copy of a badge, on its way to the card (in a .uag-host so the kit's badge styles apply) */
   #ach-lift {
     position: fixed;
     z-index: calc(var(--uf-z-modal, 1000) + 2);
@@ -2544,7 +2513,7 @@
     box-shadow: 0 0 30px rgba(255, 210, 63, 0.45), 0 30px 60px rgba(0, 0, 0, 0.6);
     transform-origin: 50% 50%;
   }
-  #ach-lift .lb-ach-name { color: rgba(255,255,255,0.92); }
+  #ach-lift .uag-name { color: rgba(255,255,255,0.92); }
   /* #576: the grid dims behind the lifting badge with a class (not a fill-forwards
      animation), so closing the card always clears it. */
   #achievements-modal .uf-sheet__body { transition: filter 420ms ease; }
@@ -2555,76 +2524,13 @@
     scrollbar-gutter: stable;
   }
   /* The detail card: the reels' end card, on the kit's sizes (reads at TV distance). */
-  .ach-detail {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: var(--uf-space-2) 0 var(--uf-space-3);
-    font-size: var(--uf-size-md);
-  }
-  .ach-detail-kicker {
-    font-size: var(--uf-size-sm);
-    font-weight: 700;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: var(--uf-color-fg-muted);
-  }
-  .ach-detail[data-state="earned"] .ach-detail-kicker { color: var(--uf-color-accent-2); }
-  .ach-detail-badge {
-    width: 6em; height: 6em;
-    margin: 0.9em 0 0.7em;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: var(--uf-size-xl);
+  #ach-detail-card .uad-badge {
     background: radial-gradient(circle at 50% 40%, #3b3352 0%, #1a1a2e 70%);
-    border: 0.18em solid rgba(255,255,255,0.25);
-    box-shadow: 0 0.6em 2em rgba(0,0,0,0.5);
+    animation: none;   /* the badge already lifted into place */
   }
-  .ach-detail-badge span { font-size: 3.2em; line-height: 1; }
-  .ach-detail[data-state="earned"] .ach-detail-badge {
-    border-color: var(--uf-color-accent-2);
-    box-shadow: 0 0 0 0.4em rgba(255,210,63,0.18), 0 0.6em 2em rgba(0,0,0,0.55);
-  }
-  .ach-detail[data-state="locked"] .ach-detail-badge,
-  .ach-detail[data-state="progress"] .ach-detail-badge,
-  .ach-detail[data-state="full"] .ach-detail-badge { border-style: dashed; }
-  .ach-detail[data-state="locked"] .ach-detail-badge span,
-  .ach-detail[data-state="full"] .ach-detail-badge span { filter: grayscale(1); opacity: 0.6; }
-  .ach-detail[data-state="secret"] .ach-detail-badge span { opacity: 0.7; }
-  .ach-detail-name {
-    font-size: var(--uf-size-2xl);
-    font-weight: 800;
-    line-height: 1.1;
-    color: #fff;
-  }
-  .ach-detail[data-state="earned"] .ach-detail-name { color: var(--uf-color-accent-2); }
-  .ach-detail-desc {
-    margin-top: 0.4em;
-    font-size: var(--uf-size-lg);
-    font-style: italic;
-    color: rgba(255,255,255,0.85);
-    max-width: 24em;
-  }
-  .ach-detail-status {
-    margin-top: 1em;
-    font-size: var(--uf-size-md);
-    font-weight: 600;
-    color: rgba(255,255,255,0.7);
-  }
-  .ach-detail[data-state="earned"] .ach-detail-status { color: var(--uf-color-accent); }
+  #ach-detail-card[data-state="progress"] .uad-status { color: rgba(255,220,120,0.95); }
+  #ach-detail-card .uad-bar i { background: rgba(255,220,120,0.95); }
   .ach-detail-best { font-size: 0.85em; color: rgba(255,255,255,0.7); margin-top: 4px; }   /* where + when the best-so-far was set */
-  .ach-detail[data-state="progress"] .ach-detail-status { color: rgba(255,220,120,0.95); }
-  .ach-detail-bar {
-    width: min(16em, 80%);
-    height: 0.45em;
-    margin-top: 0.5em;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.12);
-    overflow: hidden;
-  }
-  .ach-detail-bar i { display: block; height: 100%; background: rgba(255,220,120,0.95); }
   /* a medal achievement's live times, one per difficulty */
   .ach-detail-times {
     margin-top: 0.7em;
@@ -2635,42 +2541,6 @@
   }
   .ach-detail-time { white-space: nowrap; }
   .ach-detail-time b { color: #fff; font-weight: 700; }
-  .ach-detail-count {
-    margin-top: 1em;
-    font-size: var(--uf-size-sm);
-    letter-spacing: 0.12em;
-    color: rgba(255,255,255,0.45);
-  }
-  /* #401: sections, counter progress, hidden + full-game-only badges */
-  /* #517: the category headings read at TV distance (were 11px at every size). */
-  .lb-ach-section-title {
-    font-size: var(--uf-size-md, 16px);
-    font-weight: 700;
-    color: rgba(255,255,255,0.85);
-    text-align: left;
-    margin: 0.9em 4px 0.5em;
-  }
-  .lb-ach-section-count {
-    font-weight: 400;
-    color: rgba(255,255,255,0.45);
-  }
-  .lb-ach-progress {
-    font-size: 8px;
-    color: rgba(255,220,120,0.9);
-    margin-top: 2px;
-  }
-  .lb-ach-item.locked:has(.lb-ach-progress) { opacity: 0.6; }
-  .lb-ach-item.secret .lb-ach-name { font-style: italic; }
-  .lb-ach-item.demo-locked { border-style: dashed; }
-  .lb-ach-count {
-    font-size: 11px;
-    color: rgba(255,255,255,0.5);
-    margin-bottom: 8px;
-  }
-  .lb-ach-count span {
-    color: var(--uf-color-accent);
-    font-weight: 700;
-  }
   .lb-section-title {
     font-size: 13px;
     font-weight: 600;
@@ -2808,6 +2678,43 @@
     color: rgba(68, 255, 102, 0.7);
     letter-spacing: 2px;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
+  }
+  /* #644 · Solo Flight's bot picker: Bolt, Rivet, Sprocket */
+  #bot-picker {
+    display: flex;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 2px;
+  }
+  .bot-pick {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    border: 1.5px solid rgba(255,255,255,0.22);
+    background: rgba(0,0,0,0.55);
+    color: rgba(255,255,255,0.75);
+    font: 700 11px/1.2 system-ui, sans-serif;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+  }
+  .bot-pick .bot-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--bot-color);
+    box-shadow: 0 0 6px var(--bot-color);
+  }
+  .bot-pick[aria-checked="true"] {
+    border-color: var(--bot-color);
+    color: #fff;
+    background: color-mix(in srgb, var(--bot-color) 28%, rgba(0,0,0,0.6));
+  }
+  #bot-picker .bot-label {
+    align-self: center;
+    font: 600 10px/1 system-ui, sans-serif;
+    color: rgba(255,255,255,0.55);
+    margin-right: 2px;
+    white-space: nowrap;
   }
   #bike-hint {
     position: absolute;
@@ -4320,6 +4227,11 @@
   .room-wardrobe-row[hidden] { display: none; }
   #btn-room-wardrobe { min-width: 12em; font-size: var(--uf-size-md); }
   #btn-room-wardrobe uf-controller-glyph { margin-right: .35em; }
+  /* #667 · HOST INSTEAD: one line and the button, under the seats (full-game guest in a Demo room). */
+  .room-rehost-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; width: 100%; max-width: 720px; margin: 0 auto 10px; }
+  .room-rehost-row[hidden] { display: none; }
+  .room-rehost__line { margin: 0; flex: 1 1 22em; text-align: center; font: 600 var(--uf-size-md)/1.35 var(--uf-font-ui); color: var(--uf-color-fg); }
+  #btn-host-instead { min-width: 12em; font-size: var(--uf-size-md); }
   .uf-seat__dev .room-look__dev { margin-right: .6em; }
   .room-look { display: inline-flex; align-items: center; gap: .4em; white-space: nowrap; color: var(--uf-color-fg); }
   .room-look__led { display: inline-block; width: .9em; height: .9em; border-radius: 50%; border: 1px solid rgba(255,255,255,.45); flex: none; }
@@ -4579,6 +4491,23 @@
       font-size: calc(14 * var(--ls));
       line-height: calc(18 * var(--ls));
     }
+    #bot-picker {
+      position: absolute;
+      bottom: calc(5 * var(--ls));
+      left: 50%;
+      transform: translateX(-50%);
+      gap: calc(4 * var(--ls));
+      margin: 0;
+      white-space: nowrap;
+    }
+    .bot-pick {
+      padding: calc(2.5 * var(--ls)) calc(7 * var(--ls));
+      font-size: calc(9 * var(--ls));
+      gap: calc(4 * var(--ls));
+      border-width: calc(1.2 * var(--ls));
+    }
+    .bot-pick .bot-dot { width: calc(7 * var(--ls)); height: calc(7 * var(--ls)); }
+    #bot-picker .bot-label { font-size: calc(8 * var(--ls)); }
     #bike-hint {
       position: absolute !important;
       top: calc(12 * var(--ls));
@@ -5043,15 +4972,15 @@
     .lb-you-tag { font-size: calc(9 * var(--ls)); }
     .lb-date { font-size: calc(10 * var(--ls)); }
     .lb-rides { font-size: calc(11 * var(--ls)); }
-    .lb-ach-item {
+    #lb-achievements .uag-item, #ach-lift {
       width: calc(76 * var(--ls));
       padding: calc(6 * var(--ls)) calc(4 * var(--ls));
       border-radius: calc(10 * var(--ls));
     }
-    .lb-ach-icon { font-size: calc(22 * var(--ls)); }
-    .lb-ach-name { font-size: calc(10 * var(--ls)); }   /* #517: was 8 */
-    .lb-ach-count { font-size: calc(11 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
-    .lb-achievement-grid { gap: calc(8 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
+    #lb-achievements .uag-icon, #ach-lift .uag-icon { font-size: calc(22 * var(--ls)); }
+    #lb-achievements .uag-name, #ach-lift .uag-name { font-size: calc(10 * var(--ls)); }   /* #517: was 8 */
+    #lb-achievements .uag-count { font-size: calc(11 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
+    #lb-achievements .uag-grid { gap: calc(8 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
     .lb-section-title { font-size: calc(13 * var(--ls)); margin: calc(10 * var(--ls)) 0 calc(6 * var(--ls)); }
     .lb-no-data { font-size: calc(13 * var(--ls)); padding: calc(16 * var(--ls)); }
 
@@ -5695,6 +5624,8 @@ ON</button>
     <div id="bike-preview-wrap">
       <canvas id="bike-preview-canvas"></canvas>
       <div id="bike-name">Default</div>
+      <!-- #644 · Solo Flight: the player bot who rides the back seat (filled by lobby.js) -->
+      <div id="bot-picker" role="radiogroup" aria-label="Bot on the back seat" style="display:none"></div>
     </div>
     <button id="bike-next" class="bike-carousel-nav" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span><uf-controller-glyph button="rb" size="lg" class="pad-only"></uf-controller-glyph></button>
   </div>
@@ -5832,6 +5763,12 @@ ON</button>
             <uf-seat id="level-room-captain" seat="Captain · front seat" tone="captain" badge="P1" state="open"></uf-seat>
             <uf-seat id="level-room-stoker" seat="Stoker · back seat" tone="stoker" badge="P2" state="open"></uf-seat>
           </uf-team>
+          <!-- #667 · a full-game guest in a demo host's room ("Demo room") can host it instead: the
+               room moves to a new code with them as captain, and everyone follows (lobby._hostInstead). -->
+          <div id="level-room-rehost" class="room-rehost-row" hidden>
+            <p id="level-room-rehost-line" class="room-rehost__line">Your friend has the demo. Host the room yourself to unlock every level and Versus. They can still join free.</p>
+            <uf-button variant="accent" size="sm" id="btn-host-instead" title="Move the room to you: a new room with you as host, and your friend follows">HOST INSTEAD</uf-button>
+          </div>
           <!-- #672 · each online player dresses their own goose here, before the ride (△ / Y, or
                click). The partner's seat above shows their look, and "dressing…" while they do. -->
           <div id="level-room-wardrobe" class="room-wardrobe-row" hidden>
@@ -6172,26 +6109,27 @@ ON</button>
     <!-- Achievements: the star + "earned / total" (lobby.js _syncSystemBar keeps the count). -->
     <uf-button size="pill" slot="start" id="bar-achievements" title="Achievements" aria-label="Achievements"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg><span id="bar-achievements-count">0 of 100</span></uf-button>
     <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
-    <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
+    <!-- #646: Players (who is playing on this screen, their controllers and each controller's settings). -->
+    <uf-button size="pill" slot="end" id="bar-players"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.6 6-5.6s6 2.3 6 5.6"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 13.6c2.7.2 4.5 2.2 4.5 4.9"/></svg><span id="bar-players-label">Players</span></uf-button>
     <uf-button size="pill" slot="end" id="bar-music" class="bar-icon-only" title="Music" aria-label="Music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg></uf-button>
     <uf-button size="pill" slot="end" id="bar-settings" class="bar-icon-only" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></uf-button>
     <!-- #172: desktop app only (js/app-quit.js canQuitApp), mode step only; lobby.js _syncSystemBar shows it. #517: the far right. -->
     <uf-button size="pill" slot="end" id="bar-quit" style="display:none;" title="Close Tandemonium"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v7"/><path d="M5.6 5.6a6.2 6.2 0 1 0 8.8 0"/></svg>Quit</uf-button>
   </uf-system-bar>
 
-  <!-- Controls sheet (#428 round 3, kit <uf-sheet>): the controller in use, every
-       connected controller, steering, prompts, and phone-as-controller. Opened
-       from the bar's Controls pill; wired in lobby.js _initSystemBar. -->
-  <uf-sheet id="controls-sheet" heading="Controls" size="md">
-    <uf-seat id="controls-seat" seat="You" tone="captain" who="No controller yet" dev="Press a button on a controller" state="open"></uf-seat>
-    <uf-controller-roster id="controls-roster" variant="list" heading="Connected controllers"></uf-controller-roster>
-    <uf-setting id="set-stick" label="Stick steering" description="Lean with the left stick"></uf-setting>
-    <uf-setting id="set-gyro" label="Gyro steering" description="Tilt the controller to lean">
-      <div slot="detail">Steering feel <span class="set-feel-end">Stable</span><input type="range" id="set-feel-slider" min="0" max="100" value="50" aria-label="Steering feel"><span class="set-feel-end">Responsive</span><uf-button size="sm" id="set-recalibrate">Recalibrate</uf-button></div>
-    </uf-setting>
-    <uf-setting id="set-prompts" kind="value" label="Button prompts" description="Picked from the controller in use" value="Automatic"></uf-setting>
+  <!-- Players (#646, replaces the Controls sheet; kit <uf-sheet>): one row per seat on THIS
+       screen (P1-P4): who (signed in or Guest, Sign in / Sign out), the bound controller
+       (model, light, Buzz) and that controller's settings (stick, gyro + feel, prompts).
+       Then Available controllers (connected, not seated) and the phone. Rows are built by
+       js/players-sheet.js; opened from the bar's Players pill (lobby.js _initSystemBar). -->
+  <uf-sheet id="players-sheet" heading="Players" size="lg">
+    <div id="pl-rows" class="pl-rows"></div>
+    <div class="pl-available">
+      <uf-controller-roster id="pl-available" variant="list" heading="Available controllers"></uf-controller-roster>
+      <p id="pl-avail-note" class="pl-avail-note" hidden></p>
+    </div>
     <uf-setting id="set-phone" kind="value" label="Use your phone instead" description="Scan a code to steer and pedal with your phone" value="Open"></uf-setting>
-    <div slot="actions"><uf-button variant="accent" id="controls-done">DONE</uf-button></div>
+    <div slot="actions"><uf-button variant="accent" id="players-done">DONE</uf-button></div>
   </uf-sheet>
 
   <!-- Quit confirm (#172, desktop app only): opened from the bar's Quit pill
@@ -6218,7 +6156,7 @@ ON</button>
      detail card below. B / Esc / scrim / Close close it. -->
 <uf-sheet id="achievements-modal" heading="Achievements" size="lg">
   <div class="leaderboard-box">
-    <div id="lb-achievements"></div>
+    <div id="lb-achievements"><uf-achievement-grid id="ach-grid"></uf-achievement-grid></div>
   </div>
 </uf-sheet>
 
@@ -6239,7 +6177,7 @@ ON</button>
      badge large (it lifts off the grid, as in the reels' lead-in), name, what
      to do, unlocked + date / locked / progress, and its number. -->
 <uf-sheet id="ach-detail" heading="Achievement" size="md">
-  <div id="ach-detail-card" class="ach-detail"></div>
+  <uf-achievement-detail id="ach-detail-card" show-id="false"></uf-achievement-detail>
 </uf-sheet>
 
 <!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all
