@@ -6193,6 +6193,27 @@ ON</button>
   <div id="ach-detail-card" class="ach-detail"></div>
 </uf-sheet>
 
+<!-- #657 · SHARE RESULT where there is no clipboard to paste from (a TV, the
+     Steam build) or when the House Tandem Discord post is on offer: a QR to the
+     phone page (share/index.html) with the result card, and POST TO DISCORD.
+     Filled by js/game.js (_openShareSheet); the status line says what already
+     happened (saved to Steam screenshots, copied). -->
+<uf-sheet id="share-sheet" heading="Share your ride" size="md">
+  <div id="share-body" class="share-body">
+    <p id="share-status" class="share-status" hidden></p>
+    <div id="share-phone" class="share-phone" hidden>
+      <uf-qr id="share-qr" caption="Scan to share from your phone" size="300"></uf-qr>
+      <p id="share-qr-note" class="share-note">Making your link&hellip;</p>
+    </div>
+    <p id="share-discord-note" class="share-note" hidden>Posts your result card to <b>#daily-ride</b> on the House Tandem Discord, under your Discord name.</p>
+  </div>
+  <div slot="actions">
+    <uf-button id="btn-share-native" style="display:none;">&#128228; SHARE&hellip;</uf-button>
+    <uf-button id="btn-share-discord" style="display:none;">POST TO DISCORD</uf-button>
+    <uf-button variant="accent" id="btn-share-done">DONE</uf-button>
+  </div>
+</uf-sheet>
+
 <!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all
      close it; focus returns to what opened it); item 18: the pad's View/Share
      button opens it from the lobby and the pause menu. -->
@@ -6634,6 +6655,16 @@ ON</button>
         <button class="opt-btn" id="opt-fps-off">Off</button>
       </div>
       <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
+    </div>
+    <!-- #657 · off by default; needs a sign-in with Discord linked, and the Worker's
+         #daily-ride webhook (js/game.js _updateOptionsDiscordUI). -->
+    <div class="opt-section" id="opt-discord-section">
+      <div class="label" id="opt-discord-label">Post to Discord</div>
+      <div class="options-row" id="opt-discord-row">
+        <button class="opt-btn" id="opt-discord-on">On</button>
+        <button class="opt-btn" id="opt-discord-off">Off</button>
+      </div>
+      <div class="options-note" id="opt-discord-note">Post my Daily Ride results to the House Tandem Discord</div>
     </div>
     <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
          present; see _initOptionsOverlay. -->

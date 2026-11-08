@@ -20,6 +20,7 @@ import {
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl,
 } from './identity.js';
 import { gameProfile, recordGame, handleMeGames } from './games.js';
+import { handleShareRoute } from './share.js';   // #657
 
 /**
  * #612 · what other House Tandem game Workers may do, through the private
@@ -169,6 +170,13 @@ export default {
       if (path === '/relay-token' && request.method === 'POST') return withAuth(request, env, corsOrigin, issueRelayToken);
 
       // Public routes (rate limited by IP)
+      // #657 · share a result: the card for the TV's QR, the #daily-ride post.
+      if (path === '/share' || path.startsWith('/share/')) {
+        const res = await handleShareRoute(request, env, { path, url, clientIP, corsOrigin },
+          { jsonResponse, corsHeaders, getUserFromRequest, checkRateLimit, listIdentities, writeMetric });
+        if (res) return res;
+      }
+
       if (path === '/leaderboard') {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
