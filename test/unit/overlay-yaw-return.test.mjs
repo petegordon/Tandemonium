@@ -1,6 +1,6 @@
 // #596 · the controller overlay's model drifted in yaw: the fusion's at-rest
-// yaw return ships disabled and the game never turned it on. Attaching a slot
-// now sets it on the slot's fusion.
+// yaw return shipped disabled. controller-core 0.7 ships it on (2 s), so the
+// game no longer sets it, and never overrides a half-life someone chose.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { InputManager, YAW_RETURN_HALF_LIFE_S } from '../../js/input-manager.js';
@@ -22,12 +22,13 @@ function fakeSlot(fusion) {
   };
 }
 
-test('attaching a slot turns the fusion\'s yaw return on', () => {
+test('the fusion\'s yaw return is on by default (controller-core 0.7)', () => {
   const fusion = new SensorFusion();
-  assert.equal(fusion.yawReturnHalfLife, 0, 'the lab default: raw yaw passes straight through');
+  assert.equal(fusion.yawReturnHalfLife, YAW_RETURN_HALF_LIFE_S);
+  assert.equal(YAW_RETURN_HALF_LIFE_S, 2);
   const im = new InputManager({ slot: fakeSlot(fusion), enableKeyboard: false, enableMotion: false, enableTouch: false });
   assert.ok(im);
-  assert.equal(fusion.yawReturnHalfLife, YAW_RETURN_HALF_LIFE_S);
+  assert.equal(fusion.yawReturnHalfLife, 2);
 });
 
 test('a half-life someone already set (the lab overlay\'s Yaw Drift) is kept', () => {

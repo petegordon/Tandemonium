@@ -74,6 +74,11 @@ export class SteamControllerDriver extends ControllerDriver {
   // some emit the state reports we parse — so the overlay must fan inputreport
   // out across siblings. (Safe here because they're genuinely one device.)
   static needsSiblingFanout = true;
+  // A Steam Controller streams STATE continuously (IMU included) even lying
+  // still, so a few seconds of silence means it is switched off: the Puck stays
+  // plugged in, so no WebHID disconnect ever fires. ControllerManager reads this
+  // for unit presence (silentAfterMs). See docs/controller-units.md.
+  static streamsWhileIdle = true;
 
   // Whether to suppress the Puck's lizard-mode keyboard/mouse emulation
   // (default on). Toggled from overlay settings before/at connect; read in

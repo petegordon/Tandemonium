@@ -57,7 +57,7 @@ import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoT
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer } from './achievement-defs.js';
-import { InputManager, readGyroRollMode, setControllerManager, noteSteamControllerPresses, claimedSteamTwinSlots, isSilentSteamControllerSlot, frozenTwinHidEntries } from './input-manager.js';
+import { InputManager, readGyroRollMode, setControllerManager, steamXInputMap } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { PedalController } from './pedal-controller.js';
@@ -69,7 +69,6 @@ import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
 import { MusicTrack } from './music-track.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
-import { isSteamTwinPad } from './input-manager.js';
 import { playerLooks, lookToWire, lookFromWire, versusSeatLooks } from './player-look.js';   // #548
 import { applyPlayerLed } from './player-led.js';   // #548
 import { FpsMeter } from './fps-meter.js';
@@ -310,15 +309,11 @@ class Game {
     // P1 = slot[0] … P4 = slot[3]. Shared with the Lobby so join detection
     // in the lobby and in-race input read from the same source of truth.
     // P3/P4 exist for versus mode; solo/co-op paths only ever touch P1/P2.
-    // padFilter: never seat the Steam-side XInput twin of a Steam Controller
-    // we already read over WebHID (#362) — one controller, one seat.
-    this.controllerManager = new ControllerManager({
-      slotIds: ['P1', 'P2', 'P3', 'P4'],
-      padFilter: (gp) => !isSteamTwinPad(gp),
-    });
-    // Let InputManager see the WebHID pool so it can tell when one of Steam's
-    // virtual XInput pads is the twin of a Steam Controller already streaming
-    // over WebHID (#362).
+    // One physical controller is one unit, one seat, whatever it arrives
+    // through (WebHID, a frozen Gamepad entry, Steam's XInput twin): core owns
+    // that since controller-core 0.7 (#607), fed Steam's slot map each frame.
+    this.controllerManager = new ControllerManager({ slotIds: ['P1', 'P2', 'P3', 'P4'] });
+    // InputManager answers Steam-twin / rumble questions from the manager's units.
     setControllerManager(this.controllerManager);
     // #548 · each player's saved controller colour (Wardrobe) is what the manager
     // lights their pad with when it claims it.
@@ -7886,35 +7881,22 @@ class Game {
     // Gamepad-API claim, HID-pool claim, release-ring, and orphan
     // transitions in one place. Must run before any input reads.
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    this.controllerManager.ingestFrame(pads, performance.now());
-    // #581 · Steam's XInput twin of a Steam Controller: remember the hardware's
-    // presses so a quick tap still matches its late virtual press, and on the
-    // lobby screens evict a twin that got claimed before it could be recognised.
-    noteSteamControllerPresses();
-    if (this.state === 'lobby') {
-      const mgr = this.controllerManager;
-      const drop = (id, why) => {
-        if (this.lobby && this.lobby._dropSeat) this.lobby._dropSeat(id, why);
-        mgr.releaseSlotToPool(id);
-      };
-      for (const id of claimedSteamTwinSlots(pads)) drop(id, "held a Steam Controller's XInput twin");
-      // A Steam Controller switched off: free its seat (P1's too), so another pad
-      // can take it and the controller lists stop showing it (#581). Mid-ride it
-      // keeps the seat and the disconnect pause shows instead.
-      const now = performance.now();
-      for (const s of mgr.slots) if (isSilentSteamControllerSlot(s, now)) drop(s.id, 'its Steam Controller went quiet (switched off)');
-      // A press on a pad only WebHID can hear, behind a frozen Gamepad twin: seat it
-      // the way the manager would have (first free seat, same cooldown rules).
-      if (!mgr.autoClaimSuspended) {
-        for (const e of frozenTwinHidEntries(pads)) {
-          const empty = mgr.slots.find((s) => s.state === 'empty' && !s._awaitingSilence);
-          if (!empty) break;
-          const releasedAt = mgr._recentlyReleasedBySlot && mgr._recentlyReleasedBySlot.get(empty.id);
-          if (releasedAt != null && now - releasedAt < (mgr.opts.reclaimCooldownMs || 0)) break;
-          if (mgr.claimHidDeviceForSlot(empty.id, e.device) && this.lobby && this.lobby._diag) {
-            this.lobby._diag(`[manager] ${empty.id}: claimed ${e.device.productName || 'a pad'} over WebHID (its Gamepad entry is frozen)`, 'frozen-claim:' + empty.id);
-          }
-        }
+    const mgr = this.controllerManager;
+    // Steam's XInput slots (null off Steam): core tells Steam's virtual twin of a
+    // controller from a real pad with them (#581, controller-core 0.7).
+    mgr.setSteamInputMap(steamXInputMap());
+    // A Steam Controller switched off (silent 4 s; the Puck stays plugged in)
+    // frees its seat on the lobby screens, so another pad can take it and the
+    // lists stop showing it. Mid-ride it keeps the seat: the disconnect pause
+    // reads slot.connected, and its first report back resumes.
+    mgr.releaseSilentSeats = this.state === 'lobby';
+    const frame = mgr.ingestFrame(pads, performance.now());
+    // Core freed a seat (switched off, or Steam's twin): whoever the lobby seated there gets up.
+    if (this.state === 'lobby' && this.lobby && this.lobby._dropSeat) {
+      for (const id of frame.released) {
+        const why = frame.why && frame.why[id];
+        if (why === 'silent') this.lobby._dropSeat(id, 'its controller went quiet (switched off)');
+        else if (why === 'twin') this.lobby._dropSeat(id, "held Steam's XInput twin of a seated controller");
       }
     }
 

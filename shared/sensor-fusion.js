@@ -41,7 +41,7 @@
 
 import * as THREE from 'three';
 
-import { twistAngleY, stepYawReturn, composeHeadingOffset } from './yaw-return.js';
+import { twistAngleY, stepYawReturn, composeHeadingOffset, DEFAULT_YAW_RETURN_HALF_LIFE_S } from './yaw-return.js';
 import { rollFromGravity } from './gravity-roll.js';
 
 // ── Initial one-shot bias calibration ──
@@ -141,8 +141,8 @@ export class SensorFusion {
 
     // Half-life (seconds) of the at-rest yaw return-to-neutral. 0 disables it
     // (raw yaw passes straight through). Set from the overlay's "Yaw Drift"
-    // setting; larger = slower return.
-    this.yawReturnHalfLife = 0;
+    // setting; larger = slower return. On by default since core 0.7 (#596).
+    this.yawReturnHalfLife = DEFAULT_YAW_RETURN_HALF_LIFE_S;
 
     // Seconds the controller has been continuously detected at rest, updated by
     // the stillness pipeline. Gates the yaw return.

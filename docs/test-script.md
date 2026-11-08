@@ -185,8 +185,10 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
-| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
+| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only`, lab `units-acceptance` |
 | IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
+| IN-21 | #499: Stick steering Off doesn't zero a Steam-only Steam Controller's lean (Steam routes its gyro onto the left stick); it still zeroes a real Xbox pad's stick | A | `smoke:steam-input` |
+| IN-21h | IN-21 on the Steam build: a Steam Controller with WebHID not granted, Stick steering Off, tilt steers | M | — |
 | IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `test/unit/motion-gain` |
 | IN-20h | IN-20 by hand: Chill feels as calm on a Steam Controller / DualSense as on a phone; Daredevil turns sharply on both | M | — |
 
