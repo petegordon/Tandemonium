@@ -80,6 +80,10 @@ import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole b
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
+import { isRoomCode } from './lobby/room-protocol.js';   // #667
+import { RoomMove, watchMoveNet, closeQuietly } from './lobby/room-move.js';   // #667 HOST INSTEAD
+import { NetworkManager } from './network-manager.js';   // #667: the new room's transport, opened beside the old
+import { canHostInstead } from './edition.js';   // #667
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
@@ -973,10 +977,13 @@ export class Lobby {
     // #672 · each seat shows its goose (outfit · colours · light swatch); the partner's, while
     // their Wardrobe is open, carries a "dressing…" tag, and the captain's START RIDE says so.
     const dressing = connected && !left && !!this._partnerDressing;
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge].join('|') : 'off';
+    // #667 · HOST INSTEAD: a full-game guest in a demo host's room, whose build follows a move.
+    const rehost = connected && !left ? (this._roomMove ? 'moving' : this._hostInsteadOffered() ? 'offer' : '') : '';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge, rehost].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
+    this._syncHostInsteadRow(on ? rehost : '');
     const wardrobe = document.getElementById('level-room-wardrobe');
     if (wardrobe) wardrobe.hidden = !on;
     const note = document.getElementById('start-dressing-note');
@@ -2162,6 +2169,9 @@ export class Lobby {
     // #672 · online, both players can reach the room's WARDROBE (△ / Y opens it from anywhere here).
     const wardrobeBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-room-wardrobe') : null;
     if (wardrobeBtn) navItems.splice(navItems.length - 1, 0, wardrobeBtn);
+    // #667 · HOST INSTEAD (shown only to a full guest in a Demo room; hidden items are skipped).
+    const hostInsteadBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-host-instead') : null;
+    if (hostInsteadBtn) navItems.splice(wardrobeBtn ? navItems.indexOf(wardrobeBtn) : navItems.length - 1, 0, hostInsteadBtn);
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
@@ -2590,6 +2600,9 @@ export class Lobby {
     // #672: the online room's WARDROBE (both sides; △ / Y does the same from a pad).
     const roomWardrobeBtn = document.getElementById('btn-room-wardrobe');
     if (roomWardrobeBtn) roomWardrobeBtn.addEventListener('click', () => { if (this._inOnlineRoom()) this._openDressingRoom(1); });
+    // #667: HOST INSTEAD (a full-game guest in a demo host's room).
+    const hostInsteadBtn = document.getElementById('btn-host-instead');
+    if (hostInsteadBtn) hostInsteadBtn.addEventListener('click', () => { this._hostInstead(); });
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -3571,7 +3584,7 @@ export class Lobby {
   // toggle (phone). The badges + the sheet's Close are the pad's focus set.
   _achFocusables() {
     return [
-      ...document.querySelectorAll('#lb-achievements .lb-ach-item'),
+      ...document.querySelectorAll('#lb-achievements .uag-item'),
       this._achievementsSheet.querySelector('.uf-sheet__close'),
     ].filter(Boolean);
   }
@@ -3579,14 +3592,18 @@ export class Lobby {
   _openAchievements() {
     this._renderAchievements();
     this._achievementsSheet.show();
-    if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
-    this._achResetFocus();
+    // #634: <uf-achievement-grid> renders on a microtask; this one runs after it.
+    queueMicrotask(() => {
+      if (!this._achievementsSheet.open) return;
+      if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
+      this._achResetFocus();
+    });
   }
 
   _achResetFocus(initial = null) {
     this._activeModal = 'achievements';
     this._modalBack = () => this._closeAchievements();
-    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
+    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .uag-item'));
   }
 
   /**
@@ -3596,16 +3613,16 @@ export class Lobby {
    * @param {-1|1} dir
    */
   _achJumpSection(dir) {
-    const secs = Array.from(document.querySelectorAll('#lb-achievements .lb-ach-section'))
-      .filter((sec) => sec.querySelector('.lb-ach-item'));
+    const secs = Array.from(document.querySelectorAll('#lb-achievements .uag-section'))
+      .filter((sec) => sec.querySelector('.uag-item'));
     if (!secs.length) return;
     const f = this._modalFocus.focused;
     const cur = f ? secs.findIndex((sec) => sec.contains(f)) : -1;
     let i;
     if (cur < 0) i = dir > 0 ? 0 : secs.length - 1;   // on Close (or nothing): RB → top, LB → last section
-    else if (dir < 0 && f !== secs[cur].querySelector('.lb-ach-item')) i = cur;
+    else if (dir < 0 && f !== secs[cur].querySelector('.uag-item')) i = cur;
     else i = Math.max(0, Math.min(secs.length - 1, cur + dir));
-    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.lb-ach-item'));
+    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.uag-item'));
     this._modalFocus.focusElement(first);
     secs[i].scrollIntoView({ block: 'start', inline: 'nearest' });
   }
@@ -4023,46 +4040,36 @@ export class Lobby {
   /**
    * #401 · the badge screen: all 100 achievements grouped by section,
    * counters with their progress (3/7 days), hidden ones as ??? until earned.
+   * #634: rendered by the kit's <uf-achievement-grid> (#ach-grid).
    */
   _renderAchievements() {
-    const container = document.getElementById('lb-achievements');
-    if (!container) return;
+    const grid = /** @type {any} */ (document.getElementById('ach-grid'));
+    if (!grid) return;
     const sections = this._achievements.getSections();
-    const defs = sections.flatMap(s => s.items);
-    const earnedCount = defs.filter(d => d.earned).length;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
+    grid.sections = sections.map(sec => ({ id: sec.id, title: sec.title }));
+    grid.achievements = sections.flatMap(sec => sec.items).map(d => this._achItem(d));
+    if (!grid.dataset.achClicks) {
+      grid.dataset.achClicks = '1';
+      // a tap, Enter, or the pad's A (the focus controller clicks) opens the detail card
+      grid.addEventListener('uf-achievement-grid:select', (e) => this._openAchievementDetail(e.detail.id));
+    }
+  }
 
-    let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
-    for (const sec of sections) {
-      const got = sec.items.filter(d => d.earned).length;
-      html += '<div class="lb-ach-section" data-section="' + sec.id + '">' +
-        '<div class="lb-ach-section-title">' + this._escapeHtml(sec.title) +
-        ' <span class="lb-ach-section-count">' + got + '/' + sec.items.length + '</span></div>';
-      html += '<div class="lb-achievement-grid">';
-      sec.items.forEach(d => {
-        const cls = (d.earned ? 'earned' : 'locked') + (d.secret ? ' secret' : '') + (d.demoLocked ? ' demo-locked' : '');
-        const prog = d.progress && d.progress[0] > 0
-          ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
-          : '';
-        const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
-        // #540: a button — a tap, Enter, or the pad's A opens the detail card.
-        html += '<button type="button" class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '"' +
-          ' aria-label="' + this._escapeHtml(d.name + (d.earned ? ', unlocked' : ', locked')) + '">' +
-          '<span class="lb-ach-icon">' + d.icon + '</span>' +
-          '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
-          prog +
-        '</button>';
-      });
-      html += '</div></div>';
-    }
-    container.innerHTML = html;
-    if (!container.dataset.achClicks) {
-      container.dataset.achClicks = '1';
-      container.addEventListener('click', (e) => {
-        const tile = /** @type {HTMLElement} */ (e.target).closest('.lb-ach-item');
-        if (tile) this._openAchievementDetail(tile.dataset.ach);
-      });
-    }
+  /**
+   * One of getAllDefinitions() as the kit's AchievementItem (#634). Hidden ones
+   * already carry ??? / ❔; full-game-only ones read "Full game" in the demo.
+   */
+  _achItem(d) {
+    return {
+      id: d.id, name: d.name, description: d.desc, icon: d.icon, section: d.section,
+      earned: d.earned, earnedAt: d.earnedAt, progress: d.progress, unit: d.unit, secret: d.secret,
+      unavailable: d.demoLocked ? 'Full game' : '', unavailableNote: 'Unlocks in the full game',
+      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
+      ...(d.earned && d.held ? {
+        kicker: 'Earned with a friend',
+        status: (d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked') + ' · get the full game to claim it',
+      } : {}),
+    };
   }
 
   // ── #540 · one achievement's detail card ──
@@ -4081,7 +4088,7 @@ export class Lobby {
     if (!d) return;
     this._achDetailId = id;
     this._renderAchievementDetail(d);
-    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]'));
+    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]'));
     const show = () => {
       this._achDetailSheet.heading = this._achievementSectionTitle(d.section);
       this._achDetailSheet.show();
@@ -4100,13 +4107,13 @@ export class Lobby {
   /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
   _onAchievementDetailClosed() {
     this._clearAchievementDim();
-    const lift = document.getElementById('ach-lift');
+    const lift = document.getElementById('ach-lift-host');
     if (lift) lift.remove();
-    document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
+    document.querySelectorAll('#lb-achievements .uag-item.lifting').forEach(el => el.classList.remove('lifting'));
     const id = this._achDetailId;
     this._achDetailId = null;
     if (!this._achievementsSheet.open) return;
-    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
+    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]') : null);
     this._achResetFocus(tile);
     if (tile) tile.focus({ preventScroll: true });
   }
@@ -4125,47 +4132,27 @@ export class Lobby {
     return sec ? sec.title : 'Achievement';
   }
 
+  /**
+   * #634: the card is the kit's <uf-achievement-detail> (#ach-detail-card): it
+   * works out the kicker, the status and the progress bar. The game adds its
+   * own lines: the medal times (extraHtml, under the description) and where +
+   * when a best-so-far was set (footHtml, under the bar).
+   */
   _renderAchievementDetail(d) {
-    const card = document.getElementById('ach-detail-card');
+    const card = /** @type {any} */ (document.getElementById('ach-detail-card'));
     if (!card) return;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
-    const total = this._achievements.getAllDefinitions().length;
-    let state, kicker, status;
     let bestLine = '';
-    if (d.earned) {
-      state = 'earned'; kicker = 'Achievement unlocked';
-      status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
-      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
-      if (d.held) { kicker = 'Earned with a friend'; status += ' · get the full game to claim it'; }
-    } else if (d.secret) {
-      state = 'secret'; kicker = 'Hidden'; status = 'Revealed when you earn it';
-    } else if (d.demoLocked) {
-      state = 'full'; kicker = 'Full game'; status = 'Unlocks in the full game';
-    } else if (d.progress && d.progress[0] > 0) {
-      state = 'progress'; kicker = 'In progress';
-      status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
-      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
-      if (d.bestAt && d.bestAt.at) {
-        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
-        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
-      }
-    } else {
-      state = 'locked'; kicker = 'Locked'; status = 'Not yet';
+    // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+    if (!d.earned && !d.secret && !d.demoLocked && d.progress && d.progress[0] > 0 && d.bestAt && d.bestAt.at) {
+      const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+      const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
     }
-    const bar = state === 'progress'
-      ? '<div class="ach-detail-bar"><i style="width:' + Math.round(100 * d.progress[0] / Math.max(1, d.progress[1])) + '%"></i></div>'
-      : '';
-    card.dataset.state = state;
-    card.innerHTML =
-      '<div class="ach-detail-kicker">' + kicker + '</div>' +
-      '<div class="ach-detail-badge"><span>' + d.icon + '</span></div>' +
-      '<div class="ach-detail-name">' + this._escapeHtml(d.name) + '</div>' +
-      '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
-      this._medalTimesHtml(d) +
-      '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
-      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
-      '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
+    card.achievement = this._achItem(d);
+    card.number = d.n;
+    card.total = this._achievements.getAllDefinitions().length;
+    card.extraHtml = this._medalTimesHtml(d);
+    card.footHtml = bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '';
   }
 
   /**
@@ -4206,13 +4193,18 @@ export class Lobby {
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const r = tile ? tile.getBoundingClientRect() : null;
     if (!tile || !r || !r.width || reduce || typeof tile.animate !== 'function') { done(); return; }
-    const old = document.getElementById('ach-lift');
+    const old = document.getElementById('ach-lift-host');
     if (old) old.remove();
     const c = /** @type {HTMLElement} */ (tile.cloneNode(true));
     c.id = 'ach-lift';
     c.classList.remove('gamepad-focus');
     c.style.left = r.left + 'px'; c.style.top = r.top + 'px'; c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
-    document.body.appendChild(c);
+    // #634: the copy sits in a .uag-host so the kit's badge styles reach it outside the grid
+    const host = document.createElement('div');
+    host.id = 'ach-lift-host';
+    host.className = 'uag-host';
+    host.appendChild(c);
+    document.body.appendChild(host);
     tile.classList.add('lifting');
     const W = window.innerWidth, H = window.innerHeight;
     const S = Math.min(0.6 * W / r.width, 0.45 * H / r.height);
@@ -4225,7 +4217,7 @@ export class Lobby {
     if (body) body.classList.add('ach-dim');
     this._achLifting = true;
     let fired = false;
-    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; host.remove(); tile.classList.remove('lifting'); done(); };
     anim.finished.then(finish, finish);
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
@@ -4677,6 +4669,134 @@ export class Lobby {
     };
 
     this.net.enterRoom(code, 'stoker');
+  }
+
+  // ── HOST INSTEAD (#667) ──────────────────────────────────────
+  // A full-game guest in a demo host's room moves the room to a new code with itself as host;
+  // the demo host (and its phones, whose pad room never moves) follows. The sequence, and why
+  // nobody is stranded, is in js/lobby/room-move.js.
+
+  /** Offer HOST INSTEAD here? A full-game stoker, a demo captain whose build follows a move. */
+  _hostInsteadOffered() {
+    return !!(this.net && this.net.connected && this._pendingMode === 'multiplayer') &&
+      canHostInstead(getEditionRules(), this._partnerRoom || null, this._roomRole);
+  }
+
+  /** Still on a room screen (a move stops when a ride starts or the room is left). */
+  _onRoomScreen() {
+    return !!(this.lobbyEl && this.lobbyEl.style.display !== 'none' && this._pendingMode === 'multiplayer' && this._roomRole &&
+      (this._currentStep === this.levelStep || this._currentStep === this.hostStep));
+  }
+
+  /** The room bar's HOST INSTEAD row: '' hidden, 'offer' the line + button, 'moving' a status line. */
+  _syncHostInsteadRow(state) {
+    const row = document.getElementById('level-room-rehost');
+    if (!row) return;
+    const line = document.getElementById('level-room-rehost-line');
+    const btn = /** @type {any} */ (document.getElementById('btn-host-instead'));
+    const was = !row.hidden && btn && !btn.hidden;
+    row.hidden = !state;
+    if (!state) return;
+    const lead = !this._roomMove || this._roomMove.side === 'lead';
+    if (line) {
+      line.textContent = state === 'moving'
+        ? (lead ? 'Opening your room… your friend will follow.' : 'Your friend is hosting now. Moving to their room…')
+        : 'Your friend has the demo. Host the room yourself to unlock every level and Versus. They can still join free.';
+    }
+    if (btn) btn.hidden = state !== 'offer';
+    // The button just appeared: on a pad, it is this screen's one action for the guest.
+    if (state === 'offer' && !was && this._currentStep === this.levelStep) this._applyStepSpatialFocus(this.levelStep);
+  }
+
+  /** A transport into the new room, beside the old one (RoomMove's openNet). */
+  async _openMoveNet(code, role) {
+    const net = new NetworkManager();
+    net._fallbackUrl = RELAY_URL;
+    net.cameraEnabled = this.cameraActive;
+    net.audioEnabled = this.audioActive;
+    const moveNet = watchMoveNet(net);
+    try { const t = await this.auth.getRelayToken(code, role); if (t) net._relayToken = t; } catch (e) { /* the relay takes no token */ }
+    net.enterRoom(code, role);
+    return moveNet;
+  }
+
+  /** G · the full-game guest pressed HOST INSTEAD: open a new room as its captain, then tell the host. */
+  async _hostInstead() {
+    if (this._roomMove || !this._hostInsteadOffered() || !this._onRoomScreen()) return;
+    const old = this.net;
+    const code = old.generateRoomCode();
+    analytics.trackEvent('room_rehost', { from: old.roomCode, to: code });
+    const move = new RoomMove({
+      side: 'lead', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      sendMoved: () => { if (old.connected) old.sendProfile(RoomProtocol.roomMoved(code)); },
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;   // the row says "Opening your room…"
+    await this._runRoomMove(move);
+  }
+
+  /** H · the partner opened `code` and hosts it now: follow as the stoker. */
+  async _followRoomMove(code) {
+    if (!isRoomCode(code) || this._roomMove || this._roomRole !== 'captain' || !this.net || !this._onRoomScreen()) return;
+    const old = this.net;
+    if (code === old.roomCode) return;
+    showInfoToast('🏠', 'Moving to your friend’s room', 'Room ' + code.slice(-4) + '…');
+    const move = new RoomMove({
+      side: 'follow', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;
+    await this._runRoomMove(move);
+  }
+
+  /** Run a move; on success make the new room this lobby's room, else stay in the old one. */
+  async _runRoomMove(move) {
+    let res;
+    try { res = await move.run(); } catch (e) { console.warn('LOBBY: room move failed', e); res = { ok: false, reason: 'error' }; }
+    if (this._roomMove === move) this._roomMove = null;
+    this._levelRoomKey = null;
+    if (!res.ok) {
+      if (move.moveNet) closeQuietly(move.moveNet.net);
+      // Still in the old room (both sides kept it). Say so, unless the move stopped for a ride.
+      if (res.reason !== 'cancelled' && this.net === move.old && this._onRoomScreen()) {
+        showInfoToast('⚠️', 'The room didn’t move', 'Still in room ' + String(move.oldCode || '').slice(-4) + '. Try HOST INSTEAD again.');
+      }
+      this._lastRoomMove = { ok: false, reason: res.reason, from: move.oldCode, to: move.code };   // read by smoke:host-instead
+      return;
+    }
+    const { net, queue } = res.moveNet;
+    const role = move.role;
+    this._netSession.adopt(net);   // closes the old room quietly: the partner is here already
+    net.onConnected = null;
+    net.onRoomJoined = null;
+    this._roomStore.clear(move.oldCode);
+    this._roomStore.save(move.code, role, this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : null);
+    // The new captain's host step shows the new code and QR (a phone's "Play on this phone" gets it too).
+    this._hostRoomCode = role === 'captain' ? move.code : null;
+    if (role === 'captain') {
+      const codeEl = document.getElementById('room-code-display');
+      if (codeEl) codeEl.textContent = move.code;
+      const statusEl = document.getElementById('host-status');
+      if (statusEl) { statusEl.textContent = 'Partner connected!'; statusEl.className = 'conn-status connected'; }
+      try { renderRoomQR(move.code); this._syncHostJoinQr(); } catch (e) { /* QR is cosmetic */ }
+    }
+    // Same partner, same seats: keep their name, look and edition; replay what they sent early.
+    this._rejoinMessageQueue = queue;
+    this._partnerProfileSeen = false;
+    this._showRoomStep(role);
+    if (role === 'captain') {
+      // Both were on level select: stay there, with the new host picking.
+      net.sendProfile(RoomProtocol.playGame());
+      net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
+      this._showRoomLevelsStep();
+    }
+    this._lastRoomMove = { ok: true, from: move.oldCode, to: move.code, role };   // read by smoke:host-instead
+    showInfoToast('🏠', role === 'captain' ? 'You’re hosting now' : 'Your friend is hosting now',
+      'Room ' + move.code.slice(-4) + ' · ' + roomBadge(this.roomRules()));
   }
 
   // ── NetworkManager lifecycle ─────────────────────────────────
@@ -5342,6 +5462,8 @@ export class Lobby {
 
     if (profile.type === ROOM_MSG.DRESSING) {
       this._setPartnerDressing(!!profile.open);   // #672
+    } else if (profile.type === ROOM_MSG.ROOM_MOVED) {
+      this._followRoomMove(profile.code);   // #667 · the partner hosts now: follow to the new code
     } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
@@ -8080,6 +8202,11 @@ export class Lobby {
     if (step === this.versusStep) {
       const cont = document.getElementById('btn-versus-continue');
       if (shown(cont)) return cont;
+    }
+    // #667: HOST INSTEAD, while offered, is the guest's one action on the room's level screen.
+    if (step === this.levelStep) {
+      const hi = document.getElementById('btn-host-instead');
+      if (hi && !hi.hidden && usable(hi)) return hi;
     }
     const preferred = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
     if (usable(preferred)) return preferred;

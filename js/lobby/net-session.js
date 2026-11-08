@@ -57,4 +57,26 @@ export class NetSession {
     this.net = new NetworkManager();
     return this.net;
   }
+
+  /**
+   * #667 · HOST INSTEAD: make an already-connected transport (the new room's) the live one.
+   * The old one is closed QUIETLY: callbacks detached and no partnerLeft, because the
+   * partner is moving to the new room too (js/lobby/room-move.js). Bumps the epoch.
+   */
+  adopt(net) {
+    const old = this.net;
+    if (old && old !== net) {
+      old.onRoomJoined = null;
+      old.onConnected = null;
+      old.onDisconnected = null;
+      old.onAuthError = null;
+      old.onProfileReceived = null;
+      old.onPartnerLeft = null;
+      old._partnerLeft = true;   // NetworkManager.destroy says goodbye only when this is false
+      try { old.destroy(); } catch (e) {}
+    }
+    this._epoch++;
+    this.net = net;
+    return net;
+  }
 }

@@ -12,7 +12,9 @@
 // to do, the status (Unlocked November 7, 2026 · Not yet · 3 / 7 days with a
 // bar), its number, and its ID in small mono text (show-id="false" hides it).
 // `extraHtml` adds a game's own trusted line under the description
-// (Tandemonium's medal times); it is not escaped.
+// (Tandemonium's medal times); `footHtml` adds one under the status and its
+// bar (Tandemonium's "Best: Daily Ride · November 7, 2026, 5:00 PM"). Neither
+// is escaped.
 //
 // Replaces: Tandemonium's #ach-detail-card markup (.ach-detail-*) built in lobby.js.
 
@@ -36,11 +38,18 @@ export function longDate(when) {
 const fmt = (/** @type {number} */ v) => Math.floor(v).toLocaleString('en-US');
 
 /**
- * The card's state, kicker and status line for an achievement.
+ * The card's state, kicker and status line for an achievement (an item's own
+ * `kicker` / `status` win over the ones its state gives).
  * @param {AchievementItem} a
  * @returns {{ state: 'earned'|'secret'|'full'|'progress'|'locked', kicker: string, status: string }}
  */
 export function detailState(a) {
+  const s = baseState(a);
+  return { state: s.state, kicker: a.kicker || s.kicker, status: a.status || s.status };
+}
+
+/** @param {AchievementItem} a @returns {{ state: 'earned'|'secret'|'full'|'progress'|'locked', kicker: string, status: string }} */
+function baseState(a) {
   if (isEarned(a)) {
     const date = longDate(a.earnedAt);
     return { state: 'earned', kicker: 'Achievement unlocked', status: date ? 'Unlocked ' + date : 'Unlocked' };
@@ -96,6 +105,7 @@ export class UfAchievementDetail extends UfElement {
 
   /** @type {AchievementItem|null} */ #achievement = null;
   #extraHtml = '';
+  #footHtml = '';
 
   /** @returns {boolean} */ get showId() { return this.get('showId'); }
   /** @param {boolean} v */ set showId(v) { this.set('showId', v); }
@@ -109,6 +119,9 @@ export class UfAchievementDetail extends UfElement {
 
   /** A trusted HTML line under the description (not escaped). @returns {string} */ get extraHtml() { return this.#extraHtml; }
   /** @param {string} v */ set extraHtml(v) { this.#extraHtml = String(v || ''); this.requestUpdate(); }
+
+  /** A trusted HTML line under the status (and its bar), above "No. n of N" (not escaped). @returns {string} */ get footHtml() { return this.#footHtml; }
+  /** @param {string} v */ set footHtml(v) { this.#footHtml = String(v || ''); this.requestUpdate(); }
 
   /** @override */
   render() {
@@ -124,6 +137,7 @@ export class UfAchievementDetail extends UfElement {
       `<div class="uad-desc">${esc(a.description || '')}</div>` +
       this.#extraHtml +
       `<div class="uad-status">${esc(status)}</div>` + bar +
+      this.#footHtml +
       (this.number > 0 ? `<div class="uad-count">No. ${this.number}${this.total > 0 ? ' of ' + this.total : ''}</div>` : '') +
       (this.showId ? `<div class="uad-id" title="Achievement ID">${esc(a.id)}</div>` : '');
   }
