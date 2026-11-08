@@ -57,6 +57,8 @@ contextBridge.exposeInMainWorld('steam', {
   isAchievementActivated: (apiName) => ipcRenderer.invoke('steam:isAchievementActivated', apiName),
   getAuthTicket: () => ipcRenderer.invoke('steam:getAuthTicket'),
   storeStats: () => ipcRenderer.invoke('steam:storeStats'),
+  // #657 · the result card into the Steam screenshot library: { png, rgb, width, height, caption } → { ok, error }.
+  saveScreenshot: (req) => ipcRenderer.invoke('steam:saveScreenshot', req),
   input: {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
     getXInputMap: () => _steamXInputMap,

@@ -7,7 +7,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike } from './special-bikes.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -35,6 +35,7 @@ import {
   recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
+import { buildResultCard, renderResultCard, linkFromStrip, steamSavedMessage } from './result-card.js';   // #657
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -2435,6 +2436,12 @@ class Game {
 
     // D-3: no stale strip from a previous ride on a different road.
     this._dailyStripText = null;
+    // #657: nor a stale result card: its data, the badges this ride unlocks, its payout.
+    this._shareCardData = null;
+    this._dailyStripInput = null;
+    this._rideUnlocks = [];
+    this._lastRidePayout = null;
+    this._shareSavedToSteam = false;
 
     // E-2: plan what the road is going to do to this pair.
     // Map Tourist has no road line to lay cobbles, gusts or goose crossings
@@ -3972,7 +3979,7 @@ class Game {
       `Tandemonium · ${plan.headline}`,
       `📍 ${plan.from.label} → ${plan.to.label}`,
       `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
-      location.origin + '/'
+      (/^https?:/.test(location.origin) ? location.origin : SITE_URL) + '/'
     ].join('\n');
 
     try {
@@ -4583,7 +4590,7 @@ class Game {
       : computeStreak(store, level.key).current;
 
     const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
-    this._dailyStripText = buildShareStrip({
+    const stripInput = {
       key: level.key,
       mode,
       timeMs: summary.timeMs,
@@ -4604,36 +4611,143 @@ class Game {
       rides: day.started,
       streak,
       partnerName: mode === 'pair' ? this._partnerName : null
-    }, { origin: location.origin });
+    };
+    this._dailyStripInput = stripInput;   // #657: the result card says the same
+    // #657: the desktop app's own origin (tandemonium://app) is no link for anyone else.
+    const origin = /^https?:/.test(location.origin) ? location.origin : SITE_URL;
+    this._dailyStripText = buildShareStrip(stripInput, { origin });
 
     const escaped = this._dailyStripText
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<div id="daily-strip">${escaped}</div>`;
   }
 
-  /** D-3 · share the clip if there is one, else the strip. */
+  /**
+   * #657 · the result card's data for this finish (the Daily Ride, or a
+   * tourist ride): what buildResultCard() takes, less the parts only known
+   * later (the payout, the badges, the link — added when it is shared).
+   */
+  _resultCardData(summary, level) {
+    const d = this._dailyStripInput;
+    const plan = this._touristRoute;
+    return {
+      levelName: level.name,
+      levelIcon: plan ? '📍' : level.icon,
+      headline: plan ? plan.headline : null,
+      isDaily: !!level.isDaily,
+      dayKey: level.key || null,
+      difficulty: plan ? null : this.lobby.selectedDifficulty,
+      mode: d ? d.mode : (this.mode === 'solo' ? 'solo' : 'pair'),
+      partnerName: d ? d.partnerName : null,
+      timeMs: summary.timeMs,
+      bestMs: d ? d.bestMs : null,
+      dnf: !!summary.dnf,
+      distance: summary.distance,
+      medal: d ? d.medal : null,
+      collectibles: summary.collectibles,
+      collectiblesTotal: summary.collectiblesTotal,
+      crashes: summary.crashes,
+    };
+  }
+
+  /** #657 · the card as it is now: the finish, plus this ride's Tandem Tokens and badges. */
+  _resultCardModel() {
+    if (!this._shareCardData) return null;
+    const pay = this._lastRidePayout;
+    return buildResultCard({
+      ...this._shareCardData,
+      tokensEarned: pay && pay.score ? pay.score.total : 0,
+      badges: this._rideUnlocks || [],
+      link: linkFromStrip(this._dailyStripText),
+    });
+  }
+
+  /**
+   * #657 · the Steam build: render the result card and write it to the
+   * player's Steam screenshot library, captioned with the strip's headline.
+   * Resolves { ok, error }; null when there is no Steam to save to.
+   */
+  async _saveResultToSteam() {
+    const steam = /** @type {any} */ (window).steam;
+    if (!steam || typeof steam.saveScreenshot !== 'function') return null;
+    try { if (!(await steam.isAvailable())) return null; } catch { return null; }
+    const model = this._resultCardModel();
+    if (!model) return { ok: false, error: 'no-card' };
+    try {
+      const card = await renderResultCard(model);
+      const png = new Uint8Array(await (await card.png()).arrayBuffer());
+      const res = await steam.saveScreenshot({ png, rgb: card.rgb(), width: card.width, height: card.height, caption: model.caption });
+      return res && res.ok ? res : { ok: false, error: (res && res.error) || 'failed' };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+
+  /** Put a message on SHARE RESULT for a while, then its label back. */
+  _flashShareButton(where, text, ms) {
+    const btn = document.getElementById('btn-daily-share-' + where);
+    if (!btn) return;
+    btn.textContent = text;
+    clearTimeout(this._shareBtnTimer);
+    this._shareBtnTimer = setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, ms);
+  }
+
+  /**
+   * D-3 · share the clip if there is one, else the strip. #657: in the Steam
+   * build the result card goes to the Steam screenshot library instead (the
+   * clipboard is a dead end on a TV with a controller); if that fails, the
+   * clipboard, and the button says so.
+   */
   async _shareDailyResult(where) {
     const text = this._dailyStripText;
     if (!text) return;
     let method = 'copy';
+    let steamFailed = false;
+    const steam = /** @type {any} */ (window).steam;
+    if (steam && typeof steam.saveScreenshot === 'function') {
+      const pad = Array.from((navigator.getGamepads && navigator.getGamepads()) || []).some(p => p && p.connected);
+      if (this._shareSavedToSteam) {   // already saved this ride: say where it went, do not save twice
+        this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
+        return;
+      }
+      if (this._shareSaving) return;
+      this._shareSaving = true;
+      this._flashShareButton(where, 'SAVING…', 15000);
+      let res = null;
+      try { res = await this._saveResultToSteam(); } finally { this._shareSaving = false; }
+      if (res && res.ok) {
+        this._shareSavedToSteam = true;
+        this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
+        try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: 'steam_screenshot', where }); } catch {}
+        if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
+        return;
+      }
+      steamFailed = !!res;   // null: no Steam running, so the ordinary clipboard and no note
+      if (res) console.warn('[share] Steam screenshot failed:', res.error);
+      else this._flashShareButton(where, '📋 SHARE RESULT', 0);
+    }
     try {
       const clip = this.recorder && this.recorder._clipBlob;
-      if (clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
+      if (!steamFailed && clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
         // The persona's channel is video: offer the clip first, with the strip
         // as its caption.
         await navigator.share({ files: [new File([clip], 'tandemonium.mp4', { type: clip.type })], text });
         method = 'clip';
-      } else if (navigator.share && isMobile) {
+      } else if (!steamFailed && navigator.share && isMobile) {
         await navigator.share({ text });
         method = 'share';
       } else {
         await navigator.clipboard.writeText(text);
-        const btn = document.getElementById('btn-daily-share-' + where);
-        if (btn) { btn.textContent = 'COPIED'; setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, 1600); }
+        if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM · COPIED INSTEAD", 4000);
+        else this._flashShareButton(where, 'COPIED', 1600);
+        if (steamFailed) method = 'copy_after_steam';
       }
       try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
       if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
-    } catch { /* the user dismissed the share sheet; that is not an error */ }
+    } catch {
+      /* the user dismissed the share sheet; that is not an error */
+      if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM", 4000);
+    }
   }
 
   /**
@@ -4793,6 +4907,8 @@ class Game {
   /** Every unlock, from any source (a frame, a finish, a payout, a launch): toast + badges. */
   _onAchievementEarned(a) {
     showAchievementToast(a);
+    // #657 · the result card shows the badges this ride unlocked.
+    if (this._rideUnlocks) this._rideUnlocks.push({ icon: a.icon || '🏅', name: a.name || '' });
     this._updateBadges();
     try {
       analytics.trackEvent('achievement_earned', {
@@ -5152,6 +5268,8 @@ class Game {
       html += this._buildDailyStripHtml(summary, level);
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
+      // #657 · what the result card will say, if this finish has something to share.
+      this._shareCardData = this._dailyStripText ? this._resultCardData(summary, level) : null;
 
       statsEl.innerHTML = html;
 
