@@ -19,7 +19,7 @@ import {
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
 } from './identity.js';
-import { gameProfile, recordGame, handleMeGames } from './games.js';
+import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, mergeGameAccounts } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 
 /**
@@ -49,11 +49,14 @@ export const houseTandemGames = {
   },
   gameProfile: (env, userId, game) => gameProfile(env, userId, game),
   recordGame: (env, userId, game, delta, earned) => recordGame(env, userId, game, delta, earned),
+  /** housetandem-web #37 · active seconds in a game (a delta, capped to real time). */
+  recordPlay: (env, userId, game, seconds) => recordPlay(env, userId, game, seconds),
 };
 
 /** What the identity module needs from this worker. */
 const identityDeps = () => ({
-  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey, mergeGuestPairs,
+  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey, mergeGuestPairs, mergeGameAccounts,
+  userFromToken,
 });
 
 export default {
@@ -157,6 +160,13 @@ export default {
         return withAuth(request, env, corsOrigin, handleDeleteAccount);
       }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
+      // housetandem-web #37 · time in game (every game) and Tandemonium's lifetime stats, as deltas.
+      const gameSync = path.match(/^\/games\/([a-z][a-z0-9_-]{0,19})\/sync$/);
+      if (gameSync && request.method === 'POST') {
+        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
+        if (limited) return limited;
+        return handleGameSync(request, env, corsOrigin, gameSync[1], identityDeps());
+      }
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
       // D-6 / D-7 · the pair, and the day's ranked results of people you have
       // actually ridden with. There is no global daily board (decision 5).
@@ -2307,6 +2317,7 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM auth_requests WHERE link_user_id = ?', userId),
     q('DELETE FROM game_achievements WHERE user_id = ?', userId),
     q('DELETE FROM game_stats WHERE user_id = ?', userId),
+    q('DELETE FROM game_playtime WHERE user_id = ?', userId),
     q('DELETE FROM user_identities WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
@@ -2336,6 +2347,15 @@ async function withDashboardAuth(request, env, corsOrigin, handler) {
     return jsonResponse({ error: 'Access denied — not authorized for dashboard' }, 403, corsOrigin);
   }
   return handler(request, env, corsOrigin, payload.sub);
+}
+
+/** The account id in a session token (or null). */
+async function userFromToken(token, env) {
+  try {
+    return (await verifyJWT(token, env.JWT_SECRET)).sub;
+  } catch {
+    return null;
+  }
 }
 
 async function getUserFromRequest(request, env) {
