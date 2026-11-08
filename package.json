@@ -62,6 +62,7 @@
     "smoke:local-coop": "node scripts/smoke-local-coop.mjs",
     "smoke:versus": "node scripts/smoke-versus.mjs",
     "smoke:wardrobe": "node scripts/smoke-wardrobe.mjs",
+    "smoke:players": "node scripts/smoke-players.mjs",
     "smoke:time-warp": "node scripts/smoke-time-warp.mjs",
     "smoke:solo-flight": "node scripts/smoke-solo-flight.mjs",
     "smoke:webhid": "node scripts/smoke-webhid.mjs",

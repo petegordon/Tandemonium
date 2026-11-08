@@ -6038,7 +6038,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.760755e | 11-07-2026 22:18</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.64586ed | 11-07-2026 22:22</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6060,26 +6060,27 @@ ON</button>
     <!-- Achievements: the star + "earned / total" (lobby.js _syncSystemBar keeps the count). -->
     <uf-button size="pill" slot="start" id="bar-achievements" title="Achievements" aria-label="Achievements"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><polygon points="10,2 12.5,7.5 18,8 14,12 15,17.5 10,15 5,17.5 6,12 2,8 7.5,7.5"/></svg><span id="bar-achievements-count">0 of 100</span></uf-button>
     <uf-button size="pill" slot="start" id="bar-profile"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="10" cy="7" r="3.5"/><path d="M3 18c0-3.5 3-6 7-6s7 2.5 7 6"/></svg>Profile</uf-button>
-    <uf-button size="pill" slot="end" id="bar-controls"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9h12a4 4 0 0 1 3.9 4.9l-.8 3.4a2.5 2.5 0 0 1-4.3 1.1L15 16H9l-1.8 2.4a2.5 2.5 0 0 1-4.3-1.1l-.8-3.4A4 4 0 0 1 6 9z"/><path d="M8 12v3M6.5 13.5h3"/></svg><span id="bar-controls-label">Controls</span></uf-button>
+    <!-- #646: Players (who is playing on this screen, their controllers and each controller's settings). -->
+    <uf-button size="pill" slot="end" id="bar-players"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19c0-3.3 2.7-5.6 6-5.6s6 2.3 6 5.6"/><circle cx="17" cy="9" r="2.6"/><path d="M16.5 13.6c2.7.2 4.5 2.2 4.5 4.9"/></svg><span id="bar-players-label">Players</span></uf-button>
     <uf-button size="pill" slot="end" id="bar-music" class="bar-icon-only" title="Music" aria-label="Music"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 17V6l9-3v11"/><circle cx="5.5" cy="17" r="2.5"/><circle cx="14.5" cy="14" r="2.5"/></svg></uf-button>
     <uf-button size="pill" slot="end" id="bar-settings" class="bar-icon-only" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></uf-button>
     <!-- #172: desktop app only (js/app-quit.js canQuitApp), mode step only; lobby.js _syncSystemBar shows it. #517: the far right. -->
     <uf-button size="pill" slot="end" id="bar-quit" style="display:none;" title="Close Tandemonium"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3v7"/><path d="M5.6 5.6a6.2 6.2 0 1 0 8.8 0"/></svg>Quit</uf-button>
   </uf-system-bar>
 
-  <!-- Controls sheet (#428 round 3, kit <uf-sheet>): the controller in use, every
-       connected controller, steering, prompts, and phone-as-controller. Opened
-       from the bar's Controls pill; wired in lobby.js _initSystemBar. -->
-  <uf-sheet id="controls-sheet" heading="Controls" size="md">
-    <uf-seat id="controls-seat" seat="You" tone="captain" who="No controller yet" dev="Press a button on a controller" state="open"></uf-seat>
-    <uf-controller-roster id="controls-roster" variant="list" heading="Connected controllers"></uf-controller-roster>
-    <uf-setting id="set-stick" label="Stick steering" description="Lean with the left stick"></uf-setting>
-    <uf-setting id="set-gyro" label="Gyro steering" description="Tilt the controller to lean">
-      <div slot="detail">Steering feel <span class="set-feel-end">Stable</span><input type="range" id="set-feel-slider" min="0" max="100" value="50" aria-label="Steering feel"><span class="set-feel-end">Responsive</span><uf-button size="sm" id="set-recalibrate">Recalibrate</uf-button></div>
-    </uf-setting>
-    <uf-setting id="set-prompts" kind="value" label="Button prompts" description="Picked from the controller in use" value="Automatic"></uf-setting>
+  <!-- Players (#646, replaces the Controls sheet; kit <uf-sheet>): one row per seat on THIS
+       screen (P1-P4): who (signed in or Guest, Sign in / Sign out), the bound controller
+       (model, light, Buzz) and that controller's settings (stick, gyro + feel, prompts).
+       Then Available controllers (connected, not seated) and the phone. Rows are built by
+       js/players-sheet.js; opened from the bar's Players pill (lobby.js _initSystemBar). -->
+  <uf-sheet id="players-sheet" heading="Players" size="lg">
+    <div id="pl-rows" class="pl-rows"></div>
+    <div class="pl-available">
+      <uf-controller-roster id="pl-available" variant="list" heading="Available controllers"></uf-controller-roster>
+      <p id="pl-avail-note" class="pl-avail-note" hidden></p>
+    </div>
     <uf-setting id="set-phone" kind="value" label="Use your phone instead" description="Scan a code to steer and pedal with your phone" value="Open"></uf-setting>
-    <div slot="actions"><uf-button variant="accent" id="controls-done">DONE</uf-button></div>
+    <div slot="actions"><uf-button variant="accent" id="players-done">DONE</uf-button></div>
   </uf-sheet>
 
   <!-- Quit confirm (#172, desktop app only): opened from the bar's Quit pill
