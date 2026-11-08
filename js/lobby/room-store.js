@@ -6,7 +6,7 @@
 // The rejoin-UX persistence layer extracted from lobby.js (#318 Step 3):
 // which rooms you've recently been in, so RIDE TOGETHER can offer a quick
 // rejoin. Pure localStorage — no DOM, no transport, no nav. Entries are
-//   { roomCode, role, timestamp, partnerName }
+//   { roomCode, role, timestamp, partnerName, partnerSeenAt? }
 // and rooms older than RECENT_WINDOW_MS are pruned on read. Logic is
 // byte-faithful to the previous inline _saveRoom/_clearRoom/_getRecentRooms.
 // ============================================================
@@ -20,15 +20,34 @@ export class RoomStore {
   save(roomCode, role, partnerName) {
     try {
       const rooms = this.getRecent();
+      /** @type {{roomCode: string, role: string, timestamp: number, partnerName: string|null, partnerSeenAt?: number}} */
       const entry = { roomCode, role, timestamp: Date.now(), partnerName: partnerName || null };
       const existing = rooms.findIndex(r => r.roomCode === roomCode);
       if (existing >= 0) {
         // Preserve partner name if not provided
         if (!entry.partnerName && rooms[existing].partnerName) entry.partnerName = rooms[existing].partnerName;
+        // #694: and when the partner was last here (C vs D on a rejoin)
+        if (rooms[existing].partnerSeenAt) entry.partnerSeenAt = rooms[existing].partnerSeenAt;
         rooms[existing] = entry;
       } else {
         rooms.push(entry);
       }
+      localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
+    } catch (e) {}
+  }
+
+  /**
+   * #694 · the partner is (still) here: remember when, so a later rejoin can say "Pete was here
+   * 3 min ago" or "hasn't been in room ABCD for 2 h". Being in the room with them also keeps
+   * the room recent.
+   */
+  markSeen(roomCode, at = Date.now()) {
+    try {
+      const rooms = this.getRecent();
+      const entry = rooms.find(r => r.roomCode === roomCode);
+      if (!entry) return;
+      entry.partnerSeenAt = at;
+      entry.timestamp = Math.max(entry.timestamp || 0, at);
       localStorage.setItem(ROOMS_KEY, JSON.stringify(rooms));
     } catch (e) {}
   }

@@ -167,12 +167,18 @@ for (const role of ['captain', 'stoker']) {
     g.net = { connected: false, transport: 'relay', roomCode: 'TNDM-TEST', sendState() {}, sendLean() {}, sendPedal() {}, sendEvent() {}, retryConnection() { window.__retried = 1; }, destroy() { window.__destroyed++; } };
     g.mode = role;
     g._reconnecting = true;   // what _showReconnecting sets after the 2 s grace
+    // #694 G: the stoker knows the captain's name (Pat); the captain's partner has none (role only).
+    g.lobby._roomPartnerName = role === 'stoker' ? 'Pat' : null;
   }, role);
   await sleep(1000);
   let o = await overlay(page);
-  const want = role === 'stoker' ? /captain lost connection/ : /partner lost connection/;
-  check(o.visible && o.who === 'partner' && want.test(o.msg), `${role}: partner loss pauses`, o.msg);
-  check(!o.alone && /in \d+s/.test(o.sub), `${role}: take-over waits with a countdown`, o.sub);
+  // #694 G: who (the name, else the role) and how long.
+  const want = role === 'stoker' ? /^Pat \(your Captain\) lost connection$/ : /^Your Stoker lost connection$/;
+  check(o.visible && o.who === 'partner' && want.test(o.msg), `${role}: partner loss pauses, saying who (#694 G)`, o.msg);
+  check(!o.alone && /^Waiting for them to come back · 0:0\d\. You can .+ in \d+s\.$/.test(o.sub), `${role}: take-over waits with a count-up and a countdown`, o.sub);
+  await page.evaluate(() => { window._game._drop.since -= 7000; });
+  const up = await page.waitForFunction(() => /come back · 0:05\./.test(document.getElementById('disconnect-sub').textContent), { timeout: 3000, polling: 50 }).then(() => true, () => false);
+  check(up, `${role}: the wait counts up in 5 s steps (0:05)`, (await overlay(page)).sub);
   await h.shot(page, `online-${role}-waiting`);
   // The transport gives up → Try Again appears too.
   await page.evaluate(() => { const g = window._game; g._netLost = true; g._renderDropOverlay(); });

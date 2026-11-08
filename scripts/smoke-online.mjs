@@ -166,6 +166,19 @@ try {
   console.log("OC-01 / OC-07 / OC-11 — Grandma's");
   {
     const { cap, sto, code } = await hostAndJoin('');
+
+    // OC-F (#694 F): over the real relay each side hears the other's activity ping; an idle
+    // partner shows "Your Stoker … hasn't moved for 0:35" (the idle clock is skewed, not waited
+    // out); the stoker pressing a key clears it within one ping period.
+    const pinged = await waitFor(cap, () => window._game.lobby._partnerIdle.pingSeen, null, 15000) && await waitFor(sto, () => window._game.lobby._partnerIdle.pingSeen, null, 15000);
+    check(pinged, "OC-F both sides hear the other's activity ping over the relay (#694 F)");
+    await cap.evaluate(() => { window._game.lobby._partnerIdle.lastAt -= 35000; });
+    const idleText = await cap.waitForFunction(() => { const e = document.getElementById('room-idle-note'); return e && !e.hidden && /^Your Stoker.* hasn't moved for 0:3[05]$/.test(e.textContent) && e.textContent; }, { timeout: 5000, polling: 100 }).then((x) => x.jsonValue(), () => null);
+    check(!!idleText, 'OC-F the captain sees the idle stoker: "Your Stoker … hasn\'t moved for 0:35"', idleText);
+    await sto.keyboard.press('Shift');
+    const cleared = await waitFor(cap, () => { const e = document.getElementById('room-idle-note'); return !e || e.hidden; }, null, 8000);
+    check(cleared, 'OC-F the stoker presses a key: the captain\'s "hasn\'t moved" clears');
+
     const riding = await startRide(cap, sto, 'grandma');
     const c0 = await net(cap), s0 = await net(sto);
     check(riding && c0.mode === 'captain' && s0.mode === 'stoker', 'both ride: captain and stoker in the same ride', { cap: c0, sto: s0 });
