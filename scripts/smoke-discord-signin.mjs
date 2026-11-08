@@ -69,7 +69,7 @@ const pill = (page) => page.evaluate(() => {
   return Array.from(b.children).map((c) => c.tagName === 'IMG' ? 'img:' + c.dataset.provider : c.tagName.toLowerCase());
 });
 const popupState = (page) => page.evaluate(() => {
-  const vis = (id) => { const e = document.getElementById(id); return !!e && !e.hidden && e.offsetParent !== null; };
+  const vis = (id) => { const e = document.getElementById(id); return !!e && e.offsetParent !== null && getComputedStyle(e).display !== "none"; };
   return {
     open: document.getElementById('profile-popup').classList.contains('visible'),
     discordBtn: vis('profile-popup-discord'),
@@ -92,7 +92,7 @@ const popupState = (page) => page.evaluate(() => {
   await page.evaluate(() => document.getElementById('bar-profile').click());
   await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
   let s = await popupState(page);
-  check(s.open && s.discordBtn && !s.linkBtn, 'A: Profile offers SIGN IN WITH DISCORD (no Google)', s);
+  check(s.open && s.qr && !s.discordBtn && !s.linkBtn, 'A: on a TV the QR stands in for SIGN IN WITH DISCORD (no Google, no duplicate button)', s);
   check(s.qr && s.code === 'K7QF', 'A: the QR steps and the code show on a TV', s);
   check(await page.evaluate(() => !document.querySelector('script[src*="accounts.google.com"]') && !document.getElementById('gsi-button-container')), 'A: no Google sign-in left on the page');
   await h.shot(page, 'A1-tv-signin');
@@ -131,7 +131,7 @@ const popupState = (page) => page.evaluate(() => {
   await page.evaluate(() => document.getElementById('profile-popup-link-discord').click());
   await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
   s = await popupState(page);
-  check(s.qr && s.code === 'K7QF', 'B: linking shows the QR steps and the code', s);
+  check(s.qr && s.code === 'K7QF' && !s.linkBtn, 'B: linking shows the QR steps and the code, and LINK DISCORD steps aside', s);
   let opened = await page.evaluate(() => window.__opened.slice());
   check(opened.length === 0, 'B: the browser does not open by itself (QR first, for the couch)', opened);
   const openBtn = await page.evaluate(() => {
