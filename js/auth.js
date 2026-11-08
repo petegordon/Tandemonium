@@ -16,6 +16,16 @@
 //     polls the API with a secret only it holds.
 
 import { API_BASE } from './config.js';
+import { getDeviceId } from './analytics.js';
+
+/**
+ * #678 · this device's id, sent with Player 1's sign-in so the rides it
+ * logged as 'guest:<device id>' move to the account. Seat sign-ins
+ * (js/seat-accounts.js) never send it: that guest is Player 1, not them.
+ */
+function deviceIdForSignIn() {
+  try { return getDeviceId() || undefined; } catch (e) { return undefined; }
+}
 
 const STORAGE_USER = 'tandemonium_auth_user';
 const STORAGE_TOKEN = 'tandemonium_auth_token';
@@ -153,7 +163,9 @@ export class AuthManager {
     const headers = { 'Content-Type': 'application/json' };
     // Signed in already: the Discord sign-in is linked to this account.
     if (this.token && !this.isTokenExpired()) headers.Authorization = `Bearer ${this.token}`;
-    const res = await fetch(`${API_BASE}/auth/discord/begin`, { method: 'POST', headers, body: JSON.stringify(body) });
+    const res = await fetch(`${API_BASE}/auth/discord/begin`, {
+      method: 'POST', headers, body: JSON.stringify({ ...body, device_id: deviceIdForSignIn() }),
+    });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || ('Discord sign-in unavailable (' + res.status + ')'));
@@ -272,7 +284,7 @@ export class AuthManager {
       const res = await fetch(`${API_BASE}/auth/steam`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ steamId, personaName, ticket }),
+        body: JSON.stringify({ steamId, personaName, ticket, device_id: deviceIdForSignIn() }),
       });
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');

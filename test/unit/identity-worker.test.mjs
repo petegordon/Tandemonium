@@ -78,8 +78,8 @@ function mockFetch(discordUser) {
 const DISCORD_PETE = { id: '80351110224678912', username: 'pete', global_name: 'Pete', avatar: 'abc123' };
 
 /** Run a device-code sign-in to the end; returns the poll result. */
-async function deviceSignIn(env, token = null) {
-  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token })).json();
+async function deviceSignIn(env, token = null, extra = {}) {
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device', ...extra }, token })).json();
   assert.match(begin.code, /^[A-HJ-NP-Z2-9]{4}$/);
   const go = await call(env, '/auth/discord/go?r=' + encodeURIComponent(begin.id));
   assert.equal(go.status, 302);
@@ -600,5 +600,135 @@ test('handoff: a signed-in link opens another site signed in, once, within a min
     const old = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
     db.prepare('UPDATE auth_requests SET created_at = created_at - 61').run();
     assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: old.code } })).status, 410, 'expired');
+  } finally { restore(); }
+});
+
+// ── #678 · a guest's pairs move to the account when that device signs in ──
+
+const STEAM_PETE = { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' };
+const pairRows = (db) => db.prepare('SELECT user_lo, user_hi, rides, distance, best_json, last_ride FROM pairs ORDER BY user_lo, user_hi').all();
+function putPair(db, a, b, { rides, distance, best = {}, lastRide, bestStreak = 0 }) {
+  const [lo, hi] = String(a) < String(b) ? [String(a), String(b)] : [String(b), String(a)];
+  db.prepare(`INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride, daily_streak, daily_best_streak, daily_last_key)
+              VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL)`).run(lo, hi, rides, distance, JSON.stringify(best), lastRide, bestStreak);
+}
+
+test('#678 guest pair → this device signs in (Steam) → the pair is under the account and readable; a second sign-in adds nothing', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const sam = await deviceSignIn(env);   // Sam's own sign-in, no device id: nothing to claim
+    // Pete rode on device 'devA' signed out; Sam posted the ride, Pete = guest:devA.
+    const res = await call(env, '/score', { method: 'POST', token: sam.token, body: {
+      levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'stoker',
+      contributions: { captain: { overallPct: 55, userId: null, guestDeviceId: 'devA' }, stoker: { overallPct: 45, userId: sam.user.id } } } });
+    assert.equal(res.status, 200, await res.clone().text());
+    assert.equal((await (await call(env, '/pair?with=guest%3AdevA', { token: sam.token })).json()).rides, 1);
+
+    const pete = await (await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: 'devA' } })).json();
+    const fromPete = await (await call(env, '/pair?with=' + sam.user.id, { token: pete.token })).json();
+    assert.equal(fromPete.rides, 1);
+    assert.equal(fromPete.distance, 1200);
+    assert.deepEqual(fromPete.best, { grandma: 200000 });
+    const fromSam = await (await call(env, '/pair?with=' + pete.user.id, { token: sam.token })).json();
+    assert.deepEqual(fromSam, fromPete, 'Sam sees the same record');
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_lo LIKE 'guest:%' OR user_hi LIKE 'guest:%'").get().n, 0, 'no guest row left');
+
+    // Signing in again (the Steam build does on every token refresh) counts nothing twice.
+    await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: 'devA' } });
+    assert.equal((await (await call(env, '/pair?with=' + sam.user.id, { token: pete.token })).json()).rides, 1);
+    assert.equal(pairRows(db).length, 1);
+
+    // An old build (no device_id) and junk ids still sign in fine.
+    assert.equal((await call(env, '/auth/steam', { method: 'POST', body: STEAM_PETE })).status, 200);
+    assert.equal((await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: { x: 1 } } })).status, 200);
+  } finally { restore(); }
+});
+
+test('#678 collision: rides and distance add, the better time per level and the later last ride win; a pair with yourself is dropped', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const pete = await (await call(env, '/auth/steam', { method: 'POST', body: STEAM_PETE })).json();
+    const P = String(pete.user.id);
+    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
+    const S = String(db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id);
+    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'kim', 'Kim')").run();
+    const K = String(db.prepare("SELECT id FROM users WHERE provider_id = 'kim'").get().id);
+
+    putPair(db, P, S, { rides: 2, distance: 2400, best: { grandma: 200000, forest: 300000 }, lastRide: '2026-11-01 10:00:00', bestStreak: 3 });
+    putPair(db, 'guest:devA', S, { rides: 3, distance: 3000, best: { grandma: 180000, river: 250000 }, lastRide: '2026-11-05 10:00:00', bestStreak: 1 });
+    putPair(db, 'guest:devA', K, { rides: 1, distance: 900, best: { grandma: 210000 }, lastRide: '2026-11-04 10:00:00' });
+    putPair(db, 'guest:devA', P, { rides: 4, distance: 4000, lastRide: '2026-11-06 10:00:00' });   // Pete's own device, Pete signed in as P2
+    putPair(db, 'guest:devB', S, { rides: 7, distance: 7000, lastRide: '2026-11-06 10:00:00' });   // another device: untouched
+
+    // Pete signs in with Discord on the TV (device code), linking to his account.
+    const linked = await deviceSignIn(env, pete.token, { device_id: 'devA' });
+    assert.equal(linked.status, 'done');
+    assert.equal(linked.user.id, pete.user.id);
+
+    const withSam = await (await call(env, '/pair?with=' + S, { token: pete.token })).json();
+    assert.equal(withSam.rides, 5);
+    assert.equal(withSam.distance, 5400);
+    assert.deepEqual(withSam.best, { grandma: 180000, forest: 300000, river: 250000 });
+    assert.equal(withSam.last_ride, '2026-11-05 10:00:00');
+    assert.equal(withSam.daily_best_streak, 3);
+    const withKim = await (await call(env, '/pair?with=' + K, { token: pete.token })).json();
+    assert.equal(withKim.rides, 1);
+    assert.deepEqual(withKim.best, { grandma: 210000 });
+
+    const keys = pairRows(db).map((r) => `${r.user_lo}|${r.user_hi}`).sort();
+    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    assert.deepEqual(keys, [key(P, S), key(P, K), key('guest:devB', S)].sort(), 'no self-pair, no devA rows, devB untouched');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM pairs WHERE user_lo = user_hi').get().n, 0);
+
+    // Again, by Discord redirect this time: nothing moves twice.
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devA' } })).json();
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.equal(cb.status, 302);
+    assert.equal((await (await call(env, '/pair?with=' + S, { token: pete.token })).json()).rides, 5);
+  } finally { restore(); }
+});
+
+test('#678 Discord redirect and Steam on the web claim the device too; a seat sign-in (no device id) does not', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
+    const S = String(db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id);
+    putPair(db, 'guest:devR', S, { rides: 2, distance: 2000, lastRide: '2026-11-05 10:00:00' });
+    putPair(db, 'guest:devW', S, { rides: 6, distance: 6000, lastRide: '2026-11-05 10:00:00' });
+
+    // A seat sign-in on devR sends no device id: devR's guest stays put.
+    const seat = await deviceSignIn(env);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_hi = 'guest:devR' OR user_lo = 'guest:devR'").get().n, 1);
+
+    // Player 1 on devR signs in by redirect.
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devR' } })).json();
+    const loc = (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).headers.get('Location');
+    const token = decodeURIComponent(loc.split('#ht_auth=')[1]);
+    assert.equal(jwtSub(token), seat.user.id, 'same Discord account as the seat sign-in');
+    assert.equal((await (await call(env, '/pair?with=' + S, { token })).json()).rides, 2);
+
+    // Steam on the web from devW.
+    const wb = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account', device_id: 'devW' } })).json();
+    const login = new URL((await call(env, '/auth/steam/go?r=' + encodeURIComponent(wb.id))).headers.get('Location'));
+    const returnTo = new URL(login.searchParams.get('openid.return_to'));
+    const claimed = 'https://steamcommunity.com/openid/id/76561190000000002';
+    for (const [k, v] of Object.entries({
+      'openid.ns': 'http://specs.openid.net/auth/2.0', 'openid.mode': 'id_res',
+      'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
+      'openid.claimed_id': claimed, 'openid.identity': claimed,
+      'openid.return_to': returnTo.toString(), 'openid.response_nonce': '2026-11-07T00:00:00Zabc',
+      'openid.assoc_handle': '1', 'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
+      'openid.sig': 'c2ln',
+    })) returnTo.searchParams.set(k, v);
+    const steamLoc = (await call(env, returnTo.pathname + returnTo.search)).headers.get('Location');
+    const steamToken = decodeURIComponent(steamLoc.split('#ht_auth=')[1]);
+    assert.equal((await (await call(env, '/pair?with=' + S, { token: steamToken })).json()).rides, 6);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_lo LIKE 'guest:%' OR user_hi LIKE 'guest:%'").get().n, 0);
   } finally { restore(); }
 });
