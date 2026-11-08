@@ -109,14 +109,14 @@ const screen = await page.evaluate(() => {
   const root = document.getElementById('lb-achievements');
   const item = id => root.querySelector(`[data-ach="${id}"]`);
   return {
-    sections: root.querySelectorAll('.lb-ach-section').length,
-    rows: root.querySelectorAll('.lb-ach-item').length,
-    count: root.querySelector('.lb-ach-count')?.textContent || '',
-    hidden: item('false_start')?.querySelector('.lb-ach-name')?.textContent,
-    hiddenIcon: item('false_start')?.querySelector('.lb-ach-icon')?.textContent,
+    sections: root.querySelectorAll('.uag-section').length,
+    rows: root.querySelectorAll('.uag-item').length,
+    count: root.querySelector('.uag-count')?.textContent || '',
+    hidden: item('false_start')?.querySelector('.uag-name')?.textContent,
+    hiddenIcon: item('false_start')?.querySelector('.uag-icon')?.textContent,
     earned: item('first_finish')?.classList.contains('earned'),
     colour: !!item('grandma_default'),
-    progress: item('rides_10')?.querySelector('.lb-ach-progress')?.textContent || '',
+    progress: item('rides_10')?.querySelector('.uag-progress')?.textContent || '',
   };
 });
 check(screen.sections === 15 && screen.rows === 100, `the badge screen has 15 sections, 100 badges ("${screen.count}")`);
