@@ -182,7 +182,7 @@ const HOLIDAY_BIKES = {
 };
 
 export class Lobby {
-  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, onGarage, input, controllerManager }) {
+  constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, onGarage, input, controllerManager, achievements }) {
     this.onSolo = onSolo;
     this.onSlingshotReady = onSlingshotReady || (() => {});
     this.onGarage = onGarage || (() => {});   // #400 D4 · the one garage
@@ -484,7 +484,10 @@ export class Lobby {
     // Leaderboard state
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
     this._lbSubLevel = LEVELS[0].id;
-    this._achievements = new AchievementManager();
+    // One achievement list for the whole game: the game's own (sign-in merges, sign-out clears and
+    // ride unlocks all touch the same list). A second copy here re-awarded a signed-in player's
+    // achievements at the next ride start and saved over the merged list.
+    this._achievements = achievements || new AchievementManager();
     this._avatarCache = new Map(); // originalUrl → blobUrl (fetched once per session)
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)

@@ -152,6 +152,23 @@ check(slingCrash.sling && slingCrash.crashes === (st2.crashes || 0) && !(await e
   `a Slingshot crash counts for no ride achievement (crashes ${slingCrash.crashes})`);
 await shot('3-sling');
 
+// 6. Sign-in merge and sign-out clear reach the ride's list (Pete, phone 2026-11-08: signed in with 40,
+//    the next ride re-awarded ~20 as new and the list dropped to 22, because the lobby kept its own copy).
+const merge = await page.evaluate(() => {
+  const g = window._game, lob = g.lobby._achievements;
+  const have = new Set(g.achievements.getEarnedIds());
+  const server = g.achievements.getAllDefinitions().map(d => d.id).filter(id => !have.has(id)).slice(0, 5);
+  lob.mergeFromServer(server.map(id => ({ id, earnedAt: Date.now() })));
+  const rideIds = g.achievements.getEarnedIds();
+  const stored = JSON.parse(localStorage.getItem('tandemonium_achievements') || '[]').map(a => a.id);
+  const out = { same: lob === g.achievements, server, inRide: server.every(id => rideIds.includes(id)), inStore: server.every(id => stored.includes(id)) };
+  lob.clear();
+  out.afterClear = g.achievements.getEarnedIds().length;
+  return out;
+});
+check(merge.same && merge.inRide && merge.inStore, `a sign-in merge lands in the ride's list and in storage (${merge.server.length} merged, shared ${merge.same})`);
+check(merge.afterClear === 0, `a sign-out clear empties the ride's list too (${merge.afterClear} left)`);
+
 check(errors.length === 0, `no page errors (${errors.length})`);
 await browser.close(); server.close();
 const failed = checks.filter(x => !x).length;
