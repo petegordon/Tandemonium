@@ -22,7 +22,7 @@
 // DOM-free and storage-agnostic so it can be tested: the store is any object
 // with get(key)/set(key, value).
 
-import { dailyKey, dailySeed } from './daily-seed.js';
+import { dailyKey, seedFromKey } from './daily-seed.js';
 
 export const STORAGE_KEY = 'tandemonium_daily';
 
@@ -34,14 +34,19 @@ export const KEEP_DAYS = 60;
  * stays constant — resolving here means the level object never carries a stale
  * date from whenever the page was loaded.
  */
-export function resolveDailyLevel(baseLevel, { key, seed } = {}) {
+export function resolveDailyLevel(baseLevel, { key, seed, warp = 0 } = {}) {
   const k = key || dailyKey();
-  return {
+  const level = {
     ...baseLevel,
     key: k,
-    seed: typeof seed === 'number' ? seed : dailySeed(),
+    // #611 · the seed is the KEY's seed, never "today's": a warped day (or a
+    // stoker given only the captain's key) must ride that day's road.
+    seed: typeof seed === 'number' ? seed : seedFromKey(k),
     dateLabel: formatDayLabel(k)
   };
+  // #611 · time warp: how many days ahead of the real date this road is.
+  if (warp > 0) level.warp = warp;
+  return level;
 }
 
 /** "Mon, Sep 8" from a 'YYYY-MM-DD' key. Locale-independent on purpose. */
@@ -250,8 +255,12 @@ export function isoWeek(key) {
  */
 export function computeStreak(store, todayKey, opts = {}) {
   const all = readAll(store);
+  // #611 · a day ahead of `todayKey` (ridden in time warp) is not counted
+  // until it arrives, or until the warp reaches it: the streak held on the
+  // real date stays the real streak, and riding that day for real later never
+  // counts it twice (it is one key).
   const ridden = Object.keys(all)
-    .filter(k => !k.startsWith('__') && hasFinish(all[k]))
+    .filter(k => !k.startsWith('__') && hasFinish(all[k]) && !(k > todayKey))
     .sort()
     .reverse();
   const granted = opts.freezes ?? MAX_BRIDGED_GAPS;
@@ -383,6 +392,7 @@ export function buildShareStrip(r, opts = {}) {
 
   // Line 1 — what, when, and who with.
   let line1 = `Tandemonium · Daily Ride · ${shortDate(r.key)}`;
+  if (r.warp) line1 += ' ⏳';   // #611 · ridden in time warp, ahead of the real date
   if (r.partnerName) line1 += ` with ${r.partnerName}`;
 
   // Line 2 — how it went.
