@@ -17,6 +17,8 @@
 //   OW-06  START RIDE never waits for a dressing partner: the joiner is dressing, the captain
 //          starts, the joiner's Wardrobe closes and both ride, each partner goose in the look
 //          the other picked
+//   OW-07  #708 each side signs in (captain Discord, joiner Steam): the other's room seat shows
+//          their picture + badge, the same one their own seat shows
 //
 // Screenshots (1920×1080) go to $TMP/tandemonium-online-wardrobe, or SMOKE_SHOTS_DIR.
 import fs from 'node:fs';
@@ -207,6 +209,26 @@ try {
   const capClosed = await waitFor(cap, () => !window._game.lobby._room, null, 5000);
   const stoCleared = await waitFor(sto, () => !document.querySelector('#level-room-captain .room-look__dressing'), null, 10000);
   check(capClosed && stoCleared, "OW-05 DONE + BACK TO SEATS closes it; the joiner's tag clears", await seat(sto, 'level-room-captain'));
+
+  // ── OW-07 #708 the partner's picture on their seat ──
+  console.log("OW-07 each side sees the other's picture + badge");
+  const dot = (c) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8"><circle cx="4" cy="4" r="4" fill="${c}"/></svg>`);
+  const signIn = (pg, user) => pg.evaluate((u) => {
+    const l = window._game.lobby;
+    l.auth.user = u; l.auth.token = 'smoke-708';
+    l._sendRoomProfile();
+  }, user);
+  const capPic = dot('#5865f2'), stoPic = dot('#1b2838');
+  await signIn(cap, { id: 'c', name: 'Cap Goose', provider: 'discord', avatar: capPic, identities: { discord: { name: 'Cap Goose', avatar: capPic } } });
+  await signIn(sto, { id: 's', name: 'Sto Goose', provider: 'steam', avatar: stoPic, identities: { steam: { name: 'Sto Goose', avatar: stoPic } } });
+  const seatPic = (pg, id) => pg.evaluate((i) => { const e = document.getElementById(i); const img = e && e.querySelector('uf-person img'); return e ? { who: e.who, pic: e.pic, source: e.source, img: !!img } : null; }, id);
+  const capSees = await waitFor(cap, (pic) => { const e = document.getElementById('level-room-stoker'); return !!e && e.pic === pic && e.source === 'steam' && !!e.querySelector('uf-person img'); }, stoPic, 10000);
+  check(capSees, "OW-07 the captain sees the joiner's Steam picture + badge on the stoker seat", await seatPic(cap, 'level-room-stoker'));
+  const stoSees = await waitFor(sto, (pic) => { const e = document.getElementById('level-room-captain'); return !!e && e.pic === pic && e.source === 'discord' && !!e.querySelector('uf-person img'); }, capPic, 10000);
+  check(stoSees, "OW-07 the joiner sees the captain's Discord picture + badge on the captain seat", await seatPic(sto, 'level-room-captain'));
+  const own = await sto.evaluate(() => { const e = document.getElementById('level-room-stoker'); return { pic: e.pic, source: e.source }; });
+  check(own.pic === stoPic && own.source === 'steam', "OW-07 the joiner's own seat shows the same picture the captain sees", own);
+
   await shot(sto, 'ow-stoker-room');
   await shot(cap, 'ow-captain-room');
 
