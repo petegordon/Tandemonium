@@ -1565,6 +1565,45 @@
     font-size: 9px;
     color: rgba(255,255,255,0.32);
   }
+  /* #611 · time warp: which day the Daily Ride card is on, and the warp row under it. */
+  .level-card-warp-day {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffd23f;
+    margin-bottom: 1px;
+  }
+  .level-card-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+  .daily-warp-row {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+  }
+  .daily-warp-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 6px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 210, 63, 0.55);
+    background: rgba(255, 210, 63, 0.12);
+    color: #fff;
+    font-family: var(--uf-font-ui);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .daily-warp-btn[hidden] { display: none; }
+  .daily-warp-btn.is-disabled { opacity: 0.55; cursor: default; border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); }
+  .daily-warp-back { border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.08); }
   /* B-3 · "Best 2:41 · 🥈 · 🥇 at 2:20" under the level description. */
   .level-card-record {
     font-size: 10px;
@@ -2538,6 +2577,8 @@
   .lb-mode-solo { background: rgba(68,255,102,0.2); color: var(--uf-color-accent); }
   .lb-mode-captain { background: rgba(68,136,255,0.2); color: #4488ff; }
   .lb-mode-stoker { background: rgba(170,68,255,0.2); color: #aa44ff; }
+  /* #611 · a Daily Ride row ridden in time warp */
+  .lb-warp { font-size: 13px; flex-shrink: 0; }
   .lb-collectibles {
     font-size: 11px;
     color: rgba(255,255,255,0.45);
@@ -4671,6 +4712,13 @@
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
     .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
+    /* #611 · the warp day + row, readable from the couch */
+    .level-card-warp-day { font-size: calc(10 * var(--ls)); }
+    .daily-warp-row { gap: calc(5 * var(--ls)); }
+    .level-card-stack { gap: calc(5 * var(--ls)); }
+    .daily-warp-btn { font-size: calc(9.5 * var(--ls)); padding: calc(5 * var(--ls)) calc(8 * var(--ls)); border-width: calc(1.2 * var(--ls)); }
+    /* compact: the description may hide, never the warped day */
+    .lobby-compact-3 .level-card[data-level-id="daily"] .level-card-desc:has(.level-card-warp-day) { display: block; }
 
     /* Difficulty selector */
     .difficulty-selector { max-width: none; width: calc(160 * var(--ls)); margin: 0 auto; }
@@ -4920,6 +4968,7 @@
     .lb-avatar { width: calc(22 * var(--ls)); height: calc(22 * var(--ls)); }
     .lb-mode { font-size: calc(9 * var(--ls)); padding: calc(1 * var(--ls)) calc(5 * var(--ls)); }
     .lb-collectibles { font-size: calc(11 * var(--ls)); }
+    .lb-warp { font-size: calc(13 * var(--ls)); }
     .lb-you-tag { font-size: calc(9 * var(--ls)); }
     .lb-date { font-size: calc(10 * var(--ls)); }
     .lb-rides { font-size: calc(11 * var(--ls)); }
@@ -6038,7 +6087,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.638a2e4 | 11-07-2026 22:53</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.994b9de | 11-07-2026 23:05</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6129,6 +6178,27 @@ ON</button>
      to do, unlocked + date / locked / progress, and its number. -->
 <uf-sheet id="ach-detail" heading="Achievement" size="md">
   <uf-achievement-detail id="ach-detail-card" show-id="false"></uf-achievement-detail>
+</uf-sheet>
+
+<!-- #657 · SHARE RESULT where there is no clipboard to paste from (a TV, the
+     Steam build) or when the House Tandem Discord post is on offer: a QR to the
+     phone page (share/index.html) with the result card, and POST TO DISCORD.
+     Filled by js/game.js (_openShareSheet); the status line says what already
+     happened (saved to Steam screenshots, copied). -->
+<uf-sheet id="share-sheet" heading="Share your ride" size="md">
+  <div id="share-body" class="share-body">
+    <p id="share-status" class="share-status" hidden></p>
+    <div id="share-phone" class="share-phone" hidden>
+      <uf-qr id="share-qr" caption="Scan to share from your phone" size="300"></uf-qr>
+      <p id="share-qr-note" class="share-note">Making your link&hellip;</p>
+    </div>
+    <p id="share-discord-note" class="share-note" hidden>Posts your result card to <b>#daily-ride</b> on the House Tandem Discord, under your Discord name.</p>
+  </div>
+  <div slot="actions">
+    <uf-button id="btn-share-native" style="display:none;">&#128228; SHARE&hellip;</uf-button>
+    <uf-button id="btn-share-discord" style="display:none;">POST TO DISCORD</uf-button>
+    <uf-button variant="accent" id="btn-share-done">DONE</uf-button>
+  </div>
 </uf-sheet>
 
 <!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all
@@ -6572,6 +6642,16 @@ ON</button>
         <button class="opt-btn" id="opt-fps-off">Off</button>
       </div>
       <div class="options-note">Frame-rate readout, all modes — applies immediately</div>
+    </div>
+    <!-- #657 · off by default; needs a sign-in with Discord linked, and the Worker's
+         #daily-ride webhook (js/game.js _updateOptionsDiscordUI). -->
+    <div class="opt-section" id="opt-discord-section">
+      <div class="label" id="opt-discord-label">Post to Discord</div>
+      <div class="options-row" id="opt-discord-row">
+        <button class="opt-btn" id="opt-discord-on">On</button>
+        <button class="opt-btn" id="opt-discord-off">Off</button>
+      </div>
+      <div class="options-note" id="opt-discord-note">Post my Daily Ride results to the House Tandem Discord</div>
     </div>
     <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
          present; see _initOptionsOverlay. -->

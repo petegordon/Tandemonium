@@ -68,3 +68,13 @@ name = "ANALYTICS_RIDE_LIMITER"
 type = "ratelimit"
 namespace_id = "1006"
 simple = { limit = 20, period = 60 }
+
+# #657 · share a result: card uploads for the TV's QR + the #daily-ride post.
+# (A D1 cap also holds each IP / device to a few dozen a day.)
+[[unsafe.bindings]]
+name = "SHARE_LIMITER"
+type = "ratelimit"
+namespace_id = "1008"
+simple = { limit = 6, period = 60 }
+# DISCORD_SHARE_WEBHOOK (the House Tandem server's #daily-ride webhook URL) is a
+# secret: wrangler secret put DISCORD_SHARE_WEBHOOK --config wrangler-api.toml
