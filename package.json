@@ -83,6 +83,7 @@
     "smoke:rejoin": "node scripts/smoke-rejoin.mjs",
     "smoke:seat-churn": "node scripts/smoke-seat-churn.mjs",
     "smoke:online": "node scripts/smoke-online.mjs",
+    "smoke:online-replay": "node scripts/smoke-online-replay.mjs",
     "smoke:online-wardrobe": "node scripts/smoke-online-wardrobe.mjs",
     "smoke:host-instead": "node scripts/smoke-host-instead.mjs",
     "smoke:room-wait": "node scripts/smoke-room-wait.mjs",
