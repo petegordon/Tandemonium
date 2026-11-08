@@ -217,7 +217,7 @@ DualSense-only to per-controller, and plumb it to the main process so
 what the renderer does with the snapshot. Both sources must remain usable —
 WebHID is the only one that works today, Steam Input is the only one available
 for a fully captured pad, and the choice belongs to the user. A debug
-Gamepad/Steam-Input window (cf. `npm run gamepadtest` / `npm run steamtest`)
+Gamepad/Steam-Input window (cf. `npm run gamepadtest`; the old `steamtest` tool was removed in #499, and the controller lab covers it)
 showing both sources side by side makes this diagnosable instead of inferred.
 
 **Phase 1 — Steam Controller gyro via `getMotionData` (design B).**
