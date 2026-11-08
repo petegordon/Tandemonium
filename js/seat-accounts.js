@@ -92,6 +92,40 @@ export class SeatAccounts {
     return out;
   }
 
+  /**
+   * #609 · ask the server, as seat n's own account, what it has done with
+   * `withKey` (an account id or 'guest:<device_id>'). Null when signed out or offline.
+   * @returns {Promise<any|null>}
+   */
+  async fetchPair(n, withKey) {
+    const acc = this.get(n);
+    if (!acc || !withKey) return null;
+    try {
+      const res = await this._fetch(`${this._api}/pair?with=${encodeURIComponent(withKey)}`, {
+        headers: { Authorization: `Bearer ${acc.token}` },
+      });
+      return res.ok ? await res.json() : null;
+    } catch (e) { return null; }
+  }
+
+  /**
+   * #609 · send a ride under seat n's own session (Player 1 signed out, so the
+   * signed-in Player 2 posts the couch ride themselves). Null when signed out or refused.
+   * @returns {Promise<any|null>}
+   */
+  async submitScore(n, body) {
+    const acc = this.get(n);
+    if (!acc) return null;
+    try {
+      const res = await this._fetch(`${this._api}/score`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${acc.token}` },
+        body: JSON.stringify(body),
+      });
+      return res.ok ? await res.json() : null;
+    } catch (e) { return null; }
+  }
+
   /** "Not me": forget seat n's account (and the controller's memory of it). */
   signOut(n) {
     this.cancel(n);
