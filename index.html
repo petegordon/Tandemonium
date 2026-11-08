@@ -4273,6 +4273,20 @@
   .wardrobe-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; width: 100%; }
   .wardrobe-row:empty { display: none; }
   .wardrobe-hint { cursor: pointer; margin: 0; }
+  /* #672 · the online room: the WARDROBE under the seats, each seat's goose (outfit · colours ·
+     light swatch) and the partner's "dressing…" tag; a soft line under START RIDE. */
+  .room-wardrobe-row { display: flex; justify-content: center; width: 100%; margin: 0 0 10px; }
+  .room-wardrobe-row[hidden] { display: none; }
+  #btn-room-wardrobe { min-width: 12em; font-size: var(--uf-size-md); }
+  #btn-room-wardrobe uf-controller-glyph { margin-right: .35em; }
+  .uf-seat__dev .room-look__dev { margin-right: .6em; }
+  .room-look { display: inline-flex; align-items: center; gap: .4em; white-space: nowrap; color: var(--uf-color-fg); }
+  .room-look__led { display: inline-block; width: .9em; height: .9em; border-radius: 50%; border: 1px solid rgba(255,255,255,.45); flex: none; }
+  .room-look__led--off { background: transparent !important; border-style: dashed; }
+  .room-look__dressing { display: inline-block; margin-left: .6em; padding: 0 .5em; border-radius: 999px; background: color-mix(in srgb, var(--uf-color-accent, #ffd34d) 22%, transparent); color: var(--uf-color-accent, #ffd34d); font-weight: 700; animation: room-dressing-pulse 1.4s ease-in-out infinite; }
+  @keyframes room-dressing-pulse { 50% { opacity: .55; } }
+  .start-dressing-note[hidden] { display: none; }
+  .start-dressing-note { color: var(--uf-color-accent, #ffd34d); margin: 6px 0 0; }
   .opt-btn.active { background: rgba(60,200,80,0.2); border-color: rgba(60,200,80,0.6); color: var(--uf-color-accent); }
   .opt-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
   #options-perf-btn, #options-devtools-btn, #options-browserdev-btn {
@@ -5769,6 +5783,11 @@ ON</button>
             <uf-seat id="level-room-captain" seat="Captain · front seat" tone="captain" badge="P1" state="open"></uf-seat>
             <uf-seat id="level-room-stoker" seat="Stoker · back seat" tone="stoker" badge="P2" state="open"></uf-seat>
           </uf-team>
+          <!-- #672 · each online player dresses their own goose here, before the ride (△ / Y, or
+               click). The partner's seat above shows their look, and "dressing…" while they do. -->
+          <div id="level-room-wardrobe" class="room-wardrobe-row" hidden>
+            <uf-button size="sm" id="btn-room-wardrobe" title="Choose your outfit, colours and controller light"><uf-controller-glyph button="north" size="sm"></uf-controller-glyph> WARDROBE</uf-button>
+          </div>
           <p class="lobby-prompt" id="level-prompt" style="display:none;">Choose your ride:</p>
           <div class="level-cards" id="level-cards"></div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-level">&larr; Back</uf-button>
@@ -6074,6 +6093,7 @@ ON</button>
     <!-- Level-step extras — scoped by wrapper visibility, toggled atomically in _showStep -->
     <div id="level-extras" style="display:none;">
       <uf-button variant="accent" class="btn-start-ride" id="btn-start-ride" disabled>START RIDE</uf-button>
+      <p id="start-dressing-note" class="conn-status start-dressing-note" hidden>Partner is still dressing</p>
       <p id="level-wait-text" class="conn-status" style="display:none;">Waiting for captain...</p>
     </div>
     <!-- Fixed back button row (non-gamepad, always at bottom of card) -->
@@ -6081,7 +6101,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.82875e0 | 11-07-2026 20:20</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.71a4c15 | 11-07-2026 20:58</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
