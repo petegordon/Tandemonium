@@ -1,4 +1,4 @@
-name: Build & Deploy Windows
+name: Build & Deploy (Windows + macOS)
 
 on:
   push:
@@ -14,6 +14,11 @@ on:
           - dev-private
           - beta
           - default
+      macos:
+        description: 'Also build and upload the macOS depot (4510252)'
+        required: true
+        default: true
+        type: boolean
 
 jobs:
   build:
@@ -52,10 +57,70 @@ jobs:
           name: tandemonium-win32-x64
           path: out/Tandemonium-win32-x64/
 
+  # macOS (#192): universal .app, ad-hoc signed (Apple Silicon refuses
+  # unsigned code; Steam downloads aren't quarantined, so no notarization yet).
+  # Only runs when a Steam upload is wanted: macOS minutes are the slow ones.
+  build-macos:
+    runs-on: macos-15
+    if: (github.event_name == 'workflow_dispatch' && inputs.macos) || github.ref == 'refs/heads/steam-publishing'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download vendor assets
+        run: npm run download-vendors
+
+      - name: Stamp version in index.html
+        run: |
+          VERSION="v.$(git rev-parse --short HEAD) | $(date '+%m-%d-%Y %H:%M') | mac"
+          sed -i '' -E "s#id=\"lobby-version\">[^<]+#id=\"lobby-version\">$VERSION#" index.html
+
+      - name: Build desktop HTML
+        run: npm run build-desktop
+
+      - name: Make the macOS icon
+        run: bash scripts/make-icns.sh
+
+      - name: Package with Electron Forge
+        run: npx electron-forge package --platform darwin --arch universal
+
+      - name: Ad-hoc sign
+        run: |
+          APP="out/Tandemonium-darwin-universal/Tandemonium.app"
+          # Only Mach-O files: koffi also ships Linux/Windows .node files, and
+          # signing those stores the signature in xattrs, which Steam drops.
+          find "$APP/Contents/Resources" -type f \( -name '*.node' -o -name '*.dylib' \) | while read -r f; do
+            if file "$f" | grep -q Mach-O; then codesign --force --sign - "$f"; fi
+          done
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          lipo -archs "$APP/Contents/MacOS/Tandemonium"
+
+      # tar keeps the framework symlinks and exec bits that upload-artifact drops.
+      - name: Pack the app
+        run: tar -C out/Tandemonium-darwin-universal -czf tandemonium-macos.tgz Tandemonium.app
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tandemonium-macos
+          path: tandemonium-macos.tgz
+
   upload-to-steam:
-    needs: build
+    needs: [build, build-macos]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing'
+    # build-macos may be skipped (macos input off); the Windows depot still goes.
+    if: >-
+      always() && needs.build.result == 'success' &&
+      (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
+      (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing')
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +129,20 @@ jobs:
         with:
           name: tandemonium-win32-x64
           path: builds/windows/
+
+      - name: Download macOS build artifact
+        if: needs.build-macos.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: tandemonium-macos
+          path: macos-artifact/
+
+      - name: Unpack macOS app
+        if: needs.build-macos.result == 'success'
+        run: |
+          mkdir -p builds/macos
+          tar -C builds/macos -xzf macos-artifact/tandemonium-macos.tgz
+          ls builds/macos
 
       # steamcmd runs natively on the runner. game-ci/steam-deploy's Docker
       # container started failing on 2026-10-23 before login ("Steamcmd needs to
@@ -99,6 +178,10 @@ jobs:
           echo "$STEAM_CONFIG_VDF" | base64 -d > "$HOME/steamcmd/config/config.vdf"
           cp "$HOME/steamcmd/config/config.vdf" "$HOME/Steam/config/config.vdf"
           VDF="$RUNNER_TEMP/app_build.vdf"
+          MAC_DEPOT=""
+          if [ -d builds/macos/Tandemonium.app ]; then
+            MAC_DEPOT='"4510252" { "FileMapping" { "LocalPath" "./macos/*" "DepotPath" "." "recursive" "1" } }'
+          fi
           cat > "$VDF" <<VDF
           "AppBuild"
           {
@@ -118,9 +201,11 @@ jobs:
                   "recursive" "1"
                 }
               }
+              $MAC_DEPOT
             }
           }
           VDF
+          cat "$VDF"
           "$HOME/steamcmd/steamcmd.sh" +login "$STEAM_USERNAME" +run_app_build "$VDF" +quit | tee "$RUNNER_TEMP/steamcmd.log"
           # steamcmd can exit 0 on a failed login or build.
           grep -q "Successfully finished AppID 4510250 build" "$RUNNER_TEMP/steamcmd.log"

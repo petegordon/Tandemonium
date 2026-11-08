@@ -68,20 +68,27 @@ test('the default steering feel is applied at load, not just shown on the slider
   assert.equal(TUNE.gyroResponseCurve, 2.0, 'already at the 2.0 ceiling');
 });
 
-test('DDA offers ASSIST after 2 failures; silent assist unchanged; SKIP after 5 (#403)', () => {
-  assert.equal(DDA_ASSIST_AFTER, 2);
+test('DDA offers ASSIST at the first Game Over; silent assist unchanged; SKIP after 5 (#403)', () => {
+  assert.equal(DDA_ASSIST_AFTER, 1);
   assert.equal(DDA_SILENT_ADJUST_AFTER, 2);
   assert.equal(DDA_SKIP_AFTER, 5);
   const dda = new DDAManager('chill');
+  assert.equal(dda.evaluate(100).offerAssist, false, 'no failure, no offer');
   dda.recordFailure(100);
-  assert.equal(dda.evaluate(100).offerAssist, false, 'one failure is not enough');
+  const r1 = dda.evaluate(100);
+  assert.equal(r1.offerAssist, true, 'Pete 2026-11-07: offered at the first Game Over');
+  assert.equal(r1.adjustTune, false);
+  dda.markAssistOffered();
+  assert.equal(dda.assistOffered, true);
   dda.recordFailure(100);
   const r = dda.evaluate(100);
-  assert.equal(r.offerAssist, true);
+  assert.equal(r.offerAssist, false, 'offered once per checkpoint (the Game Over keeps showing the button)');
   assert.equal(r.adjustTune, true);
   assert.equal(r.offerSkip, false);
-  for (let i = 0; i < 4; i++) dda.recordFailure(100);
+  for (let i = 0; i < 3; i++) dda.recordFailure(100);
   assert.equal(dda.evaluate(100).offerSkip, true);
+  dda.onCheckpointPassed(200);
+  assert.equal(dda.assistOffered, false, 'the next stretch starts without the offer');
 });
 
 // ── B2 (PR #397 review): steering feel is applied to an un-feeled base ──

@@ -117,7 +117,7 @@ function describeCondition(id, fallback) {
     no_trees_daily: "Finish the Daily Ride without hitting a tree",
     new_best: 'Set a new personal best',
     look_no_thumbs: 'Finish a ride steering only by tilting your controller',
-    assist_free: 'Crash twice at one checkpoint, then finish without using ASSIST',
+    assist_free: 'Crash three times at one checkpoint, then finish without using ASSIST',
     terminal_goose: 'Reach 65 km/h on a ride',
     boost_25: 'Trigger 25 boosts',
     afterburner: 'Chain pickups to keep boosting for 10 seconds straight',
