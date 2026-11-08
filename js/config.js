@@ -199,6 +199,10 @@ export const EVT_RETURN_ROOM = 0x08;
 // get back on the road at the same moment. A partner on an older build sees
 // EVT_RESET semantics for anything it does not know, so this is additive.
 export const EVT_RESET_QUICK = 0x09;
+// The captain opened / closed the pause menu: the stoker's ride stops with it and says so.
+// An older build ignores event types it does not know.
+export const EVT_PAUSE  = 0x0A;
+export const EVT_RESUME = 0x0B;
 
 export const MSG_COLLECT     = 0x06;
 export const MSG_PROFILE     = 0x07;

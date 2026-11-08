@@ -10,7 +10,7 @@ import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './spec
 import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { BotRace, raceableLevel, RACE_TIERS } from './bot-race.js';
 import { BOT_GHOST_RUNS } from './bot-ghost-runs.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -1520,6 +1520,9 @@ class Game {
         // must not roll the timer or sync bar back either.
         if (!this.remoteBikeState.pushState(state)) return;
         this._heardFromCaptain();
+        // The captain sends no state while paused: a fresh one means it is riding again (a
+        // RESUME lost to a drop). One sent just before the pause can land just after it.
+        if (this._partnerPaused && performance.now() - this._partnerPaused.since > 500) this._endPartnerPause();
         // Use captain's authoritative timer to prevent drift
         if (state.timerRemaining !== undefined && this.raceManager) {
           this.raceManager.segmentTimeRemaining = state.timerRemaining;
@@ -1538,13 +1541,25 @@ class Game {
 
     this.net.onEventReceived = (eventType) => {
       if (this.mode === 'stoker') this._heardFromCaptain();
-      if (eventType === EVT_COUNTDOWN) {
+      // Anything else from the captain means it is no longer paused.
+      if (this._partnerPaused && eventType !== EVT_PAUSE) this._endPartnerPause();
+      if (eventType === EVT_PAUSE) {
+        if (this.mode === 'stoker') this._startPartnerPause();
+      } else if (eventType === EVT_RESUME) {
+        // (ended above)
+      } else if (eventType === EVT_COUNTDOWN) {
         // Tutorial stoker: scene already set up in _startTutorialRide —
         // just resume the countdown from captain's calibration finish
         if (this._tutorialActive && (this.state === 'waiting' || this.state === 'countdown')) {
           this.state = 'countdown';
           this.countdownTimer = 3.0;
           document.getElementById('status').textContent = '';
+        } else if (this.mode === 'stoker' && this.state === 'countdown') {
+          // The captain's reset already started this countdown (its EVT_RESET comes first). Its
+          // countdown message arrives once the captain has built the ride: line the two up
+          // instead of building the whole ride a second time (Pete 2026-11-08: after RESTART on
+          // TOO SLOW the stoker restarted its countdown a second late).
+          this.countdownTimer = this._countdownLen || 3.0;
         } else {
           this._startCountdown();
         }
@@ -1576,6 +1591,16 @@ class Game {
           }
         }, 1000);
       } else if (eventType === EVT_RESET || eventType === EVT_RESET_QUICK) {
+        // After the finish a reset is PLAY AGAIN: a new ride from the start line on both sides.
+        // The stoker's race only learns of the finish from the captain, so its own race may not
+        // be marked finished; without this it went back to its last checkpoint near Grandma's.
+        const again = this.state === 'victory' || this.state === 'finishCinematic' || !!(this.raceManager && this.raceManager.finished);
+        if (this.mode === 'captain' && again) {
+          // The stoker pressed PLAY AGAIN: the captain runs it as its own press.
+          this._hideVictory();
+          this._resetGame(false, true);
+          return;
+        }
         this._quickCountdown = (eventType === EVT_RESET_QUICK);
         this._hideGameOver();
         this._hideVictory();
@@ -1584,10 +1609,10 @@ class Game {
         if (flash) flash.classList.remove('visible');
         this._stokerTimeoutShown = false;
         // Reset segment timer so countdown restarts from checkpoint
-        if (this.raceManager) {
+        if (this.raceManager && !again) {
           this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
         }
-        this._resetGame(true);
+        this._resetGame(true, again);
         this._quickCountdown = false;
       } else if (eventType === EVT_GAMEOVER) {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
@@ -1634,6 +1659,7 @@ class Game {
       // resend this side's room profile and the captain's helping-hand state.
       this._sendProfile();
       if (this.mode === 'captain' && this._help) this._sendHelpState();
+      if (this.mode === 'captain' && this._pause) this.net.sendEvent(EVT_PAUSE);   // a pause the drop hid
       this._resendTouristBarrier();   // PR #397 m15
       // Re-establish media call after data reconnection (only if P2P is already up)
       if (this.mode === 'captain' && this.net.transport === 'p2p') {
@@ -2482,6 +2508,7 @@ class Game {
     this._hideGameOver();
     this._hideVictory();
     this.instructionsEl.classList.add('hidden');
+    this._countdownLen = 3.0;
 
     // Show in-game music button (off-screen; the quick menu proxies it)
     this._musicBtn.style.display = 'block';
@@ -3232,6 +3259,7 @@ class Game {
     // have summed to 2.7 s.)
     const quick = !!this._quickCountdown;
     this.countdownTimer = quick ? 1.2 : 3.0;
+    this._countdownLen = this.countdownTimer;
     this.instructionsEl.classList.add('hidden');
 
     const statusEl = document.getElementById('status');
@@ -3342,6 +3370,7 @@ class Game {
 
   _showDisconnect(reason) {
     this._closePause();   // #459: a notice over a paused ride replaces the menu
+    this._sheetTone('danger');
     const overlay = document.getElementById('disconnect-overlay');
     const msg = document.getElementById('disconnect-msg');
     overlay.style.display = 'flex';
@@ -3396,7 +3425,7 @@ class Game {
     if (who && (!this._drop || this._drop.who !== who)) this._startDropPause(who);
     else if (!who && this._drop) this._endDropPause();
     // #459: the pause menu freezes the ride through this same path.
-    if (!this._drop && !this._pause) return false;
+    if (!this._drop && !this._pause && !this._partnerPaused) return false;
 
     const d = this._drop;
     if (d && d.canTakeover && !d.takeoverReady) {
@@ -3446,6 +3475,7 @@ class Game {
       else { d.takeoverWho = 'You'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone'; }
     }
     this._drop = d;
+    this._sheetTone('danger');
     if (this.mode === 'local') { this._localP2Disconnected = who === 'p2'; }
     this._closePause();     // #459: the drop takes over from the pause menu
     this._freezeClock(true);
@@ -3498,6 +3528,7 @@ class Game {
     this._clearOverlayButtons();
     this._freezeClock(false);
     this._overlayFocus.input = this.input;
+    if (this._partnerPaused) this._showPartnerPause();   // the captain is still paused
     this._overlayFocus.reprime();
     // A button held to resume isn't a pedal stroke.
     this.input.consumeTaps();
@@ -7344,7 +7375,7 @@ class Game {
 
   /** A ride is on and nothing else owns the screen. `phonePanel`: the phone's QR panel may be open (a dropped phone, #529). */
   _canPause({ phonePanel = false } = {}) {
-    if (this.state !== 'playing' || this._drop || this._inputChoiceOpen) return false;
+    if (this.state !== 'playing' || this._drop || this._partnerPaused || this._inputChoiceOpen) return false;
     if (this.mode === 'versus' && this._versusPaused) return false;
     if (!phonePanel && this._phonePanelOpen()) return false;
     if (this.recorder && this.recorder._previewPollId) return false;
@@ -7386,9 +7417,12 @@ class Game {
         this.input.consumeTaps();
         if (this.inputP2) this.inputP2.consumeTaps();
         this._autoWatching = false;   // resuming hitches: a fresh Auto grace
+        if (this.mode === 'captain' && this.net && this.net.connected) this.net.sendEvent(EVT_RESUME);
         try { analytics.trackEvent('ride_pause_end', { reason, mode: this.mode }); } catch (e) {}
       },
     });
+    // Online co-op: the stoker's ride stops with the captain's, and its screen says so.
+    if (this.mode === 'captain' && this.net && this.net.connected) this.net.sendEvent(EVT_PAUSE);
     this._overlayCooldownUntil = performance.now() + 250;
     try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
   }
@@ -7418,6 +7452,49 @@ class Game {
     set('btn-pause-clip', !!share && share.style.display !== 'none');
     const box = document.getElementById('pause-toggles');
     if (box) box.hidden = !box.querySelector('uf-button:not([hidden])');
+  }
+
+  // The captain's pause, on the stoker's screen (Pete 2026-11-08): the ride freezes the same
+  // way (_tickDropPause) and a sheet says who paused it. Return to Lobby stays the way out.
+  _startPartnerPause() {
+    if (this._partnerPaused || this.state !== 'playing') return;
+    this._closePause();
+    this._partnerPaused = { since: performance.now() };
+    this._freezeClock(true);
+    this._showPartnerPause();
+  }
+
+  _showPartnerPause() {
+    if (this._drop) return;   // the drop's sheet wins; this comes back when it ends
+    const who = this._partnerDisplayName() || 'Your captain';
+    const title = who + ' paused the ride';
+    document.getElementById('disconnect-overlay').style.display = 'flex';
+    document.getElementById('disconnect-msg').textContent = title;
+    this._setSheetHeading('disconnect-sheet', title);
+    this._sheetTone('neutral');
+    const sub = document.getElementById('disconnect-sub');
+    sub.hidden = false;
+    sub.textContent = 'The ride carries on when they resume.';
+    for (const id of ['btn-drop-resume', 'btn-ride-alone', 'btn-try-reconnect']) document.getElementById(id).hidden = true;
+    focusResult(this._overlayFocus, document.getElementById('disconnect-sheet'));
+  }
+
+  _endPartnerPause() {
+    if (!this._partnerPaused) return;
+    this._partnerPaused = null;
+    this._lastCaptainAt = performance.now();
+    if (this._drop) return;   // the drop's sheet and freeze stay
+    document.getElementById('disconnect-overlay').style.display = 'none';
+    this._sheetTone('danger');
+    this._clearOverlayButtons();
+    if (!this._pause) this._freezeClock(false);
+    this.input.consumeTaps();
+  }
+
+  /** The notice sheet's colour: danger for a drop, neutral for a pause. */
+  _sheetTone(tone) {
+    const sh = /** @type {any} */ (document.getElementById('disconnect-sheet'));
+    if (sh) sh.tone = tone;
   }
 
   /** Close the pause menu. `reason` is for analytics ('resume', 'restart', 'end', 'api'). */
