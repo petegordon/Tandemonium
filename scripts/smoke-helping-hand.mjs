@@ -123,8 +123,15 @@ async function failByTimeout(page) {
       announce: help.style.display === 'none' ? '' : help.textContent,
     };
   });
-  await sleep(2600);   // the TOO SLOW beat, then the automatic retry (or the modal)
-  return seen;
+  await sleep(2000);   // the TOO SLOW beat, then the same sheet as a crash (Pete 2026-11-07)
+  const sheet = await page.evaluate(() => {
+    const ra = document.getElementById('btn-restart-assist');
+    return { overlay: document.getElementById('gameover-overlay').style.display,
+             title: document.getElementById('gameover-title').textContent,
+             reason: document.getElementById('gameover-reason').textContent,
+             ra: !!ra && ra.style.display !== 'none' };
+  });
+  return { ...seen, sheet };
 }
 
 // ── 1. Practice: fail checkpoint 2 again and again ─────────────────────────
@@ -161,6 +168,9 @@ check('attempt 2 unchanged', a2.tier === 0 && a2.badge === '' && Math.abs(a2.pus
 // failure 2 (timeout) → attempt 3
 seen = await failByTimeout(page);
 check('failure 2 (timeout): no announcement', seen.flash && seen.announce === '', seen);
+check('a timeout stops on the same sheet: TOO SLOW!, the reason, RESTART WITH ASSIST',
+  seen.sheet.overlay === 'flex' && seen.sheet.title === 'TOO SLOW!' && /clock ran out/.test(seen.sheet.reason) && seen.sheet.ra, seen.sheet);
+await retryFromModal(page);
 const a3 = await probe(page);
 check('attempt 3 unchanged', a3.tier === 0 && a3.badge === '' && Math.abs(a3.push - base.push) < 1e-6 && Math.abs(a3.timeTotal - base.timeTotal) < 1e-6, a3);
 
@@ -177,6 +187,7 @@ check('attempt 4: 💨 badge, half gusts, 1.25× time, safety untouched',
 // failure 4 (timeout) → attempt 5: Sir Winston
 seen = await failByTimeout(page);
 check('failure 4 (timeout): 🎩 announced on the TOO SLOW screen', seen.flash && /🎩 Sir Winston clears the road/.test(seen.announce), seen);
+await retryFromModal(page);
 const a5 = await probe(page);
 console.log('  attempt 5:', JSON.stringify(a5));
 check('attempt 5: 🎩 badge, no gusts (no banner), 1.5× time, safety on',

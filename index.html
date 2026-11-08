@@ -1741,6 +1741,7 @@
     z-index: 95;
   }
   #timeout-flash.visible { display: flex; }
+  .end-reason { margin: 0 0 0.5em; text-align: center; font-size: 1.15em; font-weight: 700; color: #e8e8f0; }
   #timeout-icon {
     font-size: 80px;
     opacity: 0;
@@ -6403,6 +6404,8 @@ ON</button>
   <!-- #428: kit sheet shell; the heading mirrors #gameover-title (game.js). -->
   <uf-sheet id="gameover-sheet" open dismissible="false" headline tone="danger" heading="Game over" size="md">
       <p id="gameover-title" hidden>GAME OVER</p>
+      <!-- Pete 2026-11-07: GAME OVER and TOO SLOW! are one sheet; this line says which ending it was. -->
+      <p id="gameover-reason" class="end-reason"></p>
       <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
       <div id="gameover-help" class="help-announce" style="display:none;"></div>
       <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
