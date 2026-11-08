@@ -2636,6 +2636,9 @@ export class Lobby {
       } catch (e) {
         console.warn('Failed to fetch server achievements on login', e);
       }
+      // housetandem-web #37 · the riding stats: this device's unsynced counts join the account once,
+      // and the account's come back (badges they earn arrive quietly, as one note)
+      this._syncAccountStats();
       // Sync all earned achievements to Steam profile (catches web/mobile unlocks)
       if (this._isSteam) {
         this._achievements.syncToSteam();
@@ -2675,7 +2678,12 @@ export class Lobby {
     logoutBtn.addEventListener('click', async () => {
       // Push local achievements to server before clearing (no-op if none/anon)
       await this._achievements.syncToServer();
+      // housetandem-web #37 · the riding stats and time in game go up, then the device starts empty:
+      // the next ride signed out (or the next account) never inherits this player's numbers
+      if (this.playtime) this.playtime.flush();
+      await this._achievements.syncStats().catch(() => {});
       this._achievements.clear();
+      this._achievements.resetStats();
       this.license.clear();
       this.auth.logout();
       updateUI(null);
@@ -2778,10 +2786,22 @@ export class Lobby {
               me.achievements.map(a => ({ id: a.achievement_id, earnedAt: a.earned_at }))
             );
           }
-        }).catch(() => {});
+        }).catch(() => {}).then(() => this._syncAccountStats());
       });
     }
     this._updateModeButtons();
+  }
+
+  /**
+   * housetandem-web #37 · sync the lifetime stats with the signed-in account.
+   * Badges the merged stats earn come quietly, with one note instead of a toast each.
+   */
+  async _syncAccountStats() {
+    let res = null;
+    try { res = await this._achievements.syncStats(); } catch (e) { return; }
+    if (!res || !res.ok) return;
+    const n = res.newlyEarned.length;
+    if (n > 0) showInfoToast('🏅', n === 1 ? res.newlyEarned[0].name : n + ' achievements from your riding', 'Saved to your House Tandem account');
   }
 
   async _requestMotion() {
