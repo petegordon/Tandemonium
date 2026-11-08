@@ -17,7 +17,9 @@
 //   leave({ forget })            leave the room (every callback detached, transport destroyed,
 //                                epoch++); forget = drop it from Recent Rooms
 //   dropIfCurrent(net)           the room screen saw `net` drop: destroy it; leave if it is still the room
-//   abandonStale()               the stale prompt's "New Room": forget the room and leave
+//   newRoom()                    a wait's "New Room" (captain): forget this room, open a fresh one, same seat
+//   abandonStale()               forget the room and leave
+//   wait                         RoomWait (js/lobby/room-wait.js): the waiting line A–E for this attempt
 //   queueProfiles(list) / takeQueued()   the partner's room messages heard before the room screen listened
 //   pendingCreate / pendingJoinCode      "sign in, then create / join" (picked up by the lobby's login handler)
 //   autoJoinCode(search)         static: the room code in a ?room= link, or null
@@ -33,7 +35,7 @@
 //   partnerConnected(role)             … and the room screen should open (after CONNECT_SETTLE_MS)
 //   connectFailed(role, code)          stoker: the join failed (spinners, retry code)
 //   onStep(name)                       is the lobby on step 'host' | 'join'?
-//   staleRoom(seat)                    the rejoined room is still empty: offer "New Room"
+//   wait(seat, view|null)              #694 · the waiting line (who, how long, what you can do); null clears it
 //
 // Every attempt captures its epoch and its transport; after each await, and in
 // every callback, a superseded attempt (another create/join/rejoin, or a leave)
@@ -42,10 +44,9 @@
 
 /** The partner connected: the room screen opens this long after (their messages are buffered meanwhile). */
 export const CONNECT_SETTLE_MS = 1000;
-/** A rejoin still without the partner this long after it started offers "New Room" (also when the relay never opened). */
-export const STALE_ROOM_MS = 30000;
-/** #346 · … and only this long once the relay says the partner is not in the room. */
-export const STALE_WAITING_MS = 10000;
+// #694: the stale-rejoin timer (STALE_ROOM_MS / STALE_WAITING_MS) became RoomWait's views C/D/E,
+// which say who, how long, and offer the way out on their own clocks (js/lobby/room-wait.js).
+import { RoomWait, ROOM_WAIT_MS } from './room-wait.js';
 
 const noop = () => {};
 const NO_ANALYTICS = { trackRoomCreate: noop, trackEvent: noop, trackRoomUpdate: noop, trackConversion: noop, getSessionId: () => '' };
@@ -61,8 +62,11 @@ export class RoomSession {
    * @param {any} [o.analytics]
    * @param {(fn: () => void, ms: number) => any} [o.setTimeout]
    * @param {(t: any) => void} [o.clearTimeout]
+   * @param {(fn: () => void, ms: number) => any} [o.setInterval]
+   * @param {(t: any) => void} [o.clearInterval]
+   * @param {() => number} [o.now]
    */
-  constructor({ netSession, store, relayUrl, auth, host, analytics, setTimeout: st, clearTimeout: ct }) {
+  constructor({ netSession, store, relayUrl, auth, host, analytics, setTimeout: st, clearTimeout: ct, setInterval: si, clearInterval: ci, now }) {
     this._ns = netSession;
     this._store = store;
     this._relayUrl = relayUrl;
@@ -77,7 +81,16 @@ export class RoomSession {
     this.pendingCreate = false;
     /** @type {string|null} "sign in, then join this code" */
     this.pendingJoinCode = null;
-    this._staleTimer = null;
+    this._seenTimer = null;
+    this._now = now || (() => Date.now());
+    /** #694 · the waiting line for the current attempt (A–E). */
+    this.wait = new RoomWait({
+      render: (seat, view) => { if (host.wait) host.wait(seat, view); },
+      retry: (force) => this._redial(force),
+      now: this._now,
+      setInterval: si,
+      clearInterval: ci,
+    });
   }
 
   /** The live room transport (or null). */
@@ -95,7 +108,7 @@ export class RoomSession {
 
   /** A fresh transport for this room attempt, with the relay and media settings applied. */
   _open(kind) {
-    this._clearStaleTimer();
+    this._stopSeen();
     this._host.replaceNet();
     this._host.newRoom(kind);
     const epoch = this._ns.epoch;
@@ -118,6 +131,7 @@ export class RoomSession {
     host.showCode('----');
 
     const code = net.generateRoomCode();
+    this.wait.begin({ seat: 'host', kind: 'create', code, role: 'captain' });
     a.trackRoomCreate(code);
     a.trackEvent('room_create', { code });
 
@@ -133,12 +147,16 @@ export class RoomSession {
       host.roomOpen(code, { rejoin: false });
       host.status('host', 'Waiting for partner...');
       this._store.save(code, 'captain');   // for rejoin after a refresh
+      this.wait.roomOpen();
     };
+    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(); };
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
       const m = host.media();
+      this.wait.end();
       host.status('host', 'Partner connected!', 'connected');
+      this._partnerSeen(epoch, net, code);
       a.trackEvent('room_connect', { type: net.connectionType || 'p2p' });
       a.trackRoomUpdate(code, {
         webrtc_connected: 1,
@@ -151,6 +169,7 @@ export class RoomSession {
 
     net.onDisconnected = (reason) => {
       if (!this._live(epoch)) return;
+      this.wait.end();
       host.status('host', reason || 'Disconnected', 'error');
     };
 
@@ -193,6 +212,7 @@ export class RoomSession {
     const a = this._analytics;
     const { epoch, net } = this._open('join');
     host.status('join', 'Connecting...', '');
+    this.wait.begin({ seat: 'join', kind: 'join', code, role: 'stoker' });
 
     a.trackEvent('room_join', { code, joined_via_url: viaUrl });
     a.trackRoomUpdate(code, {
@@ -211,18 +231,23 @@ export class RoomSession {
       if (!this._live(epoch)) return;
       host.status('join', 'Waiting for captain...');
       this._store.save(code, 'stoker');
+      this.wait.roomOpen();
     };
+    net.onRoomWaiting = () => { if (this._live(epoch) && !net.connected) this.wait.partnerAbsent(); };
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
+      this.wait.end();
       host.partnerHere('stoker');
       host.status('join', 'Connected!', 'connected');
+      this._partnerSeen(epoch, net, code);
       a.trackEvent('room_connect', { type: net.connectionType || 'p2p' });
       this._settleThenOpen(epoch, net, 'stoker');
     };
 
     net.onDisconnected = (reason) => {
       if (!this._live(epoch)) return;
+      this.wait.end();
       host.status('join', reason || 'Could not connect', 'error');
       host.connectFailed('stoker', code);
     };
@@ -262,9 +287,14 @@ export class RoomSession {
     const role = captain ? 'captain' : 'stoker';
     const { epoch, net } = this._open('rejoin');
     host.status(seat, 'Rejoining room...', '');
-    // #346: the way out starts with the attempt, not when the relay opens: a relay that never
-    // opens (or keeps refusing) no longer leaves "Rejoining room..." up for good.
-    this._startStaleTimer(seat, epoch, STALE_ROOM_MS);
+    // #694: who was here and when (stored with the recent room) picks C ("was here 3 min ago")
+    // or D ("hasn't been in room ABCD for 2 h"); a relay that never opens shows E. The clock
+    // starts with the attempt, so "Rejoining room..." never stays up for good (#346).
+    const known = (this._store.getRecent() || []).find((r) => r.roomCode === saved.roomCode) || saved;
+    this.wait.begin({ seat, kind: 'rejoin', code: saved.roomCode, role,
+      partner: { name: known.partnerName || null,
+        // an entry from before #694 has a name but no time: it was saved while they were here
+        seenAt: known.partnerSeenAt || (known.partnerName && known.timestamp) || null } });
 
     const relayToken = await this._auth.getRelayToken(saved.roomCode, role);
     if (!this._live(epoch)) return;
@@ -280,24 +310,26 @@ export class RoomSession {
       if (captain) host.roomOpen(saved.roomCode, { rejoin: true });
       host.status(seat, captain ? 'Waiting for partner...' : 'Waiting for captain...');
       this._store.save(saved.roomCode, role);
+      this.wait.roomOpen();
     };
 
-    // #346 · the relay says the room is open but the partner is not in it: a stale room is far
-    // more likely now, so offer "New Room" sooner. (It keeps waiting either way.)
+    // #346 · the relay says the room is open but the partner is not in it.
     net.onRoomWaiting = () => {
       if (!this._live(epoch) || net.connected) return;
-      this._startStaleTimer(seat, epoch, STALE_WAITING_MS);
+      this.wait.partnerAbsent();
     };
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
-      this._clearStaleTimer();
+      this.wait.end();
       host.status(seat, captain ? 'Partner connected!' : 'Connected!', 'connected');
+      this._partnerSeen(epoch, net, saved.roomCode);
       this._settleThenOpen(epoch, net, role);
     };
 
     net.onDisconnected = (reason) => {
       if (!this._live(epoch)) return;
+      this.wait.end();
       host.status(seat, reason || (captain ? 'Disconnected' : 'Could not connect'), 'error');
     };
 
@@ -321,26 +353,59 @@ export class RoomSession {
     }, CONNECT_SETTLE_MS);
   }
 
-  // ── stale rejoin ──────────────────────────────────────────
+  // ── partner last seen (#694) ──────────────────────────────
 
-  /** Offer "New Room" after `ms` unless the partner is here by then. Bound to its attempt
-   *  (`epoch`): it never shows over a room opened since, or after the room was left. */
-  _startStaleTimer(seat, epoch, ms) {
-    this._clearStaleTimer();
-    this._staleTimer = this._setTimeout(() => {
-      this._staleTimer = null;
-      if (this._live(epoch) && this.net && !this.net.connected) this._host.staleRoom(seat);
-    }, ms);
+  /**
+   * The partner is here: remember when, with the recent room (C vs D on a later rejoin), and
+   * keep it fresh every ROOM_WAIT_MS.seenEvery while they stay (a refresh mid-ride still knows).
+   */
+  _partnerSeen(epoch, net, code) {
+    this._markSeen(code);
+    this._stopSeen();
+    const again = () => {
+      this._seenTimer = this._setTimeout(() => {
+        this._seenTimer = null;
+        if (!this._live(epoch) || !net.connected) return;
+        this._markSeen(code);
+        again();
+      }, ROOM_WAIT_MS.seenEvery);
+    };
+    again();
   }
 
-  _clearStaleTimer() {
-    if (this._staleTimer) {
-      this._clearTimeout(this._staleTimer);
-      this._staleTimer = null;
-    }
+  _markSeen(code) {
+    try { if (code && this._store.markSeen) this._store.markSeen(code); } catch (e) { /* storage */ }
   }
 
-  /** The stale prompt's "New Room": forget the room (or every recent room) and leave it. */
+  _stopSeen() {
+    if (this._seenTimer) { this._clearTimeout(this._seenTimer); this._seenTimer = null; }
+  }
+
+  /**
+   * E · dial the room server again. `force` = the Retry button. The automatic retry leaves a
+   * socket that is still opening alone (on a slow link the handshake can take longer than the
+   * 5 s retry period, and re-dialling would cut it off every time); the transport's own backoff
+   * covers sockets that fail.
+   */
+  _redial(force = false) {
+    const n = this.net;
+    if (!n || n._destroyed || !n.roomCode || n.connected) return;
+    const ws = n._relayWs;
+    if (!force && ws && ws.readyState === 0) return;   // WebSocket.CONNECTING
+    n.retryWithToken(n._relayToken);
+  }
+
+  /**
+   * A wait's "New Room" (#694; Pete: it must REALLY make a fresh room, keeping your seat): forget
+   * this room and open a new one as its captain. Only the captain has a room to make; a
+   * stoker's way out is another code.
+   */
+  newRoom() {
+    if (this.net && this.net.roomCode) this._store.clear(this.net.roomCode);
+    return this.create();
+  }
+
+  /** Forget the room (or every recent room) and leave it. */
   abandonStale() {
     if (this.net && this.net.roomCode) this._store.clear(this.net.roomCode);
     else this._store.clear();
@@ -357,9 +422,11 @@ export class RoomSession {
    * @param {{forget?: boolean}} [opts]
    */
   leave({ forget = false } = {}) {
-    this._clearStaleTimer();
+    this.wait.end();
+    this._stopSeen();
     const net = this.net;
     if (!net) return;
+    if (net.connected && !forget) this._markSeen(net.roomCode);   // #694: they were here until now
     if (forget) { try { if (net.roomCode) this._store.clear(net.roomCode); } catch (e) { /* storage */ } }
     this._ns.clear();
   }
@@ -369,6 +436,7 @@ export class RoomSession {
    * live one (not a newer room opened since). Returns true when it was.
    */
   dropIfCurrent(net) {
+    if (net && net.roomCode) this._markSeen(net.roomCode);   // #694: they were here until the drop
     if (this.net !== net) {
       try { net.destroy(); } catch (e) { /* already gone */ }
       return false;

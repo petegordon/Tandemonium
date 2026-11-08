@@ -2,7 +2,9 @@
 // leave lifecycle, with fake transports, a fake host (the lobby's side) and manual timers.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RoomSession, CONNECT_SETTLE_MS, STALE_ROOM_MS, STALE_WAITING_MS } from '../../js/lobby/room-session.js';
+import { RoomSession, CONNECT_SETTLE_MS } from '../../js/lobby/room-session.js';
+import { ROOM_WAIT_MS } from '../../js/lobby/room-wait.js';
+const LONG = 60 * 60000;   // longer than any wait's clock
 import { NetSession, NET_CALLBACKS } from '../../js/lobby/net-session.js';
 const noop = () => {};
 
@@ -33,8 +35,9 @@ FakeNet.CALLBACKS = ['onRoomJoined', 'onConnected', 'onDisconnected', 'onAuthErr
   'onReconnecting', 'onRemoteStream', 'onP2PUpgrade', 'onPedalReceived', 'onStateReceived', 'onLeanReceived', 'onEventReceived'];
 
 class FakeStore {
-  constructor() { this.rooms = new Map(); this.log = []; }
-  save(code, role, partnerName) { this.rooms.set(code, { roomCode: code, role, partnerName: partnerName || null }); this.log.push(['save', code, role]); }
+  constructor(now = () => 0) { this.rooms = new Map(); this.log = []; this.now = now; }
+  save(code, role, partnerName) { const old = this.rooms.get(code) || {}; this.rooms.set(code, { ...old, roomCode: code, role, partnerName: partnerName || old.partnerName || null }); this.log.push(['save', code, role]); }
+  markSeen(code) { const r = this.rooms.get(code); if (r) r.partnerSeenAt = this.now(); this.log.push(['seen', code]); }
   clear(code) { if (code) this.rooms.delete(code); else this.rooms.clear(); this.log.push(['clear', code || null]); }
   getRecent() { return [...this.rooms.values()]; }
 }
@@ -45,6 +48,9 @@ function timers() {
   return {
     setTimeout: (fn, ms) => { pending.set(++id, { at: now + ms, fn }); return id; },
     clearTimeout: (t) => { pending.delete(t); },
+    setInterval: (fn, ms) => { pending.set(++id, { at: now + ms, fn, every: ms }); return id; },
+    clearInterval: (t) => { pending.delete(t); },
+    get now() { return now; },
     get count() { return pending.size; },
     advance(ms) {
       const end = now + ms;
@@ -52,7 +58,9 @@ function timers() {
         let next = null;
         for (const [k, v] of pending) if (v.at <= end && (!next || v.at < next[1].at)) next = [k, v];
         if (!next) break;
-        pending.delete(next[0]); now = next[1].at; next[1].fn();
+        pending.delete(next[0]); now = next[1].at;
+        if (next[1].every) pending.set(next[0], { ...next[1], at: now + next[1].every });
+        next[1].fn();
       }
       now = end;
     },
@@ -64,7 +72,7 @@ const tick = () => new Promise((r) => setImmediate(r));
 function setup({ step = 'host', token = null } = {}) {
   const t = timers();
   const ns = new NetSession(() => new FakeNet());
-  const store = new FakeStore();
+  const store = new FakeStore(() => t.now);
   const calls = [];
   const statuses = { host: [], join: [] };
   const host = {
@@ -79,7 +87,8 @@ function setup({ step = 'host', token = null } = {}) {
     partnerConnected: (role) => calls.push(['partnerConnected', role]),
     connectFailed: (role, code) => calls.push(['connectFailed', role, code]),
     onStep: (name) => name === host.step,
-    staleRoom: (seat) => calls.push(['staleRoom', seat]),
+    // #694: the waiting line (RoomWait); logged as [wait, seat, kind, action ids, text]
+    wait: (seat, v) => calls.push(['wait', seat, v ? v.kind : null, v ? v.actions.map((a) => a.id).join(',') : '', v ? v.text : '']),
   };
   const auth = {
     tokens: 0,
@@ -95,9 +104,11 @@ function setup({ step = 'host', token = null } = {}) {
     trackConversion: (n) => events.push(['conv', n]),
     getSessionId: () => 'sid',
   };
-  const rs = new RoomSession({ netSession: ns, store, relayUrl: 'ws://relay', auth, host, analytics, setTimeout: t.setTimeout, clearTimeout: t.clearTimeout });
+  const rs = new RoomSession({ netSession: ns, store, relayUrl: 'ws://relay', auth, host, analytics, setTimeout: t.setTimeout, clearTimeout: t.clearTimeout,
+    setInterval: t.setInterval, clearInterval: t.clearInterval, now: () => t.now });
+  const lastWait = () => calls.filter((c) => c[0] === 'wait').at(-1) || null;
   const last = (seat) => statuses[seat][statuses[seat].length - 1];
-  return { t, ns, store, calls, statuses, host, auth, events, rs, last };
+  return { t, ns, store, calls, statuses, host, auth, events, rs, last, lastWait };
 }
 
 test('autoJoinCode reads ?room= with or without the TNDM- prefix', () => {
@@ -119,7 +130,7 @@ test('create: opens a captain room, saves it once the relay has us, opens the ro
   assert.deepEqual(calls.slice(0, 3), [['replaceNet'], ['newRoom', 'create'], ['showCode', '----']]);
   assert.ok(events.some((e) => e[0] === 'room_create'));
   net.open();
-  assert.deepEqual(calls.at(-1), ['roomOpen', code, false]);
+  assert.deepEqual(calls.filter((c) => c[0] !== 'wait').at(-1), ['roomOpen', code, false]);
   assert.deepEqual(last('host'), ['Waiting for partner...', undefined]);
   assert.equal(store.rooms.get(code).role, 'captain');
   net.partnerReady();
@@ -194,7 +205,7 @@ test('rejoin as captain shows the code (roomOpen rejoin=true)', async () => {
   const { rs, ns, calls } = setup();
   await rs.rejoin({ roomCode: 'TNDM-WXYZ', role: 'captain' });
   ns.net.open();
-  assert.deepEqual(calls.at(-1), ['roomOpen', 'TNDM-WXYZ', true]);
+  assert.deepEqual(calls.filter((c) => c[0] !== 'wait').at(-1), ['roomOpen', 'TNDM-WXYZ', true]);
 });
 
 test('a superseded attempt never touches the newer room', async () => {
@@ -235,30 +246,6 @@ test('dropIfCurrent leaves only when the dropped transport is still the room', a
   const b = ns.net;
   assert.equal(rs.dropIfCurrent(a), false);
   assert.equal(ns.net, b);
-});
-
-test('stale rejoin: still alone after STALE_ROOM_MS offers New Room; New Room forgets it and leaves', async () => {
-  const { rs, ns, store, calls, t } = setup();
-  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
-  ns.net.open();
-  t.advance(STALE_ROOM_MS - 1);
-  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
-  t.advance(1);
-  assert.deepEqual(calls.at(-1), ['staleRoom', 'host']);
-  const net = ns.net;
-  rs.abandonStale();
-  assert.ok(net._destroyed);
-  assert.equal(ns.net, null);
-  assert.ok(!store.rooms.has('TNDM-ABCD'));
-});
-
-test('stale rejoin: the partner arriving in time cancels the prompt', async () => {
-  const { rs, ns, calls, t } = setup();
-  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
-  ns.net.open();
-  ns.net.partnerReady();
-  t.advance(STALE_ROOM_MS * 2);
-  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
 });
 
 test('queueProfiles hands a moved room\'s early messages to the room screen', () => {
@@ -360,41 +347,6 @@ test('create and join hold the partner\'s first messages for the room screen too
   }
 });
 
-test('stale rejoin: a relay that never opens still offers New Room (from the attempt, not the open)', async () => {
-  const { rs, calls, t } = setup();
-  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
-  t.advance(STALE_ROOM_MS);
-  assert.deepEqual(calls.at(-1), ['staleRoom', 'join']);
-});
-
-test('stale rejoin: the relay saying the partner is not there offers New Room after STALE_WAITING_MS', async () => {
-  const { rs, ns, calls, t } = setup();
-  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
-  ns.net.open();
-  t.advance(1000);
-  ns.net.onRoomWaiting();
-  t.advance(STALE_WAITING_MS - 1);
-  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
-  t.advance(1);
-  assert.deepEqual(calls.at(-1), ['staleRoom', 'host']);
-  assert.ok(STALE_WAITING_MS < STALE_ROOM_MS);
-});
-
-test('stale rejoin: the timer never shows over a room opened since, or after leaving', async () => {
-  const { rs, ns, calls, t } = setup();
-  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
-  ns.net.open();
-  rs.leave();
-  t.advance(STALE_ROOM_MS);
-  await rs.rejoin({ roomCode: 'TNDM-WXYZ', role: 'captain' });
-  const stale = ns.net;
-  await rs.create();
-  stale.onRoomWaiting && stale.onRoomWaiting();
-  t.advance(STALE_ROOM_MS * 2);
-  assert.ok(!calls.some((c) => c[0] === 'staleRoom'));
-  assert.equal(t.count, 0, 'no timers left behind');
-});
-
 test('repeated room in / out leaves nothing behind', async () => {
   const retired = [];
   const s = setup({ step: 'join' });
@@ -406,13 +358,153 @@ test('repeated room in / out leaves nothing behind', async () => {
     await s.rs.create(); nets.push(s.ns.net);
     s.rs.leave();
   }
-  s.t.advance(STALE_ROOM_MS * 2);
+  s.t.advance(LONG);
   assert.equal(s.ns.net, null);
   assert.equal(retired.length, nets.length);
   for (const n of nets) {
     assert.equal(n.destroyCount, 1, 'destroyed exactly once');
     for (const k of NET_CALLBACKS) assert.equal(n[k], null, k);
   }
-  assert.ok(!s.calls.some((c) => c[0] === 'partnerConnected' || c[0] === 'staleRoom'));
+  assert.ok(!s.calls.some((c) => c[0] === 'partnerConnected'));
+  assert.equal(s.lastWait()[2], null, 'the last wait was cleared');
   assert.equal(s.t.count, 0);
+});
+
+// ── #694 · the waiting line (RoomWait inside RoomSession) ──
+
+test('A: a captain alone in a new room: "only one in room", then a count-up after 0:30', async () => {
+  const { rs, ns, t, lastWait } = setup();
+  const code = await rs.create();
+  assert.equal(lastWait(), null, 'nothing before the relay opens');
+  ns.net.open();
+  assert.deepEqual(lastWait().slice(0, 4), ['wait', 'host', 'A', '']);
+  assert.match(lastWait()[4], new RegExp(`only one in room ${code.slice(5)}`));
+  t.advance(ROOM_WAIT_MS.hostCount + 5000);
+  assert.match(lastWait()[4], /Waiting 0:35…/);
+  ns.net.partnerReady();
+  assert.equal(lastWait()[2], null, 'the partner arriving clears it');
+  rs.leave();
+  t.advance(LONG);
+  assert.equal(t.count, 0, 'no timers left behind');
+});
+
+test('B: a joiner alone: "No one else" once the relay says waiting, the way out after 0:15 and never gone', async () => {
+  const { rs, ns, t, lastWait } = setup({ step: 'join' });
+  await rs.join('TNDM-WXYZ');
+  ns.net.open();
+  assert.equal(lastWait(), null, 'no "no one" flash while a partner may still be arriving');
+  ns.net.onRoomWaiting();
+  assert.deepEqual(lastWait().slice(0, 4), ['wait', 'join', 'B', '']);
+  assert.match(lastWait()[4], /No one else is in room WXYZ yet · 0:00/);
+  t.advance(ROOM_WAIT_MS.joinOut - 1000);
+  assert.equal(lastWait()[3], '');
+  t.advance(1000);
+  assert.equal(lastWait()[3], 'keep,other-code');
+  assert.match(lastWait()[4], /0:15\. Check the code/);
+  t.advance(60000);
+  assert.equal(lastWait()[3], 'keep,other-code', 'still offered');
+  rs.leave({ forget: true });
+});
+
+test('C: rejoin, partner seen 3 min ago: names them, New Room (captain) only after 0:30', async () => {
+  const { rs, ns, t, store, lastWait } = setup();
+  t.advance(LONG);
+  store.rooms.set('TNDM-ABCD', { roomCode: 'TNDM-ABCD', role: 'captain', partnerName: 'Pat', partnerSeenAt: t.now - 3 * 60000 });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
+  assert.equal(lastWait()[2], 'C');
+  assert.match(lastWait()[4], /^Pat \(your Stoker\) was here 3 min ago\. Waiting for them to come back · 0:00$/);
+  assert.equal(lastWait()[3], '');
+  ns.net.open();
+  t.advance(ROOM_WAIT_MS.rejoinOut);
+  assert.equal(lastWait()[3], 'keep,new-room,back');
+  // New Room is a REAL fresh room in the same seat (not the role screen)
+  const old = ns.net;
+  const code = await rs.newRoom();
+  assert.ok(old._destroyed);
+  assert.ok(!store.rooms.has('TNDM-ABCD'), 'the stale room is forgotten');
+  assert.ok(code && code !== 'TNDM-ABCD');
+  assert.deepEqual(ns.net.entered, [[code, 'captain']]);
+});
+
+test('C for a stoker: the way out is another code (only a captain can make a room)', async () => {
+  const { rs, ns, t, store, lastWait } = setup({ step: 'join' });
+  t.advance(LONG);
+  store.rooms.set('TNDM-ABCD', { roomCode: 'TNDM-ABCD', role: 'stoker', partnerName: null, partnerSeenAt: t.now - 30000 });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
+  assert.match(lastWait()[4], /^Your Captain was here just now/);
+  ns.net.open();
+  t.advance(ROOM_WAIT_MS.rejoinOut);
+  assert.equal(lastWait()[3], 'keep,other-code,back');
+});
+
+test('D: rejoin, partner gone 2 h (or never seen): New Room at once, Keep waiting focused', async () => {
+  const { rs, ns, t, store, lastWait } = setup();
+  t.advance(LONG * 3);
+  store.rooms.set('TNDM-ABCD', { roomCode: 'TNDM-ABCD', role: 'captain', partnerName: 'Pat', partnerSeenAt: t.now - 2 * LONG });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
+  assert.equal(lastWait()[2], 'D');
+  assert.equal(lastWait()[3], 'keep,new-room');
+  assert.match(lastWait()[4], /^Pat hasn't been in room ABCD for 2 h\./);
+  rs.leave();
+  await rs.rejoin({ roomCode: 'TNDM-NEVR', role: 'captain' });
+  assert.match(lastWait()[4], /^No one else has been in room NEVR yet/);
+  assert.equal(lastWait()[3], 'keep,new-room');
+  ns.net.open();
+  ns.net.partnerReady();
+  assert.equal(lastWait()[2], null);
+});
+
+test('E: a room server that never lets us in says so (no partner wording) and retries every 5 s', async () => {
+  const { rs, ns, t, lastWait } = setup({ step: 'join' });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
+  t.advance(ROOM_WAIT_MS.unreachable);
+  assert.equal(lastWait()[2], 'E');
+  assert.equal(lastWait()[3], 'retry,back');
+  assert.match(lastWait()[4], /^Can't reach the room server\. Retrying in 5…$/);
+  assert.doesNotMatch(lastWait()[4], /partner|captain|stoker/i);
+  t.advance(ROOM_WAIT_MS.retryEvery);
+  assert.equal(ns.net.retried.length, 1, 'retried on its own');
+  rs.wait.retryNow();
+  assert.equal(ns.net.retried.length, 2, 'Retry dials at once');
+  ns.net.open();
+  assert.notEqual(lastWait()[2], 'E', 'in the room: E is over');
+  rs.leave();
+});
+
+test('partner last seen: stored on connect, kept fresh while connected, and on leaving', async () => {
+  const { rs, ns, t, store } = setup();
+  const code = await rs.create();
+  ns.net.open();
+  ns.net.partnerReady();
+  assert.equal(store.rooms.get(code).partnerSeenAt, t.now);
+  t.advance(ROOM_WAIT_MS.seenEvery * 2);
+  assert.equal(store.rooms.get(code).partnerSeenAt, t.now);
+  t.advance(1000);
+  rs.leave();
+  assert.equal(store.rooms.get(code).partnerSeenAt, t.now);
+  t.advance(LONG);
+  assert.equal(t.count, 0);
+});
+
+test('a left or superseded attempt never draws a wait again', async () => {
+  const { rs, ns, t, calls } = setup();
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'captain' });
+  const old = ns.net;
+  rs.leave();
+  const n = calls.length;
+  t.advance(LONG);
+  if (old.onRoomWaiting) old.onRoomWaiting();
+  assert.equal(calls.length, n);
+  assert.equal(t.count, 0);
+});
+
+test('E: the automatic retry never cuts off a socket that is still opening; Retry does', async () => {
+  const { rs, ns, t } = setup({ step: 'join' });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
+  ns.net._relayWs = { readyState: 0 };
+  t.advance(ROOM_WAIT_MS.unreachable + ROOM_WAIT_MS.retryEvery * 3);
+  assert.equal(ns.net.retried.length, 0, 'a slow handshake is left alone');
+  rs.wait.retryNow();
+  assert.equal(ns.net.retried.length, 1, 'the Retry button forces a fresh dial');
+  rs.leave();
 });
