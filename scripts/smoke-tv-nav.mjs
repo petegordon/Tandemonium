@@ -11,7 +11,7 @@
 //   LY-10  Leaderboard is a kit sheet like Help (its Close, B closes it); the
 //          desktop app's Quit pill is the bar's last pill.
 //   LY-11  First Grandma's finish: the unlocks fit, ← / → walk the button row.
-//   LY-15  Controls sheet: a focused setting row's ring is whole (#534).
+//   LY-15  Players (#646, was Controls): a focused setting row's ring is whole (#534).
 //   LY-16  Leaderboard: the top tab row shows its whole focus ring (#534).
 //   LY-18  Bike chooser by D-pad: ← from RIDE TOGETHER lands on ›, OK changes
 //          the bike; a phone remote alone sees ‹ › arrows, not L1 / R1.
@@ -82,9 +82,10 @@ const lbShell = await page.evaluate(() => {
 check(lbOpen && lbShell.sheet === 'uf-sheet' && lbShell.help === 'uf-sheet' && lbShell.close, 'LY-10 the Leaderboard opens as the same kit sheet as Help, with its Close', lbShell);
 // #540: the badges live in their own Achievements sheet now (smoke:ach-detail
 // walks it); the category-heading size check renders the grid there.
-const sectionPx = await page.evaluate(() => {
+const sectionPx = await page.evaluate(async () => {
   window._game.lobby._renderAchievements();
-  const t = document.querySelector('#achievements-modal .lb-ach-section-title');
+  await Promise.resolve();   // #634: <uf-achievement-grid> renders on a microtask
+  const t = document.querySelector('#achievements-modal .uag-section-title');
   if (!t) return 0;
   const s = document.getElementById('achievements-modal'); s.open = true;
   const px = parseFloat(getComputedStyle(t).fontSize); s.open = false;
@@ -195,24 +196,24 @@ await h.shot(page, '3-settings');
 await pads.press(0, 'B', 160);
 check(await until(() => !document.getElementById('options-overlay').classList.contains('visible')), 'LY-09 B closes Settings');
 
-// ── LY-15 · Controls sheet focus ring (#534) ──
-await page.evaluate(() => document.getElementById('bar-controls').click());
-check(await until(() => document.getElementById('controls-sheet').open === true), 'LY-15 the Controls pill opens the Controls sheet');
+// ── LY-15 · Players focus ring (#534; #646 Players replaces Controls) ──
+await page.evaluate(() => document.getElementById('bar-players').click());
+check(await until(() => document.getElementById('players-sheet').open === true), 'LY-15 the Players pill opens Players');
 for (let i = 0; i < 8; i++) {
-  if (await page.evaluate(() => !!document.querySelector('#controls-sheet uf-setting.gamepad-focus'))) break;
+  if (await page.evaluate(() => !!document.querySelector('#players-sheet uf-setting.gamepad-focus'))) break;
   await press('DOWN');
 }
 const ring = await page.evaluate(() => {
-  const el = document.querySelector('#controls-sheet uf-setting.gamepad-focus');
+  const el = document.querySelector('#players-sheet uf-setting.gamepad-focus');
   if (!el) return null;
-  const row = el.querySelector('.uf-setting__row'), body = document.getElementById('controls-sheet').querySelector('.uf-sheet__body');
+  const row = el.querySelector('.uf-setting__row'), body = document.getElementById('players-sheet').querySelector('.uf-sheet__body');
   const rr = row.getBoundingClientRect(), br = body.getBoundingClientRect();
   return { id: el.id, outline: getComputedStyle(el).outlineStyle, inside: rr.left >= br.left - 0.5 && rr.right <= br.right + 0.5 };
 });
 check(ring && ring.outline === 'none' && ring.inside, 'LY-15 a focused setting shows only its own ring, inside the sheet (no clipped outline)', ring);
-await h.shot(page, '3b-controls');
+await h.shot(page, '3b-players');
 await pads.press(0, 'B', 160);
-check(await until(() => document.getElementById('controls-sheet').open === false), 'LY-15 B closes the Controls sheet');
+check(await until(() => document.getElementById('players-sheet').open === false), 'LY-15 B closes Players');
 
 // ── LY-07 · slingshot ──
 await page.evaluate(() => document.querySelector('#level-cards .level-card-slingshot').click());

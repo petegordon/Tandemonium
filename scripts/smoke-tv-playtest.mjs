@@ -77,7 +77,10 @@ check(Math.abs(lean.cap - 0.5) < 1e-9 && Math.abs(lean.sto + 0.5) < 1e-9 && lean
 const joy = await page.evaluate(() => {
   const l = window._game.lobby, inp = window._game.input;
   const keep = { active: l.joystickActive, motion: inp.motionEnabled, suppress: inp.suppressGamepadLean };
+  // #646: the choice is P1's controller's (js/controller-settings.js); the old screen-wide key without one.
+  const key = l._p1SettingsKey();
   const run = (saved) => {
+    if (key) l.controllerSettings.set(key, { stick: saved == null ? null : saved === 'on' });
     try { if (saved == null) localStorage.removeItem('tandemonium_joystick'); else localStorage.setItem('tandemonium_joystick', saved); } catch {}
     l.joystickActive = true; inp.suppressGamepadLean = false; inp.motionEnabled = true;
     l._joystickOffForGyro();
@@ -85,6 +88,7 @@ const joy = await page.evaluate(() => {
   };
   const fresh = run(null), chose = run('on');
   inp.motionEnabled = false; l.joystickActive = true;
+  if (key) l.controllerSettings.set(key, { stick: null });
   try { localStorage.removeItem('tandemonium_joystick'); } catch {}
   l._joystickOffForGyro();
   const noGyro = { active: l.joystickActive };

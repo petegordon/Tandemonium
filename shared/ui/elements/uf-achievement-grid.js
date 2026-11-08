@@ -39,6 +39,8 @@ import { UfElement, prop, esc } from '../uf-element.js';
  * @property {boolean} [secret]              hidden until earned (pass the name/icon you want shown, e.g. "???")
  * @property {string} [unavailable]          a reason it can't be earned here (e.g. "Full game")
  * @property {string} [unavailableNote]      the detail card's line for it ("Unlocks in the full game")
+ * @property {string} [kicker]               the detail card's kicker, in place of the one its state gives ("Earned with a friend")
+ * @property {string} [status]               the detail card's status line, in place of the one its state gives
  */
 
 /** @typedef {{ id: string, title: string }} AchievementSection */

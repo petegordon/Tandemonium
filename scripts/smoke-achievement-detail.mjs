@@ -11,7 +11,10 @@
 //   AD-04  B closes the card and the focus is back on the same badge, with the
 //          Achievements sheet still open.
 //   AD-05  Unlocked shows its date; a counter shows its progress with a bar; a
-//          hidden one stays ??? / "Hidden".
+//          best-so-far shows "45 / 65 km/h" and its "Best: <ride> · <date, time>"
+//          line under the bar; a hidden one stays ??? / "Hidden".
+//          #634: the grid and the card are the kit's <uf-achievement-grid> /
+//          <uf-achievement-detail>.
 //   AD-06  B closes the Achievements sheet.
 //   AD-08  Hold to scroll (Steam playtest 2026-11-07): a d-pad tap moves one
 //          row; holding ↓ ~1.5 s runs past No. 40 with the focus in view;
@@ -29,7 +32,8 @@ const EARNED_AT = Date.UTC(2026, 10, 1, 15, 0, 0);   // 1 November 2026
 const storage = {
   tandemonium_tutorial_done: 'smoke',
   tandemonium_achievements: JSON.stringify([{ id: 'first_pedal', name: 'Kick Off', icon: '🦶', earnedAt: EARNED_AT }]),
-  tandemonium_achievement_stats: JSON.stringify({ v: 2, rides: 1 }),
+  // a best-so-far with where + when it was set (Terminal Goose: 45 of 65 km/h on the Daily Ride)
+  tandemonium_achievement_stats: JSON.stringify({ v: 2, rides: 1, bests: { terminal_goose: 45 }, bestsAt: { terminal_goose: { level: 'daily', at: Date.UTC(2026, 10, 7, 22, 0) } } }),
 };
 
 // ── TV, one pad ──
@@ -65,10 +69,10 @@ const card = () => page.evaluate(() => {
   const px = (el) => (el ? parseFloat(getComputedStyle(el).fontSize) : 0);
   const cr = s.querySelector('.uf-sheet__card').getBoundingClientRect();
   return {
-    heading: s.heading, state: q('.ach-detail').dataset.state,
-    kicker: q('.ach-detail-kicker')?.textContent, name: q('.ach-detail-name')?.textContent, desc: q('.ach-detail-desc')?.textContent,
-    status: q('.ach-detail-status')?.textContent, count: q('.ach-detail-count')?.textContent, bar: !!q('.ach-detail-bar'),
-    namePx: px(q('.ach-detail-name')), descPx: px(q('.ach-detail-desc')), badgePx: q('.ach-detail-badge')?.getBoundingClientRect().width || 0,
+    heading: s.heading, state: q('uf-achievement-detail').dataset.state,
+    kicker: q('.uad-kicker')?.textContent, name: q('.uad-name')?.textContent, desc: q('.uad-desc')?.textContent,
+    status: q('.uad-status')?.textContent, count: q('.uad-count')?.textContent, bar: !!q('.uad-bar'),
+    namePx: px(q('.uad-name')), descPx: px(q('.uad-desc')), badgePx: q('.uad-badge')?.getBoundingClientRect().width || 0,
     fits: cr.left >= 0 && cr.top >= 0 && cr.right <= innerWidth + 0.5 && cr.bottom <= innerHeight + 0.5, cardW: Math.round(cr.width),
   };
 });
@@ -94,29 +98,31 @@ await until(() => document.getElementById('leaderboard-modal').open === true);
 const lbYou = await page.evaluate(async () => {
   document.querySelector('#lb-main-tabs .lb-tab[data-tab-id="you"]')?.click();
   await new Promise((r) => setTimeout(r, 300));
-  return { heading: document.getElementById('leaderboard-modal').heading, badges: document.querySelectorAll('#leaderboard-modal .lb-ach-item').length };
+  return { heading: document.getElementById('leaderboard-modal').heading, badges: document.querySelectorAll('#leaderboard-modal .uag-item').length };
 });
 check(lbYou.badges === 0, 'AD-01 the Leaderboard\'s You tab no longer carries the badge grid', lbYou);
 await pads.press(0, 'B', 160);
 await until(() => document.getElementById('leaderboard-modal').open === false);
 await new Promise((r) => setTimeout(r, 300));
 await page.evaluate(() => document.getElementById('bar-achievements').click());
-const achOpen = await until(() => document.getElementById('achievements-modal').open === true && document.querySelectorAll('#achievements-modal .lb-ach-item').length > 0);
+const achOpen = await until(() => document.getElementById('achievements-modal').open === true && document.querySelectorAll('#achievements-modal .uag-item').length > 0);
 const grid = await page.evaluate(() => ({
   heading: document.getElementById('achievements-modal').heading,
-  badges: document.querySelectorAll('#achievements-modal button.lb-ach-item').length,
-  sections: document.querySelectorAll('#achievements-modal .lb-ach-section').length,
+  badges: document.querySelectorAll('#achievements-modal button.uag-item').length,
+  sections: document.querySelectorAll('#achievements-modal .uag-section').length,
 }));
 check(achOpen && grid.heading === 'Achievements' && grid.badges === 100 && grid.sections === 15, 'AD-01 the Achievements sheet opens with all 100 badges as buttons, in 15 sections', grid);
+const kitEls = await page.evaluate(() => ({ grid: !!document.querySelector('#lb-achievements > uf-achievement-grid .uag-item'), card: document.getElementById('ach-detail-card')?.localName }));
+check(kitEls.grid && kitEls.card === 'uf-achievement-detail', 'AD-01 #634: the badges and the card are the kit uf-achievement-grid / uf-achievement-detail', kitEls);
 await h.shot(page, '1-tv-grid');
 
 // ── AD-02 · pad focus over the badges, scrolling with it ──
-const f0 = await until(() => document.querySelector('#achievements-modal .lb-ach-item.gamepad-focus')?.getAttribute('data-ach') || null, null, 3000);
+const f0 = await until(() => document.querySelector('#achievements-modal .uag-item.gamepad-focus')?.getAttribute('data-ach') || null, null, 3000);
 check(!!f0, 'AD-02 the pad\'s focus starts on a badge', f0);
 let moved = null;
 for (let i = 0; i < 12; i++) { await press('DOWN'); moved = await focusedAch(); }
 const inView = await page.evaluate(() => {
-  const f = document.querySelector('#achievements-modal .lb-ach-item.gamepad-focus'); if (!f) return null;
+  const f = document.querySelector('#achievements-modal .uag-item.gamepad-focus'); if (!f) return null;
   const r = f.getBoundingClientRect(), b = document.getElementById('achievements-modal').querySelector('.uf-sheet__body').getBoundingClientRect();
   return { ach: f.dataset.ach, inView: r.top >= b.top - 1 && r.bottom <= b.bottom + 1, scrolled: document.getElementById('achievements-modal').querySelector('.uf-sheet__body').scrollTop };
 });
@@ -129,7 +135,7 @@ const opened = await until(() => document.getElementById('ach-detail').open === 
 const c1 = opened ? await card() : null;
 check(!!c1 && !!c1.name && !!c1.desc && !!c1.status && /No\. \d+ of 100/.test(c1.count || ''), 'AD-03 A opens the detail card: name, what to do, status, its number', c1);
 check(!!c1 && c1.namePx >= kit.x2 - 0.5 && c1.descPx >= kit.lg - 0.5 && c1.badgePx >= 120 && c1.fits, 'AD-03 the card reads at TV size (name 2xl, text lg, badge ≥120px) and is all on screen', c1 && { ...c1, kit });
-check(await page.evaluate(() => !document.getElementById('ach-lift') && !document.querySelector('.lb-ach-item.lifting')), 'AD-03 the lifting copy of the badge is gone once the card shows');
+check(await page.evaluate(() => !document.getElementById('ach-lift') && !document.querySelector('.uag-item.lifting')), 'AD-03 the lifting copy of the badge is gone once the card shows');
 await h.shot(page, '2-tv-detail');
 await pads.press(0, 'B', 160);
 const closed = await until(() => document.getElementById('ach-detail').open === false, null, 3000);
@@ -149,12 +155,12 @@ await h.shot(page, '2b-tv-after-close');
 
 // ── AD-08 · hold to scroll fast; LB / RB jump a section ──
 const achAt = () => page.evaluate(() => {
-  const items = Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item'));
-  const f = document.querySelector('#achievements-modal .lb-ach-item.gamepad-focus');
+  const items = Array.from(document.querySelectorAll('#achievements-modal .uag-item'));
+  const f = document.querySelector('#achievements-modal .uag-item.gamepad-focus');
   const body = document.getElementById('achievements-modal').querySelector('.uf-sheet__body').getBoundingClientRect();
   const r = f ? f.getBoundingClientRect() : null;
   return { i: f ? items.indexOf(f) : -1, top: r ? Math.round(r.top) : null, inView: !!r && r.top >= body.top - 1 && r.bottom <= body.bottom + 1,
-    section: f ? f.closest('.lb-ach-section')?.dataset.section : null, bike: window._game.lobby._presetIndex ?? null };
+    section: f ? f.closest('.uag-section')?.dataset.section : null, bike: window._game.lobby._presetIndex ?? null };
 });
 const toTop = async () => {
   await page.evaluate(() => { const L = window._game.lobby; L._achievementsSheet.body.scrollTop = 0; L._achResetFocus(); });
@@ -166,7 +172,7 @@ await pads.press(0, 'DOWN', 160);
 await new Promise((r) => setTimeout(r, 600));
 const t1 = await achAt();
 const perRow = await page.evaluate(() => {
-  const items = Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item'));
+  const items = Array.from(document.querySelectorAll('#achievements-modal .uag-item'));
   const top0 = Math.round(items[0].getBoundingClientRect().top);
   return items.filter((el) => Math.round(el.getBoundingClientRect().top) === top0).length;
 });
@@ -199,7 +205,7 @@ await pads.press(0, 'RB', 160); await new Promise((r) => setTimeout(r, 300));
 const r2 = await achAt();
 await pads.press(0, 'LB', 160); await new Promise((r) => setTimeout(r, 300));
 const l1 = await achAt();
-const secs = await page.evaluate(() => Array.from(document.querySelectorAll('#achievements-modal .lb-ach-section')).map((s) => ({ id: s.dataset.section, first: Array.from(document.querySelectorAll('#achievements-modal .lb-ach-item')).indexOf(s.querySelector('.lb-ach-item')) })));
+const secs = await page.evaluate(() => Array.from(document.querySelectorAll('#achievements-modal .uag-section')).map((s) => ({ id: s.dataset.section, first: Array.from(document.querySelectorAll('#achievements-modal .uag-item')).indexOf(s.querySelector('.uag-item')) })));
 check(r1.section === secs[1].id && r1.i === secs[1].first && r2.section === secs[2].id && r2.i === secs[2].first && l1.section === secs[1].id && l1.i === secs[1].first && r2.inView,
   'AD-08 RB jumps to the next section’s first badge, LB back', { r1, r2, l1, secs: secs.slice(0, 3) });
 check(l1.bike === bikeBefore, 'AD-08 LB / RB over the sheet leave the bike colour alone', { bikeBefore, after: l1.bike });
@@ -221,6 +227,17 @@ const prog = await open('rides_10');
 check(!!prog && prog.state === 'progress' && prog.bar && /^1 \/ 10/.test(prog.status || ''), 'AD-05 a counter shows its progress with a bar', prog);
 await h.shot(page, '4-tv-detail-progress');
 await closeCard();
+const best = await open('terminal_goose');
+const bestLine = await page.evaluate(() => {
+  const b = document.querySelector('#ach-detail-card .ach-detail-best');
+  return { text: b?.textContent || '', afterBar: !!b && b.previousElementSibling?.classList.contains('uad-bar'), beforeCount: !!b && b.nextElementSibling?.classList.contains('uad-count') };
+});
+check(!!best && best.state === 'progress' && best.status === '45 / 65 km/h' && best.bar, 'AD-05 a best-so-far shows its progress with the unit and a bar', best);
+check(/^Best: Daily Ride · November 7, 2026, \d{1,2}:\d\d [AP]M$/.test(bestLine.text) && bestLine.afterBar && bestLine.beforeCount, 'AD-05 …and where + when the best was set, under the bar', bestLine);
+const tile = await page.evaluate(() => document.querySelector('#achievements-modal .uag-item[data-ach="terminal_goose"] .uag-progress')?.textContent || '');
+check(tile === '45/65 km/h', 'AD-05 its badge on the grid reads 45/65 km/h', tile);
+await h.shot(page, '4c-tv-detail-best');
+await closeCard();
 const gold = await open('grandma_gold');
 const goldTimes = await page.evaluate(() => document.querySelector('#ach-detail .ach-detail-times')?.textContent || '');
 check(!!gold && /gold time/i.test(gold.desc || '') && /Gold time on Grandma's/.test(goldTimes) && /Chill[ ]\d:\d\d/.test(goldTimes) && /Adventurous[ ]\d:\d\d/.test(goldTimes) && /Daredevil[ ]\d:\d\d/.test(goldTimes), 'AD-05 a medal badge says what the medal is and lists its live time per difficulty', { desc: gold?.desc, goldTimes });
@@ -230,6 +247,15 @@ const hidden = await open('false_start');
 check(!!hidden && hidden.state === 'secret' && hidden.name === '???' && hidden.kicker === 'Hidden', 'AD-05 a hidden achievement keeps its ??? and says Hidden', hidden);
 await h.shot(page, '5-tv-detail-hidden');
 await closeCard();
+// #666 → #634: a held one (earned with a friend in a full-game room) keeps its own kicker + status on the kit card.
+const held = await page.evaluate(async () => {
+  const L = window._game.lobby;
+  L._renderAchievementDetail({ ...L._achievements.getAllDefinitions().find((a) => a.id === 'first_pedal'), held: true });
+  await Promise.resolve();
+  const c = document.getElementById('ach-detail-card');
+  return { state: c.dataset.state, kicker: c.querySelector('.uad-kicker')?.textContent, status: c.querySelector('.uad-status')?.textContent };
+});
+check(held.state === 'earned' && held.kicker === 'Earned with a friend' && held.status === 'Unlocked November 1, 2026 · get the full game to claim it', 'AD-05 a held achievement says Earned with a friend · get the full game to claim it', held);
 
 // ── AD-06 · B closes the sheet ──
 await pads.press(0, 'B', 160);
@@ -254,15 +280,15 @@ const toggle = await ph.evaluate(() => {
 check(toggle.shown && toggle.title === 'Achievements' && toggle.below, 'AD-07 the phone lobby shows the ⭐ Achievements toggle under 🏆 Leaderboard', toggle);
 await h.shot(ph, '6a-phone-lobby');
 await ph.tap('#toggle-achievements');
-check(await pUntil(() => document.getElementById('achievements-modal').open === true && document.querySelectorAll('#achievements-modal .lb-ach-item').length === 100), 'AD-07 a tap on ⭐ opens the Achievements sheet');
+check(await pUntil(() => document.getElementById('achievements-modal').open === true && document.querySelectorAll('#achievements-modal .uag-item').length === 100), 'AD-07 a tap on ⭐ opens the Achievements sheet');
 await h.shot(ph, '6-phone-grid');
-await ph.tap('#achievements-modal .lb-ach-item[data-ach="first_finish"]');
+await ph.tap('#achievements-modal .uag-item[data-ach="first_finish"]');
 const phOpen = await pUntil(() => document.getElementById('ach-detail').open === true, null, 3000);
 const pc = phOpen ? await ph.evaluate(() => {
   const s = document.getElementById('ach-detail');
   const cr = s.querySelector('.uf-sheet__card').getBoundingClientRect();
-  return { name: s.querySelector('.ach-detail-name')?.textContent, fits: cr.left >= 0 && cr.right <= innerWidth + 0.5 && cr.top >= 0 && cr.bottom <= innerHeight + 0.5,
-    namePx: parseFloat(getComputedStyle(s.querySelector('.ach-detail-name')).fontSize), scrollW: document.documentElement.scrollWidth, w: Math.round(cr.width) };
+  return { name: s.querySelector('.uad-name')?.textContent, fits: cr.left >= 0 && cr.right <= innerWidth + 0.5 && cr.top >= 0 && cr.bottom <= innerHeight + 0.5,
+    namePx: parseFloat(getComputedStyle(s.querySelector('.uad-name')).fontSize), scrollW: document.documentElement.scrollWidth, w: Math.round(cr.width) };
 }) : null;
 check(!!pc && pc.name === 'Made It' && pc.fits && pc.scrollW <= 390 && pc.namePx >= 24, 'AD-07 the card fits the phone (no sideways scroll, name ≥24px)', pc);
 await h.shot(ph, '7-phone-detail');
