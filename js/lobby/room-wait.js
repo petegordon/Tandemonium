@@ -79,6 +79,9 @@ export const ROOM_WAIT_COPY = {
   // B
   joinEmpty: (code, t) => `No one else is in room ${shortCode(code)} yet · ${t}`,
   joinEmptyOut: (code, t) => `No one else is in room ${shortCode(code)} yet · ${t}. Check the code, or keep waiting.`,
+  // B, when the room server remembers (#694): an old or never-used room is most likely a wrong code
+  joinUnused: (code, span, t) => `Room ${shortCode(code)} hasn't been used for ${span}. Check the code · ${t}`,
+  joinNeverUsed: (code, t) => `No one has opened room ${shortCode(code)} yet. Check the code · ${t}`,
   // C
   rejoinRecent: (p, ago, t) => `${cap(ROOM_WAIT_COPY.partner(p))} was here ${ago}. Waiting for them to come back · ${t}`,
   // D
@@ -107,7 +110,8 @@ export const ROOM_WAIT_COPY = {
  * @typedef {{ seat: 'host'|'join', kind: 'create'|'join'|'rejoin', code: string, role: 'captain'|'stoker',
  *             partner: { name?: string|null, seenAt?: number|null } | null,
  *             startedAt: number, openAt: number|null, absentAt: number|null,
- *             retryAt: number|null, outShown: boolean }} WaitState
+ *             retryAt: number|null, outShown: boolean,
+ *             relay?: { fresh: boolean, lastUsedAt: number|null, partnerSeenAt: number|null, partnerName: string|null } | null }} WaitState
  */
 
 const act = (id) => ({ id, label: { keep: ROOM_WAIT_COPY.keepWaiting, 'other-code': ROOM_WAIT_COPY.otherCode, 'new-room': ROOM_WAIT_COPY.newRoom, back: ROOM_WAIT_COPY.back, retry: ROOM_WAIT_COPY.retry }[id] });
@@ -122,7 +126,12 @@ export const otherRole = (role) => role === 'captain' ? 'stoker' : 'captain';
  */
 export function roomWaitView(s, now, ms = ROOM_WAIT_MS) {
   if (!s) return null;
-  const p = { name: (s.partner && s.partner.name) || null, role: otherRole(s.role) };
+  // #694: what the room server remembers fills in what this device doesn't know (and a later
+  // sighting there wins: the partner may have come back from another device).
+  const r = s.relay || null;
+  const localSeen = s.partner && typeof s.partner.seenAt === 'number' ? s.partner.seenAt : null;
+  const relaySeen = r && typeof r.partnerSeenAt === 'number' ? r.partnerSeenAt : null;
+  const p = { name: (s.partner && s.partner.name) || (r && r.partnerName) || null, role: otherRole(s.role) };
   // E · the room server never let us in (a refusal and a dead network look the same from here).
   if (s.openAt == null && now - s.startedAt >= ms.unreachable) {
     const n = s.retryAt == null ? Math.ceil(ms.retryEvery / 1000) : Math.max(0, Math.ceil((s.retryAt - now) / 1000));
@@ -138,6 +147,12 @@ export function roomWaitView(s, now, ms = ROOM_WAIT_MS) {
     // Wait for the relay's "waiting" (or a moment) so a partner who IS there never flashes "no one".
     if (s.absentAt == null && now - s.openAt < ms.joinGrace) return null;
     const t = now - s.openAt;
+    // #694: the room server says the room was never opened, or not for a long while: most
+    // likely a wrong code, so say so and offer another code at once (Keep waiting still focused).
+    if (r && (r.fresh || (r.lastUsedAt && now - r.lastUsedAt >= ms.recentSeen))) {
+      const text = r.fresh ? ROOM_WAIT_COPY.joinNeverUsed(s.code, fmtClock(t)) : ROOM_WAIT_COPY.joinUnused(s.code, fmtSpan(now - r.lastUsedAt), fmtClock(t));
+      return { kind: 'B', text, actions: [act('keep'), act('other-code')], focus: 'keep', cls: '' };
+    }
     const out = s.outShown || t >= ms.joinOut;
     return out
       ? { kind: 'B', text: ROOM_WAIT_COPY.joinEmptyOut(s.code, fmtClock(t)), actions: [act('keep'), act('other-code')], focus: 'keep', cls: '' }
@@ -145,7 +160,8 @@ export function roomWaitView(s, now, ms = ROOM_WAIT_MS) {
   }
   // rejoin · C or D, from when the partner was last seen (stored with the recent room)
   const t = now - s.startedAt;
-  const seenAt = s.partner && typeof s.partner.seenAt === "number" ? s.partner.seenAt : null;
+  const seens = [localSeen, relaySeen].filter((x) => x != null);
+  const seenAt = seens.length ? Math.max(...seens) : null;
   // The stoker can't make a room of their own (the captain's code is the room): their way out
   // is another code. The captain's is a real fresh room, same seat.
   const fresh = s.role === 'captain' ? 'new-room' : 'other-code';
@@ -195,8 +211,14 @@ export class RoomWait {
   /** The relay let us into the room. */
   roomOpen() { if (this.state && this.state.openAt == null) { this.state.openAt = this.now(); this.state.retryAt = null; this.tick(); } }
 
-  /** The relay says the partner is not in the room. */
-  partnerAbsent() { if (this.state && this.state.absentAt == null) { this.state.absentAt = this.now(); this.tick(); } }
+  /** The relay says the partner is not in the room (and, from #694 on, what the room remembers). */
+  partnerAbsent(info = null) {
+    const s = this.state;
+    if (!s) return;
+    if (info) s.relay = info;
+    if (s.absentAt == null) s.absentAt = this.now();
+    this.tick();
+  }
 
   /** Retry now (the E line's button); the countdown starts over. */
   retryNow() {

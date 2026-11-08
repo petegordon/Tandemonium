@@ -3,11 +3,42 @@
 // Deploy: wrangler deploy
 
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// #694 · the room remembers when it was last used and when each seat was last here (and the
+// name it gave), for a week, so a joiner or a rejoin can hear "Room ABCD hasn't been used for
+// 2 h" or "Pete was here 3 min ago" even on a device with no history. Only a few small fields;
+// an old client ignores them (they ride on the 'waiting' message it already reads by type).
+const ROOM_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** A display name from the query: trimmed, no control characters, at most 32 characters. */
+export function cleanName(raw) {
+    if (typeof raw !== 'string') return null;
+    const n = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 32);
+    return n || null;
+}
 
 export class TandemRoom {
     constructor(state, env) {
         this.state = state;
         this.env = env;
+        this._meta = undefined;      // #694 · { createdAt, lastUsedAt, seen: { captain?: {at, name}, stoker?: {at, name} } } | null
+    }
+
+    /** #694 · the room's record (cached; null for a room never used). Storage trouble = no record. */
+    async _readMeta() {
+        if (this._meta === undefined) {
+            try { this._meta = (await this.state.storage.get('meta')) || null; } catch (e) { this._meta = null; }
+        }
+        return this._meta;
+    }
+
+    /** #694 · the room is in use now, and `role` (with `name`, if given) is here. */
+    async _touch(role, name) {
+        const now = Date.now();
+        const prev = await this._readMeta();
+        const seen = { ...((prev && prev.seen) || {}) };
+        if (role) seen[role] = { at: now, name: name || (seen[role] && seen[role].name) || null };
+        this._meta = { createdAt: (prev && prev.createdAt) || now, lastUsedAt: now, seen };
+        try { await this.state.storage.put('meta', this._meta); } catch (e) { /* the record is a nicety */ }
     }
 
     async fetch(request) {
@@ -32,6 +63,13 @@ export class TandemRoom {
             }
         }
 
+        // #694: what the room knew BEFORE this connection (read first: touching it changes it).
+        // Read before the stale sockets close: from there to acceptWebSocket must not await, or a
+        // replaced socket's close sees no seat-holder and tells the partner "disconnect" (#620).
+        const prior = await this._readMeta();
+        const partnerRoleForMeta = role === 'captain' ? 'stoker' : 'captain';
+        const partnerSeen = prior && prior.seen && prior.seen[partnerRoleForMeta];
+
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair);
 
@@ -42,6 +80,7 @@ export class TandemRoom {
         }
 
         this.state.acceptWebSocket(server, [role]);
+        await this._touch(role, cleanName(url.searchParams.get('name')));   // after accept: safe to await
 
         // Reset room TTL on new connection
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
@@ -66,7 +105,17 @@ export class TandemRoom {
             }
         } else {
             // No partner yet — confirm room is valid
-            try { server.send(JSON.stringify({ type: 'waiting' })); } catch (e) {}
+            // #694: plus what the room remembers: when it was last used (null = never, before
+            // this connection) and when the partner's seat was last here, with their name.
+            try {
+                server.send(JSON.stringify({
+                    type: 'waiting',
+                    fresh: !prior,
+                    lastUsedAt: prior ? prior.lastUsedAt : null,
+                    partnerSeenAt: partnerSeen ? partnerSeen.at : null,
+                    partnerName: partnerSeen ? partnerSeen.name : null,
+                }));
+            } catch (e) {}
         }
 
         return new Response(null, { status: 101, webSocket: client });
@@ -97,11 +146,13 @@ export class TandemRoom {
         const stillHere = this.state.getWebSockets(senderRole).some((s) => s !== ws && s.readyState === 1);
         if (stillHere) return;
 
+
         // Notify partner
         const closeMsg = JSON.stringify({ type: 'disconnect', role: senderRole });
         for (const sock of this.state.getWebSockets(targetRole)) {
             try { sock.send(closeMsg); } catch (e) { /* closed */ }
         }
+        await this._touch(senderRole);   // #694: they were here until now
     }
 
     async webSocketError(ws) {
@@ -112,7 +163,15 @@ export class TandemRoom {
         // Clean up room if no active WebSockets remain
         const sockets = this.state.getWebSockets();
         if (sockets.length === 0) {
-            await this.state.storage.deleteAll();
+            // #694: keep the small "last used" record for a week, then forget the room.
+            const meta = await this._readMeta();
+            const until = meta && meta.lastUsedAt ? meta.lastUsedAt + ROOM_META_TTL_MS : 0;
+            if (until > Date.now()) {
+                await this.state.storage.setAlarm(until);
+            } else {
+                await this.state.storage.deleteAll();
+                this._meta = null;
+            }
         } else {
             // Still active — reschedule
             await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);

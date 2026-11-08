@@ -225,3 +225,20 @@ test('the relay saying "waiting" marks the partner absent and tells onRoomWaitin
   assert.equal(t.connected, true);
   t._stopHeartbeat();
 });
+
+// #694 · a relay from #694 on says what the room remembers on "waiting"; an older one doesn't.
+test('"waiting" with the room record fills roomInfo; a bare "waiting" (old relay) leaves it null', () => {
+  const t = transport();
+  let got;
+  t.onRoomWaiting = (info) => { got = info; };
+  t._displayName = 'Pete';
+  t.enterRoom('TNDM-AAAA', 'stoker');
+  assert.match(sockets.at(-1).url, /[?&]name=Pete(&|$)/, 'the seat\'s name goes to the relay');
+  sockets.at(-1).open();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'waiting', fresh: false, lastUsedAt: 1000, partnerSeenAt: 900, partnerName: 'Pat' }) });
+  assert.deepEqual(got, { fresh: false, lastUsedAt: 1000, partnerSeenAt: 900, partnerName: 'Pat' });
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'waiting' }) });
+  assert.equal(got, null);
+  assert.equal(t.roomInfo, null);
+  t._stopHeartbeat();
+});
