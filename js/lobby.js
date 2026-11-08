@@ -1909,8 +1909,12 @@ export class Lobby {
     if (!gate.ok) return '&#x1F512; ' + this._dailyGateText(gate) + rule;
     let line = dailyDescription(dailyStatus(browserStore(), key), key);
     if (gate.left != null) line += ' · ' + gate.left + ' of ' + this.roomRules().dailyRideCap + ' rides left';
-    // #611 · say clearly which day the card is on.
-    if (warp > 0) line = '<span class="level-card-warp-day">' + warpLine(key, warp) + '</span>' + line;
+    // #611 · say clearly which day the card is on (the long date replaces the short one).
+    if (warp > 0) {
+      const short = formatDayLabel(key) + ' \u00B7 ';
+      if (line.startsWith(short)) line = line.slice(short.length);
+      line = '<span class="level-card-warp-day">' + warpLine(key, warp) + '</span>' + line;
+    }
     return line + rule;
   }
 
@@ -1962,7 +1966,7 @@ export class Lobby {
     // Not `disabled`: a disabled button would drop the controller's highlight.
     fwd.setAttribute('aria-disabled', more ? 'false' : 'true');
     fwd.classList.toggle('is-disabled', !more);
-    fwd.textContent = more ? '\u23E9 Warp to tomorrow' : '\u23F3 ' + MAX_WARP_DAYS + ' days ahead \u00B7 as far as it goes';
+    fwd.textContent = more ? '\u23E9 Warp to tomorrow' : '\u23F3 Limit: ' + MAX_WARP_DAYS + ' days ahead';
     back.hidden = !(warp > 0);
   }
 
@@ -2157,16 +2161,22 @@ export class Lobby {
         }
       }
 
+      // #611 · time warp mode: once the Time Warp reward is earned, the Daily
+      // Ride card gets "Warp to tomorrow" under it (card + row stacked in one
+      // column, so the TV's one-row card layout keeps its four columns). Not in
+      // an online room (the partner is on the real date) and not in the versus
+      // list (no Daily Ride there).
+      if (level.isDaily && !locked && isClickable && mode === 'solo' && this._timeWarpUnlocked()) {
+        const stack = document.createElement('div');
+        stack.className = 'level-card-stack';
+        const warp = this._buildWarpRow();
+        stack.append(card, warp.row);
+        container.appendChild(stack);
+        buttons.push(card, ...warp.buttons);
+        return;
+      }
       container.appendChild(card);
       if (!locked) buttons.push(card);
-      // #611 · time warp mode: once the Time Warp reward is earned, the Daily
-      // Ride card gets "Warp to tomorrow". Not in an online room (the partner
-      // is on the real date) and not in the versus list (no Daily Ride there).
-      if (level.isDaily && !locked && isClickable && mode === 'solo' && this._timeWarpUnlocked()) {
-        const warp = this._buildWarpRow();
-        container.appendChild(warp.row);
-        buttons.push(...warp.buttons);
-      }
     });
 
     // Slingshot lives under SOLO: a mode, not a level. #517: picking its card

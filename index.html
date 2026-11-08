@@ -1573,21 +1573,28 @@
     color: #ffd23f;
     margin-bottom: 1px;
   }
+  .level-card-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
   .daily-warp-row {
     display: flex;
     gap: 6px;
     width: 100%;
   }
   .daily-warp-btn {
-    flex: 1 1 0;
+    flex: 1 1 auto;
     min-width: 0;
-    padding: 6px 8px;
+    padding: 6px 6px;
     border-radius: 999px;
     border: 2px solid rgba(255, 210, 63, 0.55);
     background: rgba(255, 210, 63, 0.12);
     color: #fff;
     font-family: var(--uf-font-ui);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 700;
     cursor: pointer;
     white-space: nowrap;
@@ -4779,6 +4786,7 @@
     /* #611 · the warp day + row, readable from the couch */
     .level-card-warp-day { font-size: calc(10 * var(--ls)); }
     .daily-warp-row { gap: calc(5 * var(--ls)); }
+    .level-card-stack { gap: calc(5 * var(--ls)); }
     .daily-warp-btn { font-size: calc(9.5 * var(--ls)); padding: calc(5 * var(--ls)) calc(8 * var(--ls)); border-width: calc(1.2 * var(--ls)); }
     /* compact: the description may hide, never the warped day */
     .lobby-compact-3 .level-card[data-level-id="daily"] .level-card-desc:has(.level-card-warp-day) { display: block; }

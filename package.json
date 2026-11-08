@@ -35,6 +35,7 @@
     "smoke:seed": "node scripts/smoke-seed-plumbing.mjs",
     "smoke:ctas": "node scripts/smoke-demo-ctas.mjs",
     "smoke:daily": "node scripts/smoke-daily-ride.mjs",
+    "smoke:time-warp-mode": "node scripts/smoke-time-warp-mode.mjs",
     "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs",
     "smoke:daily-best": "node scripts/smoke-daily-best.mjs",
     "smoke:tutorial": "node scripts/smoke-tutorial-first.mjs",
