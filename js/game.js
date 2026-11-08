@@ -569,18 +569,7 @@ class Game {
 
     // Assist button (hidden by default, shown by DDA)
     this.assistBtn = document.getElementById('assist-btn');
-    this.assistBtn.addEventListener('click', () => {
-      if (this._assistWeight > 0) {
-        this._assistWeight = 0;
-        this.assistBtn.className = 'side-btn assist-off';
-        this.assistBtn.textContent = 'ASSIST';
-      } else {
-        this._assistWeight = 0.65;
-        this.assistBtn.className = 'side-btn assist-on';
-        this.assistBtn.textContent = 'ASSIST\nON';
-        this._helpMarkAssisted();   // #403: an ASSIST finish is a 🛟 finish
-      }
-    });
+    this.assistBtn.addEventListener('click', () => this._setAssist(!(this._assistWeight > 0)));
 
     // Reset button
     document.getElementById('reset-btn').addEventListener('click', () => {
@@ -735,6 +724,17 @@ class Game {
       }
       this._hideGameOver();
       this._resetGame();
+    });
+
+    // Game Over: RESTART WITH ASSIST (Pete 2026-11-07): the same restart, with ASSIST
+    // on until the next checkpoint.
+    this._onTap('btn-restart-assist', () => {
+      if (this.mode === 'stoker') return;   // the captain's screen owns the offer
+      analytics.trackRideEvent('dda_assist_accepted', this.bike ? this.bike.distanceTraveled : 0, { type: 'restart_with_assist' });
+      if (this.ddaManager) this.ddaManager.acceptedCount++;
+      this._hideGameOver();
+      this._resetGame();
+      this._setAssist(true);
     });
 
     // Game Over: return to room (stay connected)
@@ -1334,7 +1334,8 @@ class Game {
         this._quickCountdown = false;
       } else if (eventType === EVT_GAMEOVER) {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
-        if (this.state === 'playing') this._showGameOver(true);
+        // After this side's own TOO SLOW, the captain's sheet is the timeout one.
+        if (this.state === 'playing') this._showGameOver(true, { timeout: !!this._stokerTimeoutShown });
       } else if (eventType === EVT_CHECKPOINT) {
         this._clearStokerTimeout();   // PR #397 M1: the captain made it — so did we
         this._showCheckpointFlash();
@@ -2233,7 +2234,9 @@ class Game {
     this.ddaManager = !this._rideSystemOn('dda') ? null
       : (keepHelp ? this.ddaManager : new DDAManager(difficultyName));
     if (keepHelp) this.ddaManager.applyInvisibleAdjustments();
-    this._assistWeight = 0;
+    this._setAssist(false);
+    // A new ride starts without the ASSIST offer (a first-stretch retry keeps it).
+    if (!keepHelp && this.assistBtn) this.assistBtn.style.display = 'none';
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
     if (TUNE.autoSpeed != null) {
@@ -2766,21 +2769,14 @@ class Game {
     // Freeze gameplay during the pause
     this.state = 'gameover';
 
+    // Pete 2026-11-07: TOO SLOW! and GAME OVER follow one rule: a failure stops on the
+    // same sheet (RESTART, RESTART WITH ASSIST, the Royal Shortcut, END RIDE). The snail
+    // gets a short beat first; there's no automatic retry any more.
+    void helpNow;
     setTimeout(() => {
       flash.classList.remove('visible');
-      // #403: after the 5th failure the player gets a choice, not an
-      // automatic retry — the Royal Shortcut is on the game-over screen.
-      if (helpNow && helpNow.offerSkip && this.state === 'gameover') {
-        this._showGameOver(false, { timeout: true });
-        return;
-      }
-      this.state = 'playing';
-      // Reset segment timer before _resetGame so it reinits properly
-      if (this.raceManager) {
-        this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
-      }
-      this._resetGame();
-    }, 2000);
+      if (this.state === 'gameover') this._showGameOver(false, { timeout: true });
+    }, 1400);
   }
 
   _showCheckpointFlash() {
@@ -3283,6 +3279,7 @@ class Game {
     const title = document.getElementById('gameover-title');
     if (title) title.textContent = opts.timeout ? 'TOO SLOW!' : 'GAME OVER';
     { const sh = /** @type {any} */ (document.getElementById('gameover-sheet')); if (sh) sh.heading = opts.timeout ? 'Too slow!' : 'Game over'; }   // #428 kit sheet
+    { const r = document.getElementById('gameover-reason'); if (r) r.textContent = opts.timeout ? '\u{1F40C} The clock ran out on this stretch' : '\u{1F4A5} Too many crashes on this stretch'; }
     { const u = document.getElementById('gameover-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; u.classList.remove('icons-only'); } }
 
     // Crash analytics already recorded at impact time in _recordCrash()
@@ -3314,6 +3311,11 @@ class Game {
         const assistBtn = document.getElementById('assist-btn');
         if (assistBtn) assistBtn.style.display = '';
       }
+    }
+    // RESTART WITH ASSIST: once ASSIST is offered for this stretch, every Game Over there shows it.
+    {
+      const ra = document.getElementById('btn-restart-assist');
+      if (ra) ra.style.display = (this.ddaManager && this.mode !== 'stoker' && this.ddaManager.assistOffered && !(this._assistWeight > 0)) ? '' : 'none';
     }
 
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
@@ -3357,6 +3359,40 @@ class Game {
       // leave the stoker stuck on a "playing" screen.
       this.net.sendEventReliable(EVT_GAMEOVER);
     }
+  }
+
+  /**
+   * ASSIST on or off: 65 % auto-steer (toward the road and the presents, away from the
+   * pylons) plus a pull back upright. Turning it on makes the ride a 🛟 ride (#403).
+   * @param {boolean} on
+   */
+  _setAssist(on) {
+    if (!this.assistBtn) return;
+    if (on) {
+      this._assistWeight = 0.65;
+      this.assistBtn.style.display = '';
+      this.assistBtn.className = 'side-btn assist-on';
+      this.assistBtn.textContent = 'ASSIST\nON';
+      this._helpMarkAssisted();   // #403: an ASSIST finish is a 🛟 finish
+    } else {
+      this._assistWeight = 0;
+      this.assistBtn.className = 'side-btn assist-off';
+      this.assistBtn.textContent = 'ASSIST';
+    }
+  }
+
+  /** Pete 2026-11-07: ASSIST covers the one stretch you were stuck on; it ends at the next checkpoint. */
+  _endAssistAtCheckpoint() {
+    if (this.mode === 'stoker' || !this.assistBtn) return;
+    if (this._assistWeight > 0) {
+      this._setAssist(false);
+      const st = document.getElementById('status');
+      if (st) {
+        st.textContent = 'ASSIST OFF \u2014 you\u2019ve got this';
+        setTimeout(() => { if (st.textContent.startsWith('ASSIST OFF')) st.textContent = ''; }, 2500);
+      }
+    }
+    this.assistBtn.style.display = 'none';   // offered again only if the next stretch is a struggle too
   }
 
   _hideGameOver() {
@@ -4639,6 +4675,7 @@ class Game {
       if (this.ddaManager) {
         this.ddaManager.onCheckpointPassed(raceEvent.distance);
       }
+      this._endAssistAtCheckpoint();
       this._helpOnCheckpoint();   // #403: the count and the tier reset here
 
       // Notify stoker

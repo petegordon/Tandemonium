@@ -10,8 +10,11 @@ import { HELP_SKIP_AFTER } from './helping-hand.js';
 // offered after 2 failures instead of 4. The silent tune is unchanged.
 // #403: SKIP CHECKPOINT ("Take the Royal Shortcut") after 5 failures, not 6 —
 // the helping hand's schedule (js/helping-hand.js) owns the number.
+// Pete 2026-11-07 ("I just tried to invoke ASSIST ... it never comes up"): ASSIST
+// is offered at the FIRST Game Over at a checkpoint (the third crash there, or a
+// timeout), as RESTART WITH ASSIST on that screen.
 export const DDA_SILENT_ADJUST_AFTER = 2;
-export const DDA_ASSIST_AFTER = 2;
+export const DDA_ASSIST_AFTER = 1;
 export const DDA_SKIP_AFTER = HELP_SKIP_AFTER;
 
 export class DDAManager {
@@ -92,6 +95,9 @@ export class DDAManager {
     this._assistOffered = false;
     this._skipOffered = false;
   }
+
+  /** ASSIST has been offered for the stretch of road in front of the player. */
+  get assistOffered() { return this._assistOffered; }
 
   markAssistOffered() {
     this._assistOffered = true;
