@@ -99,6 +99,12 @@ uf-system-bar#lobby-bar { display: none; }
     gap: var(--uf-space-5) !important; align-items: stretch !important; padding: var(--uf-space-2) 0 !important;
   }
   #lobby .level-card { flex: 1 1 0 !important; min-width: 0 !important; width: auto !important; min-height: 0; padding: var(--uf-space-5) var(--uf-space-5) !important; text-align: left; }
+  /* #611 · the Daily Ride card with its time-warp row: one column of the row, card on top */
+  #lobby .level-card-stack { flex: 1 1 calc(2 * var(--uf-space-5) + 4px); min-width: 0; width: auto; gap: var(--uf-space-3); }
+  #lobby .level-card-stack > .level-card { flex: 1 1 auto !important; width: 100% !important; }
+  #lobby .daily-warp-row { flex-direction: column; gap: var(--uf-space-3); }
+  #lobby .daily-warp-btn { font-size: var(--uf-size-md); padding: var(--uf-space-3) var(--uf-space-4); border-width: 2px; flex: 0 0 auto; }
+  #lobby .level-card-warp-day { font-size: var(--uf-size-lg) !important; margin-bottom: var(--uf-space-1); }
   #lobby .level-card-top { flex-direction: column !important; align-items: flex-start !important; gap: var(--uf-space-3) !important; }
   #lobby .level-card-icon { font-size: calc(var(--uf-size-2xl) * 1.25) !important; }
   #lobby .level-card-name { font-size: var(--uf-size-xl) !important; }

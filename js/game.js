@@ -33,12 +33,19 @@ const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
   cobbles: '🪨 ROUGH ROAD'
 };
-import { makePlacementSalt, dailyKey } from './daily-seed.js';
+import { makePlacementSalt } from './daily-seed.js';
+import { playDayKey } from './time-warp.js';   // #611 · the day the game is on (warped or real)
 import {
   recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
 import { buildResultCard, renderResultCard, linkFromStrip, steamSavedMessage } from './result-card.js';   // #657
+import {   // #657 parts 2 + 3 · the TV's QR to the phone page, the House Tandem Discord post
+  shareSurface, discordPostable, getDiscordAutoPost, setDiscordAutoPost, discordButtonLabel,
+  cardUploadBlob, fetchShareConfig, uploadCard, postCardToDiscord,
+} from './share-result.js';
+import { API_BASE } from './config.js';
+import { toast } from './slingshot-ui.js';
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -649,6 +656,7 @@ class Game {
     for (const which of ['victory', 'gameover']) {
       this._onTap('btn-daily-share-' + which, () => this._shareDailyResult(which));
     }
+    this._wireShareSheet();   // #657
 
     // Try Again from disconnect overlay
     this._onTap('btn-try-reconnect', () => {
@@ -2658,6 +2666,9 @@ class Game {
     this._rideUnlocks = [];
     this._lastRidePayout = null;
     this._shareSavedToSteam = false;
+    this._shareUpload = null;          // #657 · the card uploaded for the QR / Discord (once a ride)
+    this._shareUploadUrl = null;
+    this._discordPostState = 'idle';
 
     // E-2: plan what the road is going to do to this pair.
     // Map Tourist has no road line to lay cobbles, gusts or goose crossings
@@ -4775,6 +4786,10 @@ class Game {
     try {
       const res = await auth.submitDaily({
         dayKey: level.key,
+        // #611 · ridden in time warp, ahead of the real date: the server allows
+        // a future day only with this flag, and the board marks the row ⏳.
+        // A server without the flag rejects the future day; the ride is still kept here.
+        ...(level.warp > 0 ? { warp: true } : {}),
         mode: this._dailyRunMode(),
         timeMs: summary.timeMs,
         dnf: false,
@@ -4853,6 +4868,7 @@ class Game {
       first: firstTry(store, level.key),
       rides: day.started,
       streak,
+      warp: level.warp > 0,   // #611
       partnerName: mode === 'pair' ? this._partnerName : null
     };
     this._dailyStripInput = stripInput;   // #657: the result card says the same
@@ -4941,19 +4957,20 @@ class Game {
    * clipboard is a dead end on a TV with a controller); if that fails, the
    * clipboard, and the button says so.
    */
-  async _shareDailyResult(where) {
+  async _shareDailyResultDirect(where) {
     const text = this._dailyStripText;
-    if (!text) return;
+    if (!text) return null;
     let method = 'copy';
+    let said = null;   // #657: what happened, for the share sheet's status line
     let steamFailed = false;
     const steam = /** @type {any} */ (window).steam;
     if (steam && typeof steam.saveScreenshot === 'function') {
       const pad = Array.from((navigator.getGamepads && navigator.getGamepads()) || []).some(p => p && p.connected);
       if (this._shareSavedToSteam) {   // already saved this ride: say where it went, do not save twice
         this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
-        return;
+        return steamSavedMessage({ pad });
       }
-      if (this._shareSaving) return;
+      if (this._shareSaving) return null;
       this._shareSaving = true;
       this._flashShareButton(where, 'SAVING…', 15000);
       let res = null;
@@ -4963,7 +4980,7 @@ class Game {
         this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
         try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: 'steam_screenshot', where }); } catch {}
         if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
-        return;
+        return steamSavedMessage({ pad });
       }
       steamFailed = !!res;   // null: no Steam running, so the ordinary clipboard and no note
       if (res) console.warn('[share] Steam screenshot failed:', res.error);
@@ -4984,13 +5001,182 @@ class Game {
         if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM · COPIED INSTEAD", 4000);
         else this._flashShareButton(where, 'COPIED', 1600);
         if (steamFailed) method = 'copy_after_steam';
+        said = steamFailed ? "Couldn't save to Steam · the result is copied instead" : 'Copied the result · paste it anywhere';
       }
       try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
       if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
     } catch {
       /* the user dismissed the share sheet; that is not an error */
-      if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM", 4000);
+      if (steamFailed) { this._flashShareButton(where, "COULDN'T SAVE TO STEAM", 4000); said = "Couldn't save to Steam"; }
     }
+    return said;
+  }
+
+  /**
+   * #657 · SHARE RESULT. A desktop browser copies the strip and a phone opens
+   * its own share sheet, as before; the Steam build saves the card to its
+   * screenshots. Then, where there is no clipboard to paste from (a TV), in
+   * the Steam build, or when the House Tandem Discord post is on offer, the
+   * share sheet: a QR to the phone page and POST TO DISCORD.
+   */
+  async _shareDailyResult(where) {
+    if (!this._dailyStripText) return;
+    const s = await this._shareSurfaceNow();
+    let status = null;
+    if (s.steam || s.copy || (s.nativeShare && !s.sheet)) status = await this._shareDailyResultDirect(where);
+    if (s.sheet) this._openShareSheet(where, s, status);
+  }
+
+  /** #657 · what SHARE RESULT does here (js/share-result.js shareSurface). */
+  async _shareSurfaceNow() {
+    const steam = /** @type {any} */ (window).steam;
+    const hasSteam = !!(steam && typeof steam.saveScreenshot === 'function');
+    const isDaily = !!(this._shareCardData && this._shareCardData.isDaily);
+    const auth = this.lobby && this.lobby.auth;
+    let configured = false;
+    if (isDaily && auth && auth.isLoggedIn() && auth.hasIdentity('discord')) {
+      configured = (await fetchShareConfig({ apiBase: API_BASE })).discord;
+    }
+    const clipboard = !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function') && window.isSecureContext !== false;
+    return shareSurface({ tv: isTV, steam: hasSteam, mobile: isMobile, clipboard, discord: discordPostable({ isDaily, auth, configured }) });
+  }
+
+  /** #657 · the share sheet's buttons. */
+  _wireShareSheet() {
+    if (!document.getElementById('share-sheet')) return;
+    this._onTap('btn-share-done', () => { if (this._shareModal) this._shareModal.close('close'); });
+    this._onTap('btn-share-discord', () => this._postResultToDiscord({ where: this._shareWhere }));
+    this._onTap('btn-share-native', () => this._shareFromSheetNative());
+  }
+
+  /**
+   * #657 · open the share sheet over a result screen ('victory' | 'gameover').
+   * `status`: what SHARE RESULT already did (saved to Steam, copied), or null.
+   */
+  _openShareSheet(where, s, status) {
+    const sheet = /** @type {any} */ (document.getElementById('share-sheet'));
+    if (!sheet || this._shareModal) return;
+    this._shareWhere = where;
+    const statusEl = document.getElementById('share-status');
+    if (statusEl) { statusEl.textContent = status || ''; statusEl.hidden = !status; }
+    const phone = document.getElementById('share-phone');
+    const qr = /** @type {any} */ (document.getElementById('share-qr'));
+    const note = document.getElementById('share-qr-note');
+    if (phone) phone.hidden = !s.qr;
+    const native = document.getElementById('btn-share-native');
+    if (native) native.style.display = s.nativeShare ? '' : 'none';
+    const discordBtn = document.getElementById('btn-share-discord');
+    if (discordBtn) discordBtn.style.display = s.discord ? '' : 'none';
+    const discordNote = document.getElementById('share-discord-note');
+    if (discordNote) discordNote.hidden = !s.discord;
+    this._setDiscordState(this._discordPostState || 'idle');
+
+    this._shareModal = openModal(sheet, this._overlayFocus, {
+      onClose: () => {
+        this._shareModal = null;
+        // Back to the result screen, on SHARE RESULT.
+        const under = document.getElementById(where + '-sheet');
+        if (under && this.state === where) focusResult(this._overlayFocus, under, { primary: document.getElementById('btn-daily-share-' + where) });
+      },
+      primary: s.discord && this._discordPostState === 'idle' ? discordBtn : null,
+    });
+
+    if (s.qr && qr) {
+      if (!this._shareUploadUrl) { qr.value = ''; if (note) note.textContent = 'Making your link…'; }
+      this._ensureShareUpload().then((up) => {
+        const first = !this._shareUploadUrl;
+        this._shareUploadUrl = up.url;
+        qr.value = up.url;
+        qr.link = up.url.replace(/^https?:\/\//, '');
+        if (note) note.textContent = 'Opens your result card on your phone, ready to share · the link lasts 7 days';
+        if (first) { try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: 'qr', where }); } catch {} }
+      }).catch(() => {
+        if (note) note.textContent = "Couldn't make a phone link right now";
+      });
+    }
+  }
+
+  /** #657 · upload this ride's card once (POST /share); the QR and the Discord post share it. */
+  _ensureShareUpload() {
+    if (this._shareUpload) return this._shareUpload;
+    const model = this._resultCardModel();
+    if (!model) return Promise.reject(new Error('no-card'));
+    const d = this._shareCardData || {};
+    const p = (async () => {
+      const card = await renderResultCard(model);
+      const blob = await cardUploadBlob(card.canvas);
+      let deviceId = null;
+      try { deviceId = analytics.getDeviceId(); } catch {}
+      return uploadCard({ blob, caption: model.caption, link: model.link, dayKey: d.isDaily ? d.dayKey : null, deviceId }, { apiBase: API_BASE });
+    })();
+    this._shareUpload = p;
+    p.catch(() => { if (this._shareUpload === p) this._shareUpload = null; });   // try again next press
+    return p;
+  }
+
+  /** #657 · the POST TO DISCORD button follows the post. */
+  _setDiscordState(state) {
+    this._discordPostState = state;
+    const b = document.getElementById('btn-share-discord');
+    if (!b) return;
+    b.textContent = discordButtonLabel(state);
+    const done = state === 'posting' || state === 'posted' || state === 'already';
+    if (done) b.setAttribute('disabled', ''); else b.removeAttribute('disabled');
+  }
+
+  /**
+   * #657 · post this Daily Ride's card to #daily-ride on the House Tandem
+   * Discord, once (the server holds it to one a day too). `auto`: the
+   * Settings option posted it at the finish.
+   */
+  async _postResultToDiscord({ where = null, auto = false } = {}) {
+    if (this._discordPosting || this._discordPostState === 'posted' || this._discordPostState === 'already') return this._discordPostState;
+    const auth = this.lobby && this.lobby.auth;
+    const token = auth && auth.getToken ? auth.getToken() : null;
+    if (!token) { this._setDiscordState('signin'); return 'signin'; }
+    this._discordPosting = true;
+    this._setDiscordState('posting');
+    try {
+      const up = await this._ensureShareUpload();
+      const res = await postCardToDiscord({ id: up.id, token }, { apiBase: API_BASE });
+      this._setDiscordState(res.state);
+      if (res.ok) {
+        try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: auto ? 'discord_auto' : 'discord', where }); } catch {}
+        this.achievements.record('share');   // #401 Show-Off
+        if (auto) toast('Posted to #daily-ride on the House Tandem Discord');
+      }
+    } catch {
+      this._setDiscordState('error');
+    } finally {
+      this._discordPosting = false;
+    }
+    return this._discordPostState;
+  }
+
+  /** #657 · a phone with the Discord post on offer: its own share sheet, from the share sheet. */
+  async _shareFromSheetNative() {
+    const text = this._dailyStripText;
+    if (!text || !navigator.share) return;
+    try {
+      await navigator.share({ text });
+      try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: 'share', where: this._shareWhere }); } catch {}
+      if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');
+    } catch { /* dismissed */ }
+  }
+
+  /**
+   * #657 · Settings "Post my Daily Ride results to the House Tandem Discord":
+   * with it on, a Daily Ride finish posts its card by itself.
+   */
+  async _maybeAutoPostDiscord() {
+    if (!getDiscordAutoPost(globalThis.localStorage)) return;
+    const d = this._shareCardData;
+    if (!d || !d.isDaily) return;
+    const auth = this.lobby && this.lobby.auth;
+    if (!auth || !auth.isLoggedIn() || !auth.hasIdentity('discord')) return;
+    const { discord } = await fetchShareConfig({ apiBase: API_BASE });
+    if (!discordPostable({ isDaily: true, auth, configured: discord })) return;
+    await this._postResultToDiscord({ where: 'victory', auto: true });
   }
 
   /**
@@ -5244,7 +5430,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local' || !!bot,
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
-      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
+      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || playDayKey()).current : 0,
     });
     // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
     // whole ride by controller gyro (local co-op: either seat; online: your own).
@@ -5311,7 +5497,7 @@ class Game {
       partnerKey: me && me.serverId ? String(me.serverId) : 'local:p1',
       gyroOnly: !!this.balanceCtrlP2 && gyroOnlySteer(this.balanceCtrlP2.steerFrames),
     };
-    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: dailyKey(), demo: !!this.achievements.demo });
+    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: playDayKey(), demo: !!this.achievements.demo });
     this._seatNewAchievements[2] = fresh.map((a) => a.id);
     for (const a of fresh) showInfoToast(a.icon, `${acc.user.name} · ${a.name}`, a.desc);
   }
@@ -5759,6 +5945,8 @@ class Game {
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
     focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: hasNext ? nextBtn : playAgainBtn });
+    // #657 · Settings' Discord option: a Daily Ride finish posts its card (after this frame's unlocks).
+    if (this._shareCardData && this._shareCardData.isDaily) setTimeout(() => { this._maybeAutoPostDiscord().catch(() => {}); }, 800);
 
     // Re4 — victory uses the same C-E-G motif as the checkpoint chime,
     // giving Tandemonium a recognizable audio signature across cues.
@@ -6541,6 +6729,10 @@ class Game {
     if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
     if (fpsOffBtn) fpsOffBtn.addEventListener('click', () => this._setShowFps(false));
 
+    // #657 · post Daily Ride results to the House Tandem Discord (off by default).
+    document.getElementById('opt-discord-on')?.addEventListener('click', () => this._setDiscordAutoPostOpt(true));
+    document.getElementById('opt-discord-off')?.addEventListener('click', () => this._setDiscordAutoPostOpt(false));
+
     const physOnBtn  = document.getElementById('opt-physics-on');
     const physOffBtn = document.getElementById('opt-physics-off');
     if (physOnBtn)  physOnBtn.addEventListener('click',  () => this._setPhysicsFx(true));
@@ -6580,6 +6772,7 @@ class Game {
     this._updateOptionsShowSoloUI();
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsDiscordUI();
     this._updateOptionsPhysicsUI();
   }
 
@@ -6629,6 +6822,40 @@ class Game {
     if (qNote) qNote.textContent = active && (t.lines || t.aa !== 'tier')
       ? 'Display Testing overrides are on (' + parts.filter((p) => p !== 'perf readout').join(', ') + '); see below'
       : 'Some changes take effect on next restart';
+  }
+
+  /** #657 · Settings: the Discord option. */
+  _setDiscordAutoPostOpt(on) {
+    const onBtn = document.getElementById('opt-discord-on');
+    if (on && onBtn && onBtn.hasAttribute('disabled')) return;
+    setDiscordAutoPost(globalThis.localStorage, on);
+    this._updateOptionsDiscordUI();
+  }
+
+  /**
+   * #657 · the Discord option shows what it needs: the Worker's #daily-ride
+   * webhook (otherwise "not available", On is off) and a sign-in with Discord
+   * linked (otherwise it says so; the choice is kept for then).
+   */
+  _updateOptionsDiscordUI() {
+    const onBtn = document.getElementById('opt-discord-on');
+    const offBtn = document.getElementById('opt-discord-off');
+    const note = document.getElementById('opt-discord-note');
+    if (!onBtn || !offBtn) return;
+    const paint = (configured) => {
+      const on = configured && getDiscordAutoPost(globalThis.localStorage);
+      onBtn.classList.toggle('active', on);
+      offBtn.classList.toggle('active', !on);
+      if (configured) onBtn.removeAttribute('disabled'); else onBtn.setAttribute('disabled', '');
+      const auth = this.lobby && this.lobby.auth;
+      const linked = !!(auth && auth.isLoggedIn() && auth.hasIdentity('discord'));
+      if (note) note.textContent = !configured
+        ? 'Posting to the House Tandem Discord is not available right now'
+        : linked ? 'Post my Daily Ride results to the House Tandem Discord'
+          : 'Post my Daily Ride results to the House Tandem Discord · sign in with Discord first';
+    };
+    paint(this._shareDiscordConfigured === true);
+    fetchShareConfig({ apiBase: API_BASE }).then(({ discord }) => { this._shareDiscordConfigured = discord; paint(discord); });
   }
 
   _updateOptionsFpsUI() {
@@ -6971,6 +7198,8 @@ class Game {
       document.getElementById('opt-colour-3'),
       document.getElementById('opt-fps-on'),
       document.getElementById('opt-fps-off'),
+      document.getElementById('opt-discord-on'),
+      document.getElementById('opt-discord-off'),
       document.getElementById('opt-physics-on'),
       document.getElementById('opt-physics-off'),
       document.getElementById('opt-lines-0'),
@@ -6993,6 +7222,7 @@ class Game {
     this._updateOptionsShowSoloUI();
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsDiscordUI();
     this._updateOptionsPhysicsUI();
     this._updateOptionsDisplayTestUI();
     // #517: the pad moves by what is on screen (rows hidden for this build or

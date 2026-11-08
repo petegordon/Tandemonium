@@ -39,7 +39,7 @@
 
 import * as THREE from 'three';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
-import { lockedOutfits, outfitLockHint, rewardProgress } from './rewards.js';
+import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
@@ -50,12 +50,13 @@ import { InputManager, isSteamTwinPad } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
-import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
+import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
+import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt } from './tourist-config.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
-  ridesStarted
+  ridesStarted, formatDayLabel
 } from './daily-ride.js';
 import * as records from './records.js';
 import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
@@ -1558,7 +1559,7 @@ export class Lobby {
     const store = records.load();
     // Today's Road is recorded under today's day (or week) key; the card's
     // level is the unresolved base, so pass the key it would ride today.
-    const roadKey = level.isDaily ? dailyKey() : undefined;
+    const roadKey = level.isDaily ? playDayKey() : undefined;   // #611: the warped day in time warp
     const best = records.getBest(store, records.key(records.levelRecordId(level, roadKey), this.selectedDifficulty, cardMode));
     const thresholds = getMedals(level.id, this.selectedDifficulty);
     if (!best) {
@@ -1620,8 +1621,13 @@ export class Lobby {
    */
   resolveRoadLevel(level, { key, seed } = {}) {
     if (!level || !level.isDaily) return level;
+    // #611 · in time warp the road is the warped day's: that day's key, and the
+    // seed from that key (the road everyone gets on that real day). A key handed
+    // in (the captain's, a link's) is never warped.
+    const warp = key ? 0 : warpDays();
+    const k = key || playDayKey();
     return resolveDailyLevel(level, {
-      key: key || dailyKey(), seed: typeof seed === 'number' ? seed : dailySeed()
+      key: k, seed: typeof seed === 'number' ? seed : seedFromKey(k), warp
     });
   }
 
@@ -1915,13 +1921,102 @@ export class Lobby {
    * Grandma's open it; three rides a day) or how many rides are left.
    */
   _roadDescHtml(level) {
-    const key = dailyKey();
+    const key = playDayKey();   // #611: the warped day in time warp
+    const warp = warpDays();
     const gate = this._dailyGate();
-    const rule = '<br><span class="level-card-daily-rule">' + DAILY_RULES_LINE + '</span>';
+    const rule = '<br><span class="level-card-daily-rule">' +
+      (warp > 0 ? WARP_RULES_LINE : DAILY_RULES_LINE) + '</span>';
     if (!gate.ok) return '&#x1F512; ' + this._dailyGateText(gate) + rule;
     let line = dailyDescription(dailyStatus(browserStore(), key), key);
     if (gate.left != null) line += ' · ' + gate.left + ' of ' + this.roomRules().dailyRideCap + ' rides left';
+    // #611 · say clearly which day the card is on (the long date replaces the short one).
+    if (warp > 0) {
+      const short = formatDayLabel(key) + ' \u00B7 ';
+      if (line.startsWith(short)) line = line.slice(short.length);
+      line = '<span class="level-card-warp-day">' + warpLine(key, warp) + '</span>' + line;
+    }
     return line + rule;
+  }
+
+  // ============================================================
+  // #611 / #644 · TIME WARP MODE — "Warp to tomorrow" on the Daily Ride card
+  // ============================================================
+  //
+  // Unlocked by the Time Warp reward (any 90 of the 95 non-calendar
+  // achievements). One day per press, up to MAX_WARP_DAYS ahead; the card
+  // shows the warped day. The warp lives in js/time-warp.js (memory only):
+  // "Back to today", an app restart or joining an online room leave it.
+
+  /** Has this player earned the Time Warp reward? (saved list + the lobby's manager, like _dailyGate) */
+  _timeWarpUnlocked() {
+    const ids = new Set(this._earnedAchievementIds());
+    try {
+      const raw = localStorage.getItem('tandemonium_achievements');
+      if (raw) for (const a of JSON.parse(raw)) if (a && a.id) ids.add(a.id);
+    } catch { /* empty */ }
+    return timeWarpProgress(ids).unlocked;
+  }
+
+  /** The row under the Daily Ride card: Warp to tomorrow · Back to today. */
+  _buildWarpRow() {
+    const row = document.createElement('div');
+    row.className = 'daily-warp-row';
+    row.id = 'daily-warp-row';
+    const fwd = document.createElement('button');
+    fwd.className = 'daily-warp-btn daily-warp-fwd';
+    fwd.id = 'btn-warp-forward';
+    fwd.addEventListener('click', () => this._warpPress(true));
+    const back = document.createElement('button');
+    back.className = 'daily-warp-btn daily-warp-back';
+    back.id = 'btn-warp-back';
+    back.textContent = '\u21A9 Back to today';
+    back.addEventListener('click', () => this._warpPress(false));
+    row.append(fwd, back);
+    this._paintWarpRow(row);
+    return { row, buttons: [fwd, back] };
+  }
+
+  /** Words and states on the warp row for the current warp. */
+  _paintWarpRow(row = document.getElementById('daily-warp-row')) {
+    if (!row) return;
+    const fwd = row.querySelector('.daily-warp-fwd');
+    const back = row.querySelector('.daily-warp-back');
+    const warp = warpDays();
+    const more = canWarpForward();
+    // Not `disabled`: a disabled button would drop the controller's highlight.
+    fwd.setAttribute('aria-disabled', more ? 'false' : 'true');
+    fwd.classList.toggle('is-disabled', !more);
+    fwd.textContent = more ? '\u23E9 Warp to tomorrow' : '\u23F3 Limit: ' + MAX_WARP_DAYS + ' days ahead';
+    back.hidden = !(warp > 0);
+  }
+
+  /** One press: forward a day, or back to the real date. The Daily Ride is picked on that day. */
+  _warpPress(forward) {
+    if (forward) {
+      if (!canWarpForward()) return;
+      warpForward();
+    } else {
+      leaveWarp();
+    }
+    const focused = this._stepFocus && this._stepFocus.focusedEl;
+    this._paintWarpRow();
+    const level = LEVELS.find(l => l.isDaily);
+    const card = document.querySelector('#level-cards .level-card[data-level-id="daily"]');
+    if (level && card && !card.classList.contains('level-locked')) {
+      this.selectedLevel = this.resolveRoadLevel(level);
+      this._slingshotPicked = false;
+      document.querySelectorAll('#level-cards .level-card').forEach(c => c.classList.remove('selected'));
+      card.classList.add('selected');
+      this._updateDifficultyVisibility('daily');
+      const startBtn = document.getElementById('btn-start-ride');
+      if (startBtn) startBtn.disabled = false;
+    }
+    this._refreshRecordLines();
+    // "Back to today" hides itself: keep the controller's highlight on the row.
+    if (focused && focused.id === 'btn-warp-back' && focused.hidden && this._stepFocus.focusElement) {
+      this._stepFocus.focusElement(document.getElementById('btn-warp-forward'));
+    }
+    analytics.trackEvent('time_warp', { days: warpDays(), key: playDayKey() });
   }
 
   /** #641 · can this device start another Daily Ride? (edition.dailyRideGate) */
@@ -1933,7 +2028,7 @@ export class Lobby {
       const raw = localStorage.getItem('tandemonium_achievements');
       if (raw) earned = JSON.parse(raw).map(a => a.id);
     } catch { /* empty */ }
-    return dailyRideGate(this.roomRules(), ridesStarted(browserStore(), dailyKey()), earned);
+    return dailyRideGate(this.roomRules(), ridesStarted(browserStore(), playDayKey()), earned);   // #611: per warped day
   }
 
   /** #641 · the words for a shut Daily Ride. */
@@ -1971,6 +2066,7 @@ export class Lobby {
       const inVersus = !!card.closest('#versus-level-list, [id*="versus"]');
       line.textContent = this._recordLine(level, inVersus ? 'versus' : (this.net ? 'coop' : 'solo'));
     });
+    this._paintWarpRow();   // #611: the real date may have caught up with the warp
   }
 
   /**
@@ -2085,6 +2181,20 @@ export class Lobby {
         }
       }
 
+      // #611 · time warp mode: once the Time Warp reward is earned, the Daily
+      // Ride card gets "Warp to tomorrow" under it (card + row stacked in one
+      // column, so the TV's one-row card layout keeps its four columns). Not in
+      // an online room (the partner is on the real date) and not in the versus
+      // list (no Daily Ride there).
+      if (level.isDaily && !locked && isClickable && mode === 'solo' && this._timeWarpUnlocked()) {
+        const stack = document.createElement('div');
+        stack.className = 'level-card-stack';
+        const warp = this._buildWarpRow();
+        stack.append(card, warp.row);
+        container.appendChild(stack);
+        buttons.push(card, ...warp.buttons);
+        return;
+      }
       container.appendChild(card);
       if (!locked) buttons.push(card);
     });
@@ -4116,6 +4226,16 @@ export class Lobby {
     const levelId = this._lbSubLevel;
     const level = LEVELS.find(l => l.id === levelId) || LEVELS[0];
 
+    // #611 · the Daily Ride's board is the day's board (worker /daily: you and
+    // the people you have ridden with), for the day the game is on — the warped
+    // day in time warp. Its rows carry the ⏳ mark for rides from a time warp.
+    // (The general /leaderboard never holds Daily rides: the worker takes only
+    // Grandma's there.)
+    if (level.isDaily && this._lbMainTab !== 'partners') {
+      await this._renderDailyBoard(list);
+      return;
+    }
+
     if (this._lbMainTab === 'you') {
       // Personal rides (#540: the badges moved to their own Achievements sheet)
       this._leaderboardSheet.heading = 'My Rides';
@@ -4185,6 +4305,55 @@ export class Lobby {
         list.innerHTML = '<div class="lb-no-data">Could not load leaderboard</div>';
       }
     }
+  }
+
+  /** #611 · the Daily Ride board for the day the game is on (solo / together / mine), ⏳ on time-warp rows. */
+  async _renderDailyBoard(list) {
+    const key = playDayKey();
+    const tab = this._lbMainTab;
+    this._leaderboardSheet.heading = 'Daily Ride \u00B7 ' + formatDayLabel(key) + (warpDays() > 0 ? ' \u23F3' : '');
+    if (!this.auth || !this.auth.user) {
+      list.innerHTML = '<div class="lb-no-data">Sign in to see the Daily Ride board</div>';
+      return;
+    }
+    list.innerHTML = '<div class="lb-no-data">Loading...</div>';
+    try {
+      const data = await this.auth.fetchDailyBoard(key);
+      const myId = this.auth.user.serverId;
+      const rows = ((data && data.results) || []).filter(r =>
+        tab === 'you' ? String(r.user_id) === String(myId)
+          : tab === 'together' ? r.mode === 'pair' : r.mode === 'solo');
+      if (rows.length === 0) {
+        list.innerHTML = '<div class="lb-no-data">No rides on this road yet</div>';
+        return;
+      }
+      await this._cacheAvatarUrls(rows.map(r => r.avatar_url));
+      list.innerHTML = this._renderDailyRows(rows, myId, { mine: tab === 'you' });
+    } catch (e) {
+      list.innerHTML = '<div class="lb-no-data">Could not load the Daily Ride board</div>';
+    }
+  }
+
+  /** Rows from worker /daily: rank, rider, Solo/Pair, ⏳ when ridden in time warp, time. */
+  _renderDailyRows(rows, myId, { mine = false } = {}) {
+    return rows.map((r, i) => {
+      const isYou = !mine && myId && String(r.user_id) === String(myId);
+      const avatarSrc = r.avatar_url ? (this._avatarCache.get(r.avatar_url) || r.avatar_url) : '';
+      const avatar = avatarSrc
+        ? '<img class="lb-avatar" src="' + this._escapeHtml(avatarSrc) + '" alt="" referrerpolicy="no-referrer">' : '';
+      const modeHtml = r.mode === 'pair'
+        ? '<span class="lb-mode lb-mode-captain">Pair</span>' : '<span class="lb-mode lb-mode-solo">Solo</span>';
+      const warpHtml = r.warp ? '<span class="lb-warp" title="Ridden in time warp">\u23F3</span>' : '';
+      return '<div class="lb-entry' + (isYou ? ' lb-you' : '') + (r.warp ? ' lb-warped' : '') + '">' +
+        (mine ? '' : '<span class="lb-rank">' + (i + 1) + '</span>') +
+        avatar +
+        '<span class="lb-name">' + this._escapeHtml((r.display_name || 'Player').split(' ')[0]) +
+          (isYou ? '<span class="lb-you-tag">You</span>' : '') + '</span>' +
+        modeHtml + warpHtml +
+        (r.collectibles != null ? '<span class="lb-collectibles">\uD83C\uDF81' + r.collectibles + '</span>' : '') +
+        '<span class="lb-time">' + (r.dnf ? 'DNF' : this._formatTime(r.time_ms)) + '</span>' +
+      '</div>';
+    }).join('');
   }
 
   /** `mine`: the My Rides list — every row is you, so no You tag and no rank (#576). */
@@ -5343,6 +5512,7 @@ export class Lobby {
    * @param {boolean} isClickable — true for captain, false for stoker
    */
   _buildRoomLevelCards(isClickable) {
+    leaveWarp();   // #611: an online room rides on the real date (the partner's game is there)
     this._buildLevelCardsShared({
       container: document.getElementById('level-cards'),
       isClickable,
