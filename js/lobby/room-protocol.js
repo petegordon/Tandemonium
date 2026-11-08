@@ -147,3 +147,45 @@ export const RoomProtocol = {
     return m;
   },
 };
+
+// ── #708 · who sits on each seat, across the room ──
+// The partner's screen shows my picture + Discord/Steam badge on my seat, the same one my own
+// seat shows (seatPerson(1): Steam first in the Steam app, Discord elsewhere). It rides in the
+// untyped room profile as `person`; `name` / `avatar` stay for older builds.
+
+const PERSON_SOURCES = ['discord', 'steam'];
+
+/** A picture URL from the partner is only used as an https or inline image. */
+function safePic(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return /^https:\/\//i.test(s) || /^data:image\//i.test(s) ? s.slice(0, 2048) : '';
+}
+
+/**
+ * #708 · the person on my seat for the room profile: { name, pic, source }, or null (not signed in).
+ * @param {{ name?: string, pic?: string, source?: string }|null|undefined} p
+ */
+export function personToWire(p) {
+  if (!p) return null;
+  return {
+    name: String(p.name || '').slice(0, 64),
+    pic: safePic(p.pic),
+    source: PERSON_SOURCES.includes(String(p.source)) ? String(p.source) : '',
+  };
+}
+
+/**
+ * #708 · the partner's person from their room profile: `person` when their build sends it,
+ * else their name + avatar (no badge). null for a guest with no picture: their seat shows the name.
+ * @param {any} profile
+ * @returns {{ name: string, pic: string, source: string }|null}
+ */
+export function partnerPersonFromProfile(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  const p = profile.person && typeof profile.person === 'object'
+    ? personToWire(profile.person)
+    : personToWire({ name: profile.name, pic: profile.avatar, source: '' });
+  if (!p || (!p.pic && !p.source)) return null;
+  if (!p.name) p.name = typeof profile.name === 'string' ? profile.name.slice(0, 64) : '';
+  return p;
+}
