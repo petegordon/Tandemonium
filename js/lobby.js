@@ -84,6 +84,7 @@ import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { RoomSession } from './lobby/room-session.js';   // #346: create / join / rejoin / leave
+import { IdleWatch, ActivityPinger, ROOM_WAIT_COPY, otherRole } from './lobby/room-wait.js';   // #694: who / how long / what you can do
 import { isRoomCode } from './lobby/room-protocol.js';   // #667
 import { RoomMove, watchMoveNet, closeQuietly } from './lobby/room-move.js';   // #667 HOST INSTEAD
 import { NetworkManager } from './network-manager.js';   // #667: the new room's transport, opened beside the old
@@ -199,6 +200,18 @@ export class Lobby {
     this._netSession.onRetire = (net) => { if (this.onRoomNetRetired) this.onRoomNetRetired(net); };
     // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
     this._roomStore = new RoomStore();
+    // #694 F · is the connected partner idle on the room screens? (their ACTIVITY pings + any room
+    // message), and this side's own throttled pings (at most one per few seconds, only after
+    // this player did something).
+    this._partnerIdle = new IdleWatch();
+    this._activity = new ActivityPinger({
+      send: () => { if (this.net && this.net.connected) this.net.sendProfile(RoomProtocol.activity()); },
+    });
+    const markActive = () => this._activity.mark();
+    for (const ev of ['keydown', 'pointerdown', 'touchstart', 'wheel']) {
+      try { window.addEventListener(ev, markActive, { capture: true, passive: true }); } catch (e) { /* no window */ }
+    }
+    this._roomActivityTimer = setInterval(() => this._tickRoomActivity(), 500);
     // The online room's lifecycle (create / join / rejoin / leave), behind a small host
     // interface (_roomSessionHost). (#346)
     this._roomSession = new RoomSession({
@@ -4915,8 +4928,12 @@ export class Lobby {
       media: () => ({ camera: this.cameraActive, audio: this.audioActive, cameraPermitted: this._cameraPermitted, audioPermitted: this._audioPermitted }),
       newRoom: (kind) => {
         this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
-        if (kind === 'create') this._hostRoomCode = null;   // #563: set once the relay has us in the room
-        if (kind !== 'rejoin') { this._partnerRoom = null; this._refusedLevelId = null; }   // PR #397 M1: a new partner, not heard from yet
+        // #563: set once the relay has us in the room. #694 (Pete): a rejoin matches create.
+        if (kind === 'create' || kind === 'rejoin') this._hostRoomCode = null;
+        // PR #397 M1: a new partner, not heard from yet. #694: a rejoin too (Pete: clear the
+        // previous partner's edition; whoever comes back says theirs again).
+        this._partnerRoom = null; this._refusedLevelId = null;
+        this._partnerIdle.reset();
       },
       status: (seat, text, cls) => {
         const s = el(seat === 'host' ? 'host-status' : 'join-status');
@@ -4925,15 +4942,15 @@ export class Lobby {
         if (cls !== undefined) s.className = cls ? 'conn-status ' + cls : 'conn-status';
       },
       showCode: (text) => { const c = el('room-code-display'); if (c) c.textContent = text; },
-      roomOpen: (code, { rejoin }) => {
+      // #694 (Pete): a rejoin as captain matches create: the host step's room code, the
+      // "Scan to join" QR (a local player can still join online by phone) and the room QR.
+      roomOpen: (code) => {
         el('room-code-display').textContent = code;
-        if (!rejoin) {
-          this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
-          this._syncHostJoinQr();
-        }
+        this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
+        this._syncHostJoinQr();
         this._updateCardHeader(this._currentStep);
         // Generate the join QR + shareable URL (with long-press-to-copy).
-        if (!rejoin) renderRoomQR(code);
+        renderRoomQR(code);
       },
       partnerHere: (role) => { if (role === 'stoker') this._lastFailedCode = null; },
       partnerConnected: (role) => this._showRoomStep(role),
@@ -4949,20 +4966,159 @@ export class Lobby {
         if (this._currentStep === this.joinStep) this._lastFailedCode = code;
       },
       onStep: (name) => this._currentStep === (name === 'host' ? this.hostStep : this.joinStep),
-      staleRoom: (seat) => {
-        const statusEl = el(seat === 'host' ? 'host-status' : 'join-status');
-        if (!statusEl) return;
-        statusEl.innerHTML = 'Partner hasn\'t reconnected yet. ' +
-          '<button id="btn-stale-new-room" style="background:#444;color:#fff;border:none;border-radius:6px;padding:6px 14px;margin-left:8px;cursor:pointer;">New Room</button>';
-        const newBtn = el('btn-stale-new-room');
-        if (newBtn) {
-          newBtn.addEventListener('click', () => {
-            this._roomSession.abandonStale();
-            this._showStep(this.roleStep);
-          });
-        }
-      },
+      wait: (seat, view) => this._renderRoomWait(seat, view),
     };
+  }
+
+  // ── Waiting in an online room (#694) ─────────────────────────
+  // RoomSession's RoomWait decides what the line says (js/lobby/room-wait.js, views A–E); this
+  // only draws it: the seat's status line, and a row of buttons under it once a way out is due.
+  // The row's buttons join the step's pad focus, which starts on the waiting choice.
+
+  /** The wait's button row for a seat, made on first use (just after the seat's status line). */
+  _roomWaitRow(seat) {
+    const id = seat === 'host' ? 'host-wait-actions' : 'join-wait-actions';
+    let row = document.getElementById(id);
+    if (row) return row;
+    const status = document.getElementById(seat === 'host' ? 'host-status' : 'join-status');
+    if (!status || !status.parentNode) return null;
+    row = document.createElement('div');
+    row.id = id;
+    row.className = 'room-wait-actions';
+    row.hidden = true;
+    status.parentNode.insertBefore(row, status.nextSibling);
+    return row;
+  }
+
+  /** The wait's buttons on screen for `step` (empty when none). */
+  _roomWaitButtons(step) {
+    const id = step === this.hostStep ? 'host-wait-actions' : step === this.joinStep ? 'join-wait-actions' : null;
+    const row = id && document.getElementById(id);
+    return row && !row.hidden ? Array.from(row.querySelectorAll('uf-button')) : [];
+  }
+
+  /** @param {'host'|'join'} seat @param {import('./lobby/room-wait.js').WaitView|null} view */
+  _renderRoomWait(seat, view) {
+    const status = document.getElementById(seat === 'host' ? 'host-status' : 'join-status');
+    const row = this._roomWaitRow(seat);
+    if (status && view) {
+      if (status.textContent !== view.text) status.textContent = view.text;
+      const cls = view.cls ? 'conn-status ' + view.cls : 'conn-status';
+      if (status.className !== cls) status.className = cls;
+      if (status.dataset.wait !== view.kind) status.dataset.wait = view.kind;
+    } else if (status) {
+      delete status.dataset.wait;
+    }
+    if (seat === 'join') {
+      // The pad's code spinners have their own status line: mirror it there.
+      const sp = document.getElementById('spinner-status');
+      if (sp && sp.style.display !== 'none' && status) { sp.textContent = status.textContent; sp.className = status.className; }
+    }
+    // Joined and waiting: the code entry has done its job, so the wait (and its buttons) take
+    // its place instead of sitting under the keypad, behind the bar on a TV.
+    let waitingChanged = false;
+    if (seat === 'join' && this.joinStep) {
+      const was = this.joinStep.classList.contains('room-waiting');
+      this.joinStep.classList.toggle('room-waiting', !!view);
+      waitingChanged = was !== !!view;
+    }
+    if (!row) return;
+    const ids = view ? view.actions.map((a) => a.id) : [];
+    const had = Array.from(row.querySelectorAll('uf-button')).map((b) => /** @type {HTMLElement} */ (b).dataset.wait);
+    if (ids.join(',') === had.join(',')) {   // same buttons: leave the pad's focus alone
+      if (waitingChanged && this._currentStep === this.joinStep) this._applyStepSpatialFocus(this.joinStep);
+      return;
+    }
+    row.textContent = '';
+    row.hidden = ids.length === 0;
+    for (const a of view ? view.actions : []) {
+      const b = /** @type {any} */ (document.createElement('uf-button'));
+      b.id = `btn-wait-${seat}-${a.id}`;
+      b.dataset.wait = a.id;
+      b.setAttribute('variant', a.id === view.focus ? 'accent' : 'ghost');
+      b.setAttribute('size', 'sm');
+      b.textContent = a.label;
+      b.addEventListener('click', () => this._roomWaitAction(seat, a.id));
+      row.appendChild(b);
+    }
+    // New buttons: hand them to the pad, focused on the waiting choice (never the way out).
+    const step = seat === 'host' ? this.hostStep : this.joinStep;
+    if (this._currentStep === step) this._applyStepSpatialFocus(step);
+  }
+
+  /** A wait button: keep waiting, a fresh room, another code, retry, or back. */
+  _roomWaitAction(seat, id) {
+    const rs = this._roomSession;
+    if (id === 'keep') return;   // the waiting choice: nothing to undo
+    if (id === 'retry') { rs.wait.retryNow(); return; }
+    if (id === 'back') {
+      const back = document.getElementById(seat === 'host' ? 'btn-back-role-host' : 'btn-back-role-join');
+      if (back) back.click();
+      return;
+    }
+    if (id === 'new-room') {
+      // Pete: a REAL fresh room, same seat (it used to drop to the role screen).
+      this._roomPartnerName = null; this._resetPartnerLook();
+      if (this._currentStep !== this.hostStep) this._showStep(this.hostStep);
+      rs.newRoom();
+      return;
+    }
+    if (id === 'other-code') {
+      // Back to the code: the room that never filled is forgotten (a wrong code isn't a recent ride).
+      rs.leave({ forget: true });
+      const status = document.getElementById('join-status');
+      if (status) { status.textContent = ''; status.className = 'conn-status'; }
+      if (this._currentStep !== this.joinStep) this._showStep(this.joinStep);
+      const input = /** @type {HTMLInputElement|null} */ (document.getElementById('room-code-input'));
+      if (input) input.value = '';
+      if (this.input && this.input.gamepadConnected) this._showSpinners(true);
+      else if (input) input.focus();
+      this._renderRejoinCards();
+      this._applyStepSpatialFocus(this.joinStep);
+    }
+  }
+
+  /** On a room screen (host step or the room's level step) with the partner connected? */
+  _inOnlineRoomScreen() {
+    return !!(this.net && this.net.connected && this._pendingMode === 'multiplayer' && this._roomRole &&
+      this.lobbyEl && this.lobbyEl.style.display !== 'none' &&
+      (this._currentStep === this.hostStep || this._currentStep === this.levelStep));
+  }
+
+  /** Any button or stick on Player 1's pad moved this frame (F: this player is active). */
+  _padActive() {
+    try {
+      const gp = this.input && this.input.gamepadConnected && this.input.getGamepadState();
+      if (!gp) return false;
+      return gp.buttons.some((b) => b && b.pressed) || gp.axes.some((v) => Math.abs(v) > 0.5);
+    } catch (e) { return false; }
+  }
+
+  /**
+   * #694 F, twice a second: send this side's activity ping when due, and say when the partner
+   * hasn't moved for a while ("Your Captain (Pete) hasn't moved for 0:30", +5 s steps). Only
+   * once the partner's build has sent a ping: an old build never shows "hasn't moved".
+   */
+  _tickRoomActivity() {
+    const on = this._inOnlineRoomScreen();
+    if (on) {
+      if (this._padActive()) this._activity.mark();
+      this._activity.pump();
+    }
+    const name = this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : null;
+    const text = on ? this._partnerIdle.text({ name, role: otherRole(this._roomRole) }) : '';
+    let note = document.getElementById('room-idle-note');
+    if (!note && !text) return;
+    if (!note) {
+      note = document.createElement('p');
+      note.id = 'room-idle-note';
+      note.className = 'conn-status room-idle-note';
+    }
+    // Under the seat's own status: the host step's, or the room level screen's wait line.
+    const anchor = this._currentStep === this.hostStep ? document.getElementById('host-status') : document.getElementById('level-wait-text');
+    if (text && anchor && anchor.parentNode && note.previousSibling !== anchor) anchor.parentNode.insertBefore(note, anchor.nextSibling);
+    note.hidden = !text;
+    if (note.textContent !== text) note.textContent = text;
   }
 
   // ── HOST INSTEAD (#667) ──────────────────────────────────────
@@ -5185,6 +5341,7 @@ export class Lobby {
   _showRoomStep(role) {
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
+    this._partnerIdle.reset(); this._activity.mark();   // #694 F: a fresh baseline, and say we're here
     this._partnerCameraOn = true; // assume on until cameraToggle received
 
     // Set role labels on PiP circles
@@ -5573,6 +5730,9 @@ export class Lobby {
   }
 
   _handleRoomMessage(profile) {
+    // #694 F: anything from the partner means they're there; the ping says their build sends them.
+    if (profile) this._partnerIdle.heard(profile.type === ROOM_MSG.ACTIVITY);
+    if (profile && profile.type === ROOM_MSG.ACTIVITY) { this._tickRoomActivity(); return; }
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
       if (profile && profile.name) {
@@ -7655,6 +7815,7 @@ export class Lobby {
     this.net = net;
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
+    this._partnerIdle.heard(); this._activity.mark();   // #694 F: they just rode with us
 
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
@@ -8363,8 +8524,14 @@ export class Lobby {
       let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
       // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
       if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
+      // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
+      // Joined and waiting, the code entry is hidden: only the wait's buttons.
+      const waitBtns = this._roomWaitButtons(step);
+      if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
+      else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
       this._modeColumns[1] = centerItems;
-      const defaultEl = this._stepPrimaryFocus(step, centerItems);
+      const waitFocus = waitBtns.find((b) => b.getAttribute('variant') === 'accent');
+      const defaultEl = waitFocus || this._stepPrimaryFocus(step, centerItems);
       this._stepFocus.setSpatial(this._stepNavItems(), defaultEl);
     } else {
       this._stepFocus.clear();

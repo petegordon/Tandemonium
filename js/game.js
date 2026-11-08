@@ -60,6 +60,7 @@ import { gyroOnlySteer } from './achievement-defs.js';
 import { InputManager, readGyroRollMode, setControllerManager, steamXInputMap } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
+import { ROOM_WAIT_COPY, fmtClock } from './lobby/room-wait.js';   // #694 G: the disconnect pause says who + how long
 import { PedalController } from './pedal-controller.js';
 import { SharedPedalController } from './shared-pedal-controller.js';
 import { BalanceController } from './balance-controller.js';
@@ -3385,10 +3386,12 @@ class Game {
     if (d && d.canTakeover && !d.takeoverReady) {
       const left = Math.max(0, Math.ceil((DROP_TAKEOVER_MS - (performance.now() - d.since)) / 1000));
       if (left === 0) { d.takeoverReady = true; this._renderDropOverlay(); }
-      else if (left !== d.shownLeft) {
-        d.shownLeft = left;
-        document.getElementById('disconnect-sub').textContent = `${d.waitText} ${d.takeoverWho} can ${d.takeoverVerb} in ${left}s.`;
-      }
+    }
+    // #694 G: the wait counts up (5 s steps) and the take-over counts down; redraw on change.
+    if (d) {
+      const sub = document.getElementById('disconnect-sub');
+      const text = this._dropSubText(d);
+      if (sub && sub.textContent !== text) sub.textContent = text;
     }
     this.input.consumeTaps();
     if (this.inputP2) this.inputP2.consumeTaps();
@@ -3418,14 +3421,13 @@ class Game {
       d.title = "Player 2's controller disconnected";
       d.waitText = 'Reconnect it to keep riding together.';
       d.takeoverWho = 'Player 1'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone';
-    } else if (this.mode === 'stoker') {
-      d.title = 'The captain lost connection';
-      d.waitText = 'Waiting for them to reconnect.';
-      d.takeoverWho = 'You'; d.takeoverVerb = 'take over the bike'; d.takeoverLabel = 'Take over the bike';
     } else {
-      d.title = 'Your partner lost connection';
-      d.waitText = 'Waiting for them to reconnect.';
-      d.takeoverWho = 'You'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone';
+      // #694 G: the partner by name (else "your Captain" / "your Stoker"), and how long it's been.
+      const partner = { name: this._partnerDisplayName(), role: this.mode === 'stoker' ? 'captain' : 'stoker' };
+      d.title = ROOM_WAIT_COPY.dropTitle(partner);
+      d.countUp = true;
+      if (this.mode === 'stoker') { d.takeoverWho = 'You'; d.takeoverVerb = 'take over the bike'; d.takeoverLabel = 'Take over the bike'; }
+      else { d.takeoverWho = 'You'; d.takeoverVerb = 'ride on alone'; d.takeoverLabel = 'Ride on alone'; }
     }
     this._drop = d;
     if (this.mode === 'local') { this._localP2Disconnected = who === 'p2'; }
@@ -3445,9 +3447,7 @@ class Game {
     this._setSheetHeading('disconnect-sheet', d.title);
     const sub = document.getElementById('disconnect-sub');
     sub.hidden = false;
-    sub.textContent = d.canTakeover && !d.takeoverReady
-      ? `${d.waitText} ${d.takeoverWho} can ${d.takeoverVerb} in ${Math.ceil(DROP_TAKEOVER_MS / 1000)}s.`
-      : d.waitText;
+    sub.textContent = this._dropSubText(d);
     const resume = document.getElementById('btn-drop-resume');
     const alone = document.getElementById('btn-ride-alone');
     const retry = document.getElementById('btn-try-reconnect');
@@ -3456,6 +3456,20 @@ class Game {
     alone.textContent = d.takeoverLabel || 'Ride on alone';
     retry.hidden = !(d.who === 'partner' && this._netLost && this.net);
     focusResult(this._overlayFocus, document.getElementById('disconnect-sheet'));   // #459: DOM order, the first accent focused
+  }
+
+  /** The partner's name as the room knows it (signed-in name / Steam persona), or null. */
+  _partnerDisplayName() {
+    const n = this.lobby && this.lobby._roomPartnerName;
+    return n && n !== 'LEFT' && n !== 'Partner' ? n : null;
+  }
+
+  /** The disconnect pause's second line: the wait (counting up for a partner) + the take-over countdown. */
+  _dropSubText(d) {
+    const wait = d.countUp ? ROOM_WAIT_COPY.dropWait(fmtClock(performance.now() - d.since)) : d.waitText;
+    if (!d.canTakeover || d.takeoverReady) return wait;
+    const left = Math.max(1, Math.ceil((DROP_TAKEOVER_MS - (performance.now() - d.since)) / 1000));
+    return `${wait} ${d.takeoverWho} can ${d.takeoverVerb} in ${left}s.`;
   }
 
   _endDropPause() {
