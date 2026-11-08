@@ -6,7 +6,8 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
-import { bikeModelPathFor, isRigTwin, isSpecialBike } from './special-bikes.js';
+import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './special-bikes.js';
+import { BotSync, botPartnerKey, recordBotRide } from './player-bots.js';
 import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -30,7 +31,8 @@ const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
   cobbles: '🪨 ROUGH ROAD'
 };
-import { makePlacementSalt, dailyKey } from './daily-seed.js';
+import { makePlacementSalt } from './daily-seed.js';
+import { playDayKey } from './time-warp.js';   // #611 · the day the game is on (warped or real)
 import {
   recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
@@ -1240,8 +1242,21 @@ class Game {
    */
   _applyBikeChoice() {
     const key = this.lobby && this.lobby.selectedPresetKey;
-    if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key), !this.versusRigs);
+    if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key, undefined, this.mode), !this.versusRigs);
     this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.selectedPreset);
+    // #644 · Solo Flight on a solo ride: a player bot rides the back seat (it only rides along) and is this ride's
+    // partner. The chooser only leaves solo_flight picked once player bots are earned.
+    // (not on a Tourist route, in Slingshot or in the tutorial: no partner there)
+    const plain = !this.isTourist && !this.isSlingshot && !(this.lobby && this.lobby._forceWizard);
+    this._botRide = plain && ridesWithBot(key, this.mode) ? (this.lobby.selectedBot || 'bolt') : null;
+    this._botSync = this._botRide ? new BotSync() : null;
+    this.bike.setBotStoker(this._botRide);
+    if (this.mode === 'solo' && this.hud) this.hud.setSeat('captain', !!this._botRide);   // the sync row: you and the bot
+  }
+
+  /** #644 · the player bot riding this solo ride's back seat ('bolt' | 'rivet' | 'sprocket'), or null. */
+  _botRideId() {
+    return this.mode === 'solo' && !this.isSlingshot && !this.isTourist && !this._touristRoute ? (this._botRide || null) : null;
   }
 
   _onMultiplayerReady(net, mode) {
@@ -1712,6 +1727,10 @@ class Game {
     if (sourceType === 'gamepad' && this.inputP2) {
       this.inputP2.motionEnabled = true;
       this.inputP2.startTiltCalibration();
+      // #646: then P2's own controller's settings (stick / gyro / steering feel).
+      if (this.lobby && this.lobby.applySeatControllerSettings) {
+        this.lobby.applySeatControllerSettings({ n: 2, input: this.inputP2, type: 'gamepad', slotId: this.inputP2._slot ? this.inputP2._slot.id : null });
+      }
     }
 
     // Show instructions (tap to start)
@@ -1823,6 +1842,10 @@ class Game {
         if (m.type === 'gamepad' && !m.isP1) {
           m.input.motionEnabled = true;
           m.input.startTiltCalibration();
+          // #646: then this joiner's own controller's settings (stick / gyro / steering feel).
+          if (this.lobby && this.lobby.applySeatControllerSettings) {
+            this.lobby.applySeatControllerSettings({ n: m.n, input: m.input, type: 'gamepad', slotId: m.slotId || (m.input._slot ? m.input._slot.id : null) });
+          }
         }
       }
     }
@@ -4583,10 +4606,15 @@ class Game {
     if (!summary || summary.dnf || !(summary.timeMs > 0) || !this._dailyRideClean()) return;
     if (!auth || !auth.isLoggedIn()) return;      // a local result is still kept
     if (!DAILY_BOARD_ENABLED) return;
+    if (this._botRideId()) return;   // #644 · a Solo Flight ride (a bot on the back) posts no board time
 
     try {
       const res = await auth.submitDaily({
         dayKey: level.key,
+        // #611 · ridden in time warp, ahead of the real date: the server allows
+        // a future day only with this flag, and the board marks the row ⏳.
+        // A server without the flag rejects the future day; the ride is still kept here.
+        ...(level.warp > 0 ? { warp: true } : {}),
         mode: this._dailyRunMode(),
         timeMs: summary.timeMs,
         dnf: false,
@@ -4614,6 +4642,7 @@ class Game {
    * good enough for a local streak, and D-7/D-9 replace it server-side.
    */
   _partnerKey() {
+    if (this._botRideId()) return botPartnerKey(this._botRideId());   // #644 · 'bot:bolt'
     if (this._partnerServerId) return String(this._partnerServerId);
     if (this._partnerName) return 'name:' + this._partnerName;
     if (this.mode === 'local') {
@@ -4664,6 +4693,7 @@ class Game {
       first: firstTry(store, level.key),
       rides: day.started,
       streak,
+      warp: level.warp > 0,   // #611
       partnerName: mode === 'pair' ? this._partnerName : null
     };
     this._dailyStripInput = stripInput;   // #657: the result card says the same
@@ -5107,11 +5137,14 @@ class Game {
     state.cumulativeDistance = this.achievements.getCumulativeDistance();
     state.speed = this.bike.speed;
     state.dt = dt;
-    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : 0;
+    const bot = this._botRideId();   // #644 · a player bot counts as the other rider
+    state.offsetScore = this.sharedPedal ? this.sharedPedal.offsetScore : (bot && this._botSync ? this._botSync.offsetScore : 0);
     state.collectibles = this.collectibleManager ? this.collectibleManager.collected : 0;
     state.totalCollectibles = this.collectibleManager ? this.collectibleManager.getTotalItems() : 0;
     state.finishedLevel = null;
     state.levelId = this.lobby && this.lobby.selectedLevel ? this.lobby.selectedLevel.id : null;   // where a best was set
+    // (a bot ride counts as multiplayer at the finish only: Team Player is the whole ride's safe riding, not the
+    // first upright seconds)
     state.isMultiplayer = this.mode !== 'solo';
     state.safePct = 0;
     Object.assign(state, this.achievements.rideFrame(dt, this));   // #401: off-road, centre strip, boost chain, steady hands
@@ -5151,6 +5184,7 @@ class Game {
 
   _checkFinishAchievements() {
     const level = this.lobby.selectedLevel;
+    const bot = this._botRideId();   // #644 · a Solo Flight ride: the bot is the partner
     // #401: the ride's metres reach the lifetime distance through the payout
     // ('ride' event, js/economy-mode.js), crashed and abandoned rides included.
     const state = {
@@ -5166,7 +5200,7 @@ class Game {
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
       restarts: this.raceManager ? this.raceManager.restartCount : 0,
-      isMultiplayer: this.mode !== 'solo',
+      isMultiplayer: this.mode !== 'solo' || !!bot,
       safePct: this.contributionTracker ? (() => {
         const s = this.contributionTracker.getSummary();
         if (this.mode === 'solo') return s.solo.safePct;
@@ -5185,7 +5219,14 @@ class Game {
         ? computePairStreak(store, partnerKey, level.key).current
         : computeStreak(store, level.key).current;
     }
-    if (this.mode === 'local') {
+    if (bot) {
+      // no server partner: the bot's pair stats live on this device (Regulars, 5K Together)
+      let pair;
+      try { pair = recordBotRide(localStorage, bot, this.bike.distanceTraveled); }
+      catch { pair = { rides: 1, distance: this.bike.distanceTraveled || 0 }; }   // storage blocked: this ride only
+      state.pairRides = pair.rides;
+      state.pairDistanceKm = pair.distance / 1000;
+    } else if (this.mode === 'local') {
       // #609 · a couch pair with a signed-in Player 2: the record fetched when the
       // ride started, plus this ride when it is being posted. Unsigned P2: none.
       const couch = this._couchPair();
@@ -5208,10 +5249,10 @@ class Game {
       medal: outcome.medal || null,
       newBest: !!outcome.isNewBest,
       difficulty: level.fixedDifficulty || this.lobby.selectedDifficulty,
-      isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local',
+      isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local' || !!bot,
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
-      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
+      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || playDayKey()).current : 0,
     });
     // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
     // whole ride by controller gyro (local co-op: either seat; online: your own).
@@ -5270,7 +5311,7 @@ class Game {
       partnerKey: me && me.serverId ? String(me.serverId) : 'local:p1',
       gyroOnly: !!this.balanceCtrlP2 && gyroOnlySteer(this.balanceCtrlP2.steerFrames),
     };
-    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: dailyKey(), demo: !!this.achievements.demo });
+    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: playDayKey(), demo: !!this.achievements.demo });
     this._seatNewAchievements[2] = fresh.map((a) => a.id);
     for (const a of fresh) showInfoToast(a.icon, `${acc.user.name} · ${a.name}`, a.desc);
   }
@@ -6677,7 +6718,7 @@ class Game {
     // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
-      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey),   // #611: a special bike stays itself
+      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey, undefined, this.mode),   // #611: a special bike stays itself
       !this.versusRigs // live versus clones share the old model's geometry
     );
 
@@ -7894,6 +7935,12 @@ class Game {
       : this.pedalCtrl.update(dt);
     if (this.isSlingshot) pedalResult = this._slingPedal(pedalResult);
     else this._playPedalTaps(this.pedalCtrl);
+    // #644 · the bot answers the player's strokes: its sync is the player's own steadiness (js/player-bots.js)
+    if (this._botSync && this._botRideId()) {
+      this._botSync.feed(this.pedalCtrl.tapEvents);
+      this._botSync.update(dt);
+      this.hud.setRemoteSync(this._botSync.offsetScore);
+    }
     const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
     if (this.isSlingshot) this._slingLean = balanceResult.leanInput;   // #401 Straight Shooter
 
@@ -9268,7 +9315,9 @@ class Game {
       const { values, migrated } = migrateSavedTuning(data);
       setTuningBase(tuningBaseFromSave(data, values));
       // #430: the player's own choice wins over the copy inside the calibration save.
-      const pref = loadSteeringFeelPref();
+      // #646: and that choice is Player 1's controller's (js/controller-settings.js).
+      const padFeel = this.lobby && this.lobby.p1SteeringFeel ? this.lobby.p1SteeringFeel() : null;
+      const pref = padFeel != null ? padFeel : loadSteeringFeelPref();
       applySteeringFeel(pref != null ? pref : Number.isFinite(data.steeringFeel) ? data.steeringFeel
         : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
       if (migrated) {
@@ -10453,7 +10502,8 @@ class Game {
     // Save the final steering feel value
     const slider = document.getElementById('steering-feel-slider');
     const feel = (slider ? slider.value : BALANCE_DEFAULTS.steeringFeel * 100) / 100;
-    saveSteeringFeelPref(feel);   // #430: the same choice the Controls sheet shows
+    saveSteeringFeelPref(feel);   // #430: the same choice Players shows
+    try { if (this.lobby && this.lobby._rememberP1Steering) this.lobby._rememberP1Steering({ feel }); } catch {}   // #646: P1's controller's
     try {
       const saved = localStorage.getItem(this._tuningKey());
       if (saved) {

@@ -189,8 +189,10 @@ export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
  *   guestPass    #666: the HOST's edition sets the room (see mergeRoomRules).
  *                A demo build with it rides Map Tourists in a full host's
  *                room, so it advertises 'tourist' too.
+ *   rehost       #667: follows a ROOM_MOVED to a new code (HOST INSTEAD,
+ *                js/lobby/room-move.js); only then is a full guest offered it.
  */
-export const ROOM_CAPS = Object.freeze(['tourist', 'helpingHand', 'weeklyRoad', 'v2LevelSync', 'guestPass']);
+export const ROOM_CAPS = Object.freeze(['tourist', 'helpingHand', 'weeklyRoad', 'v2LevelSync', 'guestPass', 'rehost']);
 
 /**
  * The { edition, caps } fields this side puts in its room profile. #666: every
@@ -250,6 +252,19 @@ export function mergeRoomRules(mine, partner, role = 'captain') {
     hostEdition: base.isDemo ? 'demo' : 'full',
     guestPass: !!mine.isDemo && !base.isDemo,
   });
+}
+
+/**
+ * #667 · offer HOST INSTEAD? Only to a full-game guest (the stoker) in a demo
+ * host's room ("Demo room"), and only when that host's build follows a room
+ * move (the 'rehost' cap). An older build never sees the button.
+ * @param {object} mine  this side's FULL_RULES / DEMO_RULES
+ * @param {{edition:string, caps:string[]|null}|null} partner
+ * @param {'captain'|'stoker'|null} role
+ */
+export function canHostInstead(mine, partner, role) {
+  return role === 'stoker' && !!mine && !mine.isDemo && !!partner && partner.edition === 'demo' &&
+    Array.isArray(partner.caps) && partner.caps.includes('rehost');
 }
 
 /** #666 · the room screen's badge: why Versus or a level is (not) there. */

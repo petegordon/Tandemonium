@@ -28,7 +28,13 @@ export const ROOM_MSG = {
   TOURIST_READY:   'touristReady',   // #400 · in-ride: my tiles world is up (or not)
   LEVEL_REFUSED:   'levelRefused',   // PR #397 M1/m17 · stoker → captain: my edition can't ride that
   DRESSING:        'dressing',       // #672 · my Wardrobe opened / closed (a "dressing…" tag on my card)
+  ROOM_MOVED:      'roomMoved',      // #667 · HOST INSTEAD: the room is moving to { code }; follow it
 };
+
+/** #667 · a room code as RoomTransport.generateRoomCode makes it ('TNDM-' + 4 of its letters). */
+export function isRoomCode(code) {
+  return typeof code === 'string' && /^TNDM-[A-HJ-NP-Z2-9]{4}$/.test(code);
+}
 
 export const RoomProtocol = {
   /**
@@ -113,6 +119,13 @@ export const RoomProtocol = {
    * (it never blocks). An old peer drops the unknown type.
    */
   dressing: (open) => ({ type: ROOM_MSG.DRESSING, open: !!open }),
+
+  /**
+   * #667 · HOST INSTEAD: the stoker (a full-game guest) opened room `code` as its captain; the
+   * old captain follows it as the stoker (js/lobby/room-move.js). Only sent to a partner with
+   * the 'rehost' cap.
+   */
+  roomMoved: (code) => ({ type: ROOM_MSG.ROOM_MOVED, code: String(code || '') }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),

@@ -50,6 +50,48 @@ export function isWheelBone(name) { return WHEEL_RE.test(name); }
 /** A special bike's effect bones (the Time Warp's clock hands and flames: its TimeWarpFX clip). */
 export function isFxBone(name) { return FX_RE.test(name); }
 
+// #644 · the Solo Flight (Penny-Farthing tandem, claude-3d make_pf_tandem.py) has its own rig: one bike clip
+// `Ride` (one big-wheel turn; the cranks are on the hubs, so wheel angle = crank angle), sockets Seat_Captain and
+// Seat_Stoker (turned 180°: the riders face away from each other). Each goose pedals it with `Pedal_PF`, baked per
+// outfit into a small clip pack (claude-3d bake_pf_clips.sh, armature + that one clip). One clip serves both seats:
+// the captain plays it forwards, the stoker (facing backwards, the bike rolling the captain's way) reversed.
+// Ride_<seat> / Lean_* stay each goose's own (the PF's grips sit where the tandem's are, relative to the seat).
+export const PF_RIDE_CLIP = 'Ride';
+export const PF_PEDAL_CLIP = 'Pedal_PF';
+const PF_DIR = 'tandem-3d/goose/pf/';
+const PF_PACK_BY_RIDER = {
+  goose_captain: 'outfit_male', goose_stoker_victorian_m: 'outfit_male',
+  goose_captain_cyclist: 'outfit_male_cyclist', goose_stoker_cyclists_m: 'outfit_male_cyclist',
+  goose_captain_fancy: 'outfit_male_victorian', goose_stoker_fancy_m: 'outfit_male_victorian',
+  goose_captain_georgian: 'outfit_male_georgian', goose_stoker_georgian_m: 'outfit_male_georgian',
+  goose_stoker: 'outfit_female', goose_captain_fancy_f: 'outfit_female',
+  goose_stoker_cyclist: 'outfit_female_cyclist', goose_captain_cyclists_f: 'outfit_female_cyclist',
+  goose_stoker_victorian: 'outfit_female_victorian', goose_captain_victorian_f: 'outfit_female_victorian',
+  goose_stoker_georgian: 'outfit_female_georgian', goose_captain_georgian_f: 'outfit_female_georgian',
+  goose_captain_robot_m: 'outfit_male_robot', goose_stoker_robot_m: 'outfit_male_robot',
+  goose_captain_robot_f: 'outfit_female_robot', goose_stoker_robot_f: 'outfit_female_robot',
+};
+
+/** The Penny-Farthing pedal clip pack for a rider GLB path; null = none baked (that goose keeps its tandem Pedal clip). */
+export function pfClipPackFor(riderPath) {
+  const base = String(riderPath || '').split('/').pop().replace(/\.glb$/i, '');
+  const pack = PF_PACK_BY_RIDER[base];
+  return pack ? `${PF_DIR}${pack}_pf.glb` : null;
+}
+
+/** Every Penny-Farthing clip pack (the unit test checks they are on disk). */
+export function pfClipPacks() {
+  return [...new Set(Object.values(PF_PACK_BY_RIDER))].map(p => `${PF_DIR}${p}_pf.glb`);
+}
+
+/**
+ * Clip time of a seat's Pedal_PF for the crank angle: the captain forwards, the stoker reversed (she back-pedals
+ * while the bike rolls forward; both start with the rider-left pedal up, so crank 0 is t = 0 for both).
+ */
+export function pfPedalTime(seat, angle, duration) {
+  return turnTime(seat === 'Stoker' ? -angle : angle, duration);
+}
+
 /** Which bones a clip may drive, by its name; null = not a clip of the goose tandem. */
 export function boneFilterFor(clipName) {
   if (clipName === 'Pedal') return isCrankBone;

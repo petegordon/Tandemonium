@@ -197,8 +197,9 @@ export class FrontViewCamera {
 
     // In front of the bike, looking back at it.
     this._desiredPos.copy(bike.position);
-    this._desiredPos.x += fwd.x * this.frontDist;
-    this._desiredPos.z += fwd.z * this.frontDist;
+    const dist = this.frontDist + (bike.frontViewAhead || 0);   // #644 · the Solo Flight's captain sits further forward
+    this._desiredPos.x += fwd.x * dist;
+    this._desiredPos.z += fwd.z * dist;
     // Riders taller or shorter than the fused riders model this rig was tuned on
     // (the goose tandem's geese are ~14% taller at the game's 4.4 m bike length).
     const s = bike.riderViewScale || 1;
