@@ -17,7 +17,7 @@ import * as walletLib from './wallet.js';
 import * as records from './records.js';
 import { gateProgress } from './economy.js';
 import { getEditionRules } from './edition.js';
-import { dailyKey } from './daily-seed.js';
+import { playDayKey, warpDays } from './time-warp.js';   // #611 · the Daily Launch follows a time warp (Launch Week)
 import { STORAGE_KEY as DAILY_STORAGE_KEY } from './daily-ride.js';
 import { RaceManager } from './race-manager.js';
 import { SlingshotRig } from './slingshot-rig.js';
@@ -130,7 +130,7 @@ class SlingshotMode {
       const buttons = slingUI.renderGarage(this._slingSave, this._wallet, {
         standalone,
         lock,
-        todays: this._dailyLaunchOn() ? sling.dailyLaunchStatus(this._slingSave, dailyKey()) : null,
+        todays: this._dailyLaunchOn() ? { ...sling.dailyLaunchStatus(this._slingSave, playDayKey()), warp: warpDays() } : null,
         // m9: at the demo's end, LAUNCH replays its last stage; no Rebuild in the demo.
         replay: lock && lock.kind === 'demo' && !this._slingLock(this._slingPlayStage()) ? this._slingPlayStage() : null,
         rebuildOffered: !getEditionRules().isDemo,
@@ -196,7 +196,7 @@ class SlingshotMode {
     this._clearOverlayButtons();
     slingUI.hideGarage();
     slingUI.hideResults();
-    this._slingDaily = daily ? { key: dailyKey() } : null;
+    this._slingDaily = daily ? { key: playDayKey() } : null;
     // Remember what the lobby had selected, so leaving the mode gives it back
     // instead of leaving the pseudo-level and a forced difficulty behind.
     if (!this._slingPrevLobby && !(this.lobby.selectedLevel && this.lobby.selectedLevel.isSlingshot)) {

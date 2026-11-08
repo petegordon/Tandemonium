@@ -20,6 +20,7 @@ import {
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
 } from './identity.js';
 import { gameProfile, recordGame, handleMeGames } from './games.js';
+import { handleShareRoute } from './share.js';   // #657
 
 /**
  * #612 · what other House Tandem game Workers may do, through the private
@@ -169,6 +170,13 @@ export default {
       if (path === '/relay-token' && request.method === 'POST') return withAuth(request, env, corsOrigin, issueRelayToken);
 
       // Public routes (rate limited by IP)
+      // #657 · share a result: the card for the TV's QR, the #daily-ride post.
+      if (path === '/share' || path.startsWith('/share/')) {
+        const res = await handleShareRoute(request, env, { path, url, clientIP, corsOrigin },
+          { jsonResponse, corsHeaders, getUserFromRequest, checkRateLimit, listIdentities, writeMetric });
+        if (res) return res;
+      }
+
       if (path === '/leaderboard') {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
@@ -659,6 +667,7 @@ async function handlePair(request, env, corsOrigin, userId) {
 async function handleDailySubmit(request, env, corsOrigin, userId) {
   const body = await request.json();
   const { dayKey, mode, timeMs, dnf, distance, collectibles, crashes, safetyUsed, syncPct, partnerUserId } = body;
+  const warp = body.warp === true;   // #611 · ridden in time warp (ahead of the real date)
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) {
     return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
@@ -667,9 +676,10 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Bad mode' }, 400, corsOrigin);
   }
   // Today or yesterday only — a client whose clock is a week out is not
-  // submitting a result anyone can compare against.
+  // submitting a result anyone can compare against. #611: a time-warp ride
+  // (flagged) may be up to WARP_MAX_DAYS ahead; an unflagged future day is not.
   const today = dailyKeyUTC();
-  if (dayKey !== today && dayGap(dayKey, today) !== 1) {
+  if (!dailyDayAllowed(dayKey, today, warp)) {
     return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
   }
   if (!dnf && !(timeMs >= 30000 && timeMs <= 900000)) {
@@ -680,7 +690,7 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
     userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
     distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
     typeof syncPct === 'number' ? Math.round(syncPct) : null,
-    partnerUserId || null
+    partnerUserId || null, warp ? 1 : 0
   ).run();
   const improved = !dnf && !!(res && res.meta && res.meta.changes > 0);
 
@@ -695,8 +705,8 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
  */
 export function dailyUpsertSql(dnf) {
   const insert = `INSERT INTO daily_results
-       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id, warp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   if (dnf) return insert + `
        ON CONFLICT(user_id, day_key, mode) DO NOTHING`;
   return insert + `
@@ -704,9 +714,23 @@ export function dailyUpsertSql(dnf) {
          time_ms = excluded.time_ms, dnf = 0, distance = excluded.distance,
          collectibles = excluded.collectibles, crashes = excluded.crashes,
          safety_used = excluded.safety_used, sync_pct = excluded.sync_pct,
-         partner_user_id = excluded.partner_user_id
+         partner_user_id = excluded.partner_user_id, warp = excluded.warp
        WHERE daily_results.dnf = 1 OR daily_results.time_ms IS NULL
           OR excluded.time_ms < daily_results.time_ms`;
+}
+
+/** #611 · how far ahead of the real date a time-warp ride may post. */
+export const WARP_MAX_DAYS = 7;
+
+/**
+ * May a Daily result for `dayKey` post when the server's day is `today`?
+ * Today or yesterday always; with the time-warp flag, up to WARP_MAX_DAYS ahead.
+ */
+export function dailyDayAllowed(dayKey, today, warp = false) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dayKey || ''))) return false;
+  const ahead = dayGap(today, dayKey);
+  if (ahead === 0 || ahead === -1) return true;
+  return !!warp && ahead >= 1 && ahead <= WARP_MAX_DAYS;
 }
 
 /**
@@ -727,7 +751,7 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
   const me = String(userId);
   const rows = await env.DB.prepare(
     `SELECT d.user_id, d.mode, d.time_ms, d.dnf, d.distance, d.collectibles,
-            d.crashes, d.safety_used, d.sync_pct, u.display_name, u.avatar_url
+            d.crashes, d.safety_used, d.sync_pct, d.warp, u.display_name, u.avatar_url
      FROM daily_results d
      JOIN users u ON u.id = d.user_id
      WHERE d.day_key = ?

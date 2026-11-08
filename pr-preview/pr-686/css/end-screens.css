@@ -162,3 +162,10 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 /* #666 · a demo guest's held full-game achievements: one line across the sheet, in the unlocked list's accent. */
 .end-held { grid-column: 1 / -1; margin: 0; width: 100%; text-align: center; font: 700 var(--uf-size-sm)/1.35 var(--uf-font-ui); color: var(--uf-color-accent-2); }
 .end-held[hidden] { display: none; }
+
+/* ── #657 · the share sheet: a QR to the phone page, POST TO DISCORD ── */
+#share-sheet { z-index: 70; }   /* over the result screen it opens from */
+#share-sheet .share-body { display: grid; justify-items: center; gap: var(--uf-space-3); text-align: center; }
+#share-sheet .share-status { margin: 0; font-weight: 700; color: var(--uf-color-success-fg, #7be38a); }
+#share-sheet .share-phone { display: grid; justify-items: center; gap: var(--uf-space-2); }
+#share-sheet .share-note { margin: 0; color: var(--uf-color-fg-muted); font-size: var(--uf-size-sm); max-width: 30em; }

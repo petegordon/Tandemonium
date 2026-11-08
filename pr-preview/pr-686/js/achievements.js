@@ -10,7 +10,7 @@
 
 import { API_BASE, TUNE } from './config.js';
 import { getEditionRules } from './edition.js';
-import { dailyKey } from './daily-seed.js';
+import { playDayKey } from './time-warp.js';   // #611 · the warped day while in time warp, else the real day
 import { computeStreak, browserStore, STORAGE_KEY as DAILY_KEY } from './daily-ride.js';
 import { STORAGE_KEY as RECORDS_KEY } from './records.js';
 import { loadSave as loadSlingSave, STORAGE_KEY as SLING_KEY } from './slingshot.js';
@@ -212,7 +212,7 @@ export class AchievementManager {
 
   /** Fold an event into the lifetime stats, save, and check. */
   record(type, detail = {}) {
-    this._stats = applyEvent(this._stats, type, detail, dailyKey());
+    this._stats = applyEvent(this._stats, type, detail, playDayKey());
     this._saveStats();
     return this._evaluate({});
   }
@@ -327,7 +327,7 @@ export class AchievementManager {
     const s = { ...ride, ...state };
     s.crashes = Math.max(s.crashes || 0, ride.rideCrashes || 0);
     this.lastFinishState = s;   // #612: a signed-in seat's achievements read the same finish
-    this._stats = applyEvent(this._stats, 'finish', s, dailyKey());
+    this._stats = applyEvent(this._stats, 'finish', s, playDayKey());
     this._saveStats();
     return this._evaluate(s);
   }
@@ -380,7 +380,7 @@ export class AchievementManager {
     const demo = this.demo;
     // The day-streak badges read the streak held today (m6).
     let live = { dailyStreak: 0, wallet: null };
-    try { live.dailyStreak = computeStreak(browserStore(), dailyKey()).current; } catch (e) {}
+    try { live.dailyStreak = computeStreak(browserStore(), playDayKey()).current; } catch (e) {}
     try { const w = localStorage.getItem(WALLET_KEY); live.wallet = w ? sanitizeWallet(JSON.parse(w)) : null; } catch (e) {}
     return ACHIEVEMENTS
       .map((a, i) => {
