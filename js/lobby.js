@@ -40,7 +40,8 @@
 import * as THREE from 'three';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress } from './rewards.js';
-import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike } from './special-bikes.js';
+import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
+import { BOTS, BOT_IDS, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -442,6 +443,8 @@ export class Lobby {
     this._previewModel = null;
     this._previewPivot = null;
     this._previewOriginalMats = null;
+    // #644 · the player bot on Solo Flight's back seat (Bolt / Rivet / Sprocket), saved per device
+    this.selectedBot = loadBotChoice(typeof localStorage !== 'undefined' ? localStorage : null);
 
     // Leaderboard state
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
@@ -8673,6 +8676,7 @@ export class Lobby {
       this._applyPresetToPreview();
       this._sendBikeSyncIfInRoom();
     };
+    this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
     prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
@@ -8794,6 +8798,7 @@ export class Lobby {
     }
     this.selectedPreset = null;
     hintEl.dataset.special = key;
+    this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
       nameEl.style.color = 'rgba(255,255,255,0.3)';
@@ -8819,7 +8824,58 @@ export class Lobby {
     hintEl.style.display = 'none';
     hintEl.title = '';
     delete hintEl.dataset.special;
+    this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
     analytics.trackEvent('bike_color_change', { preset_key: key });
+  }
+
+  /**
+   * #644 · Solo Flight's bot picker: a row of the three player bots (Bolt, Rivet, Sprocket) under the bike. Mouse,
+   * touch or a pad (the buttons join the lobby's spatial focus, next to the chooser's ‹ ›) picks who rides the back
+   * seat on a solo ride. Each is its own partner for the partner achievements (js/player-bots.js).
+   */
+  _buildBotPicker() {
+    const el = document.getElementById('bot-picker');
+    if (!el || el.childElementCount) return;
+    const label = document.createElement('span');
+    label.className = 'bot-label';
+    label.textContent = 'Back seat';
+    el.appendChild(label);
+    this._botButtons = BOT_IDS.map((id) => {
+      const b = document.createElement('button');
+      b.className = 'bot-pick';
+      b.type = 'button';
+      b.dataset.bot = id;
+      b.setAttribute('role', 'radio');
+      b.style.setProperty('--bot-color', BOTS[id].color);
+      b.innerHTML = `<span class="bot-dot"></span>${BOTS[id].name}`;
+      b.title = `${BOTS[id].name} rides the back seat (a robot goose; counts as a partner)`;
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
+      el.appendChild(b);
+      return b;
+    });
+    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
+    // a pad already driving the mode step picks them up now, not on the next step change
+    if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
+      this._stepFocus.refreshSpatial(this._stepNavItems());
+    }
+    this._syncBotPicker();
+  }
+
+  /** Pick the player bot for Solo Flight (saved on this device). */
+  pickBot(id) {
+    this.selectedBot = saveBotChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
+    this._syncBotPicker();
+    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
+  }
+
+  _syncBotPicker() {
+    for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
+  }
+
+  _showBotPicker(on) {
+    const el = document.getElementById('bot-picker');
+    if (el) el.style.display = on ? '' : 'none';
+    if (on) this._syncBotPicker();
   }
 
   _applyPresetToPreview() {
@@ -8827,6 +8883,7 @@ export class Lobby {
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
     if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
+    this._showBotPicker(false);
     if (this._previewModel) this._previewModel.visible = true;
     this._hideSpecialPreviews();
     { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }
