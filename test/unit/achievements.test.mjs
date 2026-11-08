@@ -421,6 +421,49 @@ test('manager: an old save keeps everything earned; v1 stats migrate', async () 
   assert.ok(m.getEarnedIds().includes('grandma_red'));
 });
 
+test("#666 manager: a demo guest earns full-game achievements only on a guest pass, held off the demo's Steam", async () => {
+  globalThis.localStorage = fakeStorage({});
+  const pushed = [];
+  globalThis.window = { steam: { activateAchievement: (id) => { pushed.push(id); return Promise.resolve(true); }, storeStats: () => Promise.resolve(true) } };
+  try {
+    const { AchievementManager } = await import('../../js/achievements.js');
+    const m = new AchievementManager();
+    m.demo = true;
+    const full = ACHIEVEMENTS.find(a => !a.demo);
+    const demoOne = ACHIEVEMENTS.find(a => a.demo);
+    const orig = [full.condition, demoOne.condition];
+    full.condition = () => true; demoOne.condition = () => true;
+    try {
+      // Solo demo (no guest pass): the full-game one stays shut.
+      let got = m.check({}).map(a => a.id);
+      assert.ok(got.includes(demoOne.id) && !got.includes(full.id), got.join(','));
+      // In a full host's room: earned, and held.
+      m.guestPass = true;
+      got = m.check({}).map(a => a.id);
+      assert.ok(got.includes(full.id), got.join(','));
+    } finally { [full.condition, demoOne.condition] = orig; }
+    assert.ok(m.getHeldIds().includes(full.id));
+    assert.ok(m.getHeldIds().every(id => m.isHeld(id)));
+    assert.equal(m.isHeld(demoOne.id), false);
+    assert.ok(pushed.includes(demoOne.id.toUpperCase()), 'a demo achievement still goes to Steam');
+    assert.ok(!pushed.includes(full.id.toUpperCase()), 'a held one never goes to the demo app');
+    pushed.length = 0;
+    await m.syncToSteam();
+    assert.ok(pushed.includes(demoOne.id.toUpperCase()) && !pushed.includes(full.id.toUpperCase()), pushed.join(','));
+    assert.equal(m.getAllDefinitions().find(d => d.id === full.id).held, true);
+    // It is kept (saved, and sent to the account by syncToServer, which sends every earned id).
+    assert.ok(JSON.parse(localStorage.getItem('tandemonium_achievements')).some(a => a.id === full.id));
+    assert.ok(m.getEarnedIds().includes(full.id));
+    // The full game, after buying: nothing held, everything goes to Steam.
+    const f = new AchievementManager();
+    f.demo = false;
+    assert.deepEqual(f.getHeldIds(), []);
+    pushed.length = 0;
+    await f.syncToSteam();
+    assert.ok(pushed.includes(full.id.toUpperCase()) && pushed.includes(demoOne.id.toUpperCase()));
+  } finally { delete globalThis.window; }
+});
+
 test('manager: badge screen — 100 rows, hidden as ???, colours show, progress', async () => {
   globalThis.localStorage = fakeStorage({ tandemonium_achievements: JSON.stringify([{ id: 'grandma_blue', earnedAt: 1 }]) });
   const { AchievementManager } = await import('../../js/achievements.js');

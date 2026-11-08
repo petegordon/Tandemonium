@@ -769,6 +769,8 @@ class Game {
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
     this.achievements.onEarned = (a) => this._onAchievementEarned(a);   // #401: every unlock, any source
+    // #666: a demo guest in a full-game host's room earns the full game's achievements (held).
+    this.achievements.guestPassSource = () => (this.mode === 'captain' || this.mode === 'stoker') && !!this._roomRules().guestPass;
     this.achievements.listen(window);                                   // #401: economy + Slingshot events
     this._updateBadges();
 
@@ -1053,14 +1055,14 @@ class Game {
   }
 
   /**
-   * PR #397 M1 · the rules this ride runs by: in an online room the most
-   * restrictive of both sides (a demo or old partner → unranked, no helping
-   * hand for an old one); otherwise this edition's.
+   * PR #397 M1 · the rules this ride runs by: in an online room the host's
+   * edition (#666: the captain's; an old partner → the most restrictive side,
+   * no helping hand); otherwise this edition's.
    */
   _roomRules() {
     const mine = getEditionRules();
     if (this.mode !== 'captain' && this.mode !== 'stoker') return mine;
-    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null);
+    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null, this.mode);   // #666: the host (captain) sets it
   }
 
   /**
@@ -1122,6 +1124,7 @@ class Game {
    * @returns {HTMLElement[]} the buttons that were shown, for gamepad focus
    */
   _updateCtaButtons(which) {
+    this._updateHeldNote(which);   // #666
     const wishlist = document.getElementById('btn-wishlist-' + which);
     const invite = document.getElementById('btn-invite-' + which);
     const shown = [];
@@ -1135,7 +1138,7 @@ class Game {
     }
 
     if (wishlist) {
-      const show = this._canWishlist;
+      const show = this._canWishlist || this._heldNoteShown;
       wishlist.style.display = show ? '' : 'none';
       if (show) shown.push(wishlist);
     }
@@ -1145,6 +1148,22 @@ class Game {
       if (show) shown.push(invite);
     }
     return shown;
+  }
+
+  /**
+   * #666 · the end-of-ride card for a demo guest in a full host's room: the
+   * full-game achievements they hold (earned with a friend, not on the demo's
+   * Steam profile yet). "You earned N achievements with your friend. Get the
+   * full game to claim them." Hidden everywhere else.
+   */
+  _updateHeldNote(which) {
+    const el = document.getElementById(which + '-held');
+    const held = this.achievements && this.achievements.guestPass ? this.achievements.getHeldIds().length : 0;
+    this._heldNoteShown = held > 0;
+    if (!el) return;
+    el.hidden = held === 0;
+    el.textContent = held === 0 ? ''
+      : 'You earned ' + held + ' achievement' + (held === 1 ? '' : 's') + ' with your friend. Get the full game to claim ' + (held === 1 ? 'it.' : 'them.');
   }
 
   /** B-5 · the wishlist CTA: the store page, counted. Also the Slingshot demo's end (#400). */
@@ -2374,10 +2393,13 @@ class Game {
     // #641 · a new ride on the Daily Ride counts (the demo's cap, the first
     // try) and starts out clean: SAFETY, SPEED, ASSIST, the silent tune or the
     // helping hand at any point make it a ride that posts no board time.
+    // #666 · a demo guest in a full host's room rides by the host's rules: its
+    // Daily Ride cap is not spent (its full-game achievements: achievements.guestPass).
+    const guestPass = !!this._roomRules().guestPass;
     if (newRide) {
       this._rideAided = false;
       this._dailyRideNo = (level.isDaily && level.key && this.mode !== 'versus')
-        ? recordRideStart(browserStore(), level.key) : 0;
+        ? recordRideStart(browserStore(), level.key, { guest: guestPass }) : 0;
     }
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
@@ -3772,7 +3794,7 @@ class Game {
     });
     // A route this side could not rebuild, or a build with Tourist switched
     // off (no Maps key / the demo), cannot load — it fails the barrier at once.
-    const canLoad = !!plan.route && getEditionRules().tourist && !!getMapsApiKey();
+    const canLoad = !!plan.route && this.lobby.roomRules().tourist && !!getMapsApiKey();   // #666: the host's edition
     // PR #397 m15: a partner that fails while this side is still loading ends
     // the wait at once, rather than after this side's own load settles.
     const partnerFailed = partner.then(v => (v === true ? new Promise(() => {}) : 'partner'));
@@ -3784,7 +3806,13 @@ class Game {
     if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
     if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
     pending.readySent = ok === true;   // resent from onConnected if it was dropped
-    const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    let theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    // The partner's ready can be taken back: a captain that timed out sends
+    // touristReady(false) after its true. When that lands while this side is
+    // still loading, `partner` has already settled on the true (a promise
+    // settles once) and its EVT_RETURN_ROOM is ignored here (still 'lobby'),
+    // so read the latest word, or this side would sit on instructions alone.
+    if (theirs === true && this._partnerTouristReady === false) theirs = false;
     clearTimeout(timer);
     this._onPartnerTouristReady = null;
     if (!isCurrent()) return;
@@ -4794,6 +4822,13 @@ class Game {
   _onAchievementEarned(a) {
     showAchievementToast(a);
     this._updateBadges();
+    // #666: a held one earned after the end sheet went up (the finish's own check) updates its count.
+    if (this.achievements && this.achievements.guestPass) {
+      const vic = document.getElementById('victory-overlay');
+      const go = document.getElementById('gameover-overlay');
+      if (vic && vic.classList.contains('visible')) this._updateCtaButtons('victory');
+      if (go && go.style.display === 'flex') this._updateCtaButtons('gameover');
+    }
     try {
       analytics.trackEvent('achievement_earned', {
         achievement_id: a.id,
