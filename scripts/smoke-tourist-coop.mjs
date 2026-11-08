@@ -16,9 +16,14 @@
 //      room with a message; a partner that never answers → timeout, never a hang.
 //   4. couch co-op: one screen, P2 seated, Tourist card → a 'local' tiles ride.
 //   PR #397 M1 / m10 / m15 / m16 / m17 — mixed editions and versions in a room:
-//   6. #641 a demo stoker + a full captain ride the real Daily Ride (today's
-//      key, Adventurous) under demo room rules (3 rides a day), with no Map
-//      Tourists card (most restrictive edition).
+//   6. #666 guest pass: the HOST's (captain's) edition sets the room.
+//      a. a full captain + a demo stoker: a "Full game room" on both sides
+//         (no Daily cap), the Map Tourists card (a level the demo lacks) rides
+//         together, the real Daily Ride too; the demo side's full-game
+//         achievement is earned but HELD (never sent to the Steam fake), its
+//         demo one still goes, and the end card says how many it holds.
+//      b. a demo captain + a full stoker: a "Demo room" (3 rides a day), no
+//         Map Tourists, nothing held.
 //   7. an OLD-client stoker (room profile without caps): no Map Tourists card,
 //      no helping hand on the captain (a NEW full stoker does get it, on the
 //      Daily Ride too).
@@ -32,6 +37,7 @@
 //  m16: the stoker uses the captain's anchor height.
 //  m10: couch co-op's level list has no Slingshot card.
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import puppeteer from 'puppeteer';
+import { installFakeSteam, fakeSteam } from './lib/fake-steam.mjs';
 const ROOT=process.cwd(); const PORT=8939;
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.png':'image/png','.jpg':'image/jpeg','.svg':'image/svg+xml','.glb':'model/gltf-binary','.mp3':'audio/mpeg','.json':'application/json'};
 const server=http.createServer((q,r)=>{const u=decodeURIComponent(q.url.split('?')[0]);const f=path.join(ROOT,u==='/'?'index.html':u);
@@ -50,8 +56,9 @@ export class TilesRenderer {
 const STUB_PLUGINS = ['GoogleCloudAuthPlugin', 'GLTFExtensionsPlugin', 'TileCompressionPlugin', 'TilesFadePlugin', 'ReorientationPlugin']
   .map(n => `export class ${n} { constructor() {} }`).join('\n');
 
-async function open(withKey, query = '', storage = null) {
+async function open(withKey, query = '', storage = null, before = null) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
+  if (before) await before(page);
   if (storage) await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
@@ -141,9 +148,9 @@ const swapOk = swap.every(({ during, after }) =>
 // ── 2-3. online co-op over a relay ─────────────────────────────────────────
 // Each page gets a fake net whose sendProfile/sendEvent land on the other
 // page's current handlers (lobby's room handler, then the game's).
-async function pair(stokerHasKey, { stokerQuery = '', stokerOld = false, storage = null } = {}) {
-  const cap = await open(true, '', storage);
-  const sto = await open(stokerHasKey, stokerQuery, storage);
+async function pair(stokerHasKey, { stokerQuery = '', captainQuery = '', stokerOld = false, storage = null, stokerBefore = null } = {}) {
+  const cap = await open(true, captainQuery, storage);
+  const sto = await open(stokerHasKey, stokerQuery, storage, stokerBefore);
   const pages = { captain: cap, stoker: sto };
   const drop = { captain: new Set(), stoker: new Set() };   // message types not delivered FROM a side
   for (const [role, page] of Object.entries(pages)) {
@@ -384,29 +391,94 @@ const roomView = (page) => page.evaluate(async () => {
     chooser: !!document.getElementById('daily-mode-overlay') };
 });
 
-// 6. #641 demo stoker + full captain → the real Daily Ride under demo rules, no Map Tourists.
+// 6. #666 guest pass: the host's (captain's) edition sets the room.
 // The demo's Daily opens after the Tutorial and Grandma's: both sides have earned them.
 const OPENED = { tandemonium_achievements: JSON.stringify([
   { id: 'tutorial_done', earnedAt: Date.now() }, { id: 'home_sweet', earnedAt: Date.now() }]) };
-({ cap, sto } = await pair(true, { stokerQuery: '?demo=1', storage: OPENED }));
-const demoCards = await cap.evaluate(() => Array.from(document.querySelectorAll('#level-cards .level-card')).map(c => c.dataset.levelId));
-const demoCard = await cap.evaluate(() => {
-  const c = document.querySelector('#level-cards .level-card[data-level-id="daily"]');
-  return { name: c.querySelector('.level-card-name').textContent, locked: c.classList.contains('level-locked'),
-    desc: c.querySelector('.level-card-desc').textContent };
+const badgeOf = (page) => page.evaluate(() => {
+  const l = window._game.lobby; l._levelRoomKey = null; l._syncLevelRoomBar();
+  const t = document.getElementById('level-room-team');
+  return { badge: t.dataset.roomBadge || '', heading: t.heading || '' };
 });
+const cardIds = (page) => page.evaluate(() => Array.from(document.querySelectorAll('#level-cards .level-card')).map(c => c.dataset.levelId));
+
+// 6a. full captain + demo stoker (the demo under the Steam fake, which records what reaches Steam).
+({ cap, sto } = await pair(true, { stokerQuery: '?demo=1', storage: OPENED,
+  stokerBefore: (p) => installFakeSteam(p, { isDemo: true }) }));
+const guestCards = await cardIds(cap);
+const guestBadges = { cap: await badgeOf(cap), sto: await badgeOf(sto) };
+// Map Tourists, the level the demo does not have: the two ride it together.
+await cap.evaluate(async (planJs) => {
+  const l = window._game.lobby;
+  document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click();
+  l._startTouristRide(await eval(planJs));
+}, PLAN_FAST_JS);
+await waitState(cap, ['instructions']);
+await waitState(sto, ['instructions']);
+const guestTourist = { cap: await worldState(cap), sto: await worldState(sto),
+  abort: await cap.evaluate(() => window._game._lastTouristAbort || null) };
+await cap.evaluate(() => window._game._returnToRoom());
+await sto.waitForFunction(() => window._game.state === 'lobby', { timeout: 5000, polling: 100 }).catch(() => null);
+await cap.waitForFunction(() => window._game.state === 'lobby' && window._game.lobby._currentStep === window._game.lobby.levelStep,
+  { timeout: 5000, polling: 100 }).catch(() => null);
+// ...and the Daily Ride, ridden by the full host's rules (no cap for the guest either).
 await startCoopRide('daily');
 await cap.evaluate(() => window.__fakeNet.sendProfile({ type: 'dailyMode', mode: 'ranked', key: 'x' }));   // an old build's ranked call: ignored
-await new Promise(r => setTimeout(r, 300));
-const demoRoom = { cards: demoCards, card: demoCard, cap: await roomView(cap), sto: await roomView(sto) };
-console.log('demo stoker:', JSON.stringify(demoRoom, null, 1));
-const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.card.name === 'Daily Ride' && !demoRoom.card.locked &&
+await cap.waitForFunction(() => window._game.state !== 'lobby', { timeout: 5000, polling: 100 }).catch(() => null);
+const guestRoom = { cards: guestCards, badges: guestBadges, tourist: guestTourist, cap: await roomView(cap), sto: await roomView(sto) };
+// The demo stoker earns one full-game and one demo achievement mid-ride.
+const held = await sto.evaluate(async () => {
+  const g = window._game, m = g.achievements;
+  const { ACHIEVEMENTS } = await import('./js/achievements.js');
+  const earned = new Set(m.getEarnedIds());
+  const full = ACHIEVEMENTS.find(a => !a.demo && !earned.has(a.id));
+  const demo = ACHIEVEMENTS.find(a => a.demo && !earned.has(a.id));
+  const orig = [full.condition, demo.condition];
+  full.condition = () => true; demo.condition = () => true;
+  const guestPass = m.guestPass;
+  try { m.check({}); } finally { [full.condition, demo.condition] = orig; }
+  await new Promise(r => setTimeout(r, 0));
+  g._updateCtaButtons('victory');   // the end card reads the held count
+  const note = document.getElementById('victory-held');
+  return { full: full.id, demo: demo.id, guestPass, earned: m.getEarnedIds(), heldIds: m.getHeldIds(),
+    note: note && !note.hidden ? note.textContent : '',
+    wishlist: document.getElementById('btn-wishlist-victory').style.display !== 'none',
+    saved: JSON.parse(localStorage.getItem('tandemonium_achievements') || '[]').map(a => a.id) };
+});
+held.steam = await fakeSteam(sto).achievements();
+guestRoom.held = held;
+console.log('full host + demo guest:', JSON.stringify(guestRoom, null, 1));
+const guestRoomOk = guestRoom.cards.includes('tourist') &&
+  guestRoom.badges.cap.badge === 'Full game room' && guestRoom.badges.sto.badge === 'Full game room' &&
+  /Full game room/.test(guestRoom.badges.sto.heading) &&
+  guestRoom.tourist.cap.state === 'instructions' && guestRoom.tourist.sto.state === 'instructions' &&
+  guestRoom.tourist.sto.kind === 'TouristWorld' && guestRoom.tourist.sto.level === 'tourist' && !guestRoom.tourist.abort &&
+  guestRoom.cap.mode === 'captain' && guestRoom.sto.mode === 'stoker' &&
+  guestRoom.cap.level === 'daily' && guestRoom.sto.level === 'daily' && guestRoom.sto.key === guestRoom.cap.key &&
+  !guestRoom.cap.roomDemo && !guestRoom.sto.roomDemo && guestRoom.cap.rideCap === null && guestRoom.sto.rideCap === null &&
+  !guestRoom.cap.chooser && !guestRoom.sto.chooser &&
+  held.guestPass && held.earned.includes(held.full) && held.heldIds.includes(held.full) && held.saved.includes(held.full) &&
+  !held.steam.includes(held.full.toUpperCase()) && held.steam.includes(held.demo.toUpperCase()) &&
+  held.steam.every(id => !held.heldIds.map(h => h.toUpperCase()).includes(id)) &&
+  new RegExp('You earned ' + held.heldIds.length + ' achievements? with your friend\\. Get the full game to claim (it|them)\\.').test(held.note) &&
+  held.wishlist;
+await cap.close(); await sto.close();
+
+// 6b. demo captain + full stoker: a demo room, 3 rides a day, no Map Tourists, nothing held.
+({ cap, sto } = await pair(true, { captainQuery: '?demo=1', storage: OPENED }));
+const demoCards = await cardIds(cap);
+const demoBadges = { cap: await badgeOf(cap), sto: await badgeOf(sto) };
+await startCoopRide('daily');
+await cap.waitForFunction(() => window._game.state !== 'lobby', { timeout: 5000, polling: 100 }).catch(() => null);
+const demoRoom = { cards: demoCards, badges: demoBadges, cap: await roomView(cap), sto: await roomView(sto),
+  guestPass: await sto.evaluate(() => window._game.achievements.guestPass || window._game._roomRules().guestPass) };
+console.log('demo host + full guest:', JSON.stringify(demoRoom, null, 1));
+const demoRoomOk = !demoRoom.cards.includes('tourist') && demoRoom.cards.includes('daily') &&
+  demoRoom.badges.cap.badge === 'Demo room' && demoRoom.badges.sto.badge === 'Demo room' &&
   demoRoom.cap.mode === 'captain' && demoRoom.sto.mode === 'stoker' &&
-  demoRoom.cap.level === 'daily' && demoRoom.sto.level === 'daily' &&
-  demoRoom.cap.key === demoRoom.cap.dailyKey && demoRoom.sto.key === demoRoom.cap.key &&
-  demoRoom.sto.seed === demoRoom.cap.seed && demoRoom.cap.diff === 'adventurous' && demoRoom.sto.diff === 'adventurous' &&
+  demoRoom.cap.level === 'daily' && demoRoom.sto.level === 'daily' && demoRoom.sto.key === demoRoom.cap.key &&
   demoRoom.cap.roomDemo && demoRoom.sto.roomDemo && demoRoom.cap.rideCap === 3 && demoRoom.sto.rideCap === 3 &&
-  !demoRoom.cap.roomTourist && !demoRoom.sto.roomTourist && !demoRoom.cap.chooser && !demoRoom.sto.chooser;
+  !demoRoom.cap.roomTourist && !demoRoom.sto.roomTourist && !demoRoom.guestPass;
 await cap.close(); await sto.close();
 
 // 7. OLD-client stoker: no Map Tourists, no helping hand.
@@ -566,7 +638,7 @@ const odoOk =
 await odoPage.close();
 
 const checks = { swapOk, coopOk, failOk, timeoutOk, localOk, anchorOk, odoOk,
-  demoRoomOk, oldRoomOk, newPairOk, capFailOk, refuseOk, blipOk, noPageErrors: errors.length === 0 };
+  guestRoomOk, demoRoomOk, oldRoomOk, newPairOk, capFailOk, refuseOk, blipOk, noPageErrors: errors.length === 0 };
 console.log(checks);
 const ok = Object.values(checks).every(Boolean);
 console.log(ok ? '✔ tourist rides hand the real road back; co-op Tourist meets at a ready barrier that never hangs'
