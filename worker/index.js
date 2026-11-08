@@ -19,4 +19,6 @@ export class HouseTandemGames extends WorkerEntrypoint {
   gameProfile(userId, game) { return houseTandemGames.gameProfile(this.env, userId, game); }
   /** → { newlyEarned: string[] } */
   recordGame(userId, game, delta, earned) { return houseTandemGames.recordGame(this.env, userId, game, delta, earned); }
+  /** Active seconds played since the last report (a delta; capped to real time). → { seconds, sessions, firstPlayed, lastPlayed, added } */
+  recordPlay(userId, game, seconds) { return houseTandemGames.recordPlay(this.env, userId, game, seconds); }
 }

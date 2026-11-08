@@ -166,6 +166,8 @@ export async function mergeAccounts(env, from, to, deps = {}) {
   await q('UPDATE OR IGNORE friends SET friend_id = ? WHERE friend_id = ?', to, from);
   await q('DELETE FROM friends WHERE user_id = ? OR friend_id = ? OR user_id = friend_id', from, from);
   if (deps.mergePairKey) await deps.mergePairKey(env, String(from), String(to));
+  // The other games' rows (and time in game) reference users(id): move them before the delete.
+  if (deps.mergeGameAccounts) await deps.mergeGameAccounts(env, from, to);
   await q('DELETE FROM users WHERE id = ?', from);
 }
 
