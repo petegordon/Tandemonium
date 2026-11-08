@@ -43,7 +43,7 @@ jobs:
           - group: input
             smokes: input solo-extras
           - group: ui
-            smokes: options lobby-layout tv-nav rejoin
+            smokes: options lobby-layout tv-nav tv-music rejoin
           - group: online
             smokes: online host-instead
           - group: phone
