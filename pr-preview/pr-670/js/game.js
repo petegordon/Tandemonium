@@ -1334,7 +1334,8 @@ class Game {
         this._quickCountdown = false;
       } else if (eventType === EVT_GAMEOVER) {
         // Idempotent: captain may retry-send GAMEOVER for reliability.
-        if (this.state === 'playing') this._showGameOver(true);
+        // After this side's own TOO SLOW, the captain's sheet is the timeout one.
+        if (this.state === 'playing') this._showGameOver(true, { timeout: !!this._stokerTimeoutShown });
       } else if (eventType === EVT_CHECKPOINT) {
         this._clearStokerTimeout();   // PR #397 M1: the captain made it — so did we
         this._showCheckpointFlash();
@@ -2768,21 +2769,14 @@ class Game {
     // Freeze gameplay during the pause
     this.state = 'gameover';
 
+    // Pete 2026-11-07: TOO SLOW! and GAME OVER follow one rule: a failure stops on the
+    // same sheet (RESTART, RESTART WITH ASSIST, the Royal Shortcut, END RIDE). The snail
+    // gets a short beat first; there's no automatic retry any more.
+    void helpNow;
     setTimeout(() => {
       flash.classList.remove('visible');
-      // #403: after the 5th failure the player gets a choice, not an
-      // automatic retry — the Royal Shortcut is on the game-over screen.
-      if (helpNow && helpNow.offerSkip && this.state === 'gameover') {
-        this._showGameOver(false, { timeout: true });
-        return;
-      }
-      this.state = 'playing';
-      // Reset segment timer before _resetGame so it reinits properly
-      if (this.raceManager) {
-        this.raceManager.resetSegmentTimer(this.bike.distanceTraveled);
-      }
-      this._resetGame();
-    }, 2000);
+      if (this.state === 'gameover') this._showGameOver(false, { timeout: true });
+    }, 1400);
   }
 
   _showCheckpointFlash() {
@@ -3285,6 +3279,7 @@ class Game {
     const title = document.getElementById('gameover-title');
     if (title) title.textContent = opts.timeout ? 'TOO SLOW!' : 'GAME OVER';
     { const sh = /** @type {any} */ (document.getElementById('gameover-sheet')); if (sh) sh.heading = opts.timeout ? 'Too slow!' : 'Game over'; }   // #428 kit sheet
+    { const r = document.getElementById('gameover-reason'); if (r) r.textContent = opts.timeout ? '\u{1F40C} The clock ran out on this stretch' : '\u{1F4A5} Too many crashes on this stretch'; }
     { const u = document.getElementById('gameover-unlocked'); if (u) { u.replaceChildren(); u.hidden = true; u.classList.remove('icons-only'); } }
 
     // Crash analytics already recorded at impact time in _recordCrash()

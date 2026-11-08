@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'83d3010',pr:670,time:'11-07-2026 19:42'}</script><base href="/pr-preview/pr-670/">
+<head><script>window.__BUILD={sha:'735b9f1',pr:670,time:'11-07-2026 19:52'}</script><base href="/pr-preview/pr-670/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -1741,6 +1741,7 @@
     z-index: 95;
   }
   #timeout-flash.visible { display: flex; }
+  .end-reason { margin: 0 0 0.5em; text-align: center; font-size: 1.15em; font-weight: 700; color: #e8e8f0; }
   #timeout-icon {
     font-size: 80px;
     opacity: 0;
@@ -5547,7 +5548,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'83d3010',pr:670,time:'11-07-2026 19:42'}</script><base href="/pr-preview/pr-670/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'735b9f1',pr:670,time:'11-07-2026 19:52'}</script><base href="/pr-preview/pr-670/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -6074,7 +6075,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.83d3010 | 11-07-2026 19:42 (PR #670)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.735b9f1 | 11-07-2026 19:52 (PR #670)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6403,6 +6404,8 @@ ON</button>
   <!-- #428: kit sheet shell; the heading mirrors #gameover-title (game.js). -->
   <uf-sheet id="gameover-sheet" open dismissible="false" headline tone="danger" heading="Game over" size="md">
       <p id="gameover-title" hidden>GAME OVER</p>
+      <!-- Pete 2026-11-07: GAME OVER and TOO SLOW! are one sheet; this line says which ending it was. -->
+      <p id="gameover-reason" class="end-reason"></p>
       <!-- #403 · the helping hand for the next attempt (js/helping-hand-mode.js). -->
       <div id="gameover-help" class="help-announce" style="display:none;"></div>
       <!-- #400 D4 · a crashed ride still pays for its distance. Filled by js/economy-mode.js. -->
