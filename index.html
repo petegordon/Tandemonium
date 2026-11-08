@@ -3936,6 +3936,10 @@
   .profile-popup-steps { margin: 0; padding-left: 1.4em; text-align: left; font-size: 12px; line-height: 1.5; color: rgba(255,255,255,0.8); }
   .profile-popup-code { font-family: ui-monospace, Consolas, monospace; letter-spacing: .15em; color: #ffd36b; font-size: 1.25em; }
   .profile-popup-device-status { font-size: 11px; color: rgba(255,255,255,0.55); min-height: 1.4em; text-align: center; }
+  /* The QR stands in for the Discord button that asked for it (lobby.js _setDiscordTriggersHidden). */
+  .profile-popup-signin-btn[hidden] { display: none !important; }
+  .profile-popup-signin-btn.profile-popup-open-browser { background: transparent; border-color: rgba(255,255,255,0.35); color: #fff; font-size: 11px; }
+  .profile-popup-signin-btn.profile-popup-open-browser:hover { background: rgba(255,255,255,0.1); }
 
   /* ── Share / Record + music buttons ──
      Both are off-screen now; the quick menu carries them. They keep their
@@ -5690,6 +5694,8 @@ ON</button>
               <li>Check the code matches <b class="profile-popup-code" id="profile-popup-code"></b></li>
             </ol>
             <div class="profile-popup-device-status" id="profile-popup-device-status" role="status"></div>
+            <!-- Desktop app only: the same sign-in in this computer's browser instead of a phone. -->
+            <button class="profile-popup-signin-btn profile-popup-open-browser" id="profile-popup-open-browser" style="display:none;">OPEN ON THIS COMPUTER</button>
           </div>
         </div>
       </div>
