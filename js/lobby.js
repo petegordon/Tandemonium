@@ -2361,6 +2361,15 @@ export class Lobby {
   }
 
   _rebuildLevelCards() {
+    // An online room's level step shows the room's list: no Slingshot or other solo-only cards,
+    // and the stoker only watches. Sign-in, a controller or gyro turning on and the rest rebuild
+    // through here; they used to swap the SOLO list in (Pete 2026-11-08: Slingshot appeared on
+    // one screen, the stoker's after its controller came on, and the stoker's never showed the
+    // captain's pick).
+    if (this._inOnlineRoom()) {
+      if (this._currentStep === this.levelStep) this._rebuildRoomLevelCards();
+      return;
+    }
     const container = document.getElementById('level-cards');
     container.innerHTML = '';
     this._buildLevelCards();
@@ -5444,6 +5453,20 @@ export class Lobby {
     // fire on the level step (A = confirm, B = back to room)
     this._gpPrevA = true;
     this._gpPrevB = true;
+  }
+
+  /** In an online room (hosting or joined): its level step lists what the room can ride. */
+  _inOnlineRoom() {
+    return !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole);
+  }
+
+  /** Rebuild the room's level list in place, keeping the pick (the stoker's is the captain's). */
+  _rebuildRoomLevelCards() {
+    this._showRoomLevelsStep();
+    if (this._roomRole !== 'captain' && this.selectedLevel) {
+      const card = document.querySelector('#level-cards .level-card[data-level-id="' + this.selectedLevel.id + '"]');
+      if (card) card.classList.add('selected');
+    }
   }
 
   /**

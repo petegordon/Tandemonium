@@ -6481,6 +6481,8 @@ class Game {
     if (this._coachVisible) this._dismissCoachCard();
     this._musicBtn.style.display = 'none';
     this.quickMenu.setVisible(false);
+    this.hud.updateLookahead(null);   // E-1 · the stoker's ROAD AHEAD panel stayed up over the room
+    this._lookaheadWasOn = false;
     if (!this.net) {
       // Fallback to full lobby return if no connection
       this._returnToLobby();
