@@ -45,7 +45,7 @@ jobs:
           - group: ui
             smokes: options lobby-layout tv-nav rejoin
           - group: online
-            smokes: online
+            smokes: online host-instead
           - group: phone
             smokes: phone-pad phone-coop
     steps:

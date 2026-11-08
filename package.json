@@ -78,6 +78,7 @@
     "smoke:seat-churn": "node scripts/smoke-seat-churn.mjs",
     "smoke:online": "node scripts/smoke-online.mjs",
     "smoke:online-wardrobe": "node scripts/smoke-online-wardrobe.mjs",
+    "smoke:host-instead": "node scripts/smoke-host-instead.mjs",
     "smoke:phone-coop": "node scripts/smoke-phone-coop.mjs",
     "smoke:phone-multi": "node scripts/smoke-phone-multi.mjs",
     "smoke:solo-extras": "node scripts/smoke-solo-extras.mjs",
