@@ -86,7 +86,7 @@ export class RoomSession {
     /** #694 · the waiting line for the current attempt (A–E). */
     this.wait = new RoomWait({
       render: (seat, view) => { if (host.wait) host.wait(seat, view); },
-      retry: () => this._redial(),
+      retry: (force) => this._redial(force),
       now: this._now,
       setInterval: si,
       clearInterval: ci,
@@ -381,10 +381,18 @@ export class RoomSession {
     if (this._seenTimer) { this._clearTimeout(this._seenTimer); this._seenTimer = null; }
   }
 
-  /** E · dial the room server again (the wait's Retry, and its automatic retry). */
-  _redial() {
+  /**
+   * E · dial the room server again. `force` = the Retry button. The automatic retry leaves a
+   * socket that is still opening alone (on a slow link the handshake can take longer than the
+   * 5 s retry period, and re-dialling would cut it off every time); the transport's own backoff
+   * covers sockets that fail.
+   */
+  _redial(force = false) {
     const n = this.net;
-    if (n && !n._destroyed && n.roomCode && !n.connected) n.retryWithToken(n._relayToken);
+    if (!n || n._destroyed || !n.roomCode || n.connected) return;
+    const ws = n._relayWs;
+    if (!force && ws && ws.readyState === 0) return;   // WebSocket.CONNECTING
+    n.retryWithToken(n._relayToken);
   }
 
   /**

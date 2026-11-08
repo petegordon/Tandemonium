@@ -203,7 +203,7 @@ export class RoomWait {
     const s = this.state;
     if (!s) return;
     s.retryAt = this.now() + ROOM_WAIT_MS.retryEvery;
-    try { this._retry(); } catch (e) { /* the transport is gone */ }
+    try { this._retry(true); } catch (e) { /* the transport is gone */ }
     this.tick();
   }
 
@@ -226,7 +226,7 @@ export class RoomWait {
     let v = roomWaitView(s, now);
     if (v && v.kind === 'E') {
       if (s.retryAt == null) s.retryAt = now + ROOM_WAIT_MS.retryEvery;
-      else if (now >= s.retryAt) { s.retryAt = now + ROOM_WAIT_MS.retryEvery; try { this._retry(); } catch (e) { /* gone */ } }
+      else if (now >= s.retryAt) { s.retryAt = now + ROOM_WAIT_MS.retryEvery; try { this._retry(false); } catch (e) { /* gone */ } }
       v = roomWaitView(s, now);
     }
     // A way out, once shown, stays (B and C keep their buttons even if the clock moves back).

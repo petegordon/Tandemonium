@@ -497,3 +497,14 @@ test('a left or superseded attempt never draws a wait again', async () => {
   assert.equal(calls.length, n);
   assert.equal(t.count, 0);
 });
+
+test('E: the automatic retry never cuts off a socket that is still opening; Retry does', async () => {
+  const { rs, ns, t } = setup({ step: 'join' });
+  await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
+  ns.net._relayWs = { readyState: 0 };
+  t.advance(ROOM_WAIT_MS.unreachable + ROOM_WAIT_MS.retryEvery * 3);
+  assert.equal(ns.net.retried.length, 0, 'a slow handshake is left alone');
+  rs.wait.retryNow();
+  assert.equal(ns.net.retried.length, 1, 'the Retry button forces a fresh dial');
+  rs.leave();
+});
