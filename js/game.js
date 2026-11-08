@@ -67,6 +67,7 @@ import { BikeModel } from './bike-model.js';
 import { RemoteBikeState } from './remote-bike-state.js';
 import { ChaseCamera } from './chase-camera.js';
 import { FrontViewCamera } from './front-view-camera.js';
+import { MusicTrack } from './music-track.js';
 import { ControllerOverlayHud, getControllerOverlayPref } from './controller-overlay-hud.js';
 import { playerLooks, lookToWire, lookFromWire, versusSeatLooks } from './player-look.js';   // #548
 import { applyPlayerLed } from './player-led.js';   // #548
@@ -908,9 +909,12 @@ class Game {
     this.lobby.padRoom = this.phonePad;
 
     // Background music
-    this._musicEl = new Audio('assets/Krampus Workshop.mp3');
+    // #567: an <audio> element that falls back to the AudioContext when the
+    // browser refuses play() (the Google TV browser plays effects, not music).
+    this._musicEl = new MusicTrack('assets/Krampus Workshop.mp3', this.audioEngine, { makeContext: isTV });
     this._musicEl.loop = true;
     this._musicEl.volume = this.lobby.musicVolume;
+    this._musicEl.onstate = () => this._updateMusicBtnIcon();
     // In-game music mute button
     this._musicBtn = document.getElementById('music-btn');
     this._updateMusicBtnIcon();
@@ -964,21 +968,28 @@ class Game {
     if (this.lobby.musicActive) {
       this._musicEl.play().catch(() => {});
     }
-    if (!this.lobby._tapOverlay || isMobile) {
-      const startMusic = () => {
-        if (this.lobby.musicActive) {
-          this._musicEl.play().catch(() => {});
-        }
-        document.removeEventListener('pointerdown', startMusic, true);
-        document.removeEventListener('keydown', startMusic, true);
-        document.removeEventListener('click', startMusic, true);
-      };
-      document.addEventListener('pointerdown', startMusic, true);
-      document.addEventListener('keydown', startMusic, true);
-      // Gamepad A button triggers el.click() in lobby — synthetic clicks
-      // don't fire pointerdown, so listen for click too.
-      document.addEventListener('click', startMusic, true);
-    }
+    // #567: every platform (a first-visit TV too, whose "Press any button"
+    // veil doesn't start the music itself), and until the music really plays:
+    // a refused try (the phone remote's and the pad's synthetic clicks are no
+    // user activation) leaves the listeners for the next key, click or touch.
+    // A TV remote's key is a keydown, which Chromium counts as activation.
+    const MUSIC_GESTURES = ['pointerdown', 'keydown', 'click', 'touchend'];
+    const startMusic = () => {
+      if (this._musicEl.playing) {
+        for (const ev of MUSIC_GESTURES) document.removeEventListener(ev, startMusic, true);
+        return;
+      }
+      if (this.lobby.musicActive) {
+        this.audioEngine.resume();
+        this._musicEl.play().then(() => {
+          if (!this._musicEl.playing) return;
+          for (const ev of MUSIC_GESTURES) document.removeEventListener(ev, startMusic, true);
+        }, () => {});
+      }
+    };
+    // Gamepad A button triggers el.click() in lobby — synthetic clicks
+    // don't fire pointerdown, so listen for click too.
+    for (const ev of MUSIC_GESTURES) document.addEventListener(ev, startMusic, true);
 
     // Keyboard shortcuts: M = toggle mute, Shift+M = volume slider,
     // C = controller overlay (live 3D tiles of each rider's pad)
@@ -2719,7 +2730,7 @@ class Game {
 
     // Route background music through the shared audio engine so it lands on
     // the music bus (duckable + captured by the recorder automatically).
-    this.audioEngine.connectMusicElement(this._musicEl);
+    this.audioEngine.connectMusicElement(this._musicEl.el);
     // Play music if enabled
     if (this.lobby.musicActive) {
       this._musicEl.play().catch(() => {});
@@ -2863,7 +2874,7 @@ class Game {
     this.audioEngine.resume();
     this.audioEngine.warmup();
     this.audioCtx = this.audioEngine.ctx;
-    this.audioEngine.connectMusicElement(this._musicEl);
+    this.audioEngine.connectMusicElement(this._musicEl.el);
     if (this.lobby.musicActive) this._musicEl.play().catch(() => {});
     this.audioEngine.duckMusic(0.55, 0.8);
     this._playBeep(400, 0.15);
@@ -6202,6 +6213,11 @@ class Game {
   }
 
   _updateMusicBtnIcon() {
+    // #567: music on but refused by the browser so far: say so (it starts on the next key, click or touch)
+    const blocked = !!(this.lobby.musicActive && this._musicEl && !this._musicEl.playing && this._musicEl.blocked);
+    this._musicBtn.classList.toggle('music-blocked', blocked);
+    this._musicBtn.title = blocked ? 'Music: press any key to start it' : 'Music';
+    if (this.lobby.setMusicBlocked) this.lobby.setMusicBlocked(blocked);
     if (this.lobby.musicActive) {
       this._musicBtn.classList.remove('muted');
       // Show note icon (already in SVG)
