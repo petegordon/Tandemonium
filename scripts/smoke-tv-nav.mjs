@@ -82,9 +82,10 @@ const lbShell = await page.evaluate(() => {
 check(lbOpen && lbShell.sheet === 'uf-sheet' && lbShell.help === 'uf-sheet' && lbShell.close, 'LY-10 the Leaderboard opens as the same kit sheet as Help, with its Close', lbShell);
 // #540: the badges live in their own Achievements sheet now (smoke:ach-detail
 // walks it); the category-heading size check renders the grid there.
-const sectionPx = await page.evaluate(() => {
+const sectionPx = await page.evaluate(async () => {
   window._game.lobby._renderAchievements();
-  const t = document.querySelector('#achievements-modal .lb-ach-section-title');
+  await Promise.resolve();   // #634: <uf-achievement-grid> renders on a microtask
+  const t = document.querySelector('#achievements-modal .uag-section-title');
   if (!t) return 0;
   const s = document.getElementById('achievements-modal'); s.open = true;
   const px = parseFloat(getComputedStyle(t).fontSize); s.open = false;

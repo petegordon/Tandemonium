@@ -2433,66 +2433,35 @@
     padding: 4px 10px;
     border-width: 1px;
   }
-  /* Achievement grid */
-  .lb-achievement-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    justify-content: center;
-    margin-bottom: 12px;
-  }
-  .lb-ach-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    width: 64px;
-    padding: 6px 4px;
-    border-radius: 10px;
-    border: 1.5px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.04);
-    transition: all 0.2s;
-  }
-  .lb-ach-icon {
-    font-size: 22px;
-    line-height: 1;
-    margin-bottom: 3px;
-  }
-  .lb-ach-name {
-    font-size: 8px;
-    color: rgba(255,255,255,0.5);
-    text-align: center;
-    line-height: 1.2;
-    word-break: break-word;
-  }
-  .lb-ach-item.earned {
+  /* #634: the Achievements sheet and detail card render through the kit's
+     <uf-achievement-grid> (.uag-*) and <uf-achievement-detail> (.uad-*). The
+     kit's own styles carry most of the look; these are only where the game's
+     values differ, plus the lift and the game's own lines (medal times, Best).
+     Scoped by id so they win over the kit's (injected later) rules. */
+  #lb-achievements .uag-item, #ach-lift { border-color: rgba(255,255,255,0.15); transition: all 0.2s; }
+  #lb-achievements .uag-item.earned {
     background: rgba(60,200,80,0.18);
     border-color: rgba(60,200,80,0.5);
     box-shadow: 0 0 8px rgba(60,200,80,0.25);
   }
-  .lb-ach-item.earned .lb-ach-name {
-    color: var(--uf-color-accent);
-  }
-  .lb-ach-item.locked {
-    opacity: 0.35;
-    border-color: rgba(255,255,255,0.08);
-  }
-  /* #540: each badge is a button (tap / Enter / the pad's A opens its card). */
-  .lb-ach-item {
-    font-family: inherit;
-    color: inherit;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .lb-ach-item:focus { outline: none; }
-  .lb-ach-item:focus-visible,
-  .lb-ach-item.gamepad-focus {
+  #lb-achievements .uag-item.locked { border-color: rgba(255,255,255,0.08); }
+  #lb-achievements .uag-item.locked:not(.gamepad-focus, :focus-visible):hover { opacity: 0.35; }   /* the kit lights a hovered badge; the game never did */
+  #lb-achievements .uag-item.locked:has(.uag-progress):not(.gamepad-focus, :focus-visible):hover { opacity: 0.6; }
+  #lb-achievements .uag-item:focus-visible,
+  #lb-achievements .uag-item.gamepad-focus {
     opacity: 1;
     outline: 2px solid var(--uf-color-accent);
     outline-offset: 2px;
     box-shadow: 0 0 10px rgba(68, 255, 102, 0.4);
   }
-  .lb-ach-item.lifting { visibility: hidden; }
-  /* the lifting copy of a badge, on its way to the card */
+  #lb-achievements .uag-item.lifting { visibility: hidden; }
+  /* #401: counter progress, hidden + full-game-only badges */
+  #lb-achievements .uag-progress, #ach-lift .uag-progress { color: rgba(255,220,120,0.9); }
+  #lb-achievements .uag-item.locked:has(.uag-progress) { opacity: 0.6; }
+  #lb-achievements .uag-item.secret .uag-name, #ach-lift.secret .uag-name { font-style: italic; }
+  #lb-achievements .uag-item.unavailable, #ach-lift.unavailable { border-style: dashed; }
+  #lb-achievements .uag-count { font-size: 11px; }
+  /* the lifting copy of a badge, on its way to the card (in a .uag-host so the kit's badge styles apply) */
   #ach-lift {
     position: fixed;
     z-index: calc(var(--uf-z-modal, 1000) + 2);
@@ -2505,7 +2474,7 @@
     box-shadow: 0 0 30px rgba(255, 210, 63, 0.45), 0 30px 60px rgba(0, 0, 0, 0.6);
     transform-origin: 50% 50%;
   }
-  #ach-lift .lb-ach-name { color: rgba(255,255,255,0.92); }
+  #ach-lift .uag-name { color: rgba(255,255,255,0.92); }
   /* #576: the grid dims behind the lifting badge with a class (not a fill-forwards
      animation), so closing the card always clears it. */
   #achievements-modal .uf-sheet__body { transition: filter 420ms ease; }
@@ -2516,76 +2485,13 @@
     scrollbar-gutter: stable;
   }
   /* The detail card: the reels' end card, on the kit's sizes (reads at TV distance). */
-  .ach-detail {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    padding: var(--uf-space-2) 0 var(--uf-space-3);
-    font-size: var(--uf-size-md);
-  }
-  .ach-detail-kicker {
-    font-size: var(--uf-size-sm);
-    font-weight: 700;
-    letter-spacing: 0.28em;
-    text-transform: uppercase;
-    color: var(--uf-color-fg-muted);
-  }
-  .ach-detail[data-state="earned"] .ach-detail-kicker { color: var(--uf-color-accent-2); }
-  .ach-detail-badge {
-    width: 6em; height: 6em;
-    margin: 0.9em 0 0.7em;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: var(--uf-size-xl);
+  #ach-detail-card .uad-badge {
     background: radial-gradient(circle at 50% 40%, #3b3352 0%, #1a1a2e 70%);
-    border: 0.18em solid rgba(255,255,255,0.25);
-    box-shadow: 0 0.6em 2em rgba(0,0,0,0.5);
+    animation: none;   /* the badge already lifted into place */
   }
-  .ach-detail-badge span { font-size: 3.2em; line-height: 1; }
-  .ach-detail[data-state="earned"] .ach-detail-badge {
-    border-color: var(--uf-color-accent-2);
-    box-shadow: 0 0 0 0.4em rgba(255,210,63,0.18), 0 0.6em 2em rgba(0,0,0,0.55);
-  }
-  .ach-detail[data-state="locked"] .ach-detail-badge,
-  .ach-detail[data-state="progress"] .ach-detail-badge,
-  .ach-detail[data-state="full"] .ach-detail-badge { border-style: dashed; }
-  .ach-detail[data-state="locked"] .ach-detail-badge span,
-  .ach-detail[data-state="full"] .ach-detail-badge span { filter: grayscale(1); opacity: 0.6; }
-  .ach-detail[data-state="secret"] .ach-detail-badge span { opacity: 0.7; }
-  .ach-detail-name {
-    font-size: var(--uf-size-2xl);
-    font-weight: 800;
-    line-height: 1.1;
-    color: #fff;
-  }
-  .ach-detail[data-state="earned"] .ach-detail-name { color: var(--uf-color-accent-2); }
-  .ach-detail-desc {
-    margin-top: 0.4em;
-    font-size: var(--uf-size-lg);
-    font-style: italic;
-    color: rgba(255,255,255,0.85);
-    max-width: 24em;
-  }
-  .ach-detail-status {
-    margin-top: 1em;
-    font-size: var(--uf-size-md);
-    font-weight: 600;
-    color: rgba(255,255,255,0.7);
-  }
-  .ach-detail[data-state="earned"] .ach-detail-status { color: var(--uf-color-accent); }
+  #ach-detail-card[data-state="progress"] .uad-status { color: rgba(255,220,120,0.95); }
+  #ach-detail-card .uad-bar i { background: rgba(255,220,120,0.95); }
   .ach-detail-best { font-size: 0.85em; color: rgba(255,255,255,0.7); margin-top: 4px; }   /* where + when the best-so-far was set */
-  .ach-detail[data-state="progress"] .ach-detail-status { color: rgba(255,220,120,0.95); }
-  .ach-detail-bar {
-    width: min(16em, 80%);
-    height: 0.45em;
-    margin-top: 0.5em;
-    border-radius: 999px;
-    background: rgba(255,255,255,0.12);
-    overflow: hidden;
-  }
-  .ach-detail-bar i { display: block; height: 100%; background: rgba(255,220,120,0.95); }
   /* a medal achievement's live times, one per difficulty */
   .ach-detail-times {
     margin-top: 0.7em;
@@ -2596,42 +2502,6 @@
   }
   .ach-detail-time { white-space: nowrap; }
   .ach-detail-time b { color: #fff; font-weight: 700; }
-  .ach-detail-count {
-    margin-top: 1em;
-    font-size: var(--uf-size-sm);
-    letter-spacing: 0.12em;
-    color: rgba(255,255,255,0.45);
-  }
-  /* #401: sections, counter progress, hidden + full-game-only badges */
-  /* #517: the category headings read at TV distance (were 11px at every size). */
-  .lb-ach-section-title {
-    font-size: var(--uf-size-md, 16px);
-    font-weight: 700;
-    color: rgba(255,255,255,0.85);
-    text-align: left;
-    margin: 0.9em 4px 0.5em;
-  }
-  .lb-ach-section-count {
-    font-weight: 400;
-    color: rgba(255,255,255,0.45);
-  }
-  .lb-ach-progress {
-    font-size: 8px;
-    color: rgba(255,220,120,0.9);
-    margin-top: 2px;
-  }
-  .lb-ach-item.locked:has(.lb-ach-progress) { opacity: 0.6; }
-  .lb-ach-item.secret .lb-ach-name { font-style: italic; }
-  .lb-ach-item.demo-locked { border-style: dashed; }
-  .lb-ach-count {
-    font-size: 11px;
-    color: rgba(255,255,255,0.5);
-    margin-bottom: 8px;
-  }
-  .lb-ach-count span {
-    color: var(--uf-color-accent);
-    font-weight: 700;
-  }
   .lb-section-title {
     font-size: 13px;
     font-weight: 600;
@@ -4994,15 +4864,15 @@
     .lb-you-tag { font-size: calc(9 * var(--ls)); }
     .lb-date { font-size: calc(10 * var(--ls)); }
     .lb-rides { font-size: calc(11 * var(--ls)); }
-    .lb-ach-item {
+    #lb-achievements .uag-item, #ach-lift {
       width: calc(76 * var(--ls));
       padding: calc(6 * var(--ls)) calc(4 * var(--ls));
       border-radius: calc(10 * var(--ls));
     }
-    .lb-ach-icon { font-size: calc(22 * var(--ls)); }
-    .lb-ach-name { font-size: calc(10 * var(--ls)); }   /* #517: was 8 */
-    .lb-ach-count { font-size: calc(11 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
-    .lb-achievement-grid { gap: calc(8 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
+    #lb-achievements .uag-icon, #ach-lift .uag-icon { font-size: calc(22 * var(--ls)); }
+    #lb-achievements .uag-name, #ach-lift .uag-name { font-size: calc(10 * var(--ls)); }   /* #517: was 8 */
+    #lb-achievements .uag-count { font-size: calc(11 * var(--ls)); margin-bottom: calc(8 * var(--ls)); }
+    #lb-achievements .uag-grid { gap: calc(8 * var(--ls)); margin-bottom: calc(12 * var(--ls)); }
     .lb-section-title { font-size: calc(13 * var(--ls)); margin: calc(10 * var(--ls)) 0 calc(6 * var(--ls)); }
     .lb-no-data { font-size: calc(13 * var(--ls)); padding: calc(16 * var(--ls)); }
 
@@ -6169,7 +6039,7 @@ ON</button>
      detail card below. B / Esc / scrim / Close close it. -->
 <uf-sheet id="achievements-modal" heading="Achievements" size="lg">
   <div class="leaderboard-box">
-    <div id="lb-achievements"></div>
+    <div id="lb-achievements"><uf-achievement-grid id="ach-grid"></uf-achievement-grid></div>
   </div>
 </uf-sheet>
 
@@ -6190,7 +6060,7 @@ ON</button>
      badge large (it lifts off the grid, as in the reels' lead-in), name, what
      to do, unlocked + date / locked / progress, and its number. -->
 <uf-sheet id="ach-detail" heading="Achievement" size="md">
-  <div id="ach-detail-card" class="ach-detail"></div>
+  <uf-achievement-detail id="ach-detail-card" show-id="false"></uf-achievement-detail>
 </uf-sheet>
 
 <!-- Help modal. #459 item 11: the kit sheet shell (B / Esc / scrim / Close all

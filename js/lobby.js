@@ -3571,7 +3571,7 @@ export class Lobby {
   // toggle (phone). The badges + the sheet's Close are the pad's focus set.
   _achFocusables() {
     return [
-      ...document.querySelectorAll('#lb-achievements .lb-ach-item'),
+      ...document.querySelectorAll('#lb-achievements .uag-item'),
       this._achievementsSheet.querySelector('.uf-sheet__close'),
     ].filter(Boolean);
   }
@@ -3579,14 +3579,18 @@ export class Lobby {
   _openAchievements() {
     this._renderAchievements();
     this._achievementsSheet.show();
-    if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
-    this._achResetFocus();
+    // #634: <uf-achievement-grid> renders on a microtask; this one runs after it.
+    queueMicrotask(() => {
+      if (!this._achievementsSheet.open) return;
+      if (this._achievementsSheet.body) this._achievementsSheet.body.scrollTop = 0;
+      this._achResetFocus();
+    });
   }
 
   _achResetFocus(initial = null) {
     this._activeModal = 'achievements';
     this._modalBack = () => this._closeAchievements();
-    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .lb-ach-item'));
+    this._modalFocus.setSpatial(this._achFocusables(), initial || document.querySelector('#lb-achievements .uag-item'));
   }
 
   /**
@@ -3596,16 +3600,16 @@ export class Lobby {
    * @param {-1|1} dir
    */
   _achJumpSection(dir) {
-    const secs = Array.from(document.querySelectorAll('#lb-achievements .lb-ach-section'))
-      .filter((sec) => sec.querySelector('.lb-ach-item'));
+    const secs = Array.from(document.querySelectorAll('#lb-achievements .uag-section'))
+      .filter((sec) => sec.querySelector('.uag-item'));
     if (!secs.length) return;
     const f = this._modalFocus.focused;
     const cur = f ? secs.findIndex((sec) => sec.contains(f)) : -1;
     let i;
     if (cur < 0) i = dir > 0 ? 0 : secs.length - 1;   // on Close (or nothing): RB → top, LB → last section
-    else if (dir < 0 && f !== secs[cur].querySelector('.lb-ach-item')) i = cur;
+    else if (dir < 0 && f !== secs[cur].querySelector('.uag-item')) i = cur;
     else i = Math.max(0, Math.min(secs.length - 1, cur + dir));
-    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.lb-ach-item'));
+    const first = /** @type {HTMLElement} */ (secs[i].querySelector('.uag-item'));
     this._modalFocus.focusElement(first);
     secs[i].scrollIntoView({ block: 'start', inline: 'nearest' });
   }
@@ -4023,46 +4027,36 @@ export class Lobby {
   /**
    * #401 · the badge screen: all 100 achievements grouped by section,
    * counters with their progress (3/7 days), hidden ones as ??? until earned.
+   * #634: rendered by the kit's <uf-achievement-grid> (#ach-grid).
    */
   _renderAchievements() {
-    const container = document.getElementById('lb-achievements');
-    if (!container) return;
+    const grid = /** @type {any} */ (document.getElementById('ach-grid'));
+    if (!grid) return;
     const sections = this._achievements.getSections();
-    const defs = sections.flatMap(s => s.items);
-    const earnedCount = defs.filter(d => d.earned).length;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
+    grid.sections = sections.map(sec => ({ id: sec.id, title: sec.title }));
+    grid.achievements = sections.flatMap(sec => sec.items).map(d => this._achItem(d));
+    if (!grid.dataset.achClicks) {
+      grid.dataset.achClicks = '1';
+      // a tap, Enter, or the pad's A (the focus controller clicks) opens the detail card
+      grid.addEventListener('uf-achievement-grid:select', (e) => this._openAchievementDetail(e.detail.id));
+    }
+  }
 
-    let html = '<div class="lb-ach-count"><span>' + earnedCount + '</span> / ' + defs.length + ' Unlocked</div>';
-    for (const sec of sections) {
-      const got = sec.items.filter(d => d.earned).length;
-      html += '<div class="lb-ach-section" data-section="' + sec.id + '">' +
-        '<div class="lb-ach-section-title">' + this._escapeHtml(sec.title) +
-        ' <span class="lb-ach-section-count">' + got + '/' + sec.items.length + '</span></div>';
-      html += '<div class="lb-achievement-grid">';
-      sec.items.forEach(d => {
-        const cls = (d.earned ? 'earned' : 'locked') + (d.secret ? ' secret' : '') + (d.demoLocked ? ' demo-locked' : '');
-        const prog = d.progress && d.progress[0] > 0
-          ? '<span class="lb-ach-progress">' + fmt(d.progress[0]) + '/' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '') + '</span>'
-          : '';
-        const tip = d.desc + (d.demoLocked ? ' (full game)' : '');
-        // #540: a button — a tap, Enter, or the pad's A opens the detail card.
-        html += '<button type="button" class="lb-ach-item ' + cls + '" data-ach="' + d.id + '" title="' + this._escapeHtml(tip) + '"' +
-          ' aria-label="' + this._escapeHtml(d.name + (d.earned ? ', unlocked' : ', locked')) + '">' +
-          '<span class="lb-ach-icon">' + d.icon + '</span>' +
-          '<span class="lb-ach-name">' + this._escapeHtml(d.name) + '</span>' +
-          prog +
-        '</button>';
-      });
-      html += '</div></div>';
-    }
-    container.innerHTML = html;
-    if (!container.dataset.achClicks) {
-      container.dataset.achClicks = '1';
-      container.addEventListener('click', (e) => {
-        const tile = /** @type {HTMLElement} */ (e.target).closest('.lb-ach-item');
-        if (tile) this._openAchievementDetail(tile.dataset.ach);
-      });
-    }
+  /**
+   * One of getAllDefinitions() as the kit's AchievementItem (#634). Hidden ones
+   * already carry ??? / ❔; full-game-only ones read "Full game" in the demo.
+   */
+  _achItem(d) {
+    return {
+      id: d.id, name: d.name, description: d.desc, icon: d.icon, section: d.section,
+      earned: d.earned, earnedAt: d.earnedAt, progress: d.progress, unit: d.unit, secret: d.secret,
+      unavailable: d.demoLocked ? 'Full game' : '', unavailableNote: 'Unlocks in the full game',
+      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
+      ...(d.earned && d.held ? {
+        kicker: 'Earned with a friend',
+        status: (d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked') + ' · get the full game to claim it',
+      } : {}),
+    };
   }
 
   // ── #540 · one achievement's detail card ──
@@ -4081,7 +4075,7 @@ export class Lobby {
     if (!d) return;
     this._achDetailId = id;
     this._renderAchievementDetail(d);
-    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]'));
+    const tile = /** @type {HTMLElement|null} */ (document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]'));
     const show = () => {
       this._achDetailSheet.heading = this._achievementSectionTitle(d.section);
       this._achDetailSheet.show();
@@ -4100,13 +4094,13 @@ export class Lobby {
   /** The card closed (B, Esc, the scrim, its Close): back to the grid, focus on the same badge. */
   _onAchievementDetailClosed() {
     this._clearAchievementDim();
-    const lift = document.getElementById('ach-lift');
+    const lift = document.getElementById('ach-lift-host');
     if (lift) lift.remove();
-    document.querySelectorAll('#lb-achievements .lb-ach-item.lifting').forEach(el => el.classList.remove('lifting'));
+    document.querySelectorAll('#lb-achievements .uag-item.lifting').forEach(el => el.classList.remove('lifting'));
     const id = this._achDetailId;
     this._achDetailId = null;
     if (!this._achievementsSheet.open) return;
-    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .lb-ach-item[data-ach="' + id + '"]') : null);
+    const tile = /** @type {HTMLElement|null} */ (id ? document.querySelector('#lb-achievements .uag-item[data-ach="' + id + '"]') : null);
     this._achResetFocus(tile);
     if (tile) tile.focus({ preventScroll: true });
   }
@@ -4125,47 +4119,27 @@ export class Lobby {
     return sec ? sec.title : 'Achievement';
   }
 
+  /**
+   * #634: the card is the kit's <uf-achievement-detail> (#ach-detail-card): it
+   * works out the kicker, the status and the progress bar. The game adds its
+   * own lines: the medal times (extraHtml, under the description) and where +
+   * when a best-so-far was set (footHtml, under the bar).
+   */
   _renderAchievementDetail(d) {
-    const card = document.getElementById('ach-detail-card');
+    const card = /** @type {any} */ (document.getElementById('ach-detail-card'));
     if (!card) return;
-    const fmt = v => Math.floor(v).toLocaleString('en-US');
-    const total = this._achievements.getAllDefinitions().length;
-    let state, kicker, status;
     let bestLine = '';
-    if (d.earned) {
-      state = 'earned'; kicker = 'Achievement unlocked';
-      status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
-      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
-      if (d.held) { kicker = 'Earned with a friend'; status += ' · get the full game to claim it'; }
-    } else if (d.secret) {
-      state = 'secret'; kicker = 'Hidden'; status = 'Revealed when you earn it';
-    } else if (d.demoLocked) {
-      state = 'full'; kicker = 'Full game'; status = 'Unlocks in the full game';
-    } else if (d.progress && d.progress[0] > 0) {
-      state = 'progress'; kicker = 'In progress';
-      status = fmt(d.progress[0]) + ' / ' + fmt(d.progress[1]) + (d.unit ? ' ' + d.unit : '');
-      // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
-      if (d.bestAt && d.bestAt.at) {
-        const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
-        const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-        bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
-      }
-    } else {
-      state = 'locked'; kicker = 'Locked'; status = 'Not yet';
+    // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
+    if (!d.earned && !d.secret && !d.demoLocked && d.progress && d.progress[0] > 0 && d.bestAt && d.bestAt.at) {
+      const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
+      const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
     }
-    const bar = state === 'progress'
-      ? '<div class="ach-detail-bar"><i style="width:' + Math.round(100 * d.progress[0] / Math.max(1, d.progress[1])) + '%"></i></div>'
-      : '';
-    card.dataset.state = state;
-    card.innerHTML =
-      '<div class="ach-detail-kicker">' + kicker + '</div>' +
-      '<div class="ach-detail-badge"><span>' + d.icon + '</span></div>' +
-      '<div class="ach-detail-name">' + this._escapeHtml(d.name) + '</div>' +
-      '<div class="ach-detail-desc">' + this._escapeHtml(d.desc) + '</div>' +
-      this._medalTimesHtml(d) +
-      '<div class="ach-detail-status">' + this._escapeHtml(status) + '</div>' + bar +
-      (bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '') +
-      '<div class="ach-detail-count">No. ' + d.n + ' of ' + total + '</div>';
+    card.achievement = this._achItem(d);
+    card.number = d.n;
+    card.total = this._achievements.getAllDefinitions().length;
+    card.extraHtml = this._medalTimesHtml(d);
+    card.footHtml = bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '';
   }
 
   /**
@@ -4206,13 +4180,18 @@ export class Lobby {
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const r = tile ? tile.getBoundingClientRect() : null;
     if (!tile || !r || !r.width || reduce || typeof tile.animate !== 'function') { done(); return; }
-    const old = document.getElementById('ach-lift');
+    const old = document.getElementById('ach-lift-host');
     if (old) old.remove();
     const c = /** @type {HTMLElement} */ (tile.cloneNode(true));
     c.id = 'ach-lift';
     c.classList.remove('gamepad-focus');
     c.style.left = r.left + 'px'; c.style.top = r.top + 'px'; c.style.width = r.width + 'px'; c.style.height = r.height + 'px';
-    document.body.appendChild(c);
+    // #634: the copy sits in a .uag-host so the kit's badge styles reach it outside the grid
+    const host = document.createElement('div');
+    host.id = 'ach-lift-host';
+    host.className = 'uag-host';
+    host.appendChild(c);
+    document.body.appendChild(host);
     tile.classList.add('lifting');
     const W = window.innerWidth, H = window.innerHeight;
     const S = Math.min(0.6 * W / r.width, 0.45 * H / r.height);
@@ -4225,7 +4204,7 @@ export class Lobby {
     if (body) body.classList.add('ach-dim');
     this._achLifting = true;
     let fired = false;
-    const finish = () => { if (fired) return; fired = true; this._achLifting = false; c.remove(); tile.classList.remove('lifting'); done(); };
+    const finish = () => { if (fired) return; fired = true; this._achLifting = false; host.remove(); tile.classList.remove('lifting'); done(); };
     anim.finished.then(finish, finish);
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
