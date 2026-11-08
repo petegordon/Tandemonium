@@ -2503,22 +2503,18 @@ export class Lobby {
     });
 
     // #612 · Sign in with Discord. On this device: go to Discord and back. In
-    // the desktop app: open the system browser on the device-code page (the QR
-    // under it does the same from a phone).
+    // the desktop app: the device code, QR first (a phone from the couch), with
+    // OPEN ON THIS COMPUTER under it for a player at the desk. The browser no
+    // longer opens by itself: on a TV it opened out of sight.
     document.getElementById('profile-popup-discord').addEventListener('click', async () => {
-      if (window.electronApp && window.electronApp.openSignIn) {
-        const dev = await this._showProfileDevice();
-        if (dev) window.electronApp.openSignIn(dev.url);
-        return;
-      }
+      if (this._hasDesktopBrowser()) { await this._showProfileDevice(); return; }
       const ok = await this.auth.signInWithDiscordRedirect();
       if (!ok) this._showProfileError(this.auth.lastAuthError || 'Discord sign-in is unavailable');
     });
-    // A Steam player links Discord: always the device code (the system
-    // browser in the desktop app, or a phone).
-    document.getElementById('profile-popup-link-discord').addEventListener('click', async () => {
-      const dev = await this._showProfileDevice();
-      if (dev && window.electronApp && window.electronApp.openSignIn) window.electronApp.openSignIn(dev.url);
+    // A Steam player links Discord: always the device code (QR, or this computer's browser).
+    document.getElementById('profile-popup-link-discord').addEventListener('click', () => this._showProfileDevice());
+    document.getElementById('profile-popup-open-browser').addEventListener('click', () => {
+      if (this._profileDevUrl && this._hasDesktopBrowser()) window.electronApp.openSignIn(this._profileDevUrl);
     });
 
     // Back from a Discord redirect: sign in with what it brought.
@@ -3593,7 +3589,10 @@ export class Lobby {
     const ids = this.auth.isLoggedIn()
       ? ['profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
       : ['profile-popup-steam', 'profile-popup-discord', 'profile-popup-signin-back'];
-    return ids.map((id) => document.getElementById(id)).filter((el) => el && el.style.display !== 'none');
+    // The QR's OPEN ON THIS COMPUTER sits just above CLOSE while the code is showing.
+    const box = document.getElementById('profile-popup-device');
+    if (box && !box.hidden) ids.splice(ids.length - 1, 0, 'profile-popup-open-browser');
+    return ids.map((id) => document.getElementById(id)).filter((el) => el && !el.hidden && el.style.display !== 'none');
   }
 
   /**
@@ -3688,6 +3687,11 @@ export class Lobby {
   async _showProfileDevice() {
     const box = document.getElementById('profile-popup-device');
     if (!box) return null;
+    this._profileDevUrl = null;
+    const openBtn = document.getElementById('profile-popup-open-browser');
+    if (openBtn) openBtn.style.display = 'none';
+    // The QR replaces the button that asked for it (LINK DISCORD / SIGN IN WITH DISCORD).
+    this._setDiscordTriggersHidden(true);
     const section = this.auth.isLoggedIn()
       ? document.querySelector('.profile-popup-content')
       : document.getElementById('profile-popup-signin');
@@ -3727,13 +3731,35 @@ export class Lobby {
     } catch (_) { qrEl.innerHTML = ''; }
     document.getElementById('profile-popup-code').textContent = dev.code || '';
     this._setProfileDeviceStatus('Waiting for Discord…');
+    this._profileDevUrl = dev.url;
+    if (openBtn && this._hasDesktopBrowser()) openBtn.style.display = '';
+    // The pad list loses the hidden trigger and gains OPEN ON THIS COMPUTER; focus lands
+    // on it (A opens the browser, B closes).
+    if (this._activeModal === 'profile') {
+      const items = this._profileItems();
+      this._modalFocus.setItems(items, Math.max(0, items.indexOf(openBtn)));
+    }
     return dev;
+  }
+
+  /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
+  _setDiscordTriggersHidden(hide) {
+    for (const id of ['profile-popup-discord', 'profile-popup-link-discord']) {
+      const el = document.getElementById(id);
+      if (el) el.hidden = hide;
+    }
+  }
+
+  /** The desktop app can open this computer's browser on a sign-in page. */
+  _hasDesktopBrowser() {
+    return !!(window.electronApp && window.electronApp.openSignIn);
   }
 
   /** Hide the QR steps. Stop (the default) also stops polling. */
   _hideProfileDevice(stop = true) {
     const box = document.getElementById('profile-popup-device');
     if (box) box.hidden = true;
+    this._setDiscordTriggersHidden(false);
     // Closing the popup keeps the code alive: the player may be mid-sign-in on
     // their phone. It is stopped on success, logout or expiry.
     if (stop) this.auth.cancelDiscordDevice();
