@@ -1705,6 +1705,10 @@ class Game {
     if (sourceType === 'gamepad' && this.inputP2) {
       this.inputP2.motionEnabled = true;
       this.inputP2.startTiltCalibration();
+      // #646: then P2's own controller's settings (stick / gyro / steering feel).
+      if (this.lobby && this.lobby.applySeatControllerSettings) {
+        this.lobby.applySeatControllerSettings({ n: 2, input: this.inputP2, type: 'gamepad', slotId: this.inputP2._slot ? this.inputP2._slot.id : null });
+      }
     }
 
     // Show instructions (tap to start)
@@ -1816,6 +1820,10 @@ class Game {
         if (m.type === 'gamepad' && !m.isP1) {
           m.input.motionEnabled = true;
           m.input.startTiltCalibration();
+          // #646: then this joiner's own controller's settings (stick / gyro / steering feel).
+          if (this.lobby && this.lobby.applySeatControllerSettings) {
+            this.lobby.applySeatControllerSettings({ n: m.n, input: m.input, type: 'gamepad', slotId: m.slotId || (m.input._slot ? m.input._slot.id : null) });
+          }
         }
       }
     }
@@ -9044,7 +9052,9 @@ class Game {
       const { values, migrated } = migrateSavedTuning(data);
       setTuningBase(tuningBaseFromSave(data, values));
       // #430: the player's own choice wins over the copy inside the calibration save.
-      const pref = loadSteeringFeelPref();
+      // #646: and that choice is Player 1's controller's (js/controller-settings.js).
+      const padFeel = this.lobby && this.lobby.p1SteeringFeel ? this.lobby.p1SteeringFeel() : null;
+      const pref = padFeel != null ? padFeel : loadSteeringFeelPref();
       applySteeringFeel(pref != null ? pref : Number.isFinite(data.steeringFeel) ? data.steeringFeel
         : TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel);
       if (migrated) {
@@ -10229,7 +10239,8 @@ class Game {
     // Save the final steering feel value
     const slider = document.getElementById('steering-feel-slider');
     const feel = (slider ? slider.value : BALANCE_DEFAULTS.steeringFeel * 100) / 100;
-    saveSteeringFeelPref(feel);   // #430: the same choice the Controls sheet shows
+    saveSteeringFeelPref(feel);   // #430: the same choice Players shows
+    try { if (this.lobby && this.lobby._rememberP1Steering) this.lobby._rememberP1Steering({ feel }); } catch {}   // #646: P1's controller's
     try {
       const saved = localStorage.getItem(this._tuningKey());
       if (saved) {

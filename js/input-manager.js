@@ -529,6 +529,8 @@ export class InputManager {
     this._gpTriggerRightPressed = false;
     this.suppressGamepadBadge = false;
     this.suppressGamepadLean = false;
+    /** #646 · this seat's controller's own feel-scaled motion params (feelTuning), or null = TUNE. */
+    this.controllerTune = null;
 
     // Quirk flag: Cyclone A/B swap. Set by attachSlot() / _onSlotChange.
     this._gpSwapAB = false;
@@ -1100,9 +1102,12 @@ export class InputManager {
     this.motionRawRelative = relative;
 
     // Select tuning parameters based on input source
-    const sensitivity = isGyro ? TUNE.gyroSensitivity : TUNE.sensitivity;
-    const deadzone = isGyro ? TUNE.gyroDeadzone : TUNE.deadzone;
-    const outputSmoothing = isGyro ? TUNE.gyroOutputSmoothing : TUNE.outputSmoothing;
+    // #646: a seat's controller may carry its own steering feel (controllerTune,
+    // from js/controller-settings.js); Player 1's lives in TUNE itself.
+    const T = this.controllerTune || TUNE;
+    const sensitivity = isGyro ? T.gyroSensitivity : T.sensitivity;
+    const deadzone = isGyro ? T.gyroDeadzone : T.deadzone;
+    const outputSmoothing = isGyro ? T.gyroOutputSmoothing : T.outputSmoothing;
 
     const absRel = Math.abs(relative);
     let lean;
@@ -1117,7 +1122,7 @@ export class InputManager {
         lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
       } else {
         const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
-        lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, TUNE.gyroResponseCurve));
+        lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, T.gyroResponseCurve));
       }
     } else {
       // Mobile tilt: same piecewise approach
@@ -1131,7 +1136,7 @@ export class InputManager {
           lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
         } else {
           const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
-          lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, TUNE.responseCurve));
+          lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, T.responseCurve));
         }
       }
     }

@@ -234,6 +234,20 @@ real-hardware rows stay manual.
 | VS-09 | Versus: the two teams' geese wear different outfits, each in its team's colourway (blue / red) (#538); the lobby bike keeps its saved colours after | A | `smoke:versus` |
 | VS-08 | 2v2 at 1080p holds frame rate on the target PC | M | — |
 
+### Players (#646, replaces Controls)
+
+| ID | Check | Tag | Covered by |
+|---|---|---|---|
+| PL-01 | The bar's Players pill opens Players: one row per seat on this screen, each with its controller (model, light, Buzz) and that controller's Stick / Gyro / Button prompts; Use your phone instead below | A | `smoke:players` |
+| PL-02 | Steering feel on P2's row changes only P2's controller (P1's and TUNE keep theirs); P2's balance controller rides with it; old screen-wide settings migrate as every pad's start | A | `smoke:players`, `test/unit/controller-settings` |
+| PL-03 | P2's Stick steering flips only P2's stick | A | `smoke:players` |
+| PL-04 | P2 signs in from their row (QR + code), then Sign out: back to Guest | A | `smoke:players` |
+| PL-05 | Web: a signed-in P1 can Sign out from Players | A | `smoke:players` |
+| PL-06 | TV: P1's pad reaches every row's controls, A toggles, B closes | A | `smoke:players` |
+| PL-07 | Versus: an unseated controller under Available controllers becomes Player 3 when selected | A | `smoke:players` |
+| PL-08 | Steam build: P1 has no Sign out | A | `smoke:players` |
+| PL-09 | On the TV with two real pads (one with a gyro): set P2's Steering feel to Responsive, ride, feel P2 steer quicker while P1 is unchanged; relaunch: each pad keeps its own | M | — |
+
 ## 6. Online co-op (TOGETHER → online)
 
 Two devices on different networks for the M rows.
@@ -327,11 +341,11 @@ Two devices on different networks for the M rows.
 | LY-12 | Steam build: Help's Profile line says Steam; the Profile pill shows the Steam avatar (#517) | M | — |
 | LY-13 | Grandma's finish: Grandma walks round her house to the line, never through it (#517) | A | `smoke:grandma` |
 | LY-14 | Desktop/TV bike chooser is 51.5vh tall, clear of the bar, and the whole bike stays in view as it turns (#521, #553) | A | `smoke:lobby-layout` |
-| LY-15 | Controls sheet on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
+| LY-15 | Players sheet (was Controls, #646) on TV: a focused setting row's green ring is whole, not clipped at the sides (#534) | A | `smoke:tv-nav` |
 | LY-16 | Leaderboard on TV: a focused tab in the top row shows its whole green ring, not clipped by the sheet (#534) | A | `smoke:tv-nav` |
 | LY-17 | Tutorial finish with a pad: ↑/↓ between the Steering Feel slider and the buttons, ←/→ along the buttons, ←/→ move the slider only while it is focused (#544) | A | `smoke:tv-nav` |
 | TV-01 | TV (1080p): tutorial coaching — instruction line at `--uf-size-2xl`, phase dots, COLLECT marker, dodge arrow, crash/off-road notes at TV sizes (#541) | A | `smoke:tv-sizes` |
-| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in the Controls sheet (#542) | A | `smoke:tv-sizes` |
+| TV-02 | TV (1080p): Steering feel's Stable / Responsive at `--uf-size-md` with a bigger track + thumb, on the tutorial finish and in each controller's row in Players (#542, #646) | A | `smoke:tv-sizes` |
 | TV-03 | TV (1080p) first page: dimmed geese-from-behind art fills the stage, the right panel fades into it, the bike chooser sits low with its top level with RIDE TOGETHER, and its arrows read L1 / R1 (LB / RB …) at TV size with a pad (#553) | A | `smoke:tv-sizes` |
 | TV-04 | A TV's built-in browser (Android TV / webOS / Tizen / Fire TV, no touch, 960×540) gets the TV lobby laid out 1920 wide, Phone as controller (Pair hidden: no WebHID on a TV), Auto at Low; on a first visit the boot veil says Press any button to start and a remote key lifts it; the perf readout's display line names the device; a phone is still a phone | A | `smoke:tv-sizes` |
 | TV-04h | Same on a real TV browser: TV lobby, Phone as controller pairs, no Pair link, Low tier, perf readout shows the TV model | M | — |

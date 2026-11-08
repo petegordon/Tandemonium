@@ -5,15 +5,17 @@
 //          marker and dodge arrow are at the kit's TV sizes, not phone pixels.
 //   TV-02  Steering feel (#542): the Stable / Responsive labels and the slider
 //          thumb are readable / reachable, on the tutorial finish screen and
-//          in the Controls sheet.
+//          in each controller's row in Players (#646).
 //   TV-04  a TV's own browser (Android TV, 960×540, no touch): TV lobby laid out
 //          1920 wide, Phone as controller (no WebHID Pair), Low tier, a
 //          "Press any button" boot veil, and the perf readout names the device.
 import { startHarness } from './lib/smoke-harness.mjs';
+import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
 const h = await startHarness({ port: 8994, outDir: 'tandemonium-tv-sizes' });
 const { check } = h;
-const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke' } });
+// No pad at boot (the checks before TV-02 read the keyboard layout); #646's Players row needs one, plugged there.
+const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke' }, before: (p) => installFakeGamepads(p, { atBoot: [] }) });
 await page.waitForFunction(() => window._game && window._game.lobby, { timeout: 90000, polling: 100 });
 const kit = () => page.evaluate(() => {
   const probe = document.createElement('span'); document.body.appendChild(probe);
@@ -97,18 +99,22 @@ check(fin.trackH >= K.md * 0.35 && fin.sliderW >= 200, 'TV-02 tutorial finish: t
 await h.shot(page, '2-tutorial-finish');
 await page.evaluate(() => document.getElementById('tutorial-complete').classList.remove('visible'));
 
-// ── TV-02 · Steering feel, Controls sheet ──
-await page.evaluate(() => document.getElementById('bar-controls').click());
-await page.waitForFunction(() => document.getElementById('controls-sheet').open === true, { timeout: 15000, polling: 100 });
+// ── TV-02 · Steering feel, Players (#646: one per controller) ──
+const tvPads = fakePads(page);
+const xb = await tvPads.plug('xbox');
+await tvPads.tap(xb, 'A');
+await page.waitForFunction(() => !!window._game.lobby._p1Identity(), { timeout: 15000, polling: 100 });
+await page.evaluate(() => document.getElementById('bar-players').click());
+await page.waitForFunction(() => !!document.querySelector('#players-sheet .pl-row[data-n="1"] uf-setting[data-set="gyro"]'), { timeout: 15000, polling: 100 });
 const ctl = await page.evaluate(() => {
-  const gyro = document.getElementById('set-gyro'); gyro.checked = true;   // the detail row shows with gyro on
-  const ends = [...document.querySelectorAll('#controls-sheet .set-feel-end')].map((e) => parseFloat(getComputedStyle(e).fontSize));
-  const s = document.getElementById('set-feel-slider'), r = s.getBoundingClientRect();
+  const gyro = document.querySelector('#players-sheet .pl-row[data-n="1"] uf-setting[data-set="gyro"]'); gyro.disabled = false; gyro.checked = true;   // the detail row shows with gyro on
+  const ends = [...gyro.querySelectorAll('.set-feel-end')].map((e) => parseFloat(getComputedStyle(e).fontSize));
+  const s = gyro.querySelector('input.pl-feel-slider'), r = s.getBoundingClientRect();
   return { ends, w: r.width, h: r.height };
 });
-check(ctl.ends.length === 2 && ctl.ends.every((v) => v >= K.md - 0.5), 'TV-02 Controls sheet: Stable / Responsive at --uf-size-md', { ...ctl, md: K.md });
-check(ctl.h >= 24, 'TV-02 Controls sheet: the slider is taller than the browser default', ctl);
-await h.shot(page, '3-controls');
+check(ctl.ends.length === 2 && ctl.ends.every((v) => v >= K.md - 0.5), 'TV-02 Players: Stable / Responsive at --uf-size-md', { ...ctl, md: K.md });
+check(ctl.h >= 24, 'TV-02 Players: the slider is taller than the browser default', ctl);
+await h.shot(page, '3-players');
 
 // ── TV-04 · a TV's built-in browser is a big screen, not a phone ──
 const TV_UA = 'Mozilla/5.0 (Linux; Android 12; BRAVIA 4K VH2 Build/STT1.211025.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';

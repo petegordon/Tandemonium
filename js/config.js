@@ -517,29 +517,41 @@ function raiseGyroFloor(values, gyroSave) {
  * @param {number} feel — 0..1 slider value
  */
 export function applySteeringFeel(feel) {
-  TUNE.steeringFeel = feel;
-  // Deadzone: Stable = wider (×1.4), Responsive = tighter (×0.6)
+  Object.assign(TUNE, feelTuning(feel));
+}
+
+/**
+ * #646 · the motion params one steering feel gives, from a calibration base
+ * (TUNING_BASE by default). Pure: applySteeringFeel writes the result into
+ * TUNE for Player 1; players 2–4 carry their own controller's copy on their
+ * InputManager (controllerTune), so each pad steers with its own feel.
+ * @param {number} feel 0 = Stable … 1 = Responsive
+ * @param {Record<string, number>} [base]
+ */
+export function feelTuning(feel, base = TUNING_BASE) {
+  // Deadzone: Stable = wider (x1.4), Responsive = tighter (x0.6)
   const dzScale = 1.4 - 0.8 * feel;
-  // Smoothing: Stable = more smoothing (×0.6 output factor), Responsive = less (×1.5)
+  // Smoothing: Stable = more smoothing (x0.6 output factor), Responsive = less (x1.5)
   const smScale = 0.6 + 0.9 * feel;
   // Sensitivity is DEGREES of tilt for a full lean, so a bigger number steers
-  // less. Stable = more degrees (×1.15, gentler), Responsive = fewer (×0.85).
-  // (B2: this was 0.85 + 0.3·feel, which made the Stable end twitchier.)
+  // less. Stable = more degrees (x1.15, gentler), Responsive = fewer (x0.85).
+  // (B2: this was 0.85 + 0.3*feel, which made the Stable end twitchier.)
   const senScale = 1.15 - 0.3 * feel;
   // Response curve: Stable = higher exponent (more gradual center), Responsive = lower
   const rcShift = 0.3 - 0.6 * feel; // +0.3 at Stable, -0.3 at Responsive
-
-  // Apply to mobile tilt params (scaled from calibrated base)
-  TUNE.deadzone = Math.min(8, Math.max(2, TUNING_BASE.deadzone * dzScale));
-  TUNE.outputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.outputSmoothing * smScale));
-  TUNE.sensitivity = Math.min(60, Math.max(15, TUNING_BASE.sensitivity * senScale));
-  TUNE.responseCurve = Math.min(2.5, Math.max(1.0, TUNING_BASE.responseCurve + rcShift));
-
-  // Apply to gyro params
-  TUNE.gyroDeadzone = Math.min(8, Math.max(2, TUNING_BASE.gyroDeadzone * dzScale));
-  TUNE.gyroOutputSmoothing = Math.min(0.8, Math.max(0.15, TUNING_BASE.gyroOutputSmoothing * smScale));
-  TUNE.gyroSensitivity = Math.min(60, Math.max(GYRO_MIN_SENSITIVITY, TUNING_BASE.gyroSensitivity * senScale));
-  TUNE.gyroResponseCurve = Math.min(2.0, Math.max(1.0, TUNING_BASE.gyroResponseCurve + rcShift));
+  return {
+    steeringFeel: feel,
+    // Mobile tilt params (scaled from calibrated base)
+    deadzone: Math.min(8, Math.max(2, base.deadzone * dzScale)),
+    outputSmoothing: Math.min(0.8, Math.max(0.15, base.outputSmoothing * smScale)),
+    sensitivity: Math.min(60, Math.max(15, base.sensitivity * senScale)),
+    responseCurve: Math.min(2.5, Math.max(1.0, base.responseCurve + rcShift)),
+    // Gyro params
+    gyroDeadzone: Math.min(8, Math.max(2, base.gyroDeadzone * dzScale)),
+    gyroOutputSmoothing: Math.min(0.8, Math.max(0.15, base.gyroOutputSmoothing * smScale)),
+    gyroSensitivity: Math.min(60, Math.max(GYRO_MIN_SENSITIVITY, base.gyroSensitivity * senScale)),
+    gyroResponseCurve: Math.min(2.0, Math.max(1.0, base.gyroResponseCurve + rcShift)),
+  };
 }
 
 // #430: the player's Steering feel choice, kept on its own so it survives

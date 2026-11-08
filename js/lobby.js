@@ -45,7 +45,7 @@ import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager, isSteamTwinPad } from './input-manager.js';
-import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed } from './daily-seed.js';
@@ -94,6 +94,8 @@ import { playerLooks, padKeyFor, vidPidFromGamepadId, lookToWire, lookFromWire, 
 import { colourwaysFor } from './goose-colourways.js';   // #672
 import { getP1Look } from './config.js';   // #672
 import { DressingRoom } from './dressing-room.js';   // #548
+import { ControllerSettings, settingsKeyFor } from './controller-settings.js';   // #646
+import { PlayersSheet, applyPadSettings } from './players-sheet.js';   // #646
 import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
@@ -1455,8 +1457,9 @@ export class Lobby {
       this._toggleCamera();
       analytics.trackEvent('video_toggle', { enabled: this.cameraActive });
     });
-    this.toggleMotion.addEventListener('click', () => this._toggleMotion());
-    this.toggleJoystick.addEventListener('click', () => this._toggleJoystick());
+    // #646: a choice made here is P1's controller's (js/controller-settings.js).
+    this.toggleMotion.addEventListener('click', () => { const want = !this.motionActive; this._toggleMotion(); this._rememberP1Steering({ gyro: want }); });
+    this.toggleJoystick.addEventListener('click', () => { const want = !this.joystickActive; this._toggleJoystick(); this._rememberP1Steering({ stick: want }); });
     this.toggleAudio.addEventListener('click', () => {
       this._toggleAudio();
       analytics.trackEvent('audio_toggle', { enabled: this.audioActive });
@@ -3054,9 +3057,18 @@ export class Lobby {
    * choice (tandemonium_joystick in localStorage).
    */
   _joystickOffForGyro() {
-    let saved = null;
-    try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
-    if (saved !== null || !this.joystickActive) return;
+    // #646: the choice is P1's controller's. A pad with its own Stick or Gyro
+    // choice (or the migrated screen-wide one) rides with that instead.
+    const padKey = this._p1SettingsKey();
+    if (padKey) {
+      const s = this.controllerSettings.get(padKey);
+      if (s.stick !== null || s.gyro === false) { this._applyP1ControllerSettings(); return; }
+    } else {
+      let saved = null;
+      try { saved = localStorage.getItem('tandemonium_joystick'); } catch {}
+      if (saved !== null) return;
+    }
+    if (!this.joystickActive) return;
     // Never leave a rider with nothing to steer by: only once the gyro is live.
     if (!this.input || !this.input.motionEnabled) return;
     this.joystickActive = false;
@@ -3185,15 +3197,15 @@ export class Lobby {
   // At ≥1024px the round toggle columns, the Back hint and the credits footer
   // give way to <uf-system-bar id="lobby-bar"> (css/lobby-tv.css). Its pills
   // run the same handlers as the toggles; Stick / Gyro steering live in the
-  // Controls sheet (<uf-sheet id="controls-sheet">) behind one pill that names
+  // Players sheet (#646, <uf-sheet id="players-sheet">) behind one pill that names
   // the controller in use. Below 1024px none of this shows and the toggles
   // work as before.
 
   _initSystemBar() {
     const $ = (id) => document.getElementById(id);
     this._bar = $('lobby-bar');
-    this._controlsSheet = $('controls-sheet');
-    if (!this._bar || !this._controlsSheet) return;
+    this._playersSheet = $('players-sheet');   // #646: Players replaces Controls
+    if (!this._bar || !this._playersSheet) return;
     this._tvQuery = window.matchMedia('(min-width: 1024px)');
     const pill = (id, fn) => {
       const el = $(id);
@@ -3207,7 +3219,7 @@ export class Lobby {
       leaderboard: pill('bar-leaderboard', () => this._openLeaderboard()),
       achievements: pill('bar-achievements', () => this._openAchievements()),   // #540
       profile: pill('bar-profile', (el) => { this._anchorPopup(this.profilePopup, el); this._toggleProfile(); }),
-      controls: pill('bar-controls', () => this._openControlsSheet()),
+      players: pill('bar-players', () => this._openPlayersSheet()),   // #646
       music: pill('bar-music', (el) => {
         if (this._volumePicker.classList.contains('visible')) { this._hideVolumePicker(); return; }
         this._anchorPopup(this._volumePicker, el);
@@ -3224,7 +3236,7 @@ export class Lobby {
     // below 1024px, the hidden bar are skipped by the FocusController).
     const p = this._barPills;
     this._modeColumns[0].push(p.help, p.leaderboard, p.achievements, p.profile);
-    this._modeColumns[2].push(p.controls, p.music, p.settings, p.quit);   // #517: Quit on the far right
+    this._modeColumns[2].push(p.players, p.music, p.settings, p.quit);   // #517: Quit on the far right
     // The bike chooser's ‹ › join the D-pad focus too: a phone remote or a TV
     // remote has no L1 / R1, so ← from RIDE TOGETHER lands on › and OK changes
     // the bike. Hidden off the first page, where the focus skips them.
@@ -3306,16 +3318,12 @@ export class Lobby {
       });
     }
 
-    // ── Controls sheet ──
-    const sheet = this._controlsSheet;
+    // ── Players sheet (#646) ── who is playing, their controllers and each controller's settings.
+    const sheet = this._playersSheet;
     sheet.attachFocus(this._stepFocus);
-    $('controls-done')?.addEventListener('click', () => sheet.close());
-    $('set-stick')?.addEventListener('change', () => { this._toggleJoystick(); this._syncSystemBar(); });
-    $('set-gyro')?.addEventListener('change', () => { this._toggleMotion(); this._syncSystemBar(); });
+    this._players = new PlayersSheet(this, sheet);
+    $('players-done')?.addEventListener('click', () => sheet.close());
     $('set-phone')?.addEventListener('uf-setting:open', () => { sheet.close(); $('btn-mode-phone')?.click(); });
-    const slider = /** @type {HTMLInputElement|null} */ ($('set-feel-slider'));
-    if (slider) slider.addEventListener('input', () => this._applySteeringFeel(slider.value / 100));
-    $('set-recalibrate')?.addEventListener('click', () => { this._recalibrateSteering(); sheet.close(); });
     sheet.addEventListener('uf-sheet:close', () => { this._stepFocus.setSlider(null); this._syncSystemBar(); });
 
     // ── Quit confirm (#172) ── desktop app only. The kit sheet handles B /
@@ -3349,20 +3357,16 @@ export class Lobby {
     popup.style.bottom = `${Math.round(window.innerHeight - r.top + 12)}px`;
   }
 
-  _openControlsSheet() {
+  _openPlayersSheet() {
     this._syncSystemBar();
-    const slider = /** @type {HTMLInputElement|null} */ (document.getElementById('set-feel-slider'));
-    if (slider) slider.value = String(Math.round((TUNE.steeringFeel != null ? TUNE.steeringFeel : BALANCE_DEFAULTS.steeringFeel) * 100));
-    // #430: on a controller, left/right moves the Steering feel slider (the
-    // sheet is a vertical list, so up/down still moves between rows).
-    if (slider) this._stepFocus.setSlider(slider);
-    this._controlsSheet.show();
+    this._players.show();
   }
 
-  /** Steering feel, shared by the Motion popup's slider and the Controls sheet's. */
+  /** Player 1's steering feel, from the Motion popup's slider or P1's row in Players. */
   _applySteeringFeel(feel) {
     const oldFeel = TUNE.steeringFeel;
     applySteeringFeel(feel);
+    this._rememberP1Steering({ feel });   // #646: Player 1's controller's feel
     saveSteeringFeelPref(feel);   // #430: kept even with no calibration saved
     analytics.trackEvent('steering_feel_change', { value: feel, from_value: oldFeel });
     try {
@@ -3404,11 +3408,18 @@ export class Lobby {
     const id = this._p1Identity();
     const stick = !!this.joystickActive, gyro = !!this.motionActive;
     const mode = [stick && 'stick', gyro && 'gyro'].filter(Boolean).join(' + ') || 'buttons';
-    const label = document.getElementById('bar-controls-label');
+    void mode;
+    // #646: the pill opens Players; it counts this screen's seats once there is more than one.
+    const label = document.getElementById('bar-players-label');
     if (label) {
-      const text = id ? `${id.shortName} · ${mode}` : 'Controls';
+      let count = 1;
+      try { count = this.playersOnScreen().length; } catch (e) {}
+      const text = count > 1 ? `Players · ${count}` : 'Players';
       if (label.textContent !== text) label.textContent = text;
     }
+    // #646: P1's controller brings its own settings when it changes.
+    const p1Key = this._p1SettingsKey();
+    if (p1Key !== this._p1SettingsKeyApplied) { this._p1SettingsKeyApplied = p1Key; if (p1Key) this._applyP1ControllerSettings(); }
     // #540: the Achievements pill reads "earned / total" (Pete: the count, not the word).
     const count = document.getElementById('bar-achievements-count');
     if (count && this._achievements) {
@@ -3417,10 +3428,13 @@ export class Lobby {
       if (count.textContent !== text) count.textContent = text;
     }
     const Glyph = customElements.get('uf-controller-glyph');
-    const key = id ? `${id.glyphFamily}${id.swapAB ? '/swap' : ''}` : 'generic';
+    // #646: P1's controller may have its Button prompts set by hand (Players).
+    const promptPick = p1Key ? this.controllerSettings.get(p1Key).prompts : 'auto';
+    const family = promptPick && promptPick !== 'auto' ? promptPick : (id ? id.glyphFamily : 'generic');
+    const key = `${family}${id && id.swapAB ? '/swap' : ''}`;
     if (Glyph && key !== this._glyphKey) {
       this._glyphKey = key;
-      Glyph.setDefault({ family: id ? id.glyphFamily : 'generic', swap: !!(id && id.swapAB) });
+      Glyph.setDefault({ family, swap: !!(id && id.swapAB) });
     }
     this._barPills?.music?.classList.toggle('active', !!this.musicActive);
     // Back shows on every step but the first.
@@ -3433,36 +3447,234 @@ export class Lobby {
       const want = this._canQuit && flow && flow.current === 'lobby-mode' ? '' : 'none';
       if (quit.style.display !== want) quit.style.display = want;
     }
-    // The sheet, when open.
-    const sheet = this._controlsSheet;
-    if (!sheet || !sheet.open) return;
-    const seat = document.getElementById('controls-seat');
-    if (seat) {
-      const me = id ? this.seatPerson(1) : null;
-      Object.assign(seat, { who: me ? me.name : id ? id.shortName : 'No controller yet', pic: me ? me.pic : '', source: me ? me.source : '' });
-      seat.dev = id ? `Player 1 · ${id.name}` : 'Press a button on a controller';
-      seat.state = id ? 'joined' : 'open';
-      seat.badge = id ? 'P1' : '';
+    // Players, when open (#646).
+    if (this._players) this._players.sync();
+  }
+
+  // ============================================================
+  // PLAYERS (#646) — per-controller steering settings + this screen's seats
+  // ============================================================
+  // Stick / gyro / steering feel / button prompts follow the controller
+  // (js/controller-settings.js: serial in the desktop app, model in a browser).
+  // Player 1's ride through the lobby's own toggles + TUNE; players 2–4's are
+  // set on their InputManager (applyPadSettings), read by their BalanceController.
+
+  /** The per-controller settings store, made on first use. */
+  get controllerSettings() {
+    if (!this._controllerSettings) {
+      let store = null;
+      try { store = window.localStorage; } catch (e) {}
+      this._controllerSettings = new ControllerSettings({ store, defaultFeel: BALANCE_DEFAULTS.steeringFeel });
     }
-    const set = (sid, prop, v) => { const el = document.getElementById(sid); if (el && el[prop] !== v) el[prop] = v; };
-    set('set-stick', 'checked', stick);
-    set('set-gyro', 'checked', gyro);
-    // Gyro defaults on whenever the controller's motion sensors are bound
-    // (the desktop app grants every controller, so that's automatic there).
-    // A browser that hasn't granted this controller yet needs one click.
-    const gyroCapable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro);
-    set('set-gyro', 'description', !gyroCapable ? 'Not available on this controller'
-      : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
-      : 'Turn on to connect the gyro (your browser asks once)');
-    const pads = (navigator.getGamepads && navigator.getGamepads()) || [];
-    const roster = document.getElementById('controls-roster');
-    if (roster && this.controllerManager?.controllerRoster) {
-      // fixRosterRow: a slot row's WebHID vid:pid names it (#458 item 14).
-      roster.rows = this.controllerManager.controllerRoster(pads, {
-        seatOf: (slotId) => (slotId === 'P1' ? { player: 1, seat: { role: 'player', label: 'P1 · you', tone: 'captain' } } : null),
-        keyboard: true,
-      }).map(fixRosterRow).map((r) => (r.player === 1 ? { ...r, person: this.seatPerson(1) } : r));
+    return this._controllerSettings;
+  }
+
+  /**
+   * This screen's seats for Players: the Dressing Room's (versus, or P1 + a seated local P2),
+   * plus a local Player 2 the narrow layout seated straight onto the level step.
+   * An online partner is not here (they stay on the room screen).
+   */
+  playersOnScreen() {
+    let out = [];
+    try { out = this._roomPlayers(); } catch (e) { out = []; }
+    const im = this._localP2InputManager;
+    if (this._currentStep !== this.versusStep && im && !out.some((p) => p.n === 2) && !(this.net && this.net.connected)) {
+      out.push({ n: 2, input: im, type: this._localP2Type || 'gamepad', slotId: im._slot ? im._slot.id : null, label: this._localP2Name || 'Player 2', team: null, seat: 'Stoker' });
     }
+    return out;
+  }
+
+  /** Seat n's player ({n, input, type, slotId}), from this screen's seats. */
+  _seatPlayer(n) {
+    if (n === 1) return { n: 1, input: this.input, type: this.input && this.input.gamepadConnected ? 'gamepad' : 'keyboard', slotId: 'P1' };
+    return this.playersOnScreen().find((p) => p.n === n) || null;
+  }
+
+  /** The settings key of the controller a player holds, or null (keyboard, phone, nothing). */
+  _padSettingsKey(p) {
+    if (!p || p.type === 'keyboard' || !p.input || p.input.remoteOnly) return null;
+    if (p.n === 1 && !(p.input.gamepadConnected || p.input.steamInputHandle != null)) return null;
+    try { return settingsKeyFor(this._lookKeyFor(p)); } catch (e) { return null; }
+  }
+
+  _p1SettingsKey() { return this._padSettingsKey(this._seatPlayer(1)); }
+
+  /** Seat n's controller settings, or null without a controller. */
+  seatPadSettings(n) {
+    const key = this._padSettingsKey(this._seatPlayer(n));
+    return key ? this.controllerSettings.get(key) : null;
+  }
+
+  /** The controller identity of a seat (name, glyphs, capabilities), or null. */
+  seatIdentity(p) {
+    if (!p || p.type === 'keyboard') return null;
+    if (p.n === 1) return this._p1Identity();
+    if (p.input && p.input.remoteOnly) return null;
+    try { return this._versusIdentity({ ...p, kind: undefined }); } catch (e) { return null; }
+  }
+
+  /** Does this seat's controller have motion sensors we can steer with? */
+  _inputHasGyro(input) {
+    return !!(input && ((input._slot && input._slot._hidEntry) || input.gyroConnected || input.steamInputHandle != null));
+  }
+
+  /** What seat n's steering does right now: {stick, gyro, gyroCapable, gyroHint}. */
+  seatSteering(n) {
+    if (n === 1) {
+      const id = this._p1Identity();
+      const capable = !!(id && id.entry && id.entry.capabilities && id.entry.capabilities.gyro) || this._inputHasGyro(this.input);
+      const gyro = !!this.motionActive;
+      return { stick: !!this.joystickActive, gyro, gyroCapable: capable,
+        // Gyro defaults on whenever the controller's motion sensors are bound
+        // (the desktop app grants every controller, so that's automatic there).
+        // A browser that hasn't granted this controller yet needs one click.
+        gyroHint: !capable ? 'Not available on this controller'
+          : (gyro || this._motionPermitted) ? 'Tilt the controller to lean'
+          : 'Turn on to connect the gyro (your browser asks once)' };
+    }
+    const p = this._seatPlayer(n);
+    const input = p && p.input;
+    const capable = this._inputHasGyro(input);
+    return { stick: !!(input && !input.suppressGamepadLean), gyro: !!(input && input.motionEnabled && capable), gyroCapable: capable,
+      gyroHint: capable ? 'Tilt the controller to lean' : 'Not available on this controller' };
+  }
+
+  /**
+   * Change seat n's controller settings (Players): saved on the controller, applied at once.
+   * @param {number} n @param {{stick?: boolean, gyro?: boolean, feel?: number, prompts?: string}} patch
+   */
+  setSeatSteering(n, patch) {
+    const p = this._seatPlayer(n);
+    const key = this._padSettingsKey(p);
+    if (n === 1) {
+      // Player 1 goes through the lobby's own toggles (WebHID grant, "keyboard only" guard).
+      if (patch.stick != null && patch.stick !== !!this.joystickActive) this._toggleJoystick();
+      if (patch.gyro != null && patch.gyro !== !!this.motionActive) this._toggleMotion();
+      if (patch.feel != null) { this._applySteeringFeel(patch.feel); return; }
+      if (key) this.controllerSettings.set(key, patch);
+      this._syncSystemBar();
+      return;
+    }
+    if (!key) return;
+    this.controllerSettings.set(key, patch);
+    this._reapplyControllerSettings(key);
+    analytics.trackEvent('controller_setting_change', { seat: n, ...patch });
+  }
+
+  /** P1 changed a steering choice somewhere: it is now that controller's. */
+  _rememberP1Steering(patch) {
+    const key = this._p1SettingsKey();
+    if (key) this.controllerSettings.set(key, patch);
+  }
+
+  /** Bring Player 1's toggles and TUNE in line with the controller P1 holds now. */
+  _applyP1ControllerSettings() {
+    const key = this._p1SettingsKey();
+    if (!key) return;
+    const s = this.controllerSettings.get(key);
+    if (!(Math.abs((TUNE.steeringFeel ?? -1) - s.feel) < 1e-6)) applySteeringFeel(s.feel);
+    if (s.stick !== null && s.stick !== !!this.joystickActive) {
+      this.joystickActive = s.stick;
+      if (this.input) this.input.suppressGamepadLean = !s.stick;
+      this._setToggleActive('joystick', s.stick);
+    }
+    if (s.gyro === false && this.motionActive) {
+      this.motionActive = false;
+      if (this.input) { this.input.motionEnabled = false; this.input.motionLean = 0; }
+      this._setToggleActive('motion', false);
+    } else if (s.gyro === true && !this.motionActive && this._motionPermitted) {
+      this.motionActive = true;
+      if (this.input) { this.input.motionEnabled = true; this.input.startTiltCalibration(); }
+      this._setToggleActive('motion', true);
+    }
+  }
+
+  /** Player 1's controller's steering feel (game._loadSavedTuning), or null without a controller. */
+  p1SteeringFeel() {
+    const key = this._p1SettingsKey();
+    return key ? this.controllerSettings.get(key).feel : null;
+  }
+
+  /**
+   * Put a seat's controller settings on its InputManager (players 2–4): joins, ride starts
+   * (game.js), and every change in Players. Keyboard and phone seats have none.
+   * @param {{n?: number, input: any, type?: string, slotId?: string|null}} p
+   */
+  applySeatControllerSettings(p) {
+    if (!p || !p.input || p.input === this.input) return;
+    const key = this._padSettingsKey({ type: 'gamepad', ...p });
+    if (!key) return;
+    const s = this.controllerSettings.get(key);
+    applyPadSettings(p.input, s, feelTuning(s.feel), this._inputHasGyro(p.input));
+  }
+
+  /** Re-apply settings to every live seat holding the controller with this key. */
+  _reapplyControllerSettings(key) {
+    const seen = new Set();
+    const each = (p) => {
+      if (!p || !p.input || seen.has(p.input) || p.input === this.input) return;
+      seen.add(p.input);
+      if (this._padSettingsKey({ type: 'gamepad', ...p }) === key) this.applySeatControllerSettings(p);
+    };
+    for (const p of this.playersOnScreen()) each(p);
+    const g = typeof window !== 'undefined' ? window._game : null;
+    if (g) {
+      if (g.inputP2) each({ n: 2, input: g.inputP2, type: 'gamepad', slotId: g.inputP2._slot ? g.inputP2._slot.id : null });
+      for (const rig of g.versusRigs || []) for (const m of rig.members || []) {
+        if (!m.isP1 && m.type === 'gamepad' && m.input) each({ n: m.n, input: m.input, type: 'gamepad', slotId: m.slotId || (m.input._slot ? m.input._slot.id : null) });
+      }
+    }
+  }
+
+  /**
+   * Players' Available controllers: connected, not seated. `assign` seats one where this
+   * step can (the co-op stoker seat, the next versus seat) through the step's own join,
+   * which claims a ControllerManager slot like any join.
+   * @returns {{ list: Array<{key: string, name: string, connection: string, detail: string, glyphFamily?: string, assign: (() => void)|null}>, note: string }}
+   */
+  availableControllers(players) {
+    const seatedSlots = new Set(players.map((p) => p.slotId || (p.input && p.input._slot && p.input._slot.id)).filter(Boolean));
+    const seatedIdx = new Set(players.map((p) => p.input && p.input.gamepadIndex).filter((x) => x != null));
+    const versus = this._currentStep === this.versusStep;
+    let cands = [];
+    try { cands = versus ? (this._versusCandidates || []) : (this._detectLocalJoinCandidates() || []); } catch (e) { cands = []; }
+    cands = cands.filter((c) => c.kind !== 'phone' && !(c.slotId && seatedSlots.has(c.slotId)) && !(c.gpIndex != null && seatedIdx.has(c.gpIndex)));
+    const online = !!(this.net && this.net.connected);
+    let join = null, note = '';
+    if (versus) {
+      if (players.length < 4) join = (c) => this._versusJoinCandidate(c);
+      else note = 'All four seats are taken.';
+    } else if (this._currentStep === this.hostStep && !online && !this._localSeatedOnHost) {
+      join = (c) => this._onLocalJoinClick('gamepad', c.gpIndex ?? null, c.device || null, { slotId: c.slotId, name: c.name, phone: c.entry });
+    } else if (this._localSeatedOnHost || online) note = 'Both seats on the tandem are taken.';
+    else note = 'Choose RIDE TOGETHER or VERSUS to seat another player.';
+    let seatN = 2;
+    if (versus) seatN = lowestFreePlayerNumber(this._versusPlayers) ?? players.length + 1;
+    const list = cands.map((c) => {
+      let id = null;
+      try { id = this._versusIdentity(c); } catch (e) {}
+      return {
+        key: c.key, name: (id && id.name) || c.name || 'Controller',
+        connection: c.kind === 'hid' ? 'webhid' : 'gamepad',
+        glyphFamily: id ? id.glyphFamily : 'generic',
+        detail: join ? `Select to make it Player ${seatN}` : 'Not seated',
+        assign: join ? () => join(c) : null,
+      };
+    });
+    return { list, note: list.length ? note : '' };
+  }
+
+  /**
+   * Sign seat n out of everything on this device: P1 the game's own account (not on Steam:
+   * they launched from their own Steam library), P2–4 their seat session.
+   */
+  signOutSeat(n) {
+    if (n === 1) {
+      if (this._isSteam) return;
+      document.getElementById('profile-popup-logout')?.click();
+      return;
+    }
+    try { this.seatAccounts.signOut(n); } catch (e) {}
   }
 
   _applyVideoTrackState(enabled) {
@@ -6532,6 +6744,8 @@ export class Lobby {
       if (this.motionActive || hidDevice) {
         this._localP2InputManager.motionEnabled = true;
       }
+      // #646: then P2's own controller's settings (stick / gyro / feel) on top.
+      this.applySeatControllerSettings({ n: 2, input: this._localP2InputManager, type: 'gamepad', slotId: slot ? slot.id : null });
 
     } else {
       // Keyboard P2: no slot needed.
@@ -7275,6 +7489,8 @@ export class Lobby {
     }
 
     input.suppressGamepadLean = !this.joystickActive;
+    // #646: the joiner's own controller's settings (stick / gyro / feel) on top.
+    if (c.kind !== 'phone') this.applySeatControllerSettings({ n: seat.n ?? this._versusPlayers.length + 1, input, type: 'gamepad', slotId });
 
     const sizeA = this._versusPlayers.filter(p => p.team === 'A').length;
     const sizeB = this._versusPlayers.filter(p => p.team === 'B').length;
@@ -7921,7 +8137,7 @@ export class Lobby {
   _pollGamepadNav() {
     // Bar label / glyph family / an open Controls sheet: a few times a second is plenty.
     const nowSync = performance.now();
-    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._controlsSheet && this._controlsSheet.open ? 200 : 1000)) {
+    if (!this._lastBarSync || nowSync - this._lastBarSync > (this._players && this._players.open ? 200 : 1000)) {
       this._lastBarSync = nowSync;
       this._syncSystemBar();
       // #576: a gyro that shows up late (Steam Input, a later HID grant) still turns the stick default off.
@@ -8156,6 +8372,12 @@ export class Lobby {
     // fresh press.
     if (!ranLast) this._stepFocus.reprime();
     this._stepNavRanLastFrame = true;
+    // #646: in Players, the focused Steering feel slider (one per controller) takes left/right.
+    if (this._players && this._players.open) {
+      const f = this._stepFocus.focusedEl;
+      const want = f && f.tagName === 'INPUT' && f.type === 'range' ? f : null;
+      if (this._stepFocus._slider !== want) this._stepFocus.setSlider(want);
+    }
     this._stepFocus.poll();
 
     // _gpPrev* are still maintained for the LB/RB bumpers + the modal branches.
