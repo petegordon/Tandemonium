@@ -249,6 +249,18 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-join:has(.join-rejoin:not([hidden])) .join-tv { gap: var(--uf-space-3); }
 }
 
+/* ── Waiting in an online room (#694): the wait's buttons under the status line ── */
+.room-wait-actions[hidden] { display: none !important; }
+.room-wait-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--uf-space-3, 12px); margin: var(--uf-space-2, 8px) 0; }
+.room-idle-note[hidden] { display: none !important; }
+.room-idle-note { margin: var(--uf-space-2, 8px) 0 0; }
+@media (min-width: 1024px) { #lobby-host .room-wait-actions { justify-content: flex-start; } }
+/* Joined and waiting: the code entry has done its job; the wait takes its place. */
+#lobby-join.room-waiting .join-rejoin, #lobby-join.room-waiting .join-tv, #lobby-join.room-waiting #btn-join,
+#lobby-join.room-waiting .lobby-prompt, #lobby-join.room-waiting .room-code-join-wrap,
+#lobby-join.room-waiting #gamepad-code-spinners { display: none !important; }
+#lobby-join.room-waiting #join-status { font-size: var(--uf-size-lg, 1.2em); margin-top: var(--uf-space-5, 24px); }
+
 /* Ride Together's seat choice: a readable column, not full width. */
 @media (min-width: 1024px) {
   #lobby-role[active] { max-width: 30em; margin: 0 auto !important; font-size: var(--uf-size-md); }

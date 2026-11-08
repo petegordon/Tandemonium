@@ -474,6 +474,11 @@ async function refusedHost({ reachable }) {
   globalThis.WebSocket = class { constructor(url) { this.url = url; this.readyState = 0; sockets.push(this); } send() {} close() {} };
   globalThis.fetch = async () => { if (!reachable) throw new TypeError('offline'); return {}; };
   host._scheduleRetry = () => {};   // the test dials by hand
+  // Await the refusal check itself (#493): it runs async work (the reachability
+  // fetch, fresh secrets via crypto) that a fixed number of ticks can't cover.
+  const checks = [];
+  const check = host._checkRefused.bind(host);
+  host._checkRefused = () => { const p = check(); checks.push(p); return p; };
   const restore = () => { globalThis.WebSocket = OrigWS; globalThis.fetch = origFetch; host.close(); };
   try {
     await host.open();
@@ -484,8 +489,8 @@ async function refusedHost({ reachable }) {
       ws.onclose();
       if (i < 3) host._connect();
     }
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    assert.ok(checks.length >= 1, 'the failed connects ask whether the relay is reachable');
+    await Promise.all(checks);
     return { host, links, sockets, firstCode, firstLink, restore };
   } catch (e) { restore(); throw e; }
 }

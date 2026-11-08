@@ -100,6 +100,8 @@ export class PerfReadout {
       `GPU ${this._gpu}`,
       this._displayLine(),
     ];
+    const m = g._musicEl;
+    if (m) lines.push(`music ${m.mode ? 'playing (' + m.mode + ')' : m.blocked ? 'refused: ' + m.blocked : 'stopped'}   audio ${(g.audioEngine && g.audioEngine.ctx && g.audioEngine.ctx.state) || 'none'}`);
     if (mem) lines.push(`JS heap ${Math.round(mem.usedJSHeapSize / 1048576)} / ${Math.round(mem.jsHeapSizeLimit / 1048576)} MB`);
     this.el.textContent = lines.join('\n');
   }

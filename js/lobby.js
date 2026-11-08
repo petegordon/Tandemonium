@@ -46,7 +46,7 @@ import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, 
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { InputManager, isSteamTwinPad } from './input-manager.js';
+import { InputManager } from './input-manager.js';
 import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
@@ -76,13 +76,15 @@ import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
-import { mergedPollGp, withoutHeldTwins, isJoinPress } from './lobby/join-poll.js';
+import { isJoinPress } from './lobby/join-poll.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
+import { RoomSession } from './lobby/room-session.js';   // #346: create / join / rejoin / leave
+import { IdleWatch, ActivityPinger, ROOM_WAIT_COPY, otherRole } from './lobby/room-wait.js';   // #694: who / how long / what you can do
 import { isRoomCode } from './lobby/room-protocol.js';   // #667
 import { RoomMove, watchMoveNet, closeQuietly } from './lobby/room-move.js';   // #667 HOST INSTEAD
 import { NetworkManager } from './network-manager.js';   // #667: the new room's transport, opened beside the old
@@ -194,8 +196,35 @@ export class Lobby {
     // callback epoch guard. `this.net` is a getter/setter over it, so every
     // existing `this.net.*` read/write is unchanged. (#318 Step 3)
     this._netSession = new NetSession();
+    // #346: a retired room transport (left, replaced, moved) is handed to the game to let go of.
+    this._netSession.onRetire = (net) => { if (this.onRoomNetRetired) this.onRoomNetRetired(net); };
     // Recent-room persistence (rejoin UX) — pure localStorage layer. (#318 Step 3)
     this._roomStore = new RoomStore();
+    // #694 F · is the connected partner idle on the room screens? (their ACTIVITY pings + any room
+    // message), and this side's own throttled pings (at most one per few seconds, only after
+    // this player did something).
+    this._partnerIdle = new IdleWatch();
+    this._activity = new ActivityPinger({
+      send: () => { if (this.net && this.net.connected) this.net.sendProfile(RoomProtocol.activity()); },
+    });
+    const markActive = () => this._activity.mark();
+    for (const ev of ['keydown', 'pointerdown', 'touchstart', 'wheel']) {
+      try { window.addEventListener(ev, markActive, { capture: true, passive: true }); } catch (e) { /* no window */ }
+    }
+    this._roomActivityTimer = setInterval(() => this._tickRoomActivity(), 500);
+    // The online room's lifecycle (create / join / rejoin / leave), behind a small host
+    // interface (_roomSessionHost). (#346)
+    this._roomSession = new RoomSession({
+      netSession: this._netSession,
+      store: this._roomStore,
+      relayUrl: RELAY_URL,
+      auth: {   // read at call time: this.auth is made later, and smokes stub its methods
+        getRelayToken: (code, role) => this.auth.getRelayToken(code, role),
+        ensureValidToken: () => this.auth.ensureValidToken(),
+      },
+      analytics,
+      host: this._roomSessionHost(),
+    });
     this.selectedLevel = LEVELS.find(l => !l.isTutorial) || LEVELS[0]; // default to first non-tutorial level
     this._forceWizard = false;
     this.selectedPresetKey = 'default';
@@ -1208,7 +1237,7 @@ export class Lobby {
       // Don't wipe recent rooms on back-out — keep them so RIDE TOGETHER can
       // still offer to rejoin this room within the 5-min window. Only an
       // explicit "New Room" (rejoin prompt / stale-room timer) clears. (#318)
-      if (this.net) { this.net.destroy(); this.net = null; }
+      this._roomSession.leave();
       this._leaveLocalP2('back from host page');
       this._roomPartnerName = null; this._resetPartnerLook();
       this._refreshHostNext();
@@ -1222,7 +1251,7 @@ export class Lobby {
     document.getElementById('btn-back-role-join').addEventListener('click', () => {
       // Keep recent rooms on back-out (see btn-back-role-host) so rejoin
       // stays available. (#318)
-      if (this.net) { this.net.destroy(); this.net = null; }
+      this._roomSession.leave();
       this._showSpinners(false);
       this._spinnerStopRepeat();
       this._showStep(this.roleStep);
@@ -1241,7 +1270,7 @@ export class Lobby {
       // "Play on this phone", or the code button (to type it elsewhere). A
       // phone captain needs the code for its partner at once, as before.
       if (!isMobile) {
-        if (this.net) { this.net.destroy(); this.net = null; }
+        this._roomSession.leave();
         this._hostRoomCode = null;
         document.getElementById('room-code-display').textContent = '----';
         document.getElementById('room-qr').innerHTML = '';
@@ -2611,11 +2640,11 @@ export class Lobby {
 
       // A live online session (a ride, or a room with the partner in it) is never replaced by a
       // queued "sign in, then create / join": drop the queue instead.
-      if (this.net && this.net.connected) { this._pendingAutoJoinCode = null; this._pendingCreateRoom = false; }
+      if (this.net && this.net.connected) { this._roomSession.pendingJoinCode = null; this._roomSession.pendingCreate = false; }
       // Resume auto-join if user arrived via shared URL before logging in
-      if (this._pendingAutoJoinCode) {
-        const code = this._pendingAutoJoinCode;
-        this._pendingAutoJoinCode = null;
+      if (this._roomSession.pendingJoinCode) {
+        const code = this._roomSession.pendingJoinCode;
+        this._roomSession.pendingJoinCode = null;
         this._showStep(this.joinStep);
         const suffix = code.slice(-4);
         document.getElementById('room-code-input').value = suffix;
@@ -2624,8 +2653,8 @@ export class Lobby {
       }
 
       // Resume room creation after login / auth refresh
-      if (this._pendingCreateRoom) {
-        this._pendingCreateRoom = false;
+      if (this._roomSession.pendingCreate) {
+        this._roomSession.pendingCreate = false;
         if (this.auth.token) {
           this._showStep(this.hostStep);
           this._createRoom();
@@ -3823,6 +3852,16 @@ export class Lobby {
     if (track) track.enabled = enabled;
   }
 
+  /** #567: music is on but the browser hasn't let it play yet (it starts on the next key, click or touch). */
+  setMusicBlocked(blocked) {
+    for (const el of [this.toggleMusic, this._barPills && this._barPills.music]) {
+      if (!el) continue;
+      el.classList.toggle('music-blocked', !!blocked);
+      if (blocked) el.setAttribute('title', 'Music: press any key to start it');
+      else if (el.getAttribute('title') === 'Music: press any key to start it') el.setAttribute('title', 'Music');
+    }
+  }
+
   _toggleMusic() {
     this.musicActive = !this.musicActive;
     // When toggling on from muted volume, bump to Low so audio is audible
@@ -4844,14 +4883,11 @@ export class Lobby {
   }
 
   async _checkAutoJoin() {
-    const params = new URLSearchParams(window.location.search);
-    const roomParam = params.get('room');
-    if (!roomParam) { this._checkDailyLink(); return; }
+    const fullCode = RoomSession.autoJoinCode(window.location.search);
+    if (!fullCode) { this._checkDailyLink(); return; }
 
     // B4a: drop ?room= but keep demo/media so a reload stays in this edition.
     history.replaceState(null, '', window.location.pathname + carriedQuery(window.location.search));
-    const code = roomParam.toUpperCase();
-    const fullCode = code.startsWith('TNDM-') ? code : 'TNDM-' + code;
 
     try { await this._requestMotion(); } catch (_) {}
     // Dismiss tap-to-start overlay — user already acted by navigating via URL
@@ -4870,192 +4906,220 @@ export class Lobby {
     this._joinRoom(fullCode);
   }
 
-  async _createRoom() {
-    this._replaceNet();
-    this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
-    this._hostRoomCode = null;   // #563: set once the relay has us in the room
-    this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1: a new partner, not heard from yet
-    const netEpoch = this._netSession.epoch;
-    this.net._fallbackUrl = RELAY_URL;
-    this.net.cameraEnabled = this.cameraActive;
-    this.net.audioEnabled = this.audioActive;
-    const statusEl = document.getElementById('host-status');
-    const codeEl = document.getElementById('room-code-display');
-
-    statusEl.textContent = 'Creating room...';
-    statusEl.className = 'conn-status';
-    codeEl.textContent = '----';
-
-    const code = this.net.generateRoomCode();
-
-    // Analytics: room creation
-    analytics.trackRoomCreate(code);
-    analytics.trackEvent('room_create', { code });
-
-    // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
-    const relayToken = await this.auth.getRelayToken(code, 'captain');
-    if (relayToken) this.net._relayToken = relayToken;
-
-    this.net.onRoomJoined = () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      codeEl.textContent = code;
-      this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
-      this._syncHostJoinQr();
-      this._updateCardHeader(this._currentStep);
-      statusEl.textContent = 'Waiting for partner...';
-
-      // Save room to localStorage for rejoin after refresh
-      this._roomStore.save(code, 'captain');
-
-      // Generate the join QR + shareable URL (with long-press-to-copy).
-      renderRoomQR(code);
-    };
-
-    this.net.onConnected = () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      statusEl.textContent = 'Partner connected!';
-      statusEl.className = 'conn-status connected';
-      analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
-      analytics.trackRoomUpdate(code, {
-        webrtc_connected: 1,
-        connection_type: this.net.connectionType || 'p2p',
-        video_enabled: this.cameraActive ? 1 : 0,
-        audio_enabled: this.audioActive ? 1 : 0,
-      });
-      setTimeout(() => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        this._showRoomStep('captain');
-      }, 1000);
-    };
-
-    this.net.onDisconnected = (reason) => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      statusEl.textContent = reason || 'Disconnected';
-      statusEl.className = 'conn-status error';
-    };
-
-    // Auth error: token was rejected by relay — try silent refresh first. Acts on
-    // THIS transport (the one the ride also uses), and only until it is destroyed: across
-    // the awaits this.net can be replaced or nulled (2026-11-06 diag: "Cannot set
-    // properties of null (_relayToken)").
-    const capNet = this.net;
-    capNet.onAuthError = async () => {
-      const live = () => this._netSession.isCurrent(netEpoch) && !capNet._destroyed;
-      if (!live()) return;
-      console.warn('LOBBY: Relay auth failed for captain — refreshing token');
-      statusEl.textContent = 'Session expired, refreshing...';
-      statusEl.className = 'conn-status';
-      const refreshed = await this.auth.ensureValidToken();
-      if (!live()) return;
-      if (refreshed) {
-        // Token refreshed — retry room creation
-        const freshToken = await this.auth.getRelayToken(code, 'captain');
-        if (!live()) return;
-        if (freshToken) capNet._relayToken = freshToken;
-        capNet.enterRoom(code, 'captain');
-      } else {
-        // The relay also takes a connection with no valid token (worker/relay.js), and a refused
-        // socket is usually the network: keep dialling (the transport backs off). Only on the
-        // host step queue "sign in, then make the room" — mid-ride that would replace the ride's
-        // transport once a login lands.
-        statusEl.textContent = 'Reconnecting...';
-        capNet.enterRoom(code, 'captain');
-        if (this._currentStep === this.hostStep) this._pendingCreateRoom = true;
-      }
-    };
-
-    this.net.enterRoom(code, 'captain');
+  /** Captain: open a new online room (js/lobby/room-session.js). */
+  _createRoom() {
+    return this._roomSession.create();
   }
 
-  async _joinRoom(code) {
-    this._replaceNet();
-    this._roomPartnerName = null; this._resetPartnerLook();
-    this._partnerRoom = null; this._refusedLevelId = null;   // PR #397 M1
-    const netEpoch = this._netSession.epoch;
-    this.net._fallbackUrl = RELAY_URL;
-    this.net.cameraEnabled = this.cameraActive;
-    this.net.audioEnabled = this.audioActive;
-    const statusEl = document.getElementById('join-status');
+  /** Stoker: join the online room `code` (js/lobby/room-session.js). */
+  _joinRoom(code) {
+    const viaUrl = new URLSearchParams(window.location.search).has('room');
+    return this._roomSession.join(code, { viaUrl });
+  }
 
-    statusEl.textContent = 'Connecting...';
-    statusEl.className = 'conn-status';
-
-    // Analytics: room join
-    const joinedViaUrl = new URLSearchParams(window.location.search).has('room');
-    analytics.trackEvent('room_join', { code, joined_via_url: joinedViaUrl });
-    analytics.trackRoomUpdate(code, {
-      stoker_session_id: analytics.getSessionId(),
-      stoker_joined_at: new Date().toISOString(),
-      stoker_joined_via_url: joinedViaUrl ? 1 : 0,
-    });
-    analytics.trackConversion('stoker_joined', 'room_join');
-    if (joinedViaUrl) analytics.trackConversion('stoker_joined_via_url', 'room_join');
-
-    // Fetch relay auth token if logged in (optional — relay allows unauthenticated)
-    const relayToken = await this.auth.getRelayToken(code, 'stoker');
-    if (relayToken) this.net._relayToken = relayToken;
-
-    this.net.onRoomJoined = () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      statusEl.textContent = 'Waiting for captain...';
-      // Save room to localStorage for rejoin after refresh
-      this._roomStore.save(code, 'stoker');
+  /**
+   * The lobby side of RoomSession (#346): what the room lifecycle shows and asks.
+   * Every method is small and DOM-only; the lifecycle itself is in js/lobby/room-session.js.
+   */
+  _roomSessionHost() {
+    const el = (id) => document.getElementById(id);
+    return {
+      replaceNet: () => this._replaceNet(),
+      media: () => ({ camera: this.cameraActive, audio: this.audioActive, cameraPermitted: this._cameraPermitted, audioPermitted: this._audioPermitted }),
+      newRoom: (kind) => {
+        this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
+        // #563: set once the relay has us in the room. #694 (Pete): a rejoin matches create.
+        if (kind === 'create' || kind === 'rejoin') this._hostRoomCode = null;
+        // PR #397 M1: a new partner, not heard from yet. #694: a rejoin too (Pete: clear the
+        // previous partner's edition; whoever comes back says theirs again).
+        this._partnerRoom = null; this._refusedLevelId = null;
+        this._partnerIdle.reset();
+      },
+      status: (seat, text, cls) => {
+        const s = el(seat === 'host' ? 'host-status' : 'join-status');
+        if (!s) return;
+        s.textContent = text;
+        if (cls !== undefined) s.className = cls ? 'conn-status ' + cls : 'conn-status';
+      },
+      showCode: (text) => { const c = el('room-code-display'); if (c) c.textContent = text; },
+      // #694 (Pete): a rejoin as captain matches create: the host step's room code, the
+      // "Scan to join" QR (a local player can still join online by phone) and the room QR.
+      roomOpen: (code) => {
+        el('room-code-display').textContent = code;
+        this._hostRoomCode = code;   // #563: the room is open (a phone may be waiting for it)
+        this._syncHostJoinQr();
+        this._updateCardHeader(this._currentStep);
+        // Generate the join QR + shareable URL (with long-press-to-copy).
+        renderRoomQR(code);
+      },
+      partnerHere: (role) => { if (role === 'stoker') this._lastFailedCode = null; },
+      partnerConnected: (role) => this._showRoomStep(role),
+      connectFailed: (role, code) => {
+        // Sync the error into the spinner status area
+        const statusEl = el('join-status');
+        const spinnerStatus = el('spinner-status');
+        if (spinnerStatus && statusEl) {
+          spinnerStatus.textContent = statusEl.textContent;
+          spinnerStatus.className = statusEl.className;
+          spinnerStatus.style.display = '';
+        }
+        if (this._currentStep === this.joinStep) this._lastFailedCode = code;
+      },
+      onStep: (name) => this._currentStep === (name === 'host' ? this.hostStep : this.joinStep),
+      wait: (seat, view) => this._renderRoomWait(seat, view),
+      myName: () => { const u = this.auth && this.auth.isLoggedIn() && this.auth.getUser(); return (u && u.name) || null; },
     };
+  }
 
-    this.net.onConnected = () => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      this._lastFailedCode = null;
-      statusEl.textContent = 'Connected!';
-      statusEl.className = 'conn-status connected';
-      analytics.trackEvent('room_connect', { type: this.net.connectionType || 'p2p' });
-      setTimeout(() => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        this._showRoomStep('stoker');
-      }, 1000);
-    };
+  // ── Waiting in an online room (#694) ─────────────────────────
+  // RoomSession's RoomWait decides what the line says (js/lobby/room-wait.js, views A–E); this
+  // only draws it: the seat's status line, and a row of buttons under it once a way out is due.
+  // The row's buttons join the step's pad focus, which starts on the waiting choice.
 
-    this.net.onDisconnected = (reason) => {
-      if (!this._netSession.isCurrent(netEpoch)) return;
-      statusEl.textContent = reason || 'Could not connect';
-      statusEl.className = 'conn-status error';
-      // Sync error into spinner status area
-      const spinnerStatus = document.getElementById('spinner-status');
-      if (spinnerStatus) {
-        spinnerStatus.textContent = statusEl.textContent;
-        spinnerStatus.className = statusEl.className;
-        spinnerStatus.style.display = '';
-      }
-      if (this._currentStep === this.joinStep) {
-        this._lastFailedCode = code;
-      }
-    };
+  /** The wait's button row for a seat, made on first use (just after the seat's status line). */
+  _roomWaitRow(seat) {
+    const id = seat === 'host' ? 'host-wait-actions' : 'join-wait-actions';
+    let row = document.getElementById(id);
+    if (row) return row;
+    const status = document.getElementById(seat === 'host' ? 'host-status' : 'join-status');
+    if (!status || !status.parentNode) return null;
+    row = document.createElement('div');
+    row.id = id;
+    row.className = 'room-wait-actions';
+    row.hidden = true;
+    status.parentNode.insertBefore(row, status.nextSibling);
+    return row;
+  }
 
-    // Auth error: token was rejected by relay — try silent refresh first
-    const stoNet = this.net;
-    stoNet.onAuthError = async () => {
-      const live = () => this._netSession.isCurrent(netEpoch) && !stoNet._destroyed;
-      if (!live()) return;
-      console.warn('LOBBY: Relay auth failed for stoker — refreshing token');
-      statusEl.textContent = 'Session expired, refreshing...';
-      statusEl.className = 'conn-status';
+  /** The wait's buttons on screen for `step` (empty when none). */
+  _roomWaitButtons(step) {
+    const id = step === this.hostStep ? 'host-wait-actions' : step === this.joinStep ? 'join-wait-actions' : null;
+    const row = id && document.getElementById(id);
+    return row && !row.hidden ? Array.from(row.querySelectorAll('uf-button')) : [];
+  }
 
-      const refreshed = await this.auth.ensureValidToken();
-      if (!live()) return;
-      if (refreshed) {
-        const freshToken = await this.auth.getRelayToken(code, 'stoker');
-        if (!live()) return;
-        statusEl.textContent = 'Reconnecting...';
-        stoNet.retryWithToken(freshToken || stoNet._relayToken);
-        if (!freshToken && this._currentStep === this.joinStep) this._pendingAutoJoinCode = code;
-      } else {
-        // As the captain's: keep dialling; queue the sign-in rejoin only on the join step.
-        statusEl.textContent = 'Reconnecting...';
-        stoNet.retryWithToken(stoNet._relayToken);
-        if (this._currentStep === this.joinStep) this._pendingAutoJoinCode = code;
-      }
-    };
+  /** @param {'host'|'join'} seat @param {import('./lobby/room-wait.js').WaitView|null} view */
+  _renderRoomWait(seat, view) {
+    const status = document.getElementById(seat === 'host' ? 'host-status' : 'join-status');
+    const row = this._roomWaitRow(seat);
+    if (status && view) {
+      if (status.textContent !== view.text) status.textContent = view.text;
+      const cls = view.cls ? 'conn-status ' + view.cls : 'conn-status';
+      if (status.className !== cls) status.className = cls;
+      if (status.dataset.wait !== view.kind) status.dataset.wait = view.kind;
+    } else if (status) {
+      delete status.dataset.wait;
+    }
+    if (seat === 'join') {
+      // The pad's code spinners have their own status line: mirror it there.
+      const sp = document.getElementById('spinner-status');
+      if (sp && sp.style.display !== 'none' && status) { sp.textContent = status.textContent; sp.className = status.className; }
+    }
+    // Joined and waiting: the code entry has done its job, so the wait (and its buttons) take
+    // its place instead of sitting under the keypad, behind the bar on a TV.
+    let waitingChanged = false;
+    if (seat === 'join' && this.joinStep) {
+      const was = this.joinStep.classList.contains('room-waiting');
+      this.joinStep.classList.toggle('room-waiting', !!view);
+      waitingChanged = was !== !!view;
+    }
+    if (!row) return;
+    const ids = view ? view.actions.map((a) => a.id) : [];
+    const had = Array.from(row.querySelectorAll('uf-button')).map((b) => /** @type {HTMLElement} */ (b).dataset.wait);
+    if (ids.join(',') === had.join(',')) {   // same buttons: leave the pad's focus alone
+      if (waitingChanged && this._currentStep === this.joinStep) this._applyStepSpatialFocus(this.joinStep);
+      return;
+    }
+    row.textContent = '';
+    row.hidden = ids.length === 0;
+    for (const a of view ? view.actions : []) {
+      const b = /** @type {any} */ (document.createElement('uf-button'));
+      b.id = `btn-wait-${seat}-${a.id}`;
+      b.dataset.wait = a.id;
+      b.setAttribute('variant', a.id === view.focus ? 'accent' : 'ghost');
+      b.setAttribute('size', 'sm');
+      b.textContent = a.label;
+      b.addEventListener('click', () => this._roomWaitAction(seat, a.id));
+      row.appendChild(b);
+    }
+    // New buttons: hand them to the pad, focused on the waiting choice (never the way out).
+    const step = seat === 'host' ? this.hostStep : this.joinStep;
+    if (this._currentStep === step) this._applyStepSpatialFocus(step);
+  }
 
-    this.net.enterRoom(code, 'stoker');
+  /** A wait button: keep waiting, a fresh room, another code, retry, or back. */
+  _roomWaitAction(seat, id) {
+    const rs = this._roomSession;
+    if (id === 'keep') return;   // the waiting choice: nothing to undo
+    if (id === 'retry') { rs.wait.retryNow(); return; }
+    if (id === 'back') {
+      const back = document.getElementById(seat === 'host' ? 'btn-back-role-host' : 'btn-back-role-join');
+      if (back) back.click();
+      return;
+    }
+    if (id === 'new-room') {
+      // Pete: a REAL fresh room, same seat (it used to drop to the role screen).
+      this._roomPartnerName = null; this._resetPartnerLook();
+      if (this._currentStep !== this.hostStep) this._showStep(this.hostStep);
+      rs.newRoom();
+      return;
+    }
+    if (id === 'other-code') {
+      // Back to the code: the room that never filled is forgotten (a wrong code isn't a recent ride).
+      rs.leave({ forget: true });
+      const status = document.getElementById('join-status');
+      if (status) { status.textContent = ''; status.className = 'conn-status'; }
+      if (this._currentStep !== this.joinStep) this._showStep(this.joinStep);
+      const input = /** @type {HTMLInputElement|null} */ (document.getElementById('room-code-input'));
+      if (input) input.value = '';
+      if (this.input && this.input.gamepadConnected) this._showSpinners(true);
+      else if (input) input.focus();
+      this._renderRejoinCards();
+      this._applyStepSpatialFocus(this.joinStep);
+    }
+  }
+
+  /** On a room screen (host step or the room's level step) with the partner connected? */
+  _inOnlineRoomScreen() {
+    return !!(this.net && this.net.connected && this._pendingMode === 'multiplayer' && this._roomRole &&
+      this.lobbyEl && this.lobbyEl.style.display !== 'none' &&
+      (this._currentStep === this.hostStep || this._currentStep === this.levelStep));
+  }
+
+  /** Any button or stick on Player 1's pad moved this frame (F: this player is active). */
+  _padActive() {
+    try {
+      const gp = this.input && this.input.gamepadConnected && this.input.getGamepadState();
+      if (!gp) return false;
+      return gp.buttons.some((b) => b && b.pressed) || gp.axes.some((v) => Math.abs(v) > 0.5);
+    } catch (e) { return false; }
+  }
+
+  /**
+   * #694 F, twice a second: send this side's activity ping when due, and say when the partner
+   * hasn't moved for a while ("Your Captain (Pete) hasn't moved for 0:30", +5 s steps). Only
+   * once the partner's build has sent a ping: an old build never shows "hasn't moved".
+   */
+  _tickRoomActivity() {
+    const on = this._inOnlineRoomScreen();
+    if (on) {
+      if (this._padActive()) this._activity.mark();
+      this._activity.pump();
+    }
+    const name = this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : null;
+    const text = on ? this._partnerIdle.text({ name, role: otherRole(this._roomRole) }) : '';
+    let note = document.getElementById('room-idle-note');
+    if (!note && !text) return;
+    if (!note) {
+      note = document.createElement('p');
+      note.id = 'room-idle-note';
+      note.className = 'conn-status room-idle-note';
+    }
+    // Under the seat's own status: the host step's, or the room level screen's wait line.
+    const anchor = this._currentStep === this.hostStep ? document.getElementById('host-status') : document.getElementById('level-wait-text');
+    if (text && anchor && anchor.parentNode && note.previousSibling !== anchor) anchor.parentNode.insertBefore(note, anchor.nextSibling);
+    note.hidden = !text;
+    if (note.textContent !== text) note.textContent = text;
   }
 
   // ── HOST INSTEAD (#667) ──────────────────────────────────────
@@ -5172,7 +5236,7 @@ export class Lobby {
       try { renderRoomQR(move.code); this._syncHostJoinQr(); } catch (e) { /* QR is cosmetic */ }
     }
     // Same partner, same seats: keep their name, look and edition; replay what they sent early.
-    this._rejoinMessageQueue = queue;
+    this._roomSession.queueProfiles(queue);
     this._partnerProfileSeen = false;
     this._showRoomStep(role);
     if (role === 'captain') {
@@ -5255,59 +5319,6 @@ export class Lobby {
 
     if (saved.role === 'captain') {
       this._showStep(this.hostStep);
-      // Re-use _createRoom logic but with saved code
-      this._replaceNet();
-      this._roomPartnerName = null; this._resetPartnerLook();
-      const netEpoch = this._netSession.epoch;
-      this.net._fallbackUrl = RELAY_URL;
-      this.net.cameraEnabled = this.cameraActive;
-      this.net.audioEnabled = this.audioActive;
-      const statusEl = document.getElementById('host-status');
-      const codeEl = document.getElementById('room-code-display');
-      statusEl.textContent = 'Rejoining room...';
-      statusEl.className = 'conn-status';
-
-      const relayToken = await this.auth.getRelayToken(saved.roomCode, 'captain');
-      if (!this._netSession.isCurrent(netEpoch)) return true;
-      if (relayToken) this.net._relayToken = relayToken;
-
-      // Acquire local media early so it's ready when P2P connects
-      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (!this._netSession.isCurrent(netEpoch)) return true;
-
-      this.net.onRoomJoined = () => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        codeEl.textContent = saved.roomCode;
-        this._updateCardHeader(this._currentStep);
-        statusEl.textContent = 'Waiting for partner...';
-        this._roomStore.save(saved.roomCode, 'captain');
-        // Start stale room timer
-        this._startStaleRoomTimer(statusEl);
-      };
-
-      this.net.onConnected = () => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        this._clearStaleRoomTimer();
-        statusEl.textContent = 'Partner connected!';
-        statusEl.className = 'conn-status connected';
-        // Buffer profile messages during the 1s delay so none are lost
-        this._rejoinMessageQueue = [];
-        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
-        setTimeout(() => {
-          if (!this._netSession.isCurrent(netEpoch)) return;
-          this._showRoomStep('captain');
-        }, 1000);
-      };
-
-      this.net.onDisconnected = (reason) => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        statusEl.textContent = reason || 'Disconnected';
-        statusEl.className = 'conn-status error';
-      };
-
-      // A refused socket (usually the network): keep dialling; the transport backs off.
-      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
-      this.net.enterRoom(saved.roomCode, 'captain');
     } else {
       this._showStep(this.joinStep);
       // #547: already on JOIN A RIDE; show the status line, not the row or spinners.
@@ -5315,83 +5326,9 @@ export class Lobby {
       if (row) row.hidden = true;
       if (this._spinnerActive) this._showSpinners(false);
       this._applyStepSpatialFocus(this.joinStep);
-      // Re-use _joinRoom logic with saved code
-      this._replaceNet();
-      this._roomPartnerName = null; this._resetPartnerLook();
-      const netEpoch = this._netSession.epoch;
-      this.net._fallbackUrl = RELAY_URL;
-      this.net.cameraEnabled = this.cameraActive;
-      this.net.audioEnabled = this.audioActive;
-      const statusEl = document.getElementById('join-status');
-      statusEl.textContent = 'Rejoining room...';
-      statusEl.className = 'conn-status';
-
-      const relayToken = await this.auth.getRelayToken(saved.roomCode, 'stoker');
-      if (!this._netSession.isCurrent(netEpoch)) return true;
-      if (relayToken) this.net._relayToken = relayToken;
-
-      // Acquire local media early so it's ready when P2P connects
-      await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-      if (!this._netSession.isCurrent(netEpoch)) return true;
-
-      this.net.onRoomJoined = () => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        statusEl.textContent = 'Waiting for captain...';
-        this._roomStore.save(saved.roomCode, 'stoker');
-        this._startStaleRoomTimer(statusEl);
-      };
-
-      this.net.onConnected = () => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        this._clearStaleRoomTimer();
-        statusEl.textContent = 'Connected!';
-        statusEl.className = 'conn-status connected';
-        // Buffer profile messages during the 1s delay so none are lost
-        this._rejoinMessageQueue = [];
-        this.net.onProfileReceived = (profile) => this._rejoinMessageQueue.push(profile);
-        setTimeout(() => {
-          if (!this._netSession.isCurrent(netEpoch)) return;
-          this._showRoomStep('stoker');
-        }, 1000);
-      };
-
-      this.net.onDisconnected = (reason) => {
-        if (!this._netSession.isCurrent(netEpoch)) return;
-        statusEl.textContent = reason || 'Could not connect';
-        statusEl.className = 'conn-status error';
-      };
-
-      { const rjNet = this.net; rjNet.onAuthError = () => { if (!rjNet._destroyed) rjNet.retryWithToken(rjNet._relayToken); }; }
-      this.net.enterRoom(saved.roomCode, 'stoker');
     }
-
+    await this._roomSession.rejoin(saved);
     return true;
-  }
-
-  _startStaleRoomTimer(statusEl) {
-    this._clearStaleRoomTimer();
-    this._staleRoomTimeout = setTimeout(() => {
-      if (this.net && !this.net.connected) {
-        statusEl.innerHTML = 'Partner hasn\'t reconnected yet. ' +
-          '<button id="btn-stale-new-room" style="background:#444;color:#fff;border:none;border-radius:6px;padding:6px 14px;margin-left:8px;cursor:pointer;">New Room</button>';
-        const newBtn = document.getElementById('btn-stale-new-room');
-        if (newBtn) {
-          newBtn.addEventListener('click', () => {
-            if (this.net && this.net.roomCode) this._roomStore.clear(this.net.roomCode);
-            else this._roomStore.clear();
-            if (this.net) { this.net.destroy(); this.net = null; }
-            this._showStep(this.roleStep);
-          });
-        }
-      }
-    }, 30000);
-  }
-
-  _clearStaleRoomTimer() {
-    if (this._staleRoomTimeout) {
-      clearTimeout(this._staleRoomTimeout);
-      this._staleRoomTimeout = null;
-    }
   }
 
   // ── Room Step (shared multiplayer lobby) ─────────────────────
@@ -5405,6 +5342,7 @@ export class Lobby {
   _showRoomStep(role) {
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
+    this._partnerIdle.reset(); this._activity.mark();   // #694 F: a fresh baseline, and say we're here
     this._partnerCameraOn = true; // assume on until cameraToggle received
 
     // Set role labels on PiP circles
@@ -5428,10 +5366,7 @@ export class Lobby {
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
     // Replay any messages buffered during the rejoin delay
-    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
-      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
-    }
-    this._rejoinMessageQueue = null;
+    for (const msg of this._roomSession.takeQueued()) this._handleRoomMessage(msg);
 
     // Send current bike preset to partner
     this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
@@ -5444,27 +5379,7 @@ export class Lobby {
     this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
 
     // Handle partner disconnect while in room or levels
-    const roomNet = this.net;
-    this.net.onDisconnected = (reason) => {
-      if (this.net !== roomNet) return;   // a newer room already replaced this one
-      const waitText = document.getElementById('level-wait-text');
-      const hostStatus = document.getElementById('host-status');
-      // This device lost its seat (the room was opened somewhere else): say that, not "partner".
-      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else')
-        : reason === PARTNER_LEFT_REASON ? reason : 'Partner disconnected';
-      if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
-      if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
-      document.getElementById('btn-start-ride').style.display = 'none';
-      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
-      setTimeout(() => {
-        // Only this room's transport, and only if the lobby is still on it (not a fresh room).
-        try { roomNet.destroy(); } catch (e) { /* already gone */ }
-        if (this.net !== roomNet) return;
-        this.net = null;
-        this._removePipLobbyMode();
-        this._showStep(this.roleStep);
-      }, 2000);
-    };
+    const roomNet = this._watchRoomDrop();
   }
 
   /**
@@ -5710,7 +5625,7 @@ export class Lobby {
 
   /** The stoker backs out of the ride: leave the room for the role screen. */
   _leaveRoomAsStoker() {
-    if (this.net) { this.net.destroy(); this.net = null; }
+    this._roomSession.leave();
     this._removePipLobbyMode();
     for (const id of ['selfie-pip', 'partner-pip']) { const v = /** @type {any} */ (document.getElementById(id)); if (v) v.srcObject = null; }
     for (const id of ['selfie-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
@@ -5816,6 +5731,9 @@ export class Lobby {
   }
 
   _handleRoomMessage(profile) {
+    // #694 F: anything from the partner means they're there; the ping says their build sends them.
+    if (profile) this._partnerIdle.heard(profile.type === ROOM_MSG.ACTIVITY);
+    if (profile && profile.type === ROOM_MSG.ACTIVITY) { this._tickRoomActivity(); return; }
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
       if (profile && profile.name) {
@@ -6450,9 +6368,9 @@ export class Lobby {
     for (let i = 0; i < gamepads.length; i++) {
       const gp = gamepads[i];
       if (!gp || i === p1GpIndex) continue;
-      // Steam's XInput twin of P1's WebHID Steam Controller is the same
-      // physical pad (#362) — never offer it as a second player.
-      if (isSteamTwinPad(gp)) continue;
+      // Steam's XInput twin of a WebHID controller is the same physical pad
+      // (#362) — never offer it as a second player (controller-core units).
+      if (this.controllerManager && this.controllerManager.isTwinPad(gp)) continue;
       const stickMag = Math.max(
         Math.abs(gp.axes[0] || 0), Math.abs(gp.axes[1] || 0),
         Math.abs(gp.axes[2] || 0), Math.abs(gp.axes[3] || 0));
@@ -6523,7 +6441,6 @@ export class Lobby {
       for (const s of mgr.slots || []) {
         if (s === p1Slot || s.state === 'empty') continue;
         if (s.gamepadIndex != null && s.gamepadIndex === p1GpIndex) continue;
-        if (s.gamepadIndex != null && isSteamTwinPad(gamepads[s.gamepadIndex])) continue;
         const hid = s._hidEntry || null;
         if (hid && !isPresentableEntry(hid)) continue;
         if (this._isP1HidEntry(hid, p1Slot)) continue;
@@ -6874,11 +6791,7 @@ export class Lobby {
     // rejoin prompt offering a room that cannot be rejoined — and, since that
     // prompt is modal, it looks like RIDE TOGETHER stopped going to the
     // join/room screen at all.
-    if (this.net) {
-      try { if (this.net.roomCode) this._roomStore.clear(this.net.roomCode); } catch (e) {}
-      try { this.net.destroy(); } catch (e) {}
-      this.net = null;
-    }
+    this._roomSession.leave({ forget: true });
     if (sourceType === 'gamepad' && opts.phone) {
       // #562 · a phone: its own InputManager is Player 2's. It is "connected"
       // while the phone is, so the drop pause treats it like a pad.
@@ -7027,10 +6940,7 @@ export class Lobby {
 
   _enterVersusStep() {
     // Tear down any in-flight online session — versus is purely local.
-    if (this.net) {
-      try { this.net.destroy(); } catch (e) {}
-      this.net = null;
-    }
+    this._roomSession.leave();
     this._pendingMode = 'versus';
     this._versusPlayers = [];
     this._versusPrevButtons.clear();
@@ -7425,62 +7335,44 @@ export class Lobby {
     const ownedDevices = owned.devices;
     const ownedIndices = owned.indices;
     const ownedSlotIds = owned.slotIds;
-    // Gamepad API pads. A controller Steam has captured arrives here too, as
-    // Steam's virtual XInput pad (emulation mode, docs/steam-input.md).
-    const gpCands = [];
-    for (const gp of pads) {
-      if (!gp || ownedIndices.has(gp.index)) continue;
-      if (isSteamTwinPad(gp)) continue;   // Steam's XInput twin of a WebHID Steam Controller (#362)
-      gpCands.push({
-        kind: 'gamepad',
-        key: 'gp:' + gp.index,
-        gpIndex: gp.index,
-        gp,
-        name: this._prettyGamepadName(gp.id),
-        pollGp: gp,
-      });
-    }
-    // A pad a slot already holds over WebHID is listed through that slot (or
-    // not at all, when its owner is seated): drop its Gamepad twin (#581).
-    out.push(...withoutHeldTwins(gpCands, mgr ? mgr.slots : []));
-
     if (mgr) {
-      // Pool entries (unclaimed HID pads — synthetics live pre-claim).
+      // One candidate per physical controller (controller-core units, #607):
+      // a pad's WebHID source, its live or frozen Gamepad entry and Steam's
+      // XInput twin are ONE unit, so a DualSense switched on after launch is one
+      // card whose poll reads a press on either source (#581), a seated pad's
+      // frozen entry is no second card, and a Steam twin is never a card.
       const now = performance.now();
-      for (const entry of mgr._hidPool.values()) {
-        if (ownedDevices.has(entry.device)) continue;
-        // Only interfaces that are actively streaming input reports are
-        // real, joinable controllers. Wireless dongles pool every HID
-        // interface they expose — the Steam Controller Puck has FIVE, of
-        // which exactly one emits STATE reports — and a single connected
-        // controller was showing as three join cards. Silent interfaces
-        // (and powered-off pads) never/no longer emit, so a freshness
-        // window filters them; a sleeping pad's card appears the moment
-        // a button press wakes it, which matches the join hint anyway.
-        if (!entry.hidActiveSince || now - entry.hidActiveSince > 5000) continue;
-        // Dual-interface pads: a visible unclaimed Gamepad API pad that
-        // shares this device's productName is the SAME pad — one card. Its
-        // Gamepad entry may be frozen (a DualSense switched on after launch:
-        // Chromium listed it from its compat-mode reports, then the driver
-        // flipped it to 0x31 and only the synthetic sees presses, #581), so
-        // the card polls both sources; the join claims the pad and the
-        // manager attaches this entry to the seat (claimPadForSlot).
-        const hidName = (entry.device.productName || '').trim().toLowerCase();
-        const twin = hidName ? out.find(c => c.kind === 'gamepad' && !c.device && c.gp.id.toLowerCase().includes(hidName)) : null;
-        if (twin) {
-          twin.device = entry.device;
-          twin.name = prettyHidName(entry.device);
-          twin.pollGp = mergedPollGp(twin.gp, entry.synthetic);
+      for (const u of mgr.units()) {
+        if (u.slot) continue;   // seated: listed through its slot below
+        const gp = u.padIndex != null ? pads[u.padIndex] : null;
+        if (u.entry) {
+          if (ownedDevices.has(u.entry.device)) continue;
+          if (u.padIndex != null && ownedIndices.has(u.padIndex)) continue;
+          // A pad that hasn't reported for a while (asleep, switched off) shows
+          // again the moment a press wakes it, which matches the join hint.
+          if (!u.lastReportAt || now - u.lastReportAt > 5000) continue;
+          const pollGp = u.frame(pads);
+          if (gp) {
+            // The join claims the pad and the manager attaches this WebHID source.
+            out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, device: u.entry.device, name: prettyHidName(u.entry.device), pollGp });
+          } else {
+            out.push({ kind: 'hid', key: 'hid:' + this._deviceKeyId(u.entry.device), device: u.entry.device, name: prettyHidName(u.entry.device), pollGp });
+          }
           continue;
         }
-        out.push({
-          kind: 'hid',
-          key: 'hid:' + this._deviceKeyId(entry.device),
-          device: entry.device,
-          name: prettyHidName(entry.device),
-          pollGp: entry.synthetic,
-        });
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        // Gamepad API pads. A controller Steam has captured and we can't read
+        // over WebHID arrives here too, as Steam's virtual XInput pad.
+        out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, name: this._prettyGamepadName(gp.id), pollGp: gp });
       }
+    } else {
+      for (const gp of pads) {
+        if (!gp || ownedIndices.has(gp.index)) continue;
+        out.push({ kind: 'gamepad', key: 'gp:' + gp.index, gpIndex: gp.index, gp, name: this._prettyGamepadName(gp.id), pollGp: gp });
+      }
+    }
+
+    if (mgr) {
       // Claimed slots holding a device no member owns — a pad that
       // activity-claimed a slot while navigating menus BEFORE this screen
       // suspended auto-claim. Joining adopts that slot.
@@ -7493,8 +7385,8 @@ export class Lobby {
           device: s.hidDevice,
           slotId: s.id,
           name: prettyHidName(s.hidDevice, s.controllerLabel),
-          // Its adopted Gamepad entry too, when it has one: a press on either counts.
-          pollGp: s.gamepadIndex != null ? mergedPollGp(pads[s.gamepadIndex], s.synthetic) : s.synthetic,
+          // Its unit's input: a press on any of its sources counts.
+          pollGp: s.unit ? s.unit.frame(pads) : s.synthetic,
         });
       }
     }
@@ -7891,11 +7783,40 @@ export class Lobby {
     }
   }
 
+  /**
+   * The room screen's handler for the partner (or this seat) dropping for good: say why, then
+   * back to the role screen. Shared by the room step and the return from a ride. Returns the
+   * transport it watches.
+   */
+  _watchRoomDrop() {
+    const roomNet = this.net;
+    roomNet.onDisconnected = (reason) => {
+      if (this.net !== roomNet) return;   // a newer room already replaced this one
+      const waitText = document.getElementById('level-wait-text');
+      const hostStatus = document.getElementById('host-status');
+      // This device lost its seat (the room was opened somewhere else): say that, not "partner".
+      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else')
+        : reason === PARTNER_LEFT_REASON ? reason : 'Partner disconnected';
+      if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
+      if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
+      document.getElementById('btn-start-ride').style.display = 'none';
+      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
+      setTimeout(() => {
+        // Only this room's transport, and only if the lobby is still on it (not a fresh room).
+        if (!this._roomSession.dropIfCurrent(roomNet)) return;
+        this._removePipLobbyMode();
+        this._showStep(this.roleStep);
+      }, 2000);
+    };
+    return roomNet;
+  }
+
   showRoom(net, role) {
     // Called by game.js _returnToRoom() after a ride together: back to level select
     this.net = net;
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
+    this._partnerIdle.heard(); this._activity.mark();   // #694 F: they just rode with us
 
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
@@ -7952,10 +7873,7 @@ export class Lobby {
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
     // Replay any messages buffered during the rejoin delay
-    if (this._rejoinMessageQueue && this._rejoinMessageQueue.length > 0) {
-      for (const msg of this._rejoinMessageQueue) this._handleRoomMessage(msg);
-    }
-    this._rejoinMessageQueue = null;
+    for (const msg of this._roomSession.takeQueued()) this._handleRoomMessage(msg);
 
     // Send current bike preset and profile to partner on re-entry
     if (this.net.connected) {
@@ -7966,27 +7884,7 @@ export class Lobby {
     }
 
     // Re-register disconnect handler for room
-    const roomNet = this.net;
-    this.net.onDisconnected = (reason) => {
-      if (this.net !== roomNet) return;   // a newer room already replaced this one
-      const waitText = document.getElementById('level-wait-text');
-      const hostStatus = document.getElementById('host-status');
-      // This device lost its seat (the room was opened somewhere else): say that, not "partner".
-      const why = roomNet._evicted ? (reason || 'This room was opened somewhere else')
-        : reason === PARTNER_LEFT_REASON ? reason : 'Partner disconnected';
-      if (waitText) { waitText.textContent = why; waitText.style.display = ''; }
-      if (hostStatus) { hostStatus.textContent = why; hostStatus.className = 'conn-status error'; }
-      document.getElementById('btn-start-ride').style.display = 'none';
-      this._setRoomSeat('partner', { who: 'LEFT', dev: 'disconnected', state: 'open' });
-      setTimeout(() => {
-        // Only this room's transport, and only if the lobby is still on it (not a fresh room).
-        try { roomNet.destroy(); } catch (e) { /* already gone */ }
-        if (this.net !== roomNet) return;
-        this.net = null;
-        this._removePipLobbyMode();
-        this._showStep(this.roleStep);
-      }, 2000);
-    };
+    const roomNet = this._watchRoomDrop();
 
     // Back from a ride whose transport already gave up or lost its seat: its onDisconnected
     // has fired (into the game) and will not fire again, so this room would sit on
@@ -8627,8 +8525,14 @@ export class Lobby {
       let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
       // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
       if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
+      // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
+      // Joined and waiting, the code entry is hidden: only the wait's buttons.
+      const waitBtns = this._roomWaitButtons(step);
+      if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
+      else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
       this._modeColumns[1] = centerItems;
-      const defaultEl = this._stepPrimaryFocus(step, centerItems);
+      const waitFocus = waitBtns.find((b) => b.getAttribute('variant') === 'accent');
+      const defaultEl = waitFocus || this._stepPrimaryFocus(step, centerItems);
       this._stepFocus.setSpatial(this._stepNavItems(), defaultEl);
     } else {
       this._stepFocus.clear();

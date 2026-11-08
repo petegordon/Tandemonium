@@ -26,7 +26,7 @@ const MIME = {
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function startHarness({ port, outDir = null, headless = 'new' } = {}) {
+export async function startHarness({ port, outDir = null, headless = 'new', autoplay = 'no-user-gesture-required' } = {}) {
   const puppeteer = require('puppeteer');
   const server = http.createServer((q, r) => {
     const u = decodeURIComponent(q.url.split('?')[0]);
@@ -41,7 +41,7 @@ export async function startHarness({ port, outDir = null, headless = 'new' } = {
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
   const browser = await puppeteer.launch({
     headless,
-    args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', '--autoplay-policy=no-user-gesture-required'],
+    args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', `--autoplay-policy=${autoplay}`],
   });
   const out = outDir ? path.join(os.tmpdir(), outDir) : null;
   if (out) fs.mkdirSync(out, { recursive: true });
@@ -60,7 +60,7 @@ export async function startHarness({ port, outDir = null, headless = 'new' } = {
    * Open the game. `before(page)` runs before navigation (install fakes there).
    * `storage` is written to localStorage before any game script runs.
    */
-  async function gamePage({ viewport = { width: 1280, height: 800 }, storage = {}, query = '', userAgent = null, before = null, waitGame = true } = {}) {
+  async function gamePage({ viewport = { width: 1280, height: 800 }, storage = {}, query = '', userAgent = null, before = null, waitGame = true, tapToStart = true } = {}) {
     const page = await browser.newPage();
     await page.setViewport(viewport);
     if (userAgent) await page.setUserAgent(userAgent);
@@ -85,7 +85,7 @@ export async function startHarness({ port, outDir = null, headless = 'new' } = {
     if (throttle > 1) { const cdp = await page.createCDPSession(); await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle }); }
     await page.goto(`${origin}/index.html${query}`, { waitUntil: 'domcontentloaded' });
     if (waitGame) await page.waitForFunction(() => !!window._game && !!window._game.lobby, { timeout: 90000 });
-    await page.click('#tap-to-start').catch(() => {});
+    if (tapToStart) await page.click('#tap-to-start').catch(() => {});
     return page;
   }
 

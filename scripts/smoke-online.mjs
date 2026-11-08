@@ -166,6 +166,19 @@ try {
   console.log("OC-01 / OC-07 / OC-11 — Grandma's");
   {
     const { cap, sto, code } = await hostAndJoin('');
+
+    // OC-F (#694 F): over the real relay each side hears the other's activity ping; an idle
+    // partner shows "Your Stoker … hasn't moved for 0:35" (the idle clock is skewed, not waited
+    // out); the stoker pressing a key clears it within one ping period.
+    const pinged = await waitFor(cap, () => window._game.lobby._partnerIdle.pingSeen, null, 15000) && await waitFor(sto, () => window._game.lobby._partnerIdle.pingSeen, null, 15000);
+    check(pinged, "OC-F both sides hear the other's activity ping over the relay (#694 F)");
+    await cap.evaluate(() => { window._game.lobby._partnerIdle.lastAt -= 35000; });
+    const idleText = await cap.waitForFunction(() => { const e = document.getElementById('room-idle-note'); return e && !e.hidden && /^Your Stoker.* hasn't moved for 0:3[05]$/.test(e.textContent) && e.textContent; }, { timeout: 5000, polling: 100 }).then((x) => x.jsonValue(), () => null);
+    check(!!idleText, 'OC-F the captain sees the idle stoker: "Your Stoker … hasn\'t moved for 0:35"', idleText);
+    await sto.keyboard.press('Shift');
+    const cleared = await waitFor(cap, () => { const e = document.getElementById('room-idle-note'); return !e || e.hidden; }, null, 8000);
+    check(cleared, 'OC-F the stoker presses a key: the captain\'s "hasn\'t moved" clears');
+
     const riding = await startRide(cap, sto, 'grandma');
     const c0 = await net(cap), s0 = await net(sto);
     check(riding && c0.mode === 'captain' && s0.mode === 'stoker', 'both ride: captain and stoker in the same ride', { cap: c0, sto: s0 });
@@ -410,6 +423,24 @@ try {
     const capLobby = await waitFor(cap, () => window._game.state === 'lobby', null, 10000);
     check(capLobby, 'OC-17 the captain goes back to the lobby from the notice');
     await cap.close(); await sto.close();
+  }
+  // ── OC-W (#694): the relay remembers rooms. A code nobody ever opened says so at once. ──
+  console.log('OC-W — a never-opened room code');
+  {
+    const p = await openPlayer(browsers[1], 'joiner');
+    const code = 'TNDM-' + Array.from({ length: 4 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ'[Math.floor(Math.random() * 23)]).join('');
+    await clickId(p, 'btn-together');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-role');
+    await clickId(p, 'btn-stoker');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-join');
+    await p.evaluate((c) => window._game.lobby._joinRoom(c), code);
+    const said = await p.waitForFunction((c) => {
+      const s = document.getElementById('join-status');
+      const row = document.getElementById('join-wait-actions');
+      return s && s.textContent.startsWith(`No one has opened room ${c.slice(5)} yet. Check the code`) && row && !row.hidden && s.textContent;
+    }, { timeout: 30000, polling: 100 }, code).then((x) => x.jsonValue(), () => null);
+    check(!!said, 'OC-W joining a code nobody opened: "No one has opened room … yet. Check the code" + Try another code at once', said);
+    await p.close();
   }
 } catch (e) {
   check(false, 'smoke crashed: ' + (e && e.message));

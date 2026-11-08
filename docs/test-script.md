@@ -99,6 +99,7 @@ CI: `pr-preview.yml` runs PF-01, PF-06 (UI) and the lobby smokes on every PR.
 | SR-03 | Grandma's: clock is held until the first pedal taps, then runs | A | `smoke:ride` |
 | SR-04 | Grandma's: ride to the finish; victory overlay shows time, medal, coins | A | `smoke:economy`, `smoke:achievements` |
 | SR-05 | Crash: two crashes in a segment go straight back to riding; the third offers help | A | `smoke:crash` |
+| SR-05b | Crash PiP (#559): through a balance and an obstacle crash, on the goose tandem and on Solo Flight, the selfie-cam corner holds its pre-impact picture (never drawn from inside a thrown goose, a flying part or the frame) and is live again, ahead of the bike, after the remount | A | `smoke:pip-crash` |
 | SR-05b | Crash: the bike falls once from the lean it crashed at — never pops upright and falls again (#483; Physics FX off shows it) | A | `test/unit/crash-tumble`, `node scripts/reel/crash-probe.mjs --fx off` (manual, GPU) |
 | SR-05c | Crash (Physics FX on): both geese are thrown as rag dolls, hats fly, the view slows for a moment with the clock held, then the riders are back in their seats at the checkpoint (#484) | A | `smoke:physics` (crash scene), `test/unit/crash-ragdoll`, `node scripts/reel/crash-probe.mjs` (manual, GPU) |
 | SR-05d | SR-05c looks right and is funny: no geese through the floor, no jitter, versus slows only the crashing half | M | `node scripts/reel/crash-review.mjs` (review video) |
@@ -184,8 +185,10 @@ One player, one device. Run each device through the lobby and one Grandma's ride
 | IN-16 | Button prompts follow P1's pad (Xbox / PlayStation / Switch / Steam): lobby glyphs, coach card, stopped-bike hint | A | `smoke:input`, `test/unit/controller-labels` |
 | IN-17 | Unplug the only pad mid-ride: "Your controller disconnected" pause; replug resumes | A | `smoke:disconnect` |
 | IN-18 | IN-17 on real hardware, USB and BT | M | — |
-| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only` |
+| IN-19 | Two Steam Controllers under Steam Input: tilting the one on the desk doesn't take Player 1; the one you press is P1 and its D-pad moves the menus | A | `smoke:steam-input`, lab `manager-claim-button-only`, lab `units-acceptance` |
 | IN-19h | IN-19 in the real Steam client with two Steam Controllers on one Puck | M | — |
+| IN-21 | #499: Stick steering Off doesn't zero a Steam-only Steam Controller's lean (Steam routes its gyro onto the left stick); it still zeroes a real Xbox pad's stick | A | `smoke:steam-input` |
+| IN-21h | IN-21 on the Steam build: a Steam Controller with WebHID not granted, Stick steering Off, tilt steers | M | — |
 | IN-20 | #522 motion gain per difficulty (Chill/tutorial 0.3, Adventurous 0.6, Daredevil 1.0) on phone tilt AND controller gyro: the same roll steers the same; on Chill a 10° gyro roll asks for under 0.1 lean; gyro "degrees for a full lean" never adapts under 35° | A | `test/unit/motion-gain` |
 | IN-20h | IN-20 by hand: Chill feels as calm on a Steam Controller / DualSense as on a phone; Daredevil turns sharply on both | M | — |
 
@@ -338,6 +341,7 @@ Two devices on different networks for the M rows.
 | LY-05 | A non-gamer can start a ride without help (playtest protocol) | M | `docs/playtests/2026-11-protocol.md` |
 | LY-06 | Level step with a pad: ↓ from Chill Ride → START RIDE; ↓ from the far-left / far-right card → the difficulty row, not the system bar (#517) | A | `smoke:tv-nav` |
 | LY-07 | Slingshot card selects like a level; START RIDE opens its garage (#517) | A | `smoke:tv-nav` |
+| LY-08b | TV music (#567): with autoplay needing activation, the first remote key starts the lobby music (first visit and returning); a phone-remote/pad click alone doesn't, and the Music pill shows it is waiting; a browser that refuses `<audio>` but allows Web Audio plays the music from the AudioContext | A | `smoke:tv-music` |
 | LY-08 | Music pill with a pad: the volume picker is navigable, A picks, B closes (#517) | A | `smoke:tv-nav` |
 | LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517). On a desktop/TV (#523): every text at least `--uf-size-sm`, options at least `--uf-size-md`, each choice one row (High \| Medium \| Low \| Auto), sections in two columns; → moves along a row, ↓ to the next row in the same column. Couch check: readable from across the room, lobby and in-ride pause | A | `smoke:tv-nav` |
 | LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |

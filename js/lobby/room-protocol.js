@@ -29,6 +29,7 @@ export const ROOM_MSG = {
   LEVEL_REFUSED:   'levelRefused',   // PR #397 M1/m17 · stoker → captain: my edition can't ride that
   DRESSING:        'dressing',       // #672 · my Wardrobe opened / closed (a "dressing…" tag on my card)
   ROOM_MOVED:      'roomMoved',      // #667 · HOST INSTEAD: the room is moving to { code }; follow it
+  ACTIVITY:        'activity',       // #694 · I did something on the room screens (throttled; "hasn't moved for 0:30")
 };
 
 /** #667 · a room code as RoomTransport.generateRoomCode makes it ('TNDM-' + 4 of its letters). */
@@ -126,6 +127,14 @@ export const RoomProtocol = {
    * the 'rehost' cap.
    */
   roomMoved: (code) => ({ type: ROOM_MSG.ROOM_MOVED, code: String(code || '') }),
+
+  /**
+   * #694 · this player did something on the room screens (a key, a click, a pad button). Sent
+   * at most every few seconds and only after a change (ActivityPinger), so the partner can say
+   * "Your Captain (Pete) hasn't moved for 0:30". An old peer drops the unknown type, and a
+   * peer that never sends it never shows "hasn't moved".
+   */
+  activity: () => ({ type: ROOM_MSG.ACTIVITY }),
 
   /** A player's bike preset (so the partner renders the right bike). */
   bikeSync: (presetKey) => ({ type: ROOM_MSG.BIKE_SYNC, presetKey }),

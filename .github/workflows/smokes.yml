@@ -31,7 +31,7 @@ jobs:
           - group: lobby
             smokes: lobby boot edition ctas tutorial records seed daily ranked flows
           - group: ride
-            smokes: ride crash helping-hand disruptions lookahead ping economy
+            smokes: ride crash pip-crash helping-hand disruptions lookahead ping economy
           - group: ride-2
             smokes: achievements quality layout geese physics no-media controller-overlay clip-share
           - group: modes
@@ -43,7 +43,7 @@ jobs:
           - group: input
             smokes: input solo-extras
           - group: ui
-            smokes: options lobby-layout tv-nav rejoin
+            smokes: options lobby-layout tv-nav tv-music rejoin
           - group: online
             smokes: online host-instead
           - group: phone

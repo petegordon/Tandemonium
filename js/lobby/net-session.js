@@ -24,9 +24,13 @@
 import { NetworkManager } from '../network-manager.js';
 
 export class NetSession {
-  constructor() {
+  /** @param {() => any} [makeNet]  builds a transport (default: a NetworkManager; tests pass a fake) */
+  constructor(makeNet) {
     this.net = null;
     this._epoch = 0;
+    this._makeNet = makeNet || (() => new NetworkManager());
+    /** @type {((net: any) => void)|null} told after a transport is retired (replaced, adopted over, cleared) */
+    this.onRetire = null;
   }
 
   /** The current epoch. Capture immediately after replace(); guard callbacks. */
@@ -45,17 +49,21 @@ export class NetSession {
    * NetworkManager.
    */
   replace() {
-    if (this.net) {
-      this.net.onRoomJoined = null;
-      this.net.onConnected = null;
-      this.net.onDisconnected = null;
-      this.net.onAuthError = null;
-      this.net.onProfileReceived = null;
-      try { this.net.destroy(); } catch (e) {}
-    }
+    this._retire(this.net, false);
     this._epoch++;
-    this.net = new NetworkManager();
+    this.net = this._makeNet();
     return this.net;
+  }
+
+  /**
+   * #346 · leave the room: retire the current net (every callback detached, destroyed: it says
+   * goodbye to the partner) and bump the epoch, so a create/join still awaiting a token, a
+   * pending "open the room screen" or a stale-room timer from it does nothing.
+   */
+  clear() {
+    this._retire(this.net, false);
+    this._epoch++;
+    this.net = null;
   }
 
   /**
@@ -65,18 +73,30 @@ export class NetSession {
    */
   adopt(net) {
     const old = this.net;
-    if (old && old !== net) {
-      old.onRoomJoined = null;
-      old.onConnected = null;
-      old.onDisconnected = null;
-      old.onAuthError = null;
-      old.onProfileReceived = null;
-      old.onPartnerLeft = null;
-      old._partnerLeft = true;   // NetworkManager.destroy says goodbye only when this is false
-      try { old.destroy(); } catch (e) {}
-    }
+    if (old && old !== net) this._retire(old, true);
     this._epoch++;
     this.net = net;
     return net;
   }
+
+  /**
+   * #346 · a transport this session is done with: EVERY consumer callback detached — the
+   * lobby's and the ride's (game.js sets the pedal / state / lean / event / reconnect / P2P
+   * ones, and they stayed on a transport the lobby threw away) — then destroyed, and
+   * `onRetire` told so the ride can drop its reference too.
+   */
+  _retire(net, quiet) {
+    if (!net) return;
+    for (const k of NET_CALLBACKS) net[k] = null;
+    if (quiet) net._partnerLeft = true;   // NetworkManager.destroy says goodbye only when this is false
+    try { net.destroy(); } catch (e) {}
+    if (this.onRetire) { try { this.onRetire(net); } catch (e) {} }
+  }
 }
+
+/** Every callback a consumer assigns on a room transport (RoomTransport + NetworkManager). */
+export const NET_CALLBACKS = [
+  'onRoomJoined', 'onRoomWaiting', 'onConnected', 'onDisconnected', 'onReconnecting', 'onAuthError',
+  'onRemoteStream', 'onP2PUpgrade', 'onPartnerLeft',
+  'onProfileReceived', 'onPedalReceived', 'onStateReceived', 'onLeanReceived', 'onEventReceived',
+];

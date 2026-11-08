@@ -208,3 +208,37 @@ test('a transport that gave up says so (_gaveUp) until Try again starts a fresh 
   assert.equal(t._gaveUp, false);
   assert.equal(t._reconnectAttempts, 1, 'a fresh cycle started');
 });
+
+// #346 · a stale relay room: the relay's "waiting" (room open, partner not in it) reaches the
+// lobby, so a rejoin into a room whose partner is gone offers "New Room" sooner.
+test('the relay saying "waiting" marks the partner absent and tells onRoomWaiting; partner-ready clears it', () => {
+  const t = transport();
+  let waiting = 0;
+  t.onRoomWaiting = () => { waiting++; };
+  t.enterRoom('TNDM-AAAA', 'stoker');
+  sockets[0].open();
+  sockets[0].onmessage({ data: JSON.stringify({ type: 'waiting' }) });
+  assert.equal(waiting, 1);
+  assert.equal(t.partnerAbsent, true);
+  sockets[0].onmessage({ data: JSON.stringify({ type: 'partner-ready', role: 'captain' }) });
+  assert.equal(t.partnerAbsent, false);
+  assert.equal(t.connected, true);
+  t._stopHeartbeat();
+});
+
+// #694 · a relay from #694 on says what the room remembers on "waiting"; an older one doesn't.
+test('"waiting" with the room record fills roomInfo; a bare "waiting" (old relay) leaves it null', () => {
+  const t = transport();
+  let got;
+  t.onRoomWaiting = (info) => { got = info; };
+  t._displayName = 'Pete';
+  t.enterRoom('TNDM-AAAA', 'stoker');
+  assert.match(sockets.at(-1).url, /[?&]name=Pete(&|$)/, 'the seat\'s name goes to the relay');
+  sockets.at(-1).open();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'waiting', fresh: false, lastUsedAt: 1000, partnerSeenAt: 900, partnerName: 'Pat' }) });
+  assert.deepEqual(got, { fresh: false, lastUsedAt: 1000, partnerSeenAt: 900, partnerName: 'Pat' });
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'waiting' }) });
+  assert.equal(got, null);
+  assert.equal(t.roomInfo, null);
+  t._stopHeartbeat();
+});

@@ -9,9 +9,13 @@
 //   RJ-03  The row fits the TV step: cards on screen, clear of the keypad, at
 //          1920×1080 and 1280×720.
 //   RJ-04  A on a back-seat card rejoins that room as the stoker (straight to
-//          connect, status "Rejoining room...", the row goes away).
+//          connect; #694: the status names the partner and how long ago they
+//          were here, "Pat (your Captain) was here 2 min ago …"; the row goes away).
 //   RJ-05  Clicking a front-seat card rejoins as the captain on the host step.
 //   RJ-06  No recent rooms: no row, and focus starts on the keypad.
+//   RJ-07  #694 (Pete): rejoin as the captain matches create once the relay has
+//          us: the host step's code, "Scan to join" offering it, the room QR,
+//          and the previous partner's edition cleared.
 //
 // The network is stubbed (enterRoom is recorded, not dialled): the connect path
 // after the pick is the same code the pop-up used, covered by smoke:online.
@@ -132,7 +136,7 @@ const after = await page.evaluate(() => ({
   status: document.getElementById('join-status').textContent,
   rowHidden: document.getElementById('join-rejoin').hidden,
 }));
-check(stoker && stoker[0] === 'TNDM-ABCD' && stoker[1] === 'stoker' && after.step === 'lobby-join' && /Rejoining/.test(after.status) && after.rowHidden,
+check(stoker && stoker[0] === 'TNDM-ABCD' && stoker[1] === 'stoker' && after.step === 'lobby-join' && /^Pat \(your Captain\) was here 2 min ago\. Waiting for them to come back · 0:00$/.test(after.status) && after.rowHidden,
   'RJ-04 A on the back-seat card rejoins TNDM-ABCD as the stoker; the row gives way to the status', { stoker, after });
 await h.shot(page, 'rj04-stoker-rejoining');
 
@@ -140,11 +144,26 @@ await h.shot(page, 'rj04-stoker-rejoining');
 await page.evaluate(() => { window.__rj = []; });
 await sleep(1600);   // the double-pick guard
 await toJoin();
-await page.evaluate(() => { const c = document.querySelector('#join-rejoin .join-rejoin-card[data-room="TNDM-WXYZ"]'); if (c) c.click(); });
+await page.evaluate(() => { window._game.lobby._partnerRoom = { demo: true };   // RJ-07: the last partner's edition
+  const c = document.querySelector('#join-rejoin .join-rejoin-card[data-room="TNDM-WXYZ"]'); if (c) c.click(); });
 const captain = await until(() => window.__rj.length > 0 && window.__rj[0], null, 8000);
 const host = await page.evaluate(() => document.getElementById('lobby-flow').current);
 check(captain && captain[0] === 'TNDM-WXYZ' && captain[1] === 'captain' && host === 'lobby-host', 'RJ-05 clicking the front-seat card rejoins TNDM-WXYZ as the captain', { captain, host });
 await h.shot(page, 'rj05-captain-rejoining');
+
+// ── RJ-07 ──
+await page.evaluate(() => { window._game.lobby.net.onRoomJoined(); });
+const rjm = await until(() => {
+  const l = window._game.lobby;
+  const qr = document.getElementById('host-join-qr');
+  return l._hostRoomCode === 'TNDM-WXYZ' && {
+    code: l._hostRoomCode, caption: qr && qr.caption, roomQr: document.getElementById('room-qr').innerHTML.length > 0,
+    partnerRoom: l._partnerRoom, status: document.getElementById('host-status').textContent,
+  };
+}, null, 8000);
+check(rjm && /type this code/.test(rjm.caption || '') && rjm.roomQr && rjm.partnerRoom === null && /^No one else has been in room WXYZ yet/.test(rjm.status),
+  'RJ-07 rejoin as captain matches create: host code, "Scan to join" offers it, room QR, old partner edition cleared', rjm);
+await h.shot(page, 'rj07-captain-room-open');
 
 // ── RJ-06 ──
 await page.evaluate(() => { const l = window._game.lobby; if (l.net) { try { l.net.destroy(); } catch {} } localStorage.removeItem('tandemonium-rooms'); });
