@@ -24,9 +24,11 @@
 import { NetworkManager } from '../network-manager.js';
 
 export class NetSession {
-  constructor() {
+  /** @param {() => any} [makeNet]  builds a transport (default: a NetworkManager; tests pass a fake) */
+  constructor(makeNet) {
     this.net = null;
     this._epoch = 0;
+    this._makeNet = makeNet || (() => new NetworkManager());
   }
 
   /** The current epoch. Capture immediately after replace(); guard callbacks. */
@@ -54,7 +56,7 @@ export class NetSession {
       try { this.net.destroy(); } catch (e) {}
     }
     this._epoch++;
-    this.net = new NetworkManager();
+    this.net = this._makeNet();
     return this.net;
   }
 
