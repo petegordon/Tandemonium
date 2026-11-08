@@ -3806,7 +3806,13 @@ class Game {
     if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
     if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
     pending.readySent = ok === true;   // resent from onConnected if it was dropped
-    const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    let theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    // The partner's ready can be taken back: a captain that timed out sends
+    // touristReady(false) after its true. When that lands while this side is
+    // still loading, `partner` has already settled on the true (a promise
+    // settles once) and its EVT_RETURN_ROOM is ignored here (still 'lobby'),
+    // so read the latest word, or this side would sit on instructions alone.
+    if (theirs === true && this._partnerTouristReady === false) theirs = false;
     clearTimeout(timer);
     this._onPartnerTouristReady = null;
     if (!isCurrent()) return;

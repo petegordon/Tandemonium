@@ -288,9 +288,32 @@ const timeout = {
   sto: { ...(await worldState(sto)), why: await sto.evaluate(() => window._game._lastTouristAbort) },
 };
 console.log('silent stoker:', JSON.stringify(timeout, null, 1));
+await cap.close(); await sto.close();
+// 3c. the same, with the stoker still loading when the captain gives up: the
+// captain's ready(true) arrived first, its ready(false) + RETURN_ROOM land
+// mid-load. The stoker must still come back, not sit on instructions alone.
+({ cap, sto, drop } = await pair(true));
+drop.stoker.add('touristReady');
+await cap.evaluate(() => { window._game._touristReadyTimeoutMs = 1500; });
+await sto.evaluate(() => {
+  const g = window._game, orig = g._loadTouristWorld.bind(g);
+  g._touristReadyTimeoutMs = 15000;
+  g._loadTouristWorld = async (...a) => { await new Promise(r => setTimeout(r, 3000)); return orig(...a); };
+});
+await cap.evaluate(async (planJs) => {
+  const l = window._game.lobby;
+  document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click();
+  l._startTouristRide(await eval(planJs));
+}, PLAN_FAST_JS);
+await cap.waitForFunction(() => !!window._game._lastTouristAbort, { timeout: 30000, polling: 100 }).catch(() => null);
+await sto.waitForFunction(() => !!window._game._lastTouristAbort && window._game.state === 'lobby', { timeout: 30000, polling: 100 }).catch(() => null);
+timeout.midLoad = { cap: await worldState(cap), sto: { ...(await worldState(sto)), why: await sto.evaluate(() => window._game._lastTouristAbort || null) } };
+console.log('captain gives up while the stoker loads:', JSON.stringify(timeout.midLoad, null, 1));
 const timeoutOk = /took too long/.test(timeout.cap.why || '') &&
   timeout.cap.state === 'lobby' && timeout.sto.state === 'lobby' &&
-  timeout.cap.kind === 'World' && timeout.sto.kind === 'World';
+  timeout.cap.kind === 'World' && timeout.sto.kind === 'World' &&
+  timeout.midLoad.cap.state === 'lobby' && timeout.midLoad.sto.state === 'lobby' &&
+  timeout.midLoad.sto.kind === 'World' && !timeout.midLoad.sto.isTourist && !!timeout.midLoad.sto.why;
 await cap.close(); await sto.close();
 
 // ── 4. couch co-op on one screen ───────────────────────────────────────────
