@@ -339,6 +339,7 @@ Two devices on different networks for the M rows.
 | LY-05 | A non-gamer can start a ride without help (playtest protocol) | M | `docs/playtests/2026-11-protocol.md` |
 | LY-06 | Level step with a pad: ↓ from Chill Ride → START RIDE; ↓ from the far-left / far-right card → the difficulty row, not the system bar (#517) | A | `smoke:tv-nav` |
 | LY-07 | Slingshot card selects like a level; START RIDE opens its garage (#517) | A | `smoke:tv-nav` |
+| LY-08b | TV music (#567): with autoplay needing activation, the first remote key starts the lobby music (first visit and returning); a phone-remote/pad click alone doesn't, and the Music pill shows it is waiting; a browser that refuses `<audio>` but allows Web Audio plays the music from the AudioContext | A | `smoke:tv-music` |
 | LY-08 | Music pill with a pad: the volume picker is navigable, A picks, B closes (#517) | A | `smoke:tv-nav` |
 | LY-09 | Settings with a pad: starts at the top, walks shown options only, stays on screen, right stick scrolls (#517). On a desktop/TV (#523): every text at least `--uf-size-sm`, options at least `--uf-size-md`, each choice one row (High \| Medium \| Low \| Auto), sections in two columns; → moves along a row, ↓ to the next row in the same column. Couch check: readable from across the room, lobby and in-ride pause | A | `smoke:tv-nav` |
 | LY-10 | Leaderboard is the same sheet as Help (Close, B, Esc, scrim); category headings readable; Quit is the bar's last pill (#517) | A | `smoke:tv-nav` |
