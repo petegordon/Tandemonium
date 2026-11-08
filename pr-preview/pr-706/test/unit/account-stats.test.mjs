@@ -348,3 +348,40 @@ test('sign out â†’ a ride doesn\'t re-award to the next account; sign back in â†
     globalThis.fetch = realFetch;
   }
 });
+
+test('a page-hide beacon while a sync is out never sends the same counts twice', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const pat = addUser(db, 'Pat');
+  const realFetch = globalThis.fetch;
+  const realNav = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const toWorker = async (input, init) => {
+    const u = new URL(String(input && input.url ? input.url : input));
+    return worker.fetch(new Request('https://api.test' + u.pathname, { ...init, headers: { ...(init && init.headers), 'CF-Connecting-IP': '1.2.3.4' } }), env, { waitUntil() {} });
+  };
+  const beacons = [];
+  globalThis.fetch = async (input, init) => { await gate; return toWorker(input, init); };
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { sendBeacon: (url, blob) => { beacons.push(blob.text().then((t) => toWorker(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: t }))); return true; } } });
+  globalThis.localStorage = fakeStorage({});
+  try {
+    const { AchievementManager } = await import('../../js/achievements.js');
+    const token = jwt(pat);
+    const m = new AchievementManager().setIdentity({ getToken: () => token });
+    m.record('crash', {});
+    const syncing = m.syncStats();          // out, held at the gate
+    m.record('crash', {});                  // one more while it's out
+    assert.equal(m.flushStatsBeacon(), true);
+    await Promise.all(beacons);             // the beacon lands first
+    release();
+    await syncing;
+    await m.syncStats();
+    const acct = fromAccount(JSON.parse(db.prepare('SELECT stats_json s FROM game_stats WHERE user_id = ?').get(pat).s));
+    assert.equal(acct.crashes, 2, 'each crash counted once');
+    assert.equal(m.getStats().crashes, 2);
+  } finally {
+    globalThis.fetch = realFetch;
+    if (realNav) Object.defineProperty(globalThis, 'navigator', realNav); else delete globalThis.navigator;
+  }
+});
