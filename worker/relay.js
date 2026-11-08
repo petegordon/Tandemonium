@@ -8,7 +8,6 @@ const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
 // 2 h" or "Pete was here 3 min ago" even on a device with no history. Only a few small fields;
 // an old client ignores them (they ride on the 'waiting' message it already reads by type).
 const ROOM_META_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const META_WRITE_EVERY_MS = 60 * 1000;   // while a room is busy, at most one write a minute
 
 /** A display name from the query: trimmed, no control characters, at most 32 characters. */
 export function cleanName(raw) {
@@ -22,7 +21,6 @@ export class TandemRoom {
         this.state = state;
         this.env = env;
         this._meta = undefined;      // #694 · { createdAt, lastUsedAt, seen: { captain?: {at, name}, stoker?: {at, name} } } | null
-        this._metaWrittenAt = 0;
     }
 
     /** #694 · the room's record (cached; null for a room never used). Storage trouble = no record. */
@@ -40,7 +38,6 @@ export class TandemRoom {
         const seen = { ...((prev && prev.seen) || {}) };
         if (role) seen[role] = { at: now, name: name || (seen[role] && seen[role].name) || null };
         this._meta = { createdAt: (prev && prev.createdAt) || now, lastUsedAt: now, seen };
-        this._metaWrittenAt = now;
         try { await this.state.storage.put('meta', this._meta); } catch (e) { /* the record is a nicety */ }
     }
 
@@ -66,6 +63,13 @@ export class TandemRoom {
             }
         }
 
+        // #694: what the room knew BEFORE this connection (read first: touching it changes it).
+        // Read before the stale sockets close: from there to acceptWebSocket must not await, or a
+        // replaced socket's close sees no seat-holder and tells the partner "disconnect" (#620).
+        const prior = await this._readMeta();
+        const partnerRoleForMeta = role === 'captain' ? 'stoker' : 'captain';
+        const partnerSeen = prior && prior.seen && prior.seen[partnerRoleForMeta];
+
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair);
 
@@ -75,13 +79,8 @@ export class TandemRoom {
             try { sock.close(1000, 'replaced'); } catch (e) {}
         }
 
-        // #694: what the room knew BEFORE this connection (read first: touching it changes it).
-        const prior = await this._readMeta();
-        const partnerRoleForMeta = role === 'captain' ? 'stoker' : 'captain';
-        const partnerSeen = prior && prior.seen && prior.seen[partnerRoleForMeta];
-
         this.state.acceptWebSocket(server, [role]);
-        await this._touch(role, cleanName(url.searchParams.get('name')));
+        await this._touch(role, cleanName(url.searchParams.get('name')));   // after accept: safe to await
 
         // Reset room TTL on new connection
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
@@ -134,8 +133,6 @@ export class TandemRoom {
         for (const sock of this.state.getWebSockets(targetRole)) {
             try { sock.send(message); } catch (e) { /* closed */ }
         }
-        // #694: still in use (throttled: a ride sends many messages a second)
-        if (Date.now() - this._metaWrittenAt > META_WRITE_EVERY_MS) await this._touch(senderRole);
     }
 
     async webSocketClose(ws) {
@@ -149,13 +146,13 @@ export class TandemRoom {
         const stillHere = this.state.getWebSockets(senderRole).some((s) => s !== ws && s.readyState === 1);
         if (stillHere) return;
 
-        await this._touch(senderRole);   // #694: they were here until now
 
         // Notify partner
         const closeMsg = JSON.stringify({ type: 'disconnect', role: senderRole });
         for (const sock of this.state.getWebSockets(targetRole)) {
             try { sock.send(closeMsg); } catch (e) { /* closed */ }
         }
+        await this._touch(senderRole);   // #694: they were here until now
     }
 
     async webSocketError(ws) {

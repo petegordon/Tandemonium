@@ -69,7 +69,7 @@ test('the empty room keeps its record for a week, then is forgotten', async () =
   } finally { Date.now = realNow; }
 });
 
-test('busy rooms write the record at most once a minute', async () => {
+test('relaying messages never writes the record (connect and leave do)', async () => {
   const R = room();
   const cap = await R.connect('captain');
   const sto = await R.connect('stoker');
@@ -84,4 +84,16 @@ test('cleanName trims, drops control characters, caps at 32', () => {
   assert.equal(cleanName('x'.repeat(40)).length, 32);
   assert.equal(cleanName(''), null);
   assert.equal(cleanName(null), null);
+});
+
+test('#620 still holds: a re-dial never tells the partner "disconnect" (no await between closing the old socket and seating the new)', async () => {
+  const R = room();
+  const sto = await R.connect('stoker');
+  const cap1 = await R.connect('captain');
+  // the runtime delivers the replaced socket's close as a separate event: model it as a microtask
+  cap1.close = () => { cap1.readyState = 3; queueMicrotask(() => R.r.webSocketClose(cap1)); };
+  sto.sent.length = 0;
+  await R.connect('captain');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(!sto.sent.some((m) => m.type === 'disconnect'), JSON.stringify(sto.sent));
 });
