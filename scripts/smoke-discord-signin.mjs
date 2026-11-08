@@ -132,8 +132,17 @@ const popupState = (page) => page.evaluate(() => {
   await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
   s = await popupState(page);
   check(s.qr && s.code === 'K7QF', 'B: linking shows the QR steps and the code', s);
-  const opened = await page.evaluate(() => window.__opened.slice());
-  check(opened.length === 1 && /\/auth\/discord\/go\?r=d1$/.test(opened[0]), 'B: the desktop app opens the system browser on the device page', opened);
+  let opened = await page.evaluate(() => window.__opened.slice());
+  check(opened.length === 0, 'B: the browser does not open by itself (QR first, for the couch)', opened);
+  const openBtn = await page.evaluate(() => {
+    const b = document.getElementById('profile-popup-open-browser');
+    const r = b && b.getBoundingClientRect();
+    return { shown: !!(b && b.style.display !== 'none' && r.width > 0), text: b && b.textContent.trim() };
+  });
+  check(openBtn.shown && openBtn.text === 'OPEN ON THIS COMPUTER', 'B: OPEN ON THIS COMPUTER sits under the QR', openBtn);
+  await page.evaluate(() => document.getElementById('profile-popup-open-browser').click());
+  opened = await page.evaluate(() => window.__opened.slice());
+  check(opened.length === 1 && /\/auth\/discord\/go\?r=d1$/.test(opened[0]), 'B: OPEN ON THIS COMPUTER opens the system browser on the device page', opened);
   const begins = await page.evaluate(() => window.__api.begins);
   check(begins.length === 1 && begins[0].authed && begins[0].mode === 'device', 'B: the link request carries the Steam session (so it links, not a new account)', begins);
   await h.shot(page, 'B2-steam-link-qr');
