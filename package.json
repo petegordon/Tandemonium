@@ -52,6 +52,7 @@
     "smoke:economy": "node scripts/smoke-economy.mjs",
     "smoke:achievements": "node scripts/smoke-achievements.mjs",
     "smoke:helping-hand": "node scripts/smoke-helping-hand.mjs",
+    "smoke:share-card": "node scripts/smoke-share-card.mjs",
     "sync-ui": "node scripts/sync-ui.js",
     "check:ui": "node scripts/check-ui.js",
     "docs:screen-flow": "node scripts/gen-screen-flow.mjs",

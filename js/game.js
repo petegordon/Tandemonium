@@ -7,7 +7,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike } from './special-bikes.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase } from './config.js';
+import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -36,6 +36,7 @@ import {
   recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
 } from './daily-ride.js';
+import { buildResultCard, renderResultCard, linkFromStrip, steamSavedMessage } from './result-card.js';   // #657
 import { getLevelById, LEVELS, getInstructions, getMedals, TUTORIAL_PHASES, TUTORIAL_LAST_PHASE } from './race-config.js';
 import { markTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { ContributionTracker } from './contribution-tracker.js';
@@ -91,6 +92,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
@@ -770,6 +772,8 @@ class Game {
     // Achievements (persists across sessions)
     this.achievements = new AchievementManager();
     this.achievements.onEarned = (a) => this._onAchievementEarned(a);   // #401: every unlock, any source
+    // #666: a demo guest in a full-game host's room earns the full game's achievements (held).
+    this.achievements.guestPassSource = () => (this.mode === 'captain' || this.mode === 'stoker') && !!this._roomRules().guestPass;
     this.achievements.listen(window);                                   // #401: economy + Slingshot events
     this._updateBadges();
 
@@ -1054,14 +1058,14 @@ class Game {
   }
 
   /**
-   * PR #397 M1 · the rules this ride runs by: in an online room the most
-   * restrictive of both sides (a demo or old partner → unranked, no helping
-   * hand for an old one); otherwise this edition's.
+   * PR #397 M1 · the rules this ride runs by: in an online room the host's
+   * edition (#666: the captain's; an old partner → the most restrictive side,
+   * no helping hand); otherwise this edition's.
    */
   _roomRules() {
     const mine = getEditionRules();
     if (this.mode !== 'captain' && this.mode !== 'stoker') return mine;
-    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null);
+    return mergeRoomRules(mine, (this.lobby && this.lobby._partnerRoom) || null, this.mode);   // #666: the host (captain) sets it
   }
 
   /**
@@ -1123,6 +1127,7 @@ class Game {
    * @returns {HTMLElement[]} the buttons that were shown, for gamepad focus
    */
   _updateCtaButtons(which) {
+    this._updateHeldNote(which);   // #666
     const wishlist = document.getElementById('btn-wishlist-' + which);
     const invite = document.getElementById('btn-invite-' + which);
     const shown = [];
@@ -1136,7 +1141,7 @@ class Game {
     }
 
     if (wishlist) {
-      const show = this._canWishlist;
+      const show = this._canWishlist || this._heldNoteShown;
       wishlist.style.display = show ? '' : 'none';
       if (show) shown.push(wishlist);
     }
@@ -1146,6 +1151,22 @@ class Game {
       if (show) shown.push(invite);
     }
     return shown;
+  }
+
+  /**
+   * #666 · the end-of-ride card for a demo guest in a full host's room: the
+   * full-game achievements they hold (earned with a friend, not on the demo's
+   * Steam profile yet). "You earned N achievements with your friend. Get the
+   * full game to claim them." Hidden everywhere else.
+   */
+  _updateHeldNote(which) {
+    const el = document.getElementById(which + '-held');
+    const held = this.achievements && this.achievements.guestPass ? this.achievements.getHeldIds().length : 0;
+    this._heldNoteShown = held > 0;
+    if (!el) return;
+    el.hidden = held === 0;
+    el.textContent = held === 0 ? ''
+      : 'You earned ' + held + ' achievement' + (held === 1 ? '' : 's') + ' with your friend. Get the full game to claim ' + (held === 1 ? 'it.' : 'them.');
   }
 
   /** B-5 · the wishlist CTA: the store page, counted. Also the Slingshot demo's end (#400). */
@@ -2375,10 +2396,13 @@ class Game {
     // #641 · a new ride on the Daily Ride counts (the demo's cap, the first
     // try) and starts out clean: SAFETY, SPEED, ASSIST, the silent tune or the
     // helping hand at any point make it a ride that posts no board time.
+    // #666 · a demo guest in a full host's room rides by the host's rules: its
+    // Daily Ride cap is not spent (its full-game achievements: achievements.guestPass).
+    const guestPass = !!this._roomRules().guestPass;
     if (newRide) {
       this._rideAided = false;
       this._dailyRideNo = (level.isDaily && level.key && this.mode !== 'versus')
-        ? recordRideStart(browserStore(), level.key) : 0;
+        ? recordRideStart(browserStore(), level.key, { guest: guestPass }) : 0;
     }
     this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
@@ -2386,6 +2410,7 @@ class Game {
     this.balanceCtrl.resetSteerFrames();
     if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
+    this._prefetchCouchPair();   // #609
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     if (this.obstacleManager) this.obstacleManager.destroy();
@@ -2436,6 +2461,12 @@ class Game {
 
     // D-3: no stale strip from a previous ride on a different road.
     this._dailyStripText = null;
+    // #657: nor a stale result card: its data, the badges this ride unlocks, its payout.
+    this._shareCardData = null;
+    this._dailyStripInput = null;
+    this._rideUnlocks = [];
+    this._lastRidePayout = null;
+    this._shareSavedToSteam = false;
 
     // E-2: plan what the road is going to do to this pair.
     // Map Tourist has no road line to lay cobbles, gusts or goose crossings
@@ -3773,7 +3804,7 @@ class Game {
     });
     // A route this side could not rebuild, or a build with Tourist switched
     // off (no Maps key / the demo), cannot load — it fails the barrier at once.
-    const canLoad = !!plan.route && getEditionRules().tourist && !!getMapsApiKey();
+    const canLoad = !!plan.route && this.lobby.roomRules().tourist && !!getMapsApiKey();   // #666: the host's edition
     // PR #397 m15: a partner that fails while this side is still loading ends
     // the wait at once, rather than after this side's own load settles.
     const partnerFailed = partner.then(v => (v === true ? new Promise(() => {}) : 'partner'));
@@ -3785,7 +3816,13 @@ class Game {
     if (!isCurrent()) { clearTimeout(timer); this._onPartnerTouristReady = null; return; }
     if (ok === true && this.net.connected) this.net.sendProfile(RoomProtocol.touristReady(true));
     pending.readySent = ok === true;   // resent from onConnected if it was dropped
-    const theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    let theirs = ok === true ? await Promise.race([partner, deadline]) : false;
+    // The partner's ready can be taken back: a captain that timed out sends
+    // touristReady(false) after its true. When that lands while this side is
+    // still loading, `partner` has already settled on the true (a promise
+    // settles once) and its EVT_RETURN_ROOM is ignored here (still 'lobby'),
+    // so read the latest word, or this side would sit on instructions alone.
+    if (theirs === true && this._partnerTouristReady === false) theirs = false;
     clearTimeout(timer);
     this._onPartnerTouristReady = null;
     if (!isCurrent()) return;
@@ -3973,7 +4010,7 @@ class Game {
       `Tandemonium · ${plan.headline}`,
       `📍 ${plan.from.label} → ${plan.to.label}`,
       `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
-      location.origin + '/'
+      (/^https?:/.test(location.origin) ? location.origin : SITE_URL) + '/'
     ].join('\n');
 
     try {
@@ -4475,26 +4512,40 @@ class Game {
    * signs in is not invisible — they just cannot see the panel from their own
    * side until they do.
    */
-  async _renderPairPanel(summary) {
+  async _renderPairPanel(summary, submitted = null) {
     const el = document.getElementById('pair-panel');
     if (!el) return;
     el.style.display = 'none';
 
-    const auth = this.lobby.auth;
-    const partner = this._partnerServerId ||
-      (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
-    if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo') return;
-
     let pair = null;
-    try { pair = await auth.fetchPair(partner); } catch { return; }
-    if (!pair) return;
-    // F-1 reads these on the next finish (pair_10_rides, pair_100km).
-    this._lastPairSummary = pair;
-
+    let name = this._partnerName || 'your partner';
+    let previousBest = null;
     const level = this.lobby.selectedLevel;
-    const previousBest = pair.best && level ? pair.best[level.id] : null;
+    const couch = this._couchPair();
+    if (couch) {
+      // #609 · a couch pair: after this ride is posted, so the panel counts it.
+      // "Best" is the pair's best before this ride (the record fetched at the start).
+      const before = this._couchPairCache && this._couchPairCache.key === couch.withKey ? this._couchPairCache.pair : null;
+      try { await submitted; } catch (e) {}
+      pair = await this._fetchCouchPair(couch);
+      if (!pair) return;
+      this._couchPairCache = { key: couch.withKey, pair };
+      name = couch.name;
+      previousBest = before && before.best && level ? before.best[level.id] : null;
+    } else {
+      const auth = this.lobby.auth;
+      const partner = this._partnerServerId ||
+        (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
+      if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo' || this.mode === 'local') return;
+
+      try { pair = await auth.fetchPair(partner); } catch { return; }
+      if (!pair) return;
+      // F-1 reads these on the next finish (pair_10_rides, pair_100km).
+      this._lastPairSummary = pair;
+      previousBest = pair.best && level ? pair.best[level.id] : null;
+    }
+
     const beat = previousBest && summary && summary.timeMs < previousBest;
-    const name = this._partnerName || 'your partner';
     const km = (pair.distance || 0) / 1000;
 
     el.innerHTML =
@@ -4588,7 +4639,7 @@ class Game {
       : computeStreak(store, level.key).current;
 
     const thresholds = getMedals(level.id, this.lobby.selectedDifficulty);
-    this._dailyStripText = buildShareStrip({
+    const stripInput = {
       key: level.key,
       mode,
       timeMs: summary.timeMs,
@@ -4610,36 +4661,143 @@ class Game {
       streak,
       warp: level.warp > 0,   // #611
       partnerName: mode === 'pair' ? this._partnerName : null
-    }, { origin: location.origin });
+    };
+    this._dailyStripInput = stripInput;   // #657: the result card says the same
+    // #657: the desktop app's own origin (tandemonium://app) is no link for anyone else.
+    const origin = /^https?:/.test(location.origin) ? location.origin : SITE_URL;
+    this._dailyStripText = buildShareStrip(stripInput, { origin });
 
     const escaped = this._dailyStripText
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     return `<div id="daily-strip">${escaped}</div>`;
   }
 
-  /** D-3 · share the clip if there is one, else the strip. */
+  /**
+   * #657 · the result card's data for this finish (the Daily Ride, or a
+   * tourist ride): what buildResultCard() takes, less the parts only known
+   * later (the payout, the badges, the link — added when it is shared).
+   */
+  _resultCardData(summary, level) {
+    const d = this._dailyStripInput;
+    const plan = this._touristRoute;
+    return {
+      levelName: level.name,
+      levelIcon: plan ? '📍' : level.icon,
+      headline: plan ? plan.headline : null,
+      isDaily: !!level.isDaily,
+      dayKey: level.key || null,
+      difficulty: plan ? null : this.lobby.selectedDifficulty,
+      mode: d ? d.mode : (this.mode === 'solo' ? 'solo' : 'pair'),
+      partnerName: d ? d.partnerName : null,
+      timeMs: summary.timeMs,
+      bestMs: d ? d.bestMs : null,
+      dnf: !!summary.dnf,
+      distance: summary.distance,
+      medal: d ? d.medal : null,
+      collectibles: summary.collectibles,
+      collectiblesTotal: summary.collectiblesTotal,
+      crashes: summary.crashes,
+    };
+  }
+
+  /** #657 · the card as it is now: the finish, plus this ride's Tandem Tokens and badges. */
+  _resultCardModel() {
+    if (!this._shareCardData) return null;
+    const pay = this._lastRidePayout;
+    return buildResultCard({
+      ...this._shareCardData,
+      tokensEarned: pay && pay.score ? pay.score.total : 0,
+      badges: this._rideUnlocks || [],
+      link: linkFromStrip(this._dailyStripText),
+    });
+  }
+
+  /**
+   * #657 · the Steam build: render the result card and write it to the
+   * player's Steam screenshot library, captioned with the strip's headline.
+   * Resolves { ok, error }; null when there is no Steam to save to.
+   */
+  async _saveResultToSteam() {
+    const steam = /** @type {any} */ (window).steam;
+    if (!steam || typeof steam.saveScreenshot !== 'function') return null;
+    try { if (!(await steam.isAvailable())) return null; } catch { return null; }
+    const model = this._resultCardModel();
+    if (!model) return { ok: false, error: 'no-card' };
+    try {
+      const card = await renderResultCard(model);
+      const png = new Uint8Array(await (await card.png()).arrayBuffer());
+      const res = await steam.saveScreenshot({ png, rgb: card.rgb(), width: card.width, height: card.height, caption: model.caption });
+      return res && res.ok ? res : { ok: false, error: (res && res.error) || 'failed' };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+
+  /** Put a message on SHARE RESULT for a while, then its label back. */
+  _flashShareButton(where, text, ms) {
+    const btn = document.getElementById('btn-daily-share-' + where);
+    if (!btn) return;
+    btn.textContent = text;
+    clearTimeout(this._shareBtnTimer);
+    this._shareBtnTimer = setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, ms);
+  }
+
+  /**
+   * D-3 · share the clip if there is one, else the strip. #657: in the Steam
+   * build the result card goes to the Steam screenshot library instead (the
+   * clipboard is a dead end on a TV with a controller); if that fails, the
+   * clipboard, and the button says so.
+   */
   async _shareDailyResult(where) {
     const text = this._dailyStripText;
     if (!text) return;
     let method = 'copy';
+    let steamFailed = false;
+    const steam = /** @type {any} */ (window).steam;
+    if (steam && typeof steam.saveScreenshot === 'function') {
+      const pad = Array.from((navigator.getGamepads && navigator.getGamepads()) || []).some(p => p && p.connected);
+      if (this._shareSavedToSteam) {   // already saved this ride: say where it went, do not save twice
+        this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
+        return;
+      }
+      if (this._shareSaving) return;
+      this._shareSaving = true;
+      this._flashShareButton(where, 'SAVING…', 15000);
+      let res = null;
+      try { res = await this._saveResultToSteam(); } finally { this._shareSaving = false; }
+      if (res && res.ok) {
+        this._shareSavedToSteam = true;
+        this._flashShareButton(where, steamSavedMessage({ pad }), 6000);
+        try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method: 'steam_screenshot', where }); } catch {}
+        if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
+        return;
+      }
+      steamFailed = !!res;   // null: no Steam running, so the ordinary clipboard and no note
+      if (res) console.warn('[share] Steam screenshot failed:', res.error);
+      else this._flashShareButton(where, '📋 SHARE RESULT', 0);
+    }
     try {
       const clip = this.recorder && this.recorder._clipBlob;
-      if (clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
+      if (!steamFailed && clip && navigator.canShare && navigator.canShare({ files: [new File([clip], 'ride.mp4', { type: clip.type })] })) {
         // The persona's channel is video: offer the clip first, with the strip
         // as its caption.
         await navigator.share({ files: [new File([clip], 'tandemonium.mp4', { type: clip.type })], text });
         method = 'clip';
-      } else if (navigator.share && isMobile) {
+      } else if (!steamFailed && navigator.share && isMobile) {
         await navigator.share({ text });
         method = 'share';
       } else {
         await navigator.clipboard.writeText(text);
-        const btn = document.getElementById('btn-daily-share-' + where);
-        if (btn) { btn.textContent = 'COPIED'; setTimeout(() => { btn.textContent = '📋 SHARE RESULT'; }, 1600); }
+        if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM · COPIED INSTEAD", 4000);
+        else this._flashShareButton(where, 'COPIED', 1600);
+        if (steamFailed) method = 'copy_after_steam';
       }
       try { analytics.trackEvent('daily_share', { key: this.lobby.selectedLevel?.key, method, where }); } catch {}
       if (this.lobby.selectedLevel?.isDaily) this.achievements.record('share');   // #401 Show-Off
-    } catch { /* the user dismissed the share sheet; that is not an error */ }
+    } catch {
+      /* the user dismissed the share sheet; that is not an error */
+      if (steamFailed) this._flashShareButton(where, "COULDN'T SAVE TO STEAM", 4000);
+    }
   }
 
   /**
@@ -4799,7 +4957,16 @@ class Game {
   /** Every unlock, from any source (a frame, a finish, a payout, a launch): toast + badges. */
   _onAchievementEarned(a) {
     showAchievementToast(a);
+    // #657 · the result card shows the badges this ride unlocked.
+    if (this._rideUnlocks) this._rideUnlocks.push({ icon: a.icon || '🏅', name: a.name || '' });
     this._updateBadges();
+    // #666: a held one earned after the end sheet went up (the finish's own check) updates its count.
+    if (this.achievements && this.achievements.guestPass) {
+      const vic = document.getElementById('victory-overlay');
+      const go = document.getElementById('gameover-overlay');
+      if (vic && vic.classList.contains('visible')) this._updateCtaButtons('victory');
+      if (go && go.style.display === 'flex') this._updateCtaButtons('gameover');
+    }
     try {
       analytics.trackEvent('achievement_earned', {
         achievement_id: a.id,
@@ -4844,7 +5011,17 @@ class Game {
         ? computePairStreak(store, partnerKey, level.key).current
         : computeStreak(store, level.key).current;
     }
-    if (this._lastPairSummary) {
+    if (this.mode === 'local') {
+      // #609 · a couch pair with a signed-in Player 2: the record fetched when the
+      // ride started, plus this ride when it is being posted. Unsigned P2: none.
+      const couch = this._couchPair();
+      const cache = this._couchPairCache;
+      if (couch && cache && cache.key === couch.withKey) {
+        const rs = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
+        const willPost = !!rs && rs.timeMs >= 30000 && !!getEditionRules().postScores;
+        Object.assign(state, pairStatsForFinish(cache.pair, { willPost, distanceM: rs ? rs.distance : 0 }));
+      }
+    } else if (this._lastPairSummary) {
       state.pairRides = this._lastPairSummary.rides || 0;
       state.pairDistanceKm = (this._lastPairSummary.distance || 0) / 1000;
     }
@@ -4875,6 +5052,33 @@ class Game {
   _seatAccount() {
     if (this.mode !== 'local' || !this.lobby || !this.lobby.seatAccounts) return null;
     try { return this.lobby.seatAccounts.get(2); } catch (e) { return null; }
+  }
+
+  /** #609 · local co-op with a signed-in Player 2 (js/couch-pair.js), or null. */
+  _couchPair() {
+    const auth = this.lobby && this.lobby.auth;
+    const p1 = auth && auth.isLoggedIn() && auth.user ? auth.user.serverId : null;
+    let deviceId = null;
+    try { deviceId = analytics.getDeviceId(); } catch (e) {}
+    return couchPair({ mode: this.mode, seatAccount: this._seatAccount(), p1ServerId: p1, deviceId });
+  }
+
+  /** #609 · the couch pair's server record, asked by whoever submits the ride. */
+  async _fetchCouchPair(couch) {
+    try {
+      if (couch.submitAs === 'p1') return await this.lobby.auth.fetchPair(couch.withKey);
+      return await this.lobby.seatAccounts.fetchPair(2, couch.withKey);
+    } catch (e) { return null; }
+  }
+
+  /** #609 · at the ride's start, so the finish's Regulars / 5K Together have the pair's numbers. */
+  _prefetchCouchPair() {
+    this._couchPairCache = null;
+    const couch = this._couchPair();
+    if (!couch) return;
+    this._fetchCouchPair(couch).then((pair) => {
+      if (pair && this._couchPair() && this._couchPair().withKey === couch.withKey) this._couchPairCache = { key: couch.withKey, pair };
+    });
   }
 
   /**
@@ -5158,6 +5362,8 @@ class Game {
       html += this._buildDailyStripHtml(summary, level);
       // E-7 · on a tourist ride, what the ride was about.
       if (this._touristRoute) html += this._touristVictoryHtml(summary.distance);
+      // #657 · what the result card will say, if this finish has something to share.
+      this._shareCardData = this._dailyStripText ? this._resultCardData(summary, level) : null;
 
       statsEl.innerHTML = html;
 
@@ -5291,11 +5497,11 @@ class Game {
     this._checkFinishAchievements();
 
     // Auto-submit score if logged in
-    this._submitScore();
+    const submitted = this._submitScore();
     // D-6 / D-8 · #641: a clean Daily finish goes to the board (the server keeps
     // the day's best), and what the two of you have done.
     this._submitDailyBest(summary, fromRemote);
-    this._renderPairPanel(summary);
+    this._renderPairPanel(summary, submitted);
 
     // Show NEXT LEVEL button if there's a next level. #400: in the demo, after
     // its last level it still shows and opens the demo's end screen.
@@ -5365,7 +5571,7 @@ class Game {
 
   async _submitScore() {
     const auth = this.lobby.auth;
-    if (!auth || !auth.isLoggedIn()) return;
+    if (!auth || !auth.isLoggedIn()) return this._submitCouchAsP2();
     // Demo mode: don't save scores to leaderboard
     if (!getEditionRules().postScores) return;
 
@@ -5448,6 +5654,34 @@ class Game {
         );
       }
     } catch (e) {}
+  }
+
+  /**
+   * #609 · Player 1 signed out, Player 2 signed in on their seat: Player 2's own
+   * session posts the couch ride (as the stoker), with Player 1 as this device's
+   * guest, so the pair record (P2, guest:<device>) grows like an online D-9 pair.
+   */
+  async _submitCouchAsP2() {
+    const couch = this._couchPair();
+    if (!couch || couch.submitAs !== 'p2' || !getEditionRules().postScores) return;
+    const level = this.lobby.selectedLevel;
+    const rs = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
+    if (!rs || !level) return;
+    const contrib = this.contributionTracker ? this.contributionTracker.getSummary() : {};
+    const data = {
+      levelId: level.id,
+      distance: rs.distance,
+      timeMs: rs.timeMs,
+      collectiblesCount: this.collectibleManager ? this.collectibleManager.collected : 0,
+      inputSource: rs.inputSource,
+      difficulty: this.lobby.selectedDifficulty || 'adventurous',
+      safetyUsed: this.safetyMode,
+      scoreMultiplier: TUNE.scoreMultiplier || 1.0,
+    };
+    const deviceId = couch.withKey.slice('guest:'.length);
+    const body = guestCaptainSubmit(data, { captain: contrib.captain || contrib.solo, stoker: contrib.stoker }, couch, deviceId,
+      (this._seatNewAchievements && this._seatNewAchievements[2]) || []);
+    try { await this.lobby.seatAccounts.submitScore(2, body); } catch (e) {}
   }
 
   _hideVictory() {

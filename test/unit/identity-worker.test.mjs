@@ -250,6 +250,43 @@ test('couch co-op: the ride saves for Player 1 and, by their own sign-in, Player
   } finally { restore(); }
 });
 
+test('#609 couch pairs: both signed in → one pair both can read; P1 signed out → Sam with this device\'s guest', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const p2 = await deviceSignIn(env);
+    const base = { levelId: 'grandma', distance: 1200, timeMs: 200000 };
+    const contributions = { captain: { overallPct: 55 }, stoker: { overallPct: 45 } };
+    // Two couch rides with both signed in (the submit P1's game sends today).
+    for (let i = 0; i < 2; i++) {
+      db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
+      const res = await call(env, '/score', { method: 'POST', token: p1.token, body: {
+        ...base, mode: 'local', contributions: { captain: { ...contributions.captain, userId: p1.user.id }, stoker: { ...contributions.stoker, userId: null } },
+        seats: [{ role: 'stoker', token: p2.token, newAchievements: [] }] } });
+      assert.equal(res.status, 200);
+    }
+    const fromP1 = await (await call(env, '/pair?with=' + p2.user.id, { token: p1.token })).json();
+    const fromP2 = await (await call(env, '/pair?with=' + p1.user.id, { token: p2.token })).json();
+    assert.equal(fromP1.rides, 2);
+    assert.equal(fromP1.distance, 2400);
+    assert.deepEqual(fromP2, fromP1, 'the same record from either seat');
+
+    // P1 signed out: Sam's own session posts the ride as the stoker, P1 = this device's guest.
+    db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
+    const res = await call(env, '/score', { method: 'POST', token: p2.token, body: {
+      ...base, mode: 'stoker', newAchievements: ['first_finish'],
+      contributions: { captain: { ...contributions.captain, userId: null, guestDeviceId: 'dev1' }, stoker: { ...contributions.stoker, userId: p2.user.id } } } });
+    assert.equal(res.status, 200);
+    const guest = await (await call(env, '/pair?with=guest%3Adev1', { token: p2.token })).json();
+    assert.equal(guest.rides, 1);
+    const again = await (await call(env, '/pair?with=' + p2.user.id, { token: p1.token })).json();
+    assert.equal(again.rides, 2, "P1's account pair is untouched");
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM user_achievements WHERE user_id = ? AND achievement_id = 'first_finish'").get(p2.user.id).n, 1);
+  } finally { restore(); }
+});
+
 test('existing users keep their sign-in after the migration', () => {
   const db = freshDb();
   db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('google', 'g1', 'Old')").run();

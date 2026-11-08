@@ -83,7 +83,7 @@ import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
-import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict } from './edition.js'; // PR #397 M1
+import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
@@ -969,10 +969,12 @@ export class Lobby {
         : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
           : { who: 'Waiting for partner…', dev: '', state: 'open' };
     const code = on ? (this.net.roomCode || '') : '';
+    // #666 · "Full game room" / "Demo room": the host's edition, so both players know why a level is (not) there.
+    const badge = on ? roomBadge(this.roomRules()) : '';
     // #672 · each seat shows its goose (outfit · colours · light swatch); the partner's, while
     // their Wardrobe is open, carries a "dressing…" tag, and the captain's START RIDE says so.
     const dressing = connected && !left && !!this._partnerDressing;
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing].join('|') : 'off';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
@@ -983,7 +985,8 @@ export class Lobby {
     if (!on) return;
     me.hint = this._roomSeatHint(me.dev, getP1Look(), false);
     them.hint = them.state === 'joined' ? this._roomSeatHint(them.dev, this._partnerLook, dressing) : '';
-    team.heading = code ? 'Online room ' + code : 'Online room';
+    team.heading = (code ? 'Online room ' + code : 'Online room') + ' · ' + badge;
+    team.dataset.roomBadge = badge;
     const cap = /** @type {any} */ (document.getElementById('level-room-captain'));
     const sto = /** @type {any} */ (document.getElementById('level-room-stoker'));
     const [mine, theirs] = role === 'captain' ? [cap, sto] : [sto, cap];
@@ -1562,12 +1565,13 @@ export class Lobby {
    * launch URL carries).
    */
   /**
-   * PR #397 M1 · the rules this lobby picks by: this edition's, or in an online room the MOST RESTRICTIVE of the two sides (edition.mergeRoomRules).
-   * Until the partner's room profile arrives it counts as an old client.
+   * PR #397 M1 · the rules this lobby picks by: this edition's, or in an online room the HOST's
+   * edition (#666, edition.mergeRoomRules; the captain is the host). Until the partner's room
+   * profile arrives it counts as an old client.
    */
   roomRules() {
     const mine = getEditionRules();
-    return this._pendingMode === 'multiplayer' ? mergeRoomRules(mine, this._partnerRoom || null) : mine;
+    return this._pendingMode === 'multiplayer' ? mergeRoomRules(mine, this._partnerRoom || null, this._roomRole || 'captain') : mine;
   }
 
   /** PR #397 M1 · { edition, caps } for this side's room profile. */
@@ -4300,6 +4304,8 @@ export class Lobby {
     if (d.earned) {
       state = 'earned'; kicker = 'Achievement unlocked';
       status = d.earnedAt ? 'Unlocked ' + this._longDate(d.earnedAt) : 'Unlocked';
+      // #666: earned with a friend in a full-game room; the full game puts it on Steam.
+      if (d.held) { kicker = 'Earned with a friend'; status += ' · get the full game to claim it'; }
     } else if (d.secret) {
       state = 'secret'; kicker = 'Hidden'; status = 'Revealed when you earn it';
     } else if (d.demoLocked) {
@@ -5513,7 +5519,7 @@ export class Lobby {
       const picked = LEVELS.find(l => l.id === profile.levelId);
       // PR #397 m17: a level (or a Today's Road) this side's edition does not
       // offer is refused — the captain hears why, this side stays on the list.
-      const verdict = levelSyncVerdict(getEditionRules(), picked, profile);
+      const verdict = levelSyncVerdict(this.roomRules(), picked, profile);   // #666: the host's edition sets the room
       if (!verdict.ok) {
         this._refusedLevelId = profile.levelId;
         this._refusedReason = verdict.reason;

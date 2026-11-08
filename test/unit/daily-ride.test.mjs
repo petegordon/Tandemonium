@@ -75,6 +75,17 @@ test('#641 a ride counts when it starts: a quit ride still uses one', () => {
   assert.match(dailyDescription(dailyStatus(store, DAY), DAY), /finished once · best 2:00/);
 });
 
+test("#666 a demo guest's rides in a full host's room count as rides, not against the cap", () => {
+  const store = memStore();
+  assert.equal(recordRideStart(store, DAY), 1);
+  assert.equal(recordRideStart(store, DAY, { guest: true }), 2, 'still ride 2 of the day (first try, the card)');
+  assert.equal(recordRideStart(store, DAY, { guest: true }), 3);
+  assert.equal(ridesStarted(store, DAY), 1, 'only the own ride is on the cap');
+  assert.equal(dailyStatus(store, DAY).started, 3);
+  recordRideStart(store, DAY);
+  assert.equal(ridesStarted(store, DAY), 2);
+});
+
 test('#641 / #403 a helped finish counts as a finish but is not the best', () => {
   const store = memStore();
   ride(store, DAY, { timeMs: 90000, helped: true });

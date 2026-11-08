@@ -14,6 +14,13 @@
 //   one QR at a time: while a card's code is open the other Sign ins wait (greyed + note); Hide frees them
 //   SS-05  Steam: P1's card offers Link Discord; after a ride the Profile card opens once
 //          with the reason, LINK DISCORD focused and NOT NOW; not again for a week
+//   SS-06  #609 couch pair, both signed in: the pair record is fetched at the ride's start
+//          (as P1, about Sam); the finish counts this ride (Regulars progress); after the
+//          submit (P2's own token in seats[]) the panel reads "You & Sam · n rides together"
+//   SS-07  the 10th couch ride: Regulars for Player 1 AND for Sam (their own achievements)
+//   SS-08  P1 signed out: Sam's own session posts the ride (stoker, P1 = this device's guest)
+//          and asks /pair?with=guest:<device>; the panel still says You & Sam
+//   SS-09  unsigned P2: 'local:p2', no /pair call, no panel
 import { startHarness } from './lib/smoke-harness.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 import { installFakeSteam, ELECTRON_UA } from './lib/fake-steam.mjs';
@@ -27,7 +34,8 @@ function fakeApi() {
   const b64 = (o) => btoa(JSON.stringify(o)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   const jwt = (sub) => b64({ alg: 'HS256' }) + '.' + b64({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.sig';
   const pic = (c) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="32" fill="${c}"/></svg>`);
-  window.__api = { begins: [], scores: [], polls: 0, linked: false };
+  window.__api = { begins: [], scores: [], polls: 0, linked: false, pair: { rides: 0, distance: 0 }, pairCalls: [] };
+  const sub = (a) => { try { return JSON.parse(atob(a.split(' ')[1].split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).sub; } catch (e) { return null; } };
   const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
   const real = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {
@@ -44,7 +52,19 @@ function fakeApi() {
     }
     if (p === '/auth/steam') return json({ token: jwt(7), user: { id: 7, name: 'pete_steam', avatar: pic('#66c0f4'), identities: { steam: { name: 'pete_steam', avatar: pic('#66c0f4') } } } });
     if (p === '/me') return json({ user: { id: 7, display_name: 'pete_steam', identities: { steam: { name: 'pete_steam', avatar: pic('#66c0f4') } } }, achievements: [], bestScores: [] });
-    if (p === '/score') { window.__api.scores.push({ body: JSON.parse(init.body), auth: !!auth }); return json({ scoreId: 1 }); }
+    if (p === '/score') {
+      const body = JSON.parse(init.body);
+      window.__api.scores.push({ body, auth: !!auth, sub: auth ? sub(auth) : null });
+      // The server's pair step: a couch ride with P2's checked seat token, or a stoker ride with a guest captain.
+      if ((body.mode === 'local' && body.seats && body.seats.length) || (body.mode === 'stoker' && body.contributions?.captain?.guestDeviceId)) {
+        window.__api.pair.rides++; window.__api.pair.distance += body.distance;
+      }
+      return json({ scoreId: 1 });
+    }
+    if (p === '/pair') {
+      window.__api.pairCalls.push({ with: new URL(url).searchParams.get('with'), sub: auth ? sub(auth) : null });
+      return json({ ...window.__api.pair, best: { grandma: 250000 }, daily_streak: 0 });
+    }
     if (p === '/achievements/sync') return json({ achievements: [] });
     return json({ error: 'not faked' }, 404);
   };
@@ -70,6 +90,60 @@ const person = (page, sel) => page.evaluate((s) => {
   const p = document.querySelector(s + ' uf-person');
   return p ? { name: p.getAttribute('name'), source: p.getAttribute('source'), pic: !!p.querySelector('img'), badge: p.querySelector('.uf-person__src')?.getAttribute('aria-label') || '' } : null;
 }, sel);
+
+/**
+ * #609 · one couch ride through the game's own steps: the ride starts (pair prefetch),
+ * finishes (achievements), posts and shows the pair panel. Stubs only the ride itself.
+ */
+const couchRide = (page, { p1SignedIn, pair }) => page.evaluate(async ({ p1SignedIn, pair }) => {
+  const g = window._game;
+  const b64 = (o) => btoa(JSON.stringify(o)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  const auth = g.lobby.auth;
+  if (p1SignedIn) {
+    auth.token = b64({ alg: 'HS256' }) + '.' + b64({ sub: 7, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.sig';
+    auth.user = { id: 7, serverId: 7, name: 'Pete', identities: {} };
+  } else { auth.token = null; auth.user = null; }
+  if (pair) window.__api.pair = { ...pair };
+  const pairCallsBefore = window.__api.pairCalls.length;
+  const scoresBefore = window.__api.scores.length;
+  const keys = ['mode', 'raceManager', 'contributionTracker', 'collectibleManager', 'bike'];
+  const was = Object.fromEntries(keys.map((k) => [k, g[k]]));
+  const wasLevel = g.lobby.selectedLevel;
+  g.mode = 'local';
+  g.bike = Object.assign(Object.create(g.bike || {}), { distanceTraveled: 1200 });
+  g.collectibleManager = null;
+  g.lobby.selectedLevel = { ...(wasLevel || {}), id: 'grandma', distance: 1200, isDaily: false, key: null };
+  g.raceManager = { crashCount: 0, restartCount: 0, getSummary: () => ({ distance: 1200, timeMs: 200000, inputSource: 'gamepad' }) };
+  const part = { overallPct: 50, safePct: 90, totalTaps: 10 };
+  g.contributionTracker = { getSummary: () => ({ mode: 'multiplayer', captain: { ...part }, stoker: { ...part } }) };
+  const out = {};
+  try {
+    g._prefetchCouchPair();
+    for (let i = 0; i < 100 && g._couchPair() && !g._couchPairCache; i++) await new Promise((r) => setTimeout(r, 20));
+    out.prefetched = !!g._couchPairCache;
+    g._checkFinishAchievements();
+    const fs = g.achievements.lastFinishState || {};
+    out.finish = { pairRides: fs.pairRides ?? null, pairDistanceKm: fs.pairDistanceKm ?? null };
+    out.regulars = (g.achievements.getAllDefinitions().find((a) => a.id === 'pair_10_rides') || {});
+    out.regulars = { earned: out.regulars.earned, progress: out.regulars.progress };
+    out.p1Earned = g.achievements.getEarnedIds().includes('pair_10_rides');
+    out.samEarned = g.lobby.seatAchievements ? g.lobby.seatAchievements.earned(42) : null;
+    out.samEarned = Array.isArray(out.samEarned) ? out.samEarned.includes('pair_10_rides') : !!(out.samEarned && out.samEarned.pair_10_rides);
+    const submitted = g._submitScore();
+    await g._renderPairPanel({ timeMs: 200000 }, submitted);
+    const el = document.getElementById('pair-panel');
+    out.panel = el && el.style.display === 'block' ? el.textContent : null;
+    out.partner = g._partnerKey();
+    out.couch = g._couchPair();
+  } finally {
+    Object.assign(g, was);
+    g.lobby.selectedLevel = wasLevel;
+    auth.token = null; auth.user = null;
+  }
+  out.pairCalls = window.__api.pairCalls.slice(pairCallsBefore);
+  out.scores = window.__api.scores.slice(scoresBefore);
+  return out;
+}, { p1SignedIn, pair });
 
 const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = document.querySelector(`#dr-cards .dr-card[data-n="${k}"] ${s}`); if (!b) return false; b.click(); return true; }, [n, sel]);
 
@@ -164,6 +238,33 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   check(body && body.seats[0].newAchievements.includes('first_finish'), "SS-03: Sam's achievements from the ride ride along", body && body.seats[0].newAchievements);
   check(sub.partner === '42', "SS-03: the pair key is Sam's account, not 'local:p2'", sub.partner);
 
+  // SS-06 · #609 a couch pair, both signed in
+  const r6 = await couchRide(page, { p1SignedIn: true, pair: { rides: 3, distance: 2000 } });
+  check(r6.prefetched && r6.pairCalls.length >= 1 && r6.pairCalls.every((c) => c.with === '42' && c.sub === 7), "SS-06: the pair record is asked by P1's session, about Sam's account", r6.pairCalls);
+  check(r6.finish.pairRides === 4 && Math.abs(r6.finish.pairDistanceKm - 3.2) < 1e-9, 'SS-06: the finish counts this ride: 4 rides, 3.2 km', r6.finish);
+  check(r6.regulars.progress && r6.regulars.progress[0] >= 4 && r6.regulars.progress[1] === 10, 'SS-06: Regulars progress counts the couch pair', r6.regulars);
+  const b6 = r6.scores[0] && r6.scores[0].body;
+  check(r6.scores.length === 1 && r6.scores[0].sub === 7 && b6.mode === 'local' && b6.seats[0].role === 'stoker' && b6.seats[0].token.split('.').length === 3 && b6.contributions.stoker.userId === null,
+    "SS-06: the submit is P1's, with Sam's own token for the stoker seat", b6 && { mode: b6.mode, seats: b6.seats?.length, stoker: b6.contributions?.stoker?.userId });
+  check(/You & Sam/.test(r6.panel || '') && /4 rides together/.test(r6.panel || ''), 'SS-06: the pair panel: You & Sam · 4 rides together (this ride included)', r6.panel);
+  await h.shot(page, 'ss06-couch-pair-panel');
+
+  // SS-07 · the 10th couch ride earns Regulars for both riders
+  const r7 = await couchRide(page, { p1SignedIn: true, pair: { rides: 9, distance: 9000 } });
+  check(r7.finish.pairRides === 10 && r7.p1Earned, 'SS-07: the 10th ride: Regulars for Player 1', { finish: r7.finish, p1: r7.p1Earned });
+  check(r7.samEarned, 'SS-07: …and for Sam, on their own account', r7.samEarned);
+
+  // SS-08 · Player 1 signed out: Sam posts the couch ride themselves
+  const r8 = await couchRide(page, { p1SignedIn: false, pair: { rides: 1, distance: 1200 } });
+  const guestKey = r8.couch && r8.couch.withKey;
+  check(r8.couch && r8.couch.submitAs === 'p2' && /^guest:.+/.test(guestKey || ''), "SS-08: P1 signed out → Sam's session, P1 = this device's guest", r8.couch);
+  check(r8.pairCalls.length >= 1 && r8.pairCalls.every((c) => c.with === guestKey && c.sub === 42), "SS-08: /pair asked by Sam's own session about the guest", r8.pairCalls);
+  const b8 = r8.scores[0] && r8.scores[0].body;
+  check(r8.scores.length === 1 && r8.scores[0].sub === 42 && b8.mode === 'stoker' && !b8.seats
+    && b8.contributions.stoker.userId === 42 && b8.contributions.captain.userId === null && 'guest:' + b8.contributions.captain.guestDeviceId === guestKey,
+    "SS-08: the ride goes up under Sam's token as the stoker, the captain a guest", b8 && { mode: b8.mode, c: b8.contributions });
+  check(r8.finish.pairRides === 2 && /You & Sam/.test(r8.panel || '') && /2 rides together/.test(r8.panel || ''), 'SS-08: the panel: You & Sam · 2 rides together', { finish: r8.finish, panel: r8.panel });
+
   // SS-04 · Not me
   await page.evaluate(() => window._game.lobby._openDressingRoom(2));
   await until(page, () => !!document.querySelector('#dr-cards .dr-card[data-n="2"] [data-act="acc-signout"]'));
@@ -181,6 +282,12 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
   await until(page, () => document.querySelector('#dr-cards .dr-card[data-n="1"] .dr-account')?.dataset.state === 'signed-out');
   const freed = await card(page, 2);
   check(freed.disabled.length === 0 && (await card(page, 1)).state === 'signed-out', 'SS-04: Hide closes the QR and frees Sign in for everyone', freed);
+
+  // SS-09 · unsigned Player 2: the shared Guest partner, no server pair
+  const r9 = await couchRide(page, { p1SignedIn: true, pair: { rides: 5, distance: 5000 } });
+  check(r9.partner === 'local:p2' && !r9.couch, "SS-09: unsigned P2 is 'local:p2'", { partner: r9.partner, couch: r9.couch });
+  check(r9.pairCalls.length === 0 && r9.panel === null && r9.finish.pairRides === null, 'SS-09: no /pair call, no panel, no pair numbers', r9);
+  check(r9.scores.length === 1 && !r9.scores[0].body.seats, 'SS-09: the ride still posts for Player 1, with no seat', r9.scores.map((x) => x.body.seats));
   await page.evaluate(() => window._game.lobby._room.close('smoke'));
   check(await until(page, () => document.getElementById('host-seat-stoker')?.who !== 'Sam'), 'SS-04: the seat goes back to the pad', await page.evaluate(() => document.getElementById('host-seat-stoker')?.who));
   await page.close();

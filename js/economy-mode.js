@@ -249,6 +249,7 @@ class EconomyMode {
     const garage = document.getElementById('btn-' + which + '-garage');
     if (garage) garage.style.display = 'none';
     const p = this._payoutRide(kind, opts);
+    this._lastRidePayout = p;   // #657: the result card's Tandem Tokens
     if (!box) return [];
     if (!p) { box.innerHTML = ''; box.style.display = 'none'; return []; }
     this._renderRideCoins(box, p.score, p.wallet);

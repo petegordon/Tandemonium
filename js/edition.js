@@ -186,17 +186,20 @@ export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
  *                stays advertised so this build still reads as current.
  *   v2LevelSync  adopts levelSync {difficulty, roadKind, key, seed}; refuses
  *                a level its edition does not allow (levelRefused)
+ *   guestPass    #666: the HOST's edition sets the room (see mergeRoomRules).
+ *                A demo build with it rides Map Tourists in a full host's
+ *                room, so it advertises 'tourist' too.
  */
-export const ROOM_CAPS = Object.freeze(['tourist', 'helpingHand', 'weeklyRoad', 'v2LevelSync']);
+export const ROOM_CAPS = Object.freeze(['tourist', 'helpingHand', 'weeklyRoad', 'v2LevelSync', 'guestPass']);
 
 /**
- * The { edition, caps } fields this side puts in its room profile. `tourist`
- * is advertised only by an edition that includes Tourist (a side without a
- * Maps key still understands the barrier, and fails it at once).
+ * The { edition, caps } fields this side puts in its room profile. #666: every
+ * edition advertises 'tourist' now: it says the build understands the co-op
+ * Tourist barrier (a side without a Maps key fails it at once), and whether
+ * the room offers Map Tourists is the host's edition's call.
  */
 export function roomProfileFields(rules) {
-  const caps = ROOM_CAPS.filter(c => c !== 'tourist' || rules.tourist);
-  return { edition: rules.isDemo ? 'demo' : 'full', caps };
+  return { edition: rules.isDemo ? 'demo' : 'full', caps: [...ROOM_CAPS] };
 }
 
 /** The partner's { edition, caps } from a received room profile (caps null = OLD client). */
@@ -207,26 +210,56 @@ export function partnerFromProfile(profile) {
 }
 
 /**
- * The rules a room rides by: the MOST RESTRICTIVE of the two sides. Either
- * player on the demo → DEMO_RULES for both. An OLD partner (or one not heard
- * from yet) → no Map Tourists, no helping hand. A partner without the
- * 'tourist' cap → no Map Tourists.
+ * The rules a room rides by. #666 (Pete, 2026-11-07): the HOST's edition sets
+ * the room. The host is player 1, the one who made the room: the captain.
+ *
+ *   host  guest  room   the guest's achievements
+ *   full  demo   full   full-game ones held until they buy (achievements.js)
+ *   full  full   full   all count
+ *   demo  full   demo   count normally (only what demo levels can earn)
+ *   demo  demo   demo   only the 20 demo ones
+ *
+ * A partner without the 'guestPass' cap (an older build, which still takes
+ * the most restrictive side and would refuse what its demo lacks) → the old
+ * rule: either side on the demo → DEMO_RULES. A partner not heard from yet →
+ * this side's own rules. An OLD partner (no caps) → no Map Tourists, no
+ * helping hand; a partner without the 'tourist' cap → no Map Tourists.
+ *
+ * Extra fields: `hostEdition` ('full' | 'demo'), and `guestPass` = this side
+ * is the demo riding under a full host's rules (its full-game achievements
+ * are held, its Daily Ride cap is not spent).
+ *
  * @param {object} mine     this side's FULL_RULES / DEMO_RULES
  * @param {{edition:string, caps:string[]|null}|null} partner
+ * @param {'captain'|'stoker'|null} [role]  this side's seat (captain = host)
  */
-export function mergeRoomRules(mine, partner) {
+export function mergeRoomRules(mine, partner, role = 'captain') {
   const caps = partner && Array.isArray(partner.caps) ? partner.caps : null;
-  const base = mine.isDemo || (partner && partner.edition === 'demo') ? DEMO_RULES : mine;
+  const guestPass = !!caps && caps.includes('guestPass');
+  let base;
+  if (!partner) base = mine;
+  else if (!guestPass) base = mine.isDemo || partner.edition === 'demo' ? DEMO_RULES : mine;
+  else if (role === 'stoker') base = rulesFor(partner.edition === 'demo');   // the host's edition
+  else base = mine;                                                             // I am the host
   return Object.freeze({
     ...base,
+    // Map Tourists needs a partner that understands the barrier, and the host's edition.
     tourist: base.tourist && !!caps && caps.includes('tourist'),
     helpingHand: !!caps && caps.includes('helpingHand'),
     partnerOld: !caps,
+    hostEdition: base.isDemo ? 'demo' : 'full',
+    guestPass: !!mine.isDemo && !base.isDemo,
   });
 }
 
+/** #666 · the room screen's badge: why Versus or a level is (not) there. */
+export function roomBadge(rules) {
+  return rules && rules.isDemo ? 'Demo room' : 'Full game room';
+}
+
 /**
- * Stoker: may it ride the level in this levelSync under ITS OWN edition?
+ * Stoker: may it ride the level in this levelSync under the ROOM's rules
+ * (#666: the host's edition, mergeRoomRules; before #666, its own edition)?
  * #641: there is one shared road again (the Daily Ride), so its kind is
  * always 'daily'. An old #400 demo captain asking for its 'weekly' road is
  * refused: this side can't build that road any more.

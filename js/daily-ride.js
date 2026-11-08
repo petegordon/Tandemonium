@@ -71,10 +71,14 @@ export function dailyStatus(store, key) {
   };
 }
 
-/** Rides started on the given day's road (what the demo's cap counts). */
+/**
+ * Rides started on the given day's road that the demo's cap counts: every
+ * start except the ones ridden as a guest in a full-game host's room (#666 ·
+ * `guest`), which the host's edition allows as often as it likes.
+ */
 export function ridesStarted(store, key) {
   const entry = readAll(store)[key];
-  return (entry && entry.started) || 0;
+  return Math.max(0, ((entry && entry.started) || 0) - ((entry && entry.guest) || 0));
 }
 
 /**
@@ -89,11 +93,14 @@ export function finishedToday(store, key) {
 /**
  * #641 · a ride on the road has started. Returns this ride's number today
  * (1 = the first try), which the caller hands back to recordDailyFinish.
+ * `guest` (#666): ridden under a full host's rules, so the demo's cap skips it.
  */
-export function recordRideStart(store, key) {
+export function recordRideStart(store, key, { guest = false } = {}) {
   const all = readAll(store);
   const entry = all[key] || { practice: 0, best: null };
   entry.started = (entry.started || 0) + 1;
+  // #666 · a demo guest in a full host's room: counted as a ride, not against the cap.
+  if (guest) entry.guest = (entry.guest || 0) + 1;
   all[key] = entry;
   writeAll(store, prune(all, key));
   return entry.started;
