@@ -81,7 +81,7 @@ import { RowFocusController as FocusController, scrollWithStick, scrollPage } fr
 import { canQuitApp, requestAppQuit } from './app-quit.js';
 import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole bike across a taller box
 import { RoomStore } from './lobby/room-store.js';
-import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
+import { RoomProtocol, ROOM_MSG, personToWire, partnerPersonFromProfile } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
 import { RoomSession } from './lobby/room-session.js';   // #346: create / join / rejoin / leave
 import { IdleWatch, ActivityPinger, ROOM_WAIT_COPY, otherRole } from './lobby/room-wait.js';   // #694: who / how long / what you can do
@@ -1009,8 +1009,8 @@ export class Lobby {
     const me = { who: (mePerson && mePerson.name) || (user && user.name) || 'You', pic: mePerson ? mePerson.pic : '', source: mePerson ? mePerson.source : '', dev: 'This screen', state: 'joined' };
     const left = this._roomPartnerName === 'LEFT';
     const them = left ? { who: 'Partner left', dev: 'Disconnected', state: 'open' }
-      : connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined' }
-        : partner ? { who: partner, dev: 'Reconnecting…', state: 'open' }
+      : connected ? { who: partner || 'Partner', dev: 'Online · connected', state: 'joined', ...this._partnerSeatPic() }
+        : partner ? { who: partner, dev: 'Reconnecting…', state: 'open', ...this._partnerSeatPic() }
           : { who: 'Waiting for partner…', dev: '', state: 'open' };
     const code = on ? (this.net.roomCode || '') : '';
     // #666 · "Full game room" / "Demo room": the host's edition, so both players know why a level is (not) there.
@@ -1020,7 +1020,7 @@ export class Lobby {
     const dressing = connected && !left && !!this._partnerDressing;
     // #667 · HOST INSTEAD: a full-game guest in a demo host's room, whose build follows a move.
     const rehost = connected && !left ? (this._roomMove ? 'moving' : this._hostInsteadOffered() ? 'offer' : '') : '';
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge, rehost].join('|') : 'off';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, them.pic || '', them.source || '', playerLooks.version, this._partnerLookKey || '', dressing, badge, rehost].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
@@ -2614,6 +2614,7 @@ export class Lobby {
 
     this.auth.onLogin(async (user) => {
       updateUI(user);
+      this._sendRoomProfile();   // #708 · signed in mid-room: the partner's screen gets my picture
       this._hideProfileDevice();
       this.profilePopup.classList.remove('visible');
       analytics.trackEvent('auth_complete', {});
@@ -5678,7 +5679,7 @@ export class Lobby {
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
     if (sto) {
       if (!sto._openHint) sto._openHint = sto.hint;
-      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: this._roomSeatHint('Online', this._partnerLook, !!this._partnerDressing), pic: '', source: '' });
+      if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: this._roomSeatHint('Online', this._partnerLook, !!this._partnerDressing), ...this._partnerSeatPic() });
       else if (local) Object.assign(sto, { dev: '', state: 'joined', hint: '' }, this._seatWho(2, this._localP2NameBeforeAccount || this._localP2Name || 'Player 2'));
       else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '', pic: '', source: '' });
       // P2 in the corner once someone sits there, like the captain's P1.
@@ -5759,6 +5760,7 @@ export class Lobby {
     if (profile && profile.type === ROOM_MSG.ACTIVITY) { this._tickRoomActivity(); return; }
     if (!profile || !profile.type) {
       // Profile message (avatar, name, achievements)
+      if (profile) this._setPartnerPerson(partnerPersonFromProfile(profile));   // #708
       if (profile && profile.name) {
         this._setRoomSeat('partner', { who: profile.name, state: 'joined' });
         // Save partner name for recent rooms display
@@ -5910,6 +5912,30 @@ export class Lobby {
     this._partnerLookKey = '';
     this._partnerDressing = false;
     this._partnerProfileSeen = false;
+    this._partnerPerson = null;   // #708
+    this._partnerPersonKey = '';
+  }
+
+  /**
+   * #708 · the partner's picture + Discord/Steam badge for their seat (null: the name alone).
+   * @param {{ name: string, pic: string, source: string }|null} person
+   */
+  _setPartnerPerson(person) {
+    const key = person ? [person.name, person.pic, person.source].join(',') : '';
+    if (key === (this._partnerPersonKey || '')) return;
+    this._partnerPerson = person;
+    this._partnerPersonKey = key;
+    // The seats redraw from their keys (room bar, host seat, controller strip).
+    this._levelRoomKey = null;
+    this._hostSeatsKey = null;
+    this._syncLevelRoomBar();
+    if (this._roomRole === 'captain' && this._currentStep === this.hostStep) this._refreshHostNext();
+  }
+
+  /** #708 · the partner's seat fields: { pic, source } from their room profile, or blank. */
+  _partnerSeatPic() {
+    const p = this._partnerPerson;
+    return p ? { pic: (p.pic && this._avatarCache.get(p.pic)) || p.pic, source: p.source } : { pic: '', source: '' };
   }
 
   /** #672 · the partner's Wardrobe opened or closed. @param {boolean} open */
@@ -5976,6 +6002,10 @@ export class Lobby {
     // Anonymous players (joined via invite without signing in) have no name —
     // give the partner a friendly label instead of a blank. (Issue #312)
     if (!profile.name) profile.name = GUEST_NAME;
+    // #708 · the partner shows my seat's own picture + badge (Steam first in the Steam app);
+    // an older build reads `avatar`, so it gets the same picture.
+    const me = user ? personToWire(this.seatPerson(1)) : null;
+    if (me) { profile.person = me; if (me.pic) profile.avatar = me.pic; }
     Object.assign(profile, this.roomProfileFields());   // PR #397 M1: { edition, caps }
     profile.look = lookToWire(getP1Look());   // #672: my goose, for the partner's room screen
     profile.dressing = !!this._room;          // #672: a resent profile restores the "dressing…" tag
@@ -7073,7 +7103,7 @@ export class Lobby {
     const p2Slot = p2Im && p2Im._slot ? p2Im._slot.id : null;
     const stokerSeat = { team: 'coop', role: 'stoker', label: 'Stoker', tone: 'stoker' };
     const key = (p1 ? p1.shortName : '') + '§' + candidates.map(c => c.key).join('|') +
-      '§' + (online ? 'online:' + (this._roomPartnerName || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '') +
+      '§' + (online ? 'online:' + (this._roomPartnerName || '') + ',' + (this._partnerPersonKey || '') : '') + (p2Im ? 'p2:' + (p2Slot || this._localP2Type) : '') +
       '§' + this._personKey(1) + '§' + (p2Im ? this._personKey(2) : '') + '§' + (online ? playerLooks.version : '');
     if (key === this._hostSeatsKey) return;
     this._hostSeatsKey = key;
@@ -7105,7 +7135,9 @@ export class Lobby {
     }
     if (online) {
       const n = this._roomPartnerName || 'Partner';
-      rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat });
+      const pp = this._partnerPerson;   // #708 · their picture + badge before "(online)"
+      rows.push({ key: 'online', name: n + ' (online)', shortName: n, glyphFamily: 'generic', swapAB: false, state: 'seated', player: 2, seat: stokerSeat,
+        person: pp ? { name: n, ...this._partnerSeatPic() } : null });
     }
     strip.rows = rows;
     // #548 · WARDROBE for Player 1 and, once seated locally, Player 2. An online partner dresses on
