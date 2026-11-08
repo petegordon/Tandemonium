@@ -6,7 +6,7 @@
 //   - Solo Flight (the Penny-Farthing tandem) is the "player bots" reward: any 80 of the 81 solo achievements
 //     (js/rewards.js playerBotsProgress). The player rides captain; a bot rides the back seat.
 //   - The bot JUST RIDES ALONG: it doesn't pedal for the player, doesn't balance, doesn't steer and can't crash the
-//     bike. It rides only on Solo Flight (no versus bot; the bot ghost team race is a later step).
+//     bike. It rides only on Solo Flight (no versus bot; races are against a bot ghost team, js/bot-race.js).
 //   - Three named bots, each a robot goose in its own colour, picked on the Solo Flight card. Each one counts as a
 //     separate partner for the partner achievements (Social Goose, Regulars, 5K Together, the co-op six), and a bot
 //     ride pays Tandem Tokens like any multiplayer ride.
@@ -42,6 +42,8 @@ export const DEFAULT_BOT = 'bolt';
 export const BOT_PARTNER_PREFIX = 'bot:';
 export const BOT_CHOICE_KEY = 'tandemonium_player_bot';
 export const BOT_PAIRS_KEY = 'tandemonium_bot_pairs';
+/** #644 step 2 · the back seat left empty (the card's "Nobody"): a solo Solo Flight ride, and a 1v2 bot race (Underdog). */
+export const NO_BOT = 'none';
 
 /** A known bot id, else the default. */
 export function normalizeBot(id) {
@@ -70,13 +72,14 @@ function write(store, key, value) {
   try { if (store) store.setItem(key, value); } catch { /* private window: the choice lasts this session */ }
 }
 
-/** The bot picked on the Solo Flight card (saved per device). */
+/** The bot picked on the Solo Flight card (saved per device), or NO_BOT for an empty back seat. */
 export function loadBotChoice(store) {
-  return normalizeBot(read(store, BOT_CHOICE_KEY));
+  const v = read(store, BOT_CHOICE_KEY);
+  return v === NO_BOT ? NO_BOT : normalizeBot(v);
 }
 
 export function saveBotChoice(store, id) {
-  const b = normalizeBot(id);
+  const b = id === NO_BOT ? NO_BOT : normalizeBot(id);
   write(store, BOT_CHOICE_KEY, b);
   return b;
 }

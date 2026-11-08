@@ -58,7 +58,8 @@ export class ChaseCamera {
     fwd.set(Math.sin(bike.heading), 0, Math.cos(bike.heading));
     const speedT = Math.min(bike.speed / 10, 1);
 
-    const offY = this.offsetSlow.y + (this.offsetFast.y - this.offsetSlow.y) * speedT;
+    // #644 · a bike whose captain hides behind its stoker from here (the Penny-Farthing) lifts the camera
+    const offY = this.offsetSlow.y + (this.offsetFast.y - this.offsetSlow.y) * speedT + (bike.chaseLift || 0);
     const offZ = this.offsetSlow.z + (this.offsetFast.z - this.offsetSlow.z) * speedT;
     const lookY = this.lookSlow.y + (this.lookFast.y - this.lookSlow.y) * speedT;
     const lookZ = this.lookSlow.z + (this.lookFast.z - this.lookSlow.z) * speedT;

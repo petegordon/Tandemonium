@@ -35,6 +35,12 @@ import { trackBone } from './goose-rider-clips.js';
 const GOOSE_TANDEM_LENGTH = 2.466;
 // #644 · where the goose tandem's captain sits ahead of the bike's centre, in game units (the selfie cam's reference)
 const GOOSE_TANDEM_CAPTAIN_AHEAD = 0.096;
+// #644 step 2 · a ghost tandem's crank turn per metre (a quarter turn per stroke, ~3 strokes/s at ~6 m/s)
+const GHOST_CRANK_PER_M = (Math.PI / 2) * 3 / 6;
+// #644 · the chase camera's extra height on the Penny-Farthing (game units). Its captain sits up over the big front
+// wheel with the stoker straight behind him, so from the tandem's camera the stoker's back hid him: from higher up
+// the camera looks down past the stoker's head onto the captain (screenshots in the PR for #644 step 2).
+const PF_CHASE_LIFT = 4;
 const underFx = (o) => { for (let p = o; p; p = p.parent) if (/^Flame[BO]_/.test(p.name || '')) return true; return false; };
 import { rebatch } from './bike-batch.js';
 import { dracoDecoderPath } from './draco-path.js';
@@ -193,8 +199,12 @@ export class BikeModel {
     this.riderViewScale = 1;     // rider height vs the fused riders model (front view)
     this._soloRider = false;     // Show Solo: only the captain goose is shown
     this._botStoker = null;      // #644 · a player bot (js/player-bots.js id) riding the Solo Flight's back seat
+    this._botCaptain = null;     // #644 step 2 · a player bot captaining a bot ghost team's tandem (setGhostBots)
+    this._emptySeat = false;     // #644 step 2 · the Solo Flight's back seat left empty ("Nobody")
     this._rigMovers = [];        // #644 · the Penny-Farthing's clip-driven nodes (no bones: rebatch keeps them apart)
     this.frontViewAhead = 0;     // #644 · how much further ahead the captain sits than on the goose tandem (the selfie cam)
+    this.chaseLift = 0;          // #644 · extra chase-camera height (game units): the Penny-Farthing's captain sits up front,
+                                 // behind its stoker from the tandem's camera (js/chase-camera.js)
 
     // Versus spawns extra bikes by cloning an already-loaded one (instant, shares
     // geometry — no re-fetch/decode). A SKINNED riders model needs SkeletonUtils
@@ -248,6 +258,8 @@ export class BikeModel {
     this._sharedGeometry = true;
     this.goose = GooseRiders.cloneFrom(source.goose, model);
     this.riderViewScale = source.riderViewScale;
+    this._findRigMovers(model, this.goose);   // #644 · a Penny-Farthing clone (the bot ghost team) turns its own wheels
+    this.chaseLift = source.chaseLift || 0;
     // _gooseRiderPaths stays unset on purpose: the clone shares the source's geese, so a
     // versus setGooseLook always loads this bike's OWN riders before recolouring them.
     this.modelLoaded = true;
@@ -317,6 +329,7 @@ export class BikeModel {
     this.goose = null;
     this._rigMovers = [];
     this.frontViewAhead = 0;
+    this.chaseLift = 0;
     this.riderViewScale = 1;
     this._originalMats = null;
     this._loadModel(() => {
@@ -442,12 +455,7 @@ export class BikeModel {
       // versus clone (taken once modelLoaded) carries them too.
       const goose = new GooseRiders(model, gltf.animations);
       goose.measureWheel();
-      if (goose.pf) {
-        // the Penny-Farthing's wheels and cranks are plain nodes its Ride clip turns: merge nothing across them
-        const names = new Set(goose.pf.getClip().tracks.map(t => trackBone(t.name)));
-        this._rigMovers = [];
-        model.traverse(o => { if (names.has(o.name)) this._rigMovers.push(o); });
-      }
+      this._findRigMovers(model, goose);
       // Each seat's goose in its player's look (#548); a look picked while the bike was loading wins.
       const looks = this._pendingSeatLooks || getSeatLooks();
       this._pendingSeatLooks = null;
@@ -473,6 +481,7 @@ export class BikeModel {
           const p = new THREE.Vector3();
           if (seat) { this.group.updateMatrixWorld(true); seat.getWorldPosition(p); this.group.worldToLocal(p); }
           this.frontViewAhead = seat ? Math.max(0, p.z - GOOSE_TANDEM_CAPTAIN_AHEAD) : 0;
+          this.chaseLift = PF_CHASE_LIFT;
         }
         finish();
         // A look picked while these geese were loading (#472): seat it now.
@@ -594,6 +603,46 @@ export class BikeModel {
     return this._gooseSwap;
   }
 
+  /** #644 · the Penny-Farthing's wheels and cranks are plain nodes its Ride clip turns: merge nothing across them. */
+  _findRigMovers(model, goose) {
+    this._rigMovers = [];
+    if (!goose || !goose.pf) return;
+    const names = new Set(goose.pf.getClip().tracks.map(t => trackBone(t.name)));
+    model.traverse(o => { if (names.has(o.name)) this._rigMovers.push(o); });
+  }
+
+  /**
+   * #644 step 2 · a bot ghost team's tandem (a clone of the player's Solo Flight): two player bots ride it, each a
+   * robot goose in its own colour. Its geese are this bike's own (disposeOwnGeese frees them).
+   * @returns {Promise|undefined} settles once both bots are seated
+   */
+  setGhostBots(captainId, stokerId) {
+    this._botCaptain = captainId || null;
+    this._botStoker = stokerId || null;
+    this._emptySeat = false;
+    if (!this.goose) return;
+    this._seatLooks = this._seatLooks || getSeatLooks();
+    this._ownGeese = true;
+    this.setSoloRider(false);
+    return this.setGooseRiders(riderPathsFor(this._withBot(this._seatLooks)), false);
+  }
+
+  /**
+   * #644 step 2 · move a ghost bike (no physics): where it is on the road, its lean, its speed. The cranks, wheels
+   * and the geese's legs turn with the distance, as a direct-drive Penny-Farthing's do.
+   */
+  applyGhostState({ x, y, z, heading, lean, speed, distance }, dt) {
+    this.position.set(x, y, z);
+    this.heading = heading;
+    this.lean = lean || 0;
+    this.speed = speed || 0;
+    this.distanceTraveled = distance || 0;
+    this.roadD = this.roadPath ? this.distanceTraveled % this.roadPath.loopLength : this.distanceTraveled;
+    this.crankAngle = this.distanceTraveled * GHOST_CRANK_PER_M;
+    this._updateCrank(dt);
+    this._applyTransform(dt);
+  }
+
   /**
    * Each goose in its seat's colourway (goose tandem only). The params come from the body the
    * seated file actually has: a seat whose player picked a body that has no file yet rides the
@@ -607,14 +656,18 @@ export class BikeModel {
       if (!l) continue;
       const body = resolveRider(seat, l.outfit, l.body).body;
       applyColourway(r.root, colourwayParamsForBody(l.outfit, l.colourway, body) || {});
-      if (seat === 'Stoker') { if (this._botStoker) tintBot(r.root, this._botStoker); else untintBot(r.root); }   // #644 · a bot in its colour
+      const bot = seat === 'Stoker' ? this._botStoker : this._botCaptain;   // #644 · a bot in its colour
+      if (bot) tintBot(r.root, bot); else untintBot(r.root);
     }
   }
 
   /** #644 · the seat looks with a player bot on the back seat (the player's own stoker look is kept underneath). */
   _withBot(looks) {
-    if (!this._botStoker || !looks) return looks;
-    return { ...looks, Stoker: botStokerLook(this._botStoker) };
+    if ((!this._botStoker && !this._botCaptain) || !looks) return looks;
+    const out = { ...looks };
+    if (this._botStoker) out.Stoker = botStokerLook(this._botStoker);
+    if (this._botCaptain) out.Captain = botStokerLook(this._botCaptain);   // (a bot ghost team's captain)
+    return out;
   }
 
   /**
@@ -632,6 +685,12 @@ export class BikeModel {
 
   /** The player bot on the back seat, or null. */
   get botStoker() { return this._botStoker; }
+
+  /** #644 step 2 · leave the Solo Flight's back seat empty (the card's "Nobody"): only the captain rides. */
+  setEmptySeat(on) {
+    this._emptySeat = !!on;
+    this.setSoloRider(this._soloRider);
+  }
 
   /**
    * #548 · dress each seat for its player: {Captain, Stoker} of {outfit, colourway, body}.
@@ -686,7 +745,7 @@ export class BikeModel {
   /** Show Solo: true shows only the captain goose (goose tandem only; kept until the geese load). */
   setSoloRider(on) {
     this._soloRider = !!on;
-    const hide = this._soloRider && !this._botStoker;   // #644 · a player bot always rides along
+    const hide = this._emptySeat || (this._soloRider && !this._botStoker);   // #644 · a player bot always rides along
     const st = this.goose && this.goose.riders.Stoker;
     if (st && st.root.visible === hide) st.root.visible = !hide;
   }
