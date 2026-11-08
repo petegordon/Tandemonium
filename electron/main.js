@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net } = require('electron');
+const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
@@ -323,6 +323,64 @@ ipcMain.handle('steam:storeStats', () => {
   // IPC handler so renderer code that still calls window.steam.storeStats()
   // doesn't break.
   return !!steam;
+});
+
+// #657 · SHARE RESULT in the Steam build: the renderer draws the result card
+// (js/result-card.js) and sends it here; it goes into the player's Steam
+// screenshot library with the strip's headline as its caption ("location"),
+// where the overlay (Shift+Tab / the Steam button) can upload or share it.
+//   req = { png: Uint8Array, rgb: Uint8Array (w*h*3), width, height, caption }
+// WriteScreenshot takes the raw RGB pixels and needs no file; if it gives back
+// no handle, the PNG is written to userData and added from disk instead.
+// Every step is feature-detected: a missing method or a throw resolves
+// { ok: false, error } and the renderer falls back to the clipboard.
+const INVALID_SCREENSHOT = 0;   // INVALID_SCREENSHOT_HANDLE in steamworks-ffi-node/dist/types/screenshots.js
+ipcMain.handle('steam:saveScreenshot', async (_event, req) => {
+  if (!steam) return { ok: false, error: 'steam-unavailable' };
+  const shots = steam.screenshots;
+  if (!shots) return { ok: false, error: 'no-screenshots-api' };
+  try {
+    const width = Math.round(Number(req && req.width));
+    const height = Math.round(Number(req && req.height));
+    if (!(width > 0 && height > 0 && width <= 8192 && height <= 8192)) return { ok: false, error: 'bad-size' };
+    const caption = String((req && req.caption) || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+    let handle = INVALID_SCREENSHOT;
+    let method = null;
+
+    const rgb = req && req.rgb ? Buffer.from(req.rgb) : null;
+    if (rgb && rgb.length === width * height * 3 && typeof shots.writeScreenshot === 'function') {
+      handle = shots.writeScreenshot(rgb, width, height);
+      method = 'write';
+    }
+    if ((!handle || handle === INVALID_SCREENSHOT) && req && req.png && typeof shots.addScreenshotToLibrary === 'function') {
+      const dir = path.join(app.getPath('userData'), 'share-cards');
+      fs.mkdirSync(dir, { recursive: true });
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const file = path.join(dir, 'result-' + stamp + '.png');
+      fs.writeFileSync(file, Buffer.from(req.png));
+      // A 200-px-wide thumbnail, as Steam asks (an empty name is not the API's NULL).
+      let thumb = null;
+      try {
+        const img = nativeImage.createFromPath(file);
+        if (!img.isEmpty()) {
+          thumb = path.join(dir, 'result-' + stamp + '-thumb.png');
+          fs.writeFileSync(thumb, img.resize({ width: 200 }).toPNG());
+        }
+      } catch (e) { thumb = null; }
+      handle = thumb ? shots.addScreenshotToLibrary(file, thumb, width, height) : INVALID_SCREENSHOT;
+      method = 'file';
+    }
+    if (!handle || handle === INVALID_SCREENSHOT) return { ok: false, error: 'no-handle', method };
+    let captioned = false;
+    if (caption && typeof shots.setLocation === 'function') {
+      try { captioned = !!shots.setLocation(handle, caption); } catch (e) { captioned = false; }
+    }
+    console.log('[share] Steam screenshot saved via ' + method + ', handle=' + handle + (captioned ? '' : ' (no caption)'));
+    return { ok: true, handle, method, captioned };
+  } catch (e) {
+    console.error('Steam screenshot error:', e && e.message);
+    return { ok: false, error: String((e && e.message) || e) };
+  }
 });
 
 // ── WebHID pairing (see the select-hid-device handler) ──
