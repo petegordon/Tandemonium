@@ -43,6 +43,20 @@ function escapeHtml(s) {
 }
 const nowS = () => Math.floor(Date.now() / 1000);
 
+/**
+ * #678 · the game's device id (js/analytics.js getDeviceId), sent with a
+ * sign-in so the pairs this device rode as 'guest:<device id>' move to the
+ * account. Anything that isn't a short plain token is ignored.
+ */
+export function cleanDeviceId(v) {
+  return typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v) ? v : null;
+}
+
+/** The device id a begin call stored on the request (profile_json is empty until the callback). */
+function requestDeviceId(row) {
+  try { return cleanDeviceId(JSON.parse(row.profile_json || '{}').deviceId); } catch { return null; }
+}
+
 /** The picture for a Discord user: their avatar, or Discord's default for their id. */
 export function discordAvatarUrl(user) {
   if (user && user.avatar) return `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`;
@@ -176,7 +190,7 @@ function redirectUri(env, url) {
 }
 
 /**
- * POST /auth/discord/begin  { mode: 'redirect'|'device', return_to? }
+ * POST /auth/discord/begin  { mode: 'redirect'|'device', return_to?, device_id? }
  * With a Bearer token the sign-in is linked to that account.
  * → { id, secret, url, code, expires_in }
  */
@@ -192,14 +206,17 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   }
   const linkUserId = await deps.getUserFromRequest(request, env);
 
+  const deviceId = cleanDeviceId(body.device_id);
+
   const id = randomId(12);
   const secret = randomId(24);
   const code = mode === 'device' ? randomCode(4) : null;
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
-     VALUES (?, ?, 'discord', ?, ?, ?, ?, 'pending', ?)`
-  ).bind(id, await sha256(secret), mode, code, linkUserId || null, returnTo, nowS()).run();
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, 'discord', ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(id, await sha256(secret), mode, code, linkUserId || null, returnTo,
+         deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
 
   return deps.jsonResponse({
     id, secret, code, expires_in: REQUEST_TTL_S,
@@ -257,9 +274,23 @@ async function fetchDiscordUser(env, url, code) {
   };
 }
 
+/**
+ * #678 · fold this device's guest pairs into the account it just signed in to.
+ * A pair row is a nicety: a failure here never fails the sign-in.
+ */
+export async function claimGuestPairs(env, deviceId, userId, deps) {
+  if (!deviceId || !userId || !deps || !deps.mergeGuestPairs) return;
+  try {
+    await deps.mergeGuestPairs(env, deviceId, userId);
+  } catch (e) {
+    console.error('guest pair merge failed', e);
+  }
+}
+
 /** Sign the profile in (or link it), store the session on the request. */
-async function finish(env, row, profile, deps) {
+async function finish(env, row, profile, deps, deviceId = null) {
   const { userId, merged } = await upsertIdentity(env, profile, row.link_user_id || null, deps);
+  await claimGuestPairs(env, deviceId, userId, deps);
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
   const identities = await listIdentities(env, userId);
   const token = await deps.createJWT({ sub: userId, name: user.display_name, picture: user.avatar_url }, env.JWT_SECRET);
@@ -290,7 +321,7 @@ export async function handleDiscordCallback(request, env, url, deps) {
   }
 
   if (row.mode === 'redirect') {
-    const result = await finish(env, row, profile, deps);
+    const result = await finish(env, row, profile, deps, requestDeviceId(row));
     await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
     return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
   }
@@ -298,7 +329,7 @@ export async function handleDiscordCallback(request, env, url, deps) {
   // Device mode: hold the profile until the player confirms the code on their screen.
   const confirmKey = randomId(12);
   await env.DB.prepare("UPDATE auth_requests SET status = 'confirm', profile_json = ? WHERE id = ?")
-    .bind(JSON.stringify({ ...profile, confirmKey }), row.id).run();
+    .bind(JSON.stringify({ ...profile, confirmKey, deviceId: requestDeviceId(row) }), row.id).run();
   const action = row.link_user_id ? 'Link this Discord account to the game' : 'Sign in to the game';
   return page('Is this your screen?', `
     <div class="who"><img src="${escapeHtml(profile.avatar)}" alt=""><span>${escapeHtml(profile.name)}</span></div>
@@ -327,8 +358,10 @@ export async function handleDiscordConfirm(request, env, url, deps) {
       .bind(JSON.stringify({ error: 'cancelled' }), row.id).run();
     return page('Cancelled', '<p>Nothing was changed. You can close this tab.</p>');
   }
+  const deviceId = cleanDeviceId(profile.deviceId);
   delete profile.confirmKey;
-  const result = await finish(env, row, profile, deps);
+  delete profile.deviceId;
+  const result = await finish(env, row, profile, deps, deviceId);
   await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
     .bind(JSON.stringify(result), row.id).run();
   const done = row.link_user_id ? 'Discord is linked' : `Signed in as ${escapeHtml(result.user.name)}`;
@@ -373,7 +406,7 @@ function steamCallbackUrl(url, id) {
 }
 
 /**
- * POST /auth/steam/begin  { return_to }
+ * POST /auth/steam/begin  { return_to, device_id? }
  * With a Bearer token the Steam account is linked to that account.
  * → { id, url, expires_in }
  */
@@ -384,12 +417,14 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   const returnTo = allowedReturnTo(body.return_to, env.CORS_ORIGIN, deps.pickCorsOrigin);
   if (!returnTo) return deps.jsonResponse({ error: 'return_to not allowed' }, 400, corsOrigin);
   const linkUserId = await deps.getUserFromRequest(request, env);
+  const deviceId = cleanDeviceId(body.device_id);
   const id = randomId(12);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
-     VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, 'pending', ?)`
-  ).bind(id, await sha256(randomId(24)), linkUserId || null, returnTo, nowS()).run();
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, 'pending', ?, ?)`
+  ).bind(id, await sha256(randomId(24)), linkUserId || null, returnTo,
+         deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
   return deps.jsonResponse({
     id, expires_in: REQUEST_TTL_S,
     url: `${url.origin}/auth/steam/go?r=${encodeURIComponent(id)}`,
@@ -473,7 +508,7 @@ export async function handleSteamWebCallback(request, env, url, deps) {
     return page('Steam sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back and try again.</p>`, 401);
   }
   const profile = await fetchSteamProfile(env, steamId, fetchImpl);
-  const result = await finish(env, row, profile, deps);
+  const result = await finish(env, row, profile, deps, requestDeviceId(row));
   return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
 }
 
