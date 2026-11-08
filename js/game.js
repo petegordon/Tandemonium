@@ -90,6 +90,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
@@ -2407,6 +2408,7 @@ class Game {
     this.balanceCtrl.resetSteerFrames();
     if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
     this.contributionTracker = new ContributionTracker(this.mode);
+    this._prefetchCouchPair();   // #609
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
     if (this.obstacleManager) this.obstacleManager.destroy();
@@ -4502,26 +4504,40 @@ class Game {
    * signs in is not invisible — they just cannot see the panel from their own
    * side until they do.
    */
-  async _renderPairPanel(summary) {
+  async _renderPairPanel(summary, submitted = null) {
     const el = document.getElementById('pair-panel');
     if (!el) return;
     el.style.display = 'none';
 
-    const auth = this.lobby.auth;
-    const partner = this._partnerServerId ||
-      (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
-    if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo') return;
-
     let pair = null;
-    try { pair = await auth.fetchPair(partner); } catch { return; }
-    if (!pair) return;
-    // F-1 reads these on the next finish (pair_10_rides, pair_100km).
-    this._lastPairSummary = pair;
-
+    let name = this._partnerName || 'your partner';
+    let previousBest = null;
     const level = this.lobby.selectedLevel;
-    const previousBest = pair.best && level ? pair.best[level.id] : null;
+    const couch = this._couchPair();
+    if (couch) {
+      // #609 · a couch pair: after this ride is posted, so the panel counts it.
+      // "Best" is the pair's best before this ride (the record fetched at the start).
+      const before = this._couchPairCache && this._couchPairCache.key === couch.withKey ? this._couchPairCache.pair : null;
+      try { await submitted; } catch (e) {}
+      pair = await this._fetchCouchPair(couch);
+      if (!pair) return;
+      this._couchPairCache = { key: couch.withKey, pair };
+      name = couch.name;
+      previousBest = before && before.best && level ? before.best[level.id] : null;
+    } else {
+      const auth = this.lobby.auth;
+      const partner = this._partnerServerId ||
+        (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
+      if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo' || this.mode === 'local') return;
+
+      try { pair = await auth.fetchPair(partner); } catch { return; }
+      if (!pair) return;
+      // F-1 reads these on the next finish (pair_10_rides, pair_100km).
+      this._lastPairSummary = pair;
+      previousBest = pair.best && level ? pair.best[level.id] : null;
+    }
+
     const beat = previousBest && summary && summary.timeMs < previousBest;
-    const name = this._partnerName || 'your partner';
     const km = (pair.distance || 0) / 1000;
 
     el.innerHTML =
@@ -4873,7 +4889,17 @@ class Game {
         ? computePairStreak(store, partnerKey, level.key).current
         : computeStreak(store, level.key).current;
     }
-    if (this._lastPairSummary) {
+    if (this.mode === 'local') {
+      // #609 · a couch pair with a signed-in Player 2: the record fetched when the
+      // ride started, plus this ride when it is being posted. Unsigned P2: none.
+      const couch = this._couchPair();
+      const cache = this._couchPairCache;
+      if (couch && cache && cache.key === couch.withKey) {
+        const rs = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
+        const willPost = !!rs && rs.timeMs >= 30000 && !!getEditionRules().postScores;
+        Object.assign(state, pairStatsForFinish(cache.pair, { willPost, distanceM: rs ? rs.distance : 0 }));
+      }
+    } else if (this._lastPairSummary) {
       state.pairRides = this._lastPairSummary.rides || 0;
       state.pairDistanceKm = (this._lastPairSummary.distance || 0) / 1000;
     }
@@ -4904,6 +4930,33 @@ class Game {
   _seatAccount() {
     if (this.mode !== 'local' || !this.lobby || !this.lobby.seatAccounts) return null;
     try { return this.lobby.seatAccounts.get(2); } catch (e) { return null; }
+  }
+
+  /** #609 · local co-op with a signed-in Player 2 (js/couch-pair.js), or null. */
+  _couchPair() {
+    const auth = this.lobby && this.lobby.auth;
+    const p1 = auth && auth.isLoggedIn() && auth.user ? auth.user.serverId : null;
+    let deviceId = null;
+    try { deviceId = analytics.getDeviceId(); } catch (e) {}
+    return couchPair({ mode: this.mode, seatAccount: this._seatAccount(), p1ServerId: p1, deviceId });
+  }
+
+  /** #609 · the couch pair's server record, asked by whoever submits the ride. */
+  async _fetchCouchPair(couch) {
+    try {
+      if (couch.submitAs === 'p1') return await this.lobby.auth.fetchPair(couch.withKey);
+      return await this.lobby.seatAccounts.fetchPair(2, couch.withKey);
+    } catch (e) { return null; }
+  }
+
+  /** #609 · at the ride's start, so the finish's Regulars / 5K Together have the pair's numbers. */
+  _prefetchCouchPair() {
+    this._couchPairCache = null;
+    const couch = this._couchPair();
+    if (!couch) return;
+    this._fetchCouchPair(couch).then((pair) => {
+      if (pair && this._couchPair() && this._couchPair().withKey === couch.withKey) this._couchPairCache = { key: couch.withKey, pair };
+    });
   }
 
   /**
@@ -5320,11 +5373,11 @@ class Game {
     this._checkFinishAchievements();
 
     // Auto-submit score if logged in
-    this._submitScore();
+    const submitted = this._submitScore();
     // D-6 / D-8 · #641: a clean Daily finish goes to the board (the server keeps
     // the day's best), and what the two of you have done.
     this._submitDailyBest(summary, fromRemote);
-    this._renderPairPanel(summary);
+    this._renderPairPanel(summary, submitted);
 
     // Show NEXT LEVEL button if there's a next level. #400: in the demo, after
     // its last level it still shows and opens the demo's end screen.
@@ -5394,7 +5447,7 @@ class Game {
 
   async _submitScore() {
     const auth = this.lobby.auth;
-    if (!auth || !auth.isLoggedIn()) return;
+    if (!auth || !auth.isLoggedIn()) return this._submitCouchAsP2();
     // Demo mode: don't save scores to leaderboard
     if (!getEditionRules().postScores) return;
 
@@ -5477,6 +5530,34 @@ class Game {
         );
       }
     } catch (e) {}
+  }
+
+  /**
+   * #609 · Player 1 signed out, Player 2 signed in on their seat: Player 2's own
+   * session posts the couch ride (as the stoker), with Player 1 as this device's
+   * guest, so the pair record (P2, guest:<device>) grows like an online D-9 pair.
+   */
+  async _submitCouchAsP2() {
+    const couch = this._couchPair();
+    if (!couch || couch.submitAs !== 'p2' || !getEditionRules().postScores) return;
+    const level = this.lobby.selectedLevel;
+    const rs = this.raceManager ? this.raceManager.getSummary(this.bike.distanceTraveled) : null;
+    if (!rs || !level) return;
+    const contrib = this.contributionTracker ? this.contributionTracker.getSummary() : {};
+    const data = {
+      levelId: level.id,
+      distance: rs.distance,
+      timeMs: rs.timeMs,
+      collectiblesCount: this.collectibleManager ? this.collectibleManager.collected : 0,
+      inputSource: rs.inputSource,
+      difficulty: this.lobby.selectedDifficulty || 'adventurous',
+      safetyUsed: this.safetyMode,
+      scoreMultiplier: TUNE.scoreMultiplier || 1.0,
+    };
+    const deviceId = couch.withKey.slice('guest:'.length);
+    const body = guestCaptainSubmit(data, { captain: contrib.captain || contrib.solo, stoker: contrib.stoker }, couch, deviceId,
+      (this._seatNewAchievements && this._seatNewAchievements[2]) || []);
+    try { await this.lobby.seatAccounts.submitScore(2, body); } catch (e) {}
   }
 
   _hideVictory() {
