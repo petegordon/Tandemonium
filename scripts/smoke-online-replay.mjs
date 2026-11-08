@@ -15,6 +15,9 @@
 //   ORP-03  both finish; the CAPTAIN presses PLAY AGAIN: same
 //   ORP-04  the captain pauses: the stoker's screen says the captain paused the ride and its
 //           clock stops; the captain resumes: the notice goes and both ride on
+//   ORP-05  back in the room after a ride: the stoker's ROAD AHEAD panel is gone; a rebuild of the
+//           level list (sign-in, a controller or gyro coming on) keeps the ROOM's list on both
+//           screens (no Slingshot, the stoker can't pick) and the stoker keeps the captain's pick
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
@@ -238,6 +241,38 @@ try {
   await clickId(cap, 'btn-play-again');
   await backAtStart(cap, sto, 'ORP-03');
   await h.shot(sto, 'stoker-riding-again');
+
+  // ── ORP-05 back to the room ──
+  console.log('ORP-05 back in the room');
+  await waitFor(cap, () => window._game.state === 'playing', null, 15000);
+  await waitFor(sto, () => window._game.state === 'playing', null, 15000);
+  // Hold the stoker's ROAD AHEAD panel up (an empty stretch of road would hide it).
+  await sto.evaluate(() => { const x = window._game; x._updateLookahead = () => { x.hud.updateLookahead([]); x._lookaheadWasOn = true; }; });
+  await sleep(800);
+  const laOn = await sto.evaluate(() => document.getElementById('lookahead').classList.contains('visible'));
+  await cap.evaluate(() => window._game._returnToRoom());
+  const inRoom = await waitFor(cap, () => window._game.state === 'lobby' && document.getElementById('lobby-flow').current === 'lobby-level', null, 20000)
+    && await waitFor(sto, () => window._game.state === 'lobby' && document.getElementById('lobby-flow').current === 'lobby-level', null, 20000);
+  const laGone = await sto.evaluate(() => !document.getElementById('lookahead').classList.contains('visible'));
+  check(inRoom && laOn && laGone, "ORP-05 back in the room: the stoker's ROAD AHEAD panel is gone", { laOnDuringRide: laOn, laGone });
+  const list = (pg) => pg.evaluate(() => {
+    const cards = [...document.querySelectorAll('#level-cards .level-card')];
+    return { ids: cards.map((c) => c.dataset.levelId), sling: cards.some((c) => c.dataset.levelId === 'slingshot'),
+      picked: (cards.find((c) => c.classList.contains('selected')) || {}).dataset?.levelId || null,
+      stokerLocked: cards.every((c) => c.style.pointerEvents === 'none' || c.disabled), start: document.getElementById('btn-start-ride').style.display };
+  });
+  // What a controller (or gyro) coming on does on each screen, and a sign-in.
+  await cap.evaluate(() => { window._game.lobby._updateTutorialButton(); window._game.lobby._rebuildLevelCards(); });
+  await sto.evaluate(() => { window._game.lobby._updateTutorialButton(); window._game.lobby._rebuildLevelCards(); });
+  const cl = await list(cap), sl = await list(sto);
+  check(!cl.sling && !sl.sling, 'ORP-05 after a rebuild neither room screen lists the Slingshot', { cap: cl.ids, sto: sl.ids });
+  check(sl.stokerLocked && sl.start === 'none', "ORP-05 the stoker's rebuilt list is still read-only (no START RIDE)", sl);
+  const other = cl.ids.find((id) => id !== cl.picked && id !== 'tutorial' && id !== 'tourist');
+  await cap.evaluate((id) => document.querySelector('#level-cards .level-card[data-level-id="' + id + '"]').click(), other);
+  const follows = await waitFor(sto, (id) => !!document.querySelector('#level-cards .level-card.selected[data-level-id="' + id + '"]'), other, 5000);
+  await sto.evaluate(() => window._game.lobby._rebuildLevelCards());
+  const kept = await list(sto);
+  check(follows && kept.picked === other, "ORP-05 the stoker's screen shows the captain's pick, and keeps it through a rebuild", { other, follows, kept: kept.picked });
   await cap.close(); await sto.close();
 } catch (e) {
   check(false, 'smoke crashed: ' + (e && e.stack || e));
