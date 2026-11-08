@@ -60,6 +60,7 @@ export class RoomTransport {
     this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
     this.onRoomWaiting = null; // #346: the relay says the room is open and the partner is NOT in it
     this.partnerAbsent = false; // #346: last relay word was "waiting" (cleared by partner-ready)
+    this.roomInfo = null; // #694: what the relay remembers about the room (on "waiting"), or null
     this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
     this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
     this.cameraEnabled = true; // set false to suppress local camera in calls
@@ -227,7 +228,15 @@ export class RoomTransport {
           // Relay confirms room is valid, waiting for partner (#346: say so — a rejoin into a
           // room whose partner is gone offers "New Room" sooner)
           this.partnerAbsent = true;
-          if (this.onRoomWaiting) this.onRoomWaiting();
+          // #694: a relay from #694 on also says what the room remembers (an older one doesn't:
+          // roomInfo stays null and the client falls back to its own history).
+          this.roomInfo = 'fresh' in parsed ? {
+            fresh: !!parsed.fresh,
+            lastUsedAt: Number(parsed.lastUsedAt) || null,
+            partnerSeenAt: Number(parsed.partnerSeenAt) || null,
+            partnerName: typeof parsed.partnerName === 'string' ? parsed.partnerName.slice(0, 32) : null,
+          } : null;
+          if (this.onRoomWaiting) this.onRoomWaiting(this.roomInfo);
           return;
         } else if (parsed.type === 'disconnect') {
           // Relay: partner disconnected — immediate notification
@@ -535,6 +544,8 @@ export class RoomTransport {
     this._relayDidOpen = false;
     let url = this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role;
     if (this._relayToken) url += '&token=' + encodeURIComponent(this._relayToken);
+    // #694: the name the room remembers this seat by ("Pete was here 3 min ago" on the partner's side)
+    if (this._displayName) url += '&name=' + encodeURIComponent(String(this._displayName).slice(0, 32));
     const ws = new WebSocket(url);
     this._relayWs = ws;
     // Every handler below acts only while `ws` is still this transport's socket.

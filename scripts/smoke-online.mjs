@@ -162,6 +162,25 @@ try {
   console.log('room relay (wrangler dev) …');
   if (!(await waitForRelay())) { console.log(wlog.slice(-3000)); throw new Error('room relay did not start'); }
 
+  // ── OC-W (#694): the relay remembers rooms. A code nobody ever opened says so at once. ──
+  console.log('OC-W — a never-opened room code');
+  {
+    const p = await openPlayer(browsers[1], 'joiner');
+    const code = 'TNDM-' + Array.from({ length: 4 }, () => 'ABCDEFGHJKMNPQRSTUVWXYZ'[Math.floor(Math.random() * 23)]).join('');
+    await clickId(p, 'btn-together');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-role');
+    await clickId(p, 'btn-stoker');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-join');
+    await p.evaluate((c) => window._game.lobby._joinRoom(c), code);
+    const said = await p.waitForFunction((c) => {
+      const s = document.getElementById('join-status');
+      const row = document.getElementById('join-wait-actions');
+      return s && s.textContent.startsWith(`No one has opened room ${c.slice(5)} yet. Check the code`) && row && !row.hidden && s.textContent;
+    }, { timeout: 30000, polling: 100 }, code).then((x) => x.jsonValue(), () => null);
+    check(!!said, 'OC-W joining a code nobody opened: "No one has opened room … yet. Check the code" + Try another code at once', said);
+    await p.close();
+  }
+
   // ── OC-01 + OC-07 + OC-11 on Grandma's ──
   console.log("OC-01 / OC-07 / OC-11 — Grandma's");
   {
