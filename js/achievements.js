@@ -61,7 +61,8 @@ export class AchievementManager {
     this._base = this._loadBase();
     this._statsSyncTimer = null;
     this._statsSync = null;      // the sync in flight (a promise)
-    this._statsResync = false;   // stats changed while it was out
+    this._statsSent = null;      // the stats it was taken from
+    this._beaconSent = null;     // stats a page-hide beacon sent while it was out (already counted)
   }
 
   /** The demo never awards the full-game-only achievements (defs `demo: false`). */
@@ -220,7 +221,11 @@ export class AchievementManager {
    * the caller may show one summary). Signed out: { ok: false }.
    */
   async syncStats() {
-    if (this._statsSync) { this._statsResync = true; return this._statsSync; }
+    // One at a time: a call while one is out waits for it, then sends what's new since.
+    if (this._statsSync) {
+      try { await this._statsSync; } catch (e) {}
+      return this.syncStats();
+    }
     const token = this._token();
     const user = tokenUser(token);
     if (!token || !user) return { ok: false, newlyEarned: [] };
@@ -231,6 +236,8 @@ export class AchievementManager {
       if (this._base.user && this._base.user !== user) this._resetDeviceStats(user);
       const sent = migrateStats(this._stats);
       const delta = toAccountDelta(sent, this._base);
+      this._statsSent = sent;
+      this._beaconSent = null;
       let res;
       try {
         res = await fetch(`${API_BASE}/games/${ACCOUNT_GAME}/sync`, {
@@ -244,7 +251,8 @@ export class AchievementManager {
       try { data = await res.json(); } catch (e) {}
       if (!data || !data.stats) return { ok: false, newlyEarned: [] };
       if (this._token() !== token) return { ok: false, newlyEarned: [] };   // signed out or switched meanwhile
-      this._stats = mergeAfterSync(data.stats, this._stats, sent);
+      // A beacon that went out meanwhile already sent the counts up to its snapshot.
+      this._stats = mergeAfterSync(data.stats, this._stats, this._beaconSent || sent);
       this._base = baseFromAccount(data.stats, user);
       this._saveBase();
       try { localStorage.setItem(STATS_KEY, JSON.stringify(this._stats)); } catch (e) {}
@@ -256,7 +264,8 @@ export class AchievementManager {
       return await this._statsSync;
     } finally {
       this._statsSync = null;
-      if (this._statsResync) { this._statsResync = false; this._scheduleStatsSync(); }
+      this._statsSent = null;
+      this._beaconSent = null;
     }
   }
 
@@ -270,7 +279,9 @@ export class AchievementManager {
     const user = tokenUser(token);
     if (!token || !user || (this._base.user && this._base.user !== user)) return false;
     const sent = migrateStats(this._stats);
-    const delta = toAccountDelta(sent, this._base);
+    // A sync is out: its counts are on their way, so the beacon sends only what came after.
+    const from = this._statsSync && this._statsSent ? baseAfterSend(this._base, this._statsSent) : this._base;
+    const delta = toAccountDelta(sent, from);
     if (!hasCounters(delta) && !this._statsSyncTimer) return false;
     if (this._statsSyncTimer) { clearTimeout(this._statsSyncTimer); this._statsSyncTimer = null; }
     const url = `${API_BASE}/games/${ACCOUNT_GAME}/sync`;
@@ -283,7 +294,8 @@ export class AchievementManager {
       try { fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body, keepalive: true }).catch(() => {}); ok = true; } catch (e) {}
     }
     if (ok) {
-      this._base = { ...baseAfterSend(this._base, sent), user };
+      this._base = { ...baseAfterSend(from, sent), user };
+      if (this._statsSync) this._beaconSent = sent;
       this._saveBase();
     }
     return ok;
