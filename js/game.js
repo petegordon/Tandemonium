@@ -903,6 +903,14 @@ class Game {
     this.lobby.phonePool = this.phonePool.pool;   // #562
     // #672 · the partner's look arrived in the room: the bike's partner seat follows on the next frame.
     this.lobby.onPartnerLook = (look) => { this._partnerLook = look; this._partnerLookKey = JSON.stringify(look); };
+    // #346: the lobby retired a room transport (left the room, opened another, HOST INSTEAD). Back
+    // from a ride, this game still held it: let go of it, and of the remote bike, so nothing here
+    // reads or tears down a dead transport later. Only in the lobby; a ride owns its own.
+    this.lobby.onRoomNetRetired = (net) => {
+      if (this.net !== net || this.state !== 'lobby') return;
+      this.net = null;
+      this.remoteBikeState = null;
+    };
     // #563 · "Play on this phone": a phone on the host step's QR asks for the
     // RIDE TOGETHER room; the lobby opens it then (and says whether it may).
     this.phonePad.onOpenRoom = () => this.lobby.openRoomForPhone();
@@ -1471,6 +1479,12 @@ class Game {
     if (mode === 'stoker') {
       this.remoteBikeState = new RemoteBikeState();
     }
+    // #346: the partner's input starts from rest. Back in the room this transport kept the last
+    // ride's lean / pedal handlers (the lobby re-registers only its own), so a late packet after
+    // _returnToRoom's reset could carry a lean or a pedal flash into this ride.
+    this.remoteLean = 0;
+    this._remoteLastFoot = null;
+    this._remoteLastTapTime = 0;
 
     // Network callbacks
     this.net.onPedalReceived = (source, foot) => {
