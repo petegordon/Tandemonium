@@ -31,7 +31,8 @@ const ACTIVE_TEXT = {
   gust: '💨 HOLD IT',
   cobbles: '🪨 ROUGH ROAD'
 };
-import { makePlacementSalt, dailyKey } from './daily-seed.js';
+import { makePlacementSalt } from './daily-seed.js';
+import { playDayKey } from './time-warp.js';   // #611 · the day the game is on (warped or real)
 import {
   recordDailyFinish, recordRideStart, ridesStarted, firstTry, dailyStatus, recordPartner, computeStreak, computePairStreak, finishedToday,
   buildShareStrip, browserStore
@@ -4600,6 +4601,10 @@ class Game {
     try {
       const res = await auth.submitDaily({
         dayKey: level.key,
+        // #611 · ridden in time warp, ahead of the real date: the server allows
+        // a future day only with this flag, and the board marks the row ⏳.
+        // A server without the flag rejects the future day; the ride is still kept here.
+        ...(level.warp > 0 ? { warp: true } : {}),
         mode: this._dailyRunMode(),
         timeMs: summary.timeMs,
         dnf: false,
@@ -4678,6 +4683,7 @@ class Game {
       first: firstTry(store, level.key),
       rides: day.started,
       streak,
+      warp: level.warp > 0,   // #611
       partnerName: mode === 'pair' ? this._partnerName : null
     };
     this._dailyStripInput = stripInput;   // #657: the result card says the same
@@ -5066,7 +5072,7 @@ class Game {
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local' || !!bot,
       partnerKey,
       touristFinished: !!(this.isTourist || this._touristRoute),
-      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || dailyKey()).current : 0,
+      pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || playDayKey()).current : 0,
     });
     // #500 · Look, No Thumbs: earned by each rider on THIS device who steered the
     // whole ride by controller gyro (local co-op: either seat; online: your own).
@@ -5125,7 +5131,7 @@ class Game {
       partnerKey: me && me.serverId ? String(me.serverId) : 'local:p1',
       gyroOnly: !!this.balanceCtrlP2 && gyroOnlySteer(this.balanceCtrlP2.steerFrames),
     };
-    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: dailyKey(), demo: !!this.achievements.demo });
+    const fresh = this.lobby.seatAchievements.finish(acc.user.id, s, { today: playDayKey(), demo: !!this.achievements.demo });
     this._seatNewAchievements[2] = fresh.map((a) => a.id);
     for (const a of fresh) showInfoToast(a.icon, `${acc.user.name} · ${a.name}`, a.desc);
   }

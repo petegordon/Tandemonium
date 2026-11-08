@@ -36,7 +36,7 @@ function btn(variant, html, cls) {
  * opts: {
  *   standalone   opened from the lobby: no stage LAUNCH, BACK instead of LOBBY
  *   lock         js/slingshot.js · stageLock() for the current stage, or null
- *   todays       { best, runs } when the Daily Launch is offered, else null
+ *   todays       { best, runs, warp? } when the Daily Launch is offered, else null (warp: #611 days ahead)
  *   canWishlist  show the WISHLIST button on the demo's end
  *   replay       at the demo's end: the stage LAUNCH replays (m9), else null
  *   rebuildOffered  false hides Rebuild (the demo, m9)
@@ -103,7 +103,7 @@ export function renderGarage(save, wallet, opts = {}) {
     buttons.push(launch);
   }
   if (todays) {
-    const t = btn('primary', `📅 DAILY LAUNCH${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
+    const t = btn('primary', `📅 DAILY LAUNCH${todays.warp > 0 ? ` ⏳ +${todays.warp}` : ''}${todays.best ? ` · best ${fmt(todays.best)} m` : ''}`);
     t.addEventListener('click', () => opts.onToday && opts.onToday());
     top.appendChild(t);
     buttons.push(t);

@@ -438,7 +438,8 @@ function noteDay(L, today) {
   if (!today || L.dayList.includes(today)) return;
   L.days += 1;
   L.dayList = [...L.dayList, today].slice(-DAY_LIST_MAX);
-  L.lastDay = today;
+  // #611 · after a time warp the real date can be behind the newest day ridden.
+  if (!L.lastDay || today > L.lastDay) L.lastDay = today;
 }
 
 const addUnique = (list, v) => (v && !list.includes(v) ? [...list, v] : list);
@@ -620,7 +621,10 @@ export function applyEvent(prev, type, d = {}, today = null) {
         L.coopFinishes += 1;
         if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       }
-      if (d.finishedLevel === 'daily' && today && L.lastDailyDay !== today) {
+      // #611 · a day behind the newest Daily day (the real date after a time
+      // warp rode ahead) leaves the run alone: that run already counted the
+      // days the warp rode, and the real date picks it up again the day after.
+      if (d.finishedLevel === 'daily' && today && (!L.lastDailyDay || today > L.lastDailyDay)) {
         const gap = L.lastDailyDay ? daysBetween(L.lastDailyDay, today) : 0;
         L.dailyDayRun = gap === 1 ? L.dailyDayRun + 1 : 1;
         L.dailyDayBest = Math.max(L.dailyDayBest, L.dailyDayRun);

@@ -1565,6 +1565,45 @@
     font-size: 9px;
     color: rgba(255,255,255,0.32);
   }
+  /* #611 · time warp: which day the Daily Ride card is on, and the warp row under it. */
+  .level-card-warp-day {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    color: #ffd23f;
+    margin-bottom: 1px;
+  }
+  .level-card-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    min-width: 0;
+  }
+  .daily-warp-row {
+    display: flex;
+    gap: 6px;
+    width: 100%;
+  }
+  .daily-warp-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 6px 6px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 210, 63, 0.55);
+    background: rgba(255, 210, 63, 0.12);
+    color: #fff;
+    font-family: var(--uf-font-ui);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .daily-warp-btn[hidden] { display: none; }
+  .daily-warp-btn.is-disabled { opacity: 0.55; cursor: default; border-color: rgba(255,255,255,0.25); background: rgba(255,255,255,0.06); }
+  .daily-warp-back { border-color: rgba(255,255,255,0.35); background: rgba(255,255,255,0.08); }
   /* B-3 · "Best 2:41 · 🥈 · 🥇 at 2:20" under the level description. */
   .level-card-record {
     font-size: 10px;
@@ -2538,6 +2577,8 @@
   .lb-mode-solo { background: rgba(68,255,102,0.2); color: var(--uf-color-accent); }
   .lb-mode-captain { background: rgba(68,136,255,0.2); color: #4488ff; }
   .lb-mode-stoker { background: rgba(170,68,255,0.2); color: #aa44ff; }
+  /* #611 · a Daily Ride row ridden in time warp */
+  .lb-warp { font-size: 13px; flex-shrink: 0; }
   .lb-collectibles {
     font-size: 11px;
     color: rgba(255,255,255,0.45);
@@ -4671,6 +4712,13 @@
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
     .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
+    /* #611 · the warp day + row, readable from the couch */
+    .level-card-warp-day { font-size: calc(10 * var(--ls)); }
+    .daily-warp-row { gap: calc(5 * var(--ls)); }
+    .level-card-stack { gap: calc(5 * var(--ls)); }
+    .daily-warp-btn { font-size: calc(9.5 * var(--ls)); padding: calc(5 * var(--ls)) calc(8 * var(--ls)); border-width: calc(1.2 * var(--ls)); }
+    /* compact: the description may hide, never the warped day */
+    .lobby-compact-3 .level-card[data-level-id="daily"] .level-card-desc:has(.level-card-warp-day) { display: block; }
 
     /* Difficulty selector */
     .difficulty-selector { max-width: none; width: calc(160 * var(--ls)); margin: 0 auto; }
@@ -4920,6 +4968,7 @@
     .lb-avatar { width: calc(22 * var(--ls)); height: calc(22 * var(--ls)); }
     .lb-mode { font-size: calc(9 * var(--ls)); padding: calc(1 * var(--ls)) calc(5 * var(--ls)); }
     .lb-collectibles { font-size: calc(11 * var(--ls)); }
+    .lb-warp { font-size: calc(13 * var(--ls)); }
     .lb-you-tag { font-size: calc(9 * var(--ls)); }
     .lb-date { font-size: calc(10 * var(--ls)); }
     .lb-rides { font-size: calc(11 * var(--ls)); }
