@@ -20,6 +20,16 @@
 // Signed twist angle (radians) of quaternion q about the world-up (Y) axis.
 // Swing-twist decomposition: the twist quaternion about (0,1,0) is (0, q.y, 0,
 // q.w) before normalization, so its signed angle is 2·atan2(q.y, q.w).
+/**
+ * Default half-life (s) of the fusion's at-rest yaw return (0.7). Gravity anchors
+ * pitch and roll but nothing anchors yaw, so gyro bias turns a still pad's
+ * displayed heading without bound (Tandemonium #596). The return only runs
+ * once the pad has been still a moment and only touches the displayed
+ * heading, never gravity roll (what steering reads). 2 s matches the lab
+ * overlay's "gentle" setting; set fusion.yawReturnHalfLife = 0 to turn it off.
+ */
+export const DEFAULT_YAW_RETURN_HALF_LIFE_S = 2;
+
 export function twistAngleY(q) {
   return 2 * Math.atan2(q.y, q.w);
 }

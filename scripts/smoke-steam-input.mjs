@@ -10,6 +10,9 @@
 //   IN-19  two Steam Controllers under Steam (two virtual XInput pads, gyro on
 //          the left stick): tilting the controller on the desk doesn't take
 //          Player 1; the one you press on is P1 and its D-pad moves the menu focus
+//   IN-21  #499: Stick steering Off doesn't zero a Steam-only Steam
+//          Controller's lean (its gyro arrives on the stick); it still zeroes
+//          a real Xbox pad's stick
 import { startHarness, sleep, waitState } from './lib/smoke-harness.mjs';
 import { installFakeSteam, ELECTRON_UA } from './lib/fake-steam.mjs';
 import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
@@ -48,6 +51,33 @@ console.log('IN-19 two Steam Controllers');
   await pads.tap(0, 'DOWN');
   const moved = await page.waitForFunction((f) => (document.querySelector('.gamepad-focus')?.id || '') !== f, { timeout: 8000, polling: 100 }, from).then(() => true).catch(() => false);
   check(moved, 'IN-19 its D-pad moves the menu focus', { from, to: (await seat()).focus });
+  await page.close();
+}
+
+// ── IN-21: Stick steering Off keeps Steam's gyro (#499) ──
+console.log('IN-21 Stick steering Off vs Steam gyro');
+for (const [type, label, wantLean] of [['14', 'Steam Controller (Steam only)', true], ['3', 'Xbox pad under Steam', false]]) {
+  const page = await h.gamePage({
+    userAgent: ELECTRON_UA, storage: { tandemonium_tutorial_done: 'smoke' },
+    before: async (p) => {
+      await installFakeSteam(p, { xinput: [{ index: 0, handle: '100', type }] });
+      await installFakeGamepads(p, { atBoot: ['xbox'] });
+    },
+  });
+  const pads = fakePads(page);
+  await page.waitForFunction(() => !!document.getElementById('btn-solo'), { timeout: 15000 });
+  await sleep(800);
+  await pads.tap(0, 'A'); await sleep(400);
+  await page.evaluate(() => { window._game.input.suppressGamepadLean = true; });
+  await pads.stick(0, 'LX', 0.7);
+  const r = await page.waitForFunction(() => {
+    const im = window._game.input;
+    im.pollGamepad();
+    return im._slot && im._slot.state === 'claimed' ? { lean: im.getGamepadLean(), steamGyro: im.stickIsSteamGyro } : null;
+  }, { timeout: 8000, polling: 100 }).then((x) => x.jsonValue()).catch(() => null);
+  await pads.stick(0, 'LX', 0);
+  if (wantLean) check(!!r && r.steamGyro && Math.abs(r.lean) > 0.1, `IN-21 ${label}: Stick steering Off keeps its gyro lean`, r);
+  else check(!!r && !r.steamGyro && r.lean === 0, `IN-21 ${label}: Stick steering Off zeroes its stick`, r);
   await page.close();
 }
 

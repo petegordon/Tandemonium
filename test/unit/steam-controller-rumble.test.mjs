@@ -3,7 +3,7 @@
 // Now it goes to the twin pad and to Steam Input by the twin's handle.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { steamTargetForEntry, setControllerManager, resetSteamTwinMemory } from '../../js/input-manager.js';
+import { steamTargetForEntry, setControllerManager } from '../../js/input-manager.js';
 import { hapticCrash, hapticHooks } from '../../js/haptics.js';
 import { colourwaysFor, colourwayName } from '../../js/goose-colourways.js';
 import DATA from '../../js/goose-colourways-data.js';
@@ -13,45 +13,52 @@ class DualSenseDriver {}
 
 const XI = 'Xbox 360 Controller (XInput STANDARD GAMEPAD)';
 
-function world({ slots, bodies = 1, pads }) {
-  resetSteamTwinMemory();
+/**
+ * Steam's slot map + the manager's units (controller-core 0.7 links each Steam
+ * Controller to its XInput twin and Steam slot; the lab tests cover how).
+ * @param {{ slots: any[], units: Array<{ twinPadIndex?: number|null, steamSlot?: any }> }} w
+ */
+function world({ slots, units }) {
   globalThis.window = { steam: { input: { getXInputMap: () => slots } } };
-  Object.defineProperty(globalThis, 'navigator', { value: { getGamepads: () => pads }, configurable: true, writable: true });
-  const now = performance.now();
-  const entries = [];
-  const pool = new Map();
-  for (let i = 0; i < bodies; i++) { const e = { driver: new SteamControllerDriver(), hidActiveSince: now - 10 }; entries.push(e); pool.set('sc' + i, e); }
-  setControllerManager({ _hidPool: pool, slots: [] });
-  return entries;
+  const built = units.map((u, i) => ({
+    entry: { driver: new SteamControllerDriver(), device: { key: 'sc' + i } },
+    presence: 'present', twinPadIndex: u.twinPadIndex ?? null, steamSlot: u.steamSlot ?? null,
+  }));
+  setControllerManager({ unitForDevice: (d) => built.find((u) => u.entry.device === d) || null, allUnits: () => built });
+  return built.map((u) => u.entry);
 }
 const xpad = (index, played = []) => ({
   index, id: XI, axes: [0, 0, 0, 0], buttons: [],
   vibrationActuator: { playEffect: (type, o) => { played.push({ index, type, ...o }); return Promise.resolve('complete'); } },
 });
 
-test('one Steam Controller: rumble targets its twin pad and its Steam handle', () => {
-  const pads = [xpad(0)];
-  const [sc] = world({ slots: [{ index: 0, handle: '777', type: '14' }], pads });
-  assert.deepEqual(steamTargetForEntry(sc, pads), { padIndex: 0, handle: '777' });
+test('a Steam Controller linked to its twin: rumble targets the twin pad and its Steam handle', () => {
+  const slot = { index: 0, handle: '777', type: '14' };
+  const [sc] = world({ slots: [slot], units: [{ twinPadIndex: 0, steamSlot: slot }] });
+  assert.deepEqual(steamTargetForEntry(sc), { padIndex: 0, handle: '777' });
 });
 
-test('two Steam Controllers not yet linked by a press: no guess', () => {
-  const pads = [xpad(0), xpad(1)];
-  const [a] = world({ slots: [{ index: 0, handle: '1', type: '14' }, { index: 1, handle: '2', type: '14' }], bodies: 2, pads });
-  assert.equal(steamTargetForEntry(a, pads), null);
+test('one Steam Controller, twin not linked yet: the one Steam-family handle', () => {
+  const [sc] = world({ slots: [{ index: 0, handle: '777', type: '14' }], units: [{}] });
+  assert.deepEqual(steamTargetForEntry(sc), { padIndex: null, handle: '777' });
+});
+
+test('two Steam Controllers not yet linked: no guess', () => {
+  const [a] = world({ slots: [{ index: 0, handle: '1', type: '14' }, { index: 1, handle: '2', type: '14' }], units: [{}, {}] });
+  assert.equal(steamTargetForEntry(a), null);
 });
 
 test('a pad that is not a Steam Controller has no Steam target', () => {
-  const pads = [xpad(0)];
-  world({ slots: [{ index: 0, handle: '9', type: '14' }], pads });
-  assert.equal(steamTargetForEntry({ driver: new DualSenseDriver(), hidActiveSince: 1 }, pads), null);
-  assert.equal(steamTargetForEntry(null, pads), null);
+  world({ slots: [{ index: 0, handle: '9', type: '14' }], units: [{}] });
+  assert.equal(steamTargetForEntry({ driver: new DualSenseDriver(), device: {} }), null);
+  assert.equal(steamTargetForEntry(null), null);
 });
 
 test('a crash rumbles a seated Steam Controller through its twin and Steam Input', () => {
   const played = [];
   const pads = [xpad(0, played)];
-  world({ slots: [{ index: 0, handle: '777', type: '14' }], pads });
+  world({ slots: [{ index: 0, handle: '777', type: '14' }], units: [{ twinPadIndex: 0 }] });
+  Object.defineProperty(globalThis, 'navigator', { value: { getGamepads: () => pads }, configurable: true, writable: true });
   const sent = [];
   const prev = hapticHooks.steamInput;
   hapticHooks.steamInput = () => ({ vibrate: (...a) => sent.push(a) });
