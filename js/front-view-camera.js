@@ -61,6 +61,13 @@ export class FrontViewCamera {
     this._stale = true;     // draw a fresh picture on the next frame
     this._skipped = 0;
 
+    // #559 · while the bike is down (a crash) the corner holds its last
+    // picture from before the impact: the rag-doll geese and the flying parts
+    // are thrown through the spot the camera sits in, and a live view filled
+    // the corner with a beak or a frame tube. The main view carries the crash.
+    // Live again, re-seated, once the bike is back up (the remount).
+    this.frozen = false;
+
     this._buildFrame();
     this._onResize();
     this._resizeHandler = () => this._onResize();
@@ -192,6 +199,11 @@ export class FrontViewCamera {
   update(bike, dt) {
     if (!this.enabled) return;
 
+    // #559 · hold through the crash; re-seat on the remount (the bike may be
+    // back at a checkpoint, so don't glide there from the crash site).
+    if (bike.fallen) { this.frozen = true; return; }
+    if (this.frozen) { this.frozen = false; this.reset(); }
+
     const fwd = this._fwd;
     fwd.set(Math.sin(bike.heading), 0, Math.cos(bike.heading));
 
@@ -227,6 +239,7 @@ export class FrontViewCamera {
   reset() {
     this._initialized = false;
     this._stale = true;
+    this.frozen = false;
   }
 
   /**
@@ -294,6 +307,13 @@ export class FrontViewCamera {
     }
     const r = this._rect;
 
+    // #559 · frozen for a crash: copy the held picture back in, never draw the
+    // scene. With no picture to hold (WebGL1, or it went stale) the corner is
+    // hidden for the crash instead.
+    const holding = this.frozen && this._rt && !this._stale && this.renderEvery > 1 && renderer.capabilities.isWebGL2 &&
+      this._rt.width === Math.max(1, Math.round(r.size * renderer.getPixelRatio()));
+    if (this.frozen && !holding) { this._showFrame(false); return; }
+
     // WebGL viewport origin is bottom-left; derive from the CSS top-left rect.
     const x = Math.round(r.cssLeft);
     const y = Math.round(h - r.cssTop - r.size);
@@ -312,7 +332,7 @@ export class FrontViewCamera {
       // #456 · draw the scene into a small picture every other frame, and
       // copy that picture into the corner every frame (the main view clears
       // the whole canvas, so the corner has to be redrawn each frame).
-      if (this._stale || ++this._skipped >= this.renderEvery) {
+      if (!this.frozen && (this._stale || ++this._skipped >= this.renderEvery)) {
         renderer.setRenderTarget(rt);
         renderer.render(scene, this.camera);
         renderer.setRenderTarget(null);
@@ -349,6 +369,8 @@ export class FrontViewCamera {
   renderInHalf(renderer, scene, bike, dt, halfX, halfW) {
     if (!this.enabled) return;
     this.update(bike, dt);
+    // #559 · no held picture in split-screen (it draws straight to the screen): hide for the crash
+    if (this.frozen) { this._showFrame(false); return; }
 
     const w = window.innerWidth;
     const h = window.innerHeight;

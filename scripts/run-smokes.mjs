@@ -17,7 +17,7 @@ import path from 'node:path';
 // `name` is the npm script without "smoke:" (`lobby` is plain `npm run smoke`).
 export const SMOKES = [
   'lobby', 'boot', 'edition', 'ctas', 'no-media', 'tutorial', 'records', 'seed',
-  'daily', 'ranked', 'ride', 'crash', 'helping-hand', 'disruptions', 'lookahead',
+  'daily', 'ranked', 'ride', 'crash', 'pip-crash', 'helping-hand', 'disruptions', 'lookahead',
   'ping', 'economy', 'achievements', 'quality', 'layout', 'geese', 'physics',
   'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'props', 'host-room', 'disconnect',
   'local-coop', 'versus', 'wardrobe', 'webhid', 'flows', 'steam-input', 'input', 'solo-extras',
