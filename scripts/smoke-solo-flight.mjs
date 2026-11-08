@@ -60,8 +60,8 @@ await toSoloFlight(page);
 await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible && !sp.dark); });
 c = await chooser(page);
 check(c.picked === 'solo_flight' && !c.dark && !c.name.startsWith('🔒') && !/Coming soon/.test(c.hint), 'SFB-02: unlocked, Solo Flight in colour is the pick', c);
-check(c.picker && c.bots.map(b => b.text).join(',') === 'Bolt,Rivet,Sprocket' && c.bots.filter(b => b.on).length === 1 && c.bot === 'bolt',
-  'SFB-02: the bot picker shows Bolt, Rivet and Sprocket (Bolt by default)', c.bots);
+check(c.picker && c.bots.map(b => b.text).join(',') === 'Bolt,Rivet,Sprocket,Nobody' && c.bots.filter(b => b.on).length === 1 && c.bot === 'bolt',
+  'SFB-02: the bot picker shows Bolt, Rivet and Sprocket, and Nobody (Bolt by default)', c.bots);
 const rivetBox = await page.evaluate(() => { const r = document.querySelector('.bot-pick[data-bot="rivet"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
 await page.mouse.click(rivetBox.x, rivetBox.y);
 c = await chooser(page);
@@ -82,7 +82,7 @@ await page.evaluate(() => {
   const fc = window._game.lobby._stepFocus, el = document.querySelector('.bot-pick[data-bot="bolt"]');
   fc._clearSpatialFocus(); fc.focusedEl = el; el.classList.add(fc.focusClass);
 });
-const inFocus = await page.evaluate(() => window._game.lobby._stepFocus.items.filter(e => e.classList.contains('bot-pick')).length);
+const inFocus = await page.evaluate(() => window._game.lobby._stepFocus.items.filter(e => e.classList.contains('bot-pick') && e.dataset.bot).length);
 await pads.press(pi, 'RIGHT');
 await sleep(250);
 await pads.press(pi, 'RIGHT');
@@ -91,7 +91,7 @@ const focused = await page.evaluate(() => { const f = window._game.lobby._stepFo
 await pads.press(pi, 'A');
 await until(page, () => window._game.lobby.selectedBot === 'sprocket', null, 5000);
 c = await chooser(page);
-check(inFocus === 3 && focused === 'sprocket' && c.bot === 'sprocket', 'SFB-02: a pad walks the row with the D-pad and A picks Sprocket', { inFocus, focused, bot: c.bot });
+check(inFocus === 4 && focused === 'sprocket' && c.bot === 'sprocket', 'SFB-02: a pad walks the row with the D-pad and A picks Sprocket', { inFocus, focused, bot: c.bot });
 await pads.press(pi, 'LB');   // LB / RB still cycle the bikes from here
 await sleep(300);
 const afterLb = await page.evaluate(() => window._game.lobby._presetKeys[window._game.lobby._presetIndex]);

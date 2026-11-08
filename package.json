@@ -65,6 +65,7 @@
     "smoke:players": "node scripts/smoke-players.mjs",
     "smoke:time-warp": "node scripts/smoke-time-warp.mjs",
     "smoke:solo-flight": "node scripts/smoke-solo-flight.mjs",
+    "smoke:bot-race": "node scripts/smoke-bot-race.mjs",
     "smoke:webhid": "node scripts/smoke-webhid.mjs",
     "smoke:flows": "node scripts/smoke-flows.mjs",
     "smoke:steam-input": "node scripts/smoke-steam-input.mjs",

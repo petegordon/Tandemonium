@@ -41,7 +41,8 @@ import * as THREE from 'three';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
-import { BOTS, BOT_IDS, loadBotChoice, saveBotChoice } from './player-bots.js';
+import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
+import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -447,6 +448,8 @@ export class Lobby {
     this._previewOriginalMats = null;
     // #644 · the player bot on Solo Flight's back seat (Bolt / Rivet / Sprocket), saved per device
     this.selectedBot = loadBotChoice(typeof localStorage !== 'undefined' ? localStorage : null);
+    // #644 step 2 · race a bot ghost team on Solo Flight: 'off' | 'easy' | 'medium' | 'hard', saved per device
+    this.selectedRace = loadRaceChoice(typeof localStorage !== 'undefined' ? localStorage : null);
 
     // Leaderboard state
     this._lbMainTab = 'you';    // 'solo' | 'together' | 'you'
@@ -9060,27 +9063,62 @@ export class Lobby {
     if (!el || el.childElementCount) return;
     const label = document.createElement('span');
     label.className = 'bot-label';
-    label.textContent = 'Back seat';
+    label.textContent = 'Seat';   // (the back seat: short, so the row fits between LB and RB on a TV)
     el.appendChild(label);
-    this._botButtons = BOT_IDS.map((id) => {
+    // #644 step 2 · "Nobody" leaves the back seat empty: ride alone (and race a two-bot team alone: Underdog)
+    this._botButtons = [...BOT_IDS, NO_BOT].map((id) => {
       const b = document.createElement('button');
       b.className = 'bot-pick';
       b.type = 'button';
       b.dataset.bot = id;
       b.setAttribute('role', 'radio');
-      b.style.setProperty('--bot-color', BOTS[id].color);
-      b.innerHTML = `<span class="bot-dot"></span>${BOTS[id].name}`;
-      b.title = `${BOTS[id].name} rides the back seat (a robot goose; counts as a partner)`;
+      const bot = BOTS[id];
+      b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
+      b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Nobody'}`;
+      b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as a partner)` : 'Ride alone: the back seat stays empty';
       b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
       el.appendChild(b);
       return b;
     });
-    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
+    this._buildRacePicker();
+    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons, ...(this._raceButtons || []));
     // a pad already driving the mode step picks them up now, not on the next step change
     if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
       this._stepFocus.refreshSpatial(this._stepNavItems());
     }
     this._syncBotPicker();
+  }
+
+  /**
+   * #644 step 2 · the Race row: race a bot ghost team (the two bots not on your back seat) on Easy, Medium or Hard,
+   * or not at all. Medium and Hard count as versus races (js/bot-race.js).
+   */
+  _buildRacePicker() {
+    const el = document.getElementById('race-picker');
+    if (!el || el.childElementCount) return;
+    const label = document.createElement('span');
+    label.className = 'bot-label';
+    label.textContent = 'Race';
+    el.appendChild(label);
+    this._raceButtons = RACE_CHOICES.map((id) => {
+      const b = document.createElement('button');
+      b.className = 'bot-pick race-pick';
+      b.type = 'button';
+      b.dataset.race = id;
+      b.setAttribute('role', 'radio');
+      const tier = RACE_TIERS[id];
+      b.innerHTML = `<span class="bot-dot"></span>${tier ? tier.name : 'Off'}`;
+      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickRace(id); });
+      el.appendChild(b);
+      return b;
+    });
+  }
+
+  /** Pick the bot race tier for Solo Flight, or 'off' (saved on this device). */
+  pickRace(id) {
+    this.selectedRace = saveRaceChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
+    this._syncBotPicker();
+    try { analytics.trackEvent('bot_race_pick', { race: this.selectedRace }); } catch { /* offline */ }
   }
 
   /** Pick the player bot for Solo Flight (saved on this device). */
@@ -9092,11 +9130,21 @@ export class Lobby {
 
   _syncBotPicker() {
     for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
+    // the race buttons name who you'd race (the two bots not on your back seat)
+    const team = ghostTeamName(ghostTeamFor(this.selectedBot));
+    for (const b of this._raceButtons || []) {
+      const id = b.dataset.race, tier = RACE_TIERS[id];
+      b.setAttribute('aria-checked', String(id === this.selectedRace));
+      b.title = tier ? `Race ${team}'s ghost tandem: they finish on ${tier.medal} medal time`
+        + (tier.counts ? ' (a versus race)' : ' (a warm-up: no versus achievements)') : 'No race';
+    }
   }
 
   _showBotPicker(on) {
     const el = document.getElementById('bot-picker');
     if (el) el.style.display = on ? '' : 'none';
+    const race = document.getElementById('race-picker');
+    if (race) race.style.display = on ? '' : 'none';
     if (on) this._syncBotPicker();
   }
 
