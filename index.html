@@ -4279,6 +4279,11 @@
   .room-wardrobe-row[hidden] { display: none; }
   #btn-room-wardrobe { min-width: 12em; font-size: var(--uf-size-md); }
   #btn-room-wardrobe uf-controller-glyph { margin-right: .35em; }
+  /* #667 · HOST INSTEAD: one line and the button, under the seats (full-game guest in a Demo room). */
+  .room-rehost-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; width: 100%; max-width: 720px; margin: 0 auto 10px; }
+  .room-rehost-row[hidden] { display: none; }
+  .room-rehost__line { margin: 0; flex: 1 1 22em; text-align: center; font: 600 var(--uf-size-md)/1.35 var(--uf-font-ui); color: var(--uf-color-fg); }
+  #btn-host-instead { min-width: 12em; font-size: var(--uf-size-md); }
   .uf-seat__dev .room-look__dev { margin-right: .6em; }
   .room-look { display: inline-flex; align-items: center; gap: .4em; white-space: nowrap; color: var(--uf-color-fg); }
   .room-look__led { display: inline-block; width: .9em; height: .9em; border-radius: 50%; border: 1px solid rgba(255,255,255,.45); flex: none; }
@@ -5783,6 +5788,12 @@ ON</button>
             <uf-seat id="level-room-captain" seat="Captain · front seat" tone="captain" badge="P1" state="open"></uf-seat>
             <uf-seat id="level-room-stoker" seat="Stoker · back seat" tone="stoker" badge="P2" state="open"></uf-seat>
           </uf-team>
+          <!-- #667 · a full-game guest in a demo host's room ("Demo room") can host it instead: the
+               room moves to a new code with them as captain, and everyone follows (lobby._hostInstead). -->
+          <div id="level-room-rehost" class="room-rehost-row" hidden>
+            <p id="level-room-rehost-line" class="room-rehost__line">Your friend has the demo. Host the room yourself to unlock every level and Versus. They can still join free.</p>
+            <uf-button variant="accent" size="sm" id="btn-host-instead" title="Move the room to you: a new room with you as host, and your friend follows">HOST INSTEAD</uf-button>
+          </div>
           <!-- #672 · each online player dresses their own goose here, before the ride (△ / Y, or
                click). The partner's seat above shows their look, and "dressing…" while they do. -->
           <div id="level-room-wardrobe" class="room-wardrobe-row" hidden>

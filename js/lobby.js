@@ -80,6 +80,10 @@ import { previewFov } from './lobby/preview-fit.js';   // #521: keep the whole b
 import { RoomStore } from './lobby/room-store.js';
 import { RoomProtocol, ROOM_MSG } from './lobby/room-protocol.js';
 import { NetSession } from './lobby/net-session.js';
+import { isRoomCode } from './lobby/room-protocol.js';   // #667
+import { RoomMove, watchMoveNet, closeQuietly } from './lobby/room-move.js';   // #667 HOST INSTEAD
+import { NetworkManager } from './network-manager.js';   // #667: the new room's transport, opened beside the old
+import { canHostInstead } from './edition.js';   // #667
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
@@ -973,10 +977,13 @@ export class Lobby {
     // #672 · each seat shows its goose (outfit · colours · light swatch); the partner's, while
     // their Wardrobe is open, carries a "dressing…" tag, and the captain's START RIDE says so.
     const dressing = connected && !left && !!this._partnerDressing;
-    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge].join('|') : 'off';
+    // #667 · HOST INSTEAD: a full-game guest in a demo host's room, whose build follows a move.
+    const rehost = connected && !left ? (this._roomMove ? 'moving' : this._hostInsteadOffered() ? 'offer' : '') : '';
+    const key = on ? [role, code, me.who, me.pic, me.source, them.who, them.dev, them.state, playerLooks.version, this._partnerLookKey || '', dressing, badge, rehost].join('|') : 'off';
     if (key === this._levelRoomKey) return;
     this._levelRoomKey = key;
     team.hidden = !on;
+    this._syncHostInsteadRow(on ? rehost : '');
     const wardrobe = document.getElementById('level-room-wardrobe');
     if (wardrobe) wardrobe.hidden = !on;
     const note = document.getElementById('start-dressing-note');
@@ -2162,6 +2169,9 @@ export class Lobby {
     // #672 · online, both players can reach the room's WARDROBE (△ / Y opens it from anywhere here).
     const wardrobeBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-room-wardrobe') : null;
     if (wardrobeBtn) navItems.splice(navItems.length - 1, 0, wardrobeBtn);
+    // #667 · HOST INSTEAD (shown only to a full guest in a Demo room; hidden items are skipped).
+    const hostInsteadBtn = mode === 'multiplayer' && this.net ? document.getElementById('btn-host-instead') : null;
+    if (hostInsteadBtn) navItems.splice(wardrobeBtn ? navItems.indexOf(wardrobeBtn) : navItems.length - 1, 0, hostInsteadBtn);
     this._stepItems.set(step, navItems);
     this._stepCenterItems.set(step, navItems);
     this._stepBack.set(step, backBtn);
@@ -2590,6 +2600,9 @@ export class Lobby {
     // #672: the online room's WARDROBE (both sides; △ / Y does the same from a pad).
     const roomWardrobeBtn = document.getElementById('btn-room-wardrobe');
     if (roomWardrobeBtn) roomWardrobeBtn.addEventListener('click', () => { if (this._inOnlineRoom()) this._openDressingRoom(1); });
+    // #667: HOST INSTEAD (a full-game guest in a demo host's room).
+    const hostInsteadBtn = document.getElementById('btn-host-instead');
+    if (hostInsteadBtn) hostInsteadBtn.addEventListener('click', () => { this._hostInstead(); });
     this._achDetailId = null;   // the badge the card is showing (focus returns to it)
 
     // Restore UI if already logged in from localStorage
@@ -4679,6 +4692,134 @@ export class Lobby {
     this.net.enterRoom(code, 'stoker');
   }
 
+  // ── HOST INSTEAD (#667) ──────────────────────────────────────
+  // A full-game guest in a demo host's room moves the room to a new code with itself as host;
+  // the demo host (and its phones, whose pad room never moves) follows. The sequence, and why
+  // nobody is stranded, is in js/lobby/room-move.js.
+
+  /** Offer HOST INSTEAD here? A full-game stoker, a demo captain whose build follows a move. */
+  _hostInsteadOffered() {
+    return !!(this.net && this.net.connected && this._pendingMode === 'multiplayer') &&
+      canHostInstead(getEditionRules(), this._partnerRoom || null, this._roomRole);
+  }
+
+  /** Still on a room screen (a move stops when a ride starts or the room is left). */
+  _onRoomScreen() {
+    return !!(this.lobbyEl && this.lobbyEl.style.display !== 'none' && this._pendingMode === 'multiplayer' && this._roomRole &&
+      (this._currentStep === this.levelStep || this._currentStep === this.hostStep));
+  }
+
+  /** The room bar's HOST INSTEAD row: '' hidden, 'offer' the line + button, 'moving' a status line. */
+  _syncHostInsteadRow(state) {
+    const row = document.getElementById('level-room-rehost');
+    if (!row) return;
+    const line = document.getElementById('level-room-rehost-line');
+    const btn = /** @type {any} */ (document.getElementById('btn-host-instead'));
+    const was = !row.hidden && btn && !btn.hidden;
+    row.hidden = !state;
+    if (!state) return;
+    const lead = !this._roomMove || this._roomMove.side === 'lead';
+    if (line) {
+      line.textContent = state === 'moving'
+        ? (lead ? 'Opening your room… your friend will follow.' : 'Your friend is hosting now. Moving to their room…')
+        : 'Your friend has the demo. Host the room yourself to unlock every level and Versus. They can still join free.';
+    }
+    if (btn) btn.hidden = state !== 'offer';
+    // The button just appeared: on a pad, it is this screen's one action for the guest.
+    if (state === 'offer' && !was && this._currentStep === this.levelStep) this._applyStepSpatialFocus(this.levelStep);
+  }
+
+  /** A transport into the new room, beside the old one (RoomMove's openNet). */
+  async _openMoveNet(code, role) {
+    const net = new NetworkManager();
+    net._fallbackUrl = RELAY_URL;
+    net.cameraEnabled = this.cameraActive;
+    net.audioEnabled = this.audioActive;
+    const moveNet = watchMoveNet(net);
+    try { const t = await this.auth.getRelayToken(code, role); if (t) net._relayToken = t; } catch (e) { /* the relay takes no token */ }
+    net.enterRoom(code, role);
+    return moveNet;
+  }
+
+  /** G · the full-game guest pressed HOST INSTEAD: open a new room as its captain, then tell the host. */
+  async _hostInstead() {
+    if (this._roomMove || !this._hostInsteadOffered() || !this._onRoomScreen()) return;
+    const old = this.net;
+    const code = old.generateRoomCode();
+    analytics.trackEvent('room_rehost', { from: old.roomCode, to: code });
+    const move = new RoomMove({
+      side: 'lead', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      sendMoved: () => { if (old.connected) old.sendProfile(RoomProtocol.roomMoved(code)); },
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;   // the row says "Opening your room…"
+    await this._runRoomMove(move);
+  }
+
+  /** H · the partner opened `code` and hosts it now: follow as the stoker. */
+  async _followRoomMove(code) {
+    if (!isRoomCode(code) || this._roomMove || this._roomRole !== 'captain' || !this.net || !this._onRoomScreen()) return;
+    const old = this.net;
+    if (code === old.roomCode) return;
+    showInfoToast('🏠', 'Moving to your friend’s room', 'Room ' + code.slice(-4) + '…');
+    const move = new RoomMove({
+      side: 'follow', old, code,
+      openNet: (c, r) => this._openMoveNet(c, r),
+      live: () => this._roomMove === move && this.net === old && this._onRoomScreen(),
+    });
+    this._roomMove = move;
+    this._levelRoomKey = null;
+    await this._runRoomMove(move);
+  }
+
+  /** Run a move; on success make the new room this lobby's room, else stay in the old one. */
+  async _runRoomMove(move) {
+    let res;
+    try { res = await move.run(); } catch (e) { console.warn('LOBBY: room move failed', e); res = { ok: false, reason: 'error' }; }
+    if (this._roomMove === move) this._roomMove = null;
+    this._levelRoomKey = null;
+    if (!res.ok) {
+      if (move.moveNet) closeQuietly(move.moveNet.net);
+      // Still in the old room (both sides kept it). Say so, unless the move stopped for a ride.
+      if (res.reason !== 'cancelled' && this.net === move.old && this._onRoomScreen()) {
+        showInfoToast('⚠️', 'The room didn’t move', 'Still in room ' + String(move.oldCode || '').slice(-4) + '. Try HOST INSTEAD again.');
+      }
+      this._lastRoomMove = { ok: false, reason: res.reason, from: move.oldCode, to: move.code };   // read by smoke:host-instead
+      return;
+    }
+    const { net, queue } = res.moveNet;
+    const role = move.role;
+    this._netSession.adopt(net);   // closes the old room quietly: the partner is here already
+    net.onConnected = null;
+    net.onRoomJoined = null;
+    this._roomStore.clear(move.oldCode);
+    this._roomStore.save(move.code, role, this._roomPartnerName && this._roomPartnerName !== 'LEFT' ? this._roomPartnerName : null);
+    // The new captain's host step shows the new code and QR (a phone's "Play on this phone" gets it too).
+    this._hostRoomCode = role === 'captain' ? move.code : null;
+    if (role === 'captain') {
+      const codeEl = document.getElementById('room-code-display');
+      if (codeEl) codeEl.textContent = move.code;
+      const statusEl = document.getElementById('host-status');
+      if (statusEl) { statusEl.textContent = 'Partner connected!'; statusEl.className = 'conn-status connected'; }
+      try { renderRoomQR(move.code); this._syncHostJoinQr(); } catch (e) { /* QR is cosmetic */ }
+    }
+    // Same partner, same seats: keep their name, look and edition; replay what they sent early.
+    this._rejoinMessageQueue = queue;
+    this._partnerProfileSeen = false;
+    this._showRoomStep(role);
+    if (role === 'captain') {
+      // Both were on level select: stay there, with the new host picking.
+      net.sendProfile(RoomProtocol.playGame());
+      net.sendProfile(RoomProtocol.difficultySync(this.selectedDifficulty));
+      this._showRoomLevelsStep();
+    }
+    this._lastRoomMove = { ok: true, from: move.oldCode, to: move.code, role };   // read by smoke:host-instead
+    showInfoToast('🏠', role === 'captain' ? 'You’re hosting now' : 'Your friend is hosting now',
+      'Room ' + move.code.slice(-4) + ' · ' + roomBadge(this.roomRules()));
+  }
+
   // ── NetworkManager lifecycle ─────────────────────────────────
 
   // `this.net` is the live room NetworkManager, owned by `_netSession`. Kept as
@@ -5342,6 +5483,8 @@ export class Lobby {
 
     if (profile.type === ROOM_MSG.DRESSING) {
       this._setPartnerDressing(!!profile.open);   // #672
+    } else if (profile.type === ROOM_MSG.ROOM_MOVED) {
+      this._followRoomMove(profile.code);   // #667 · the partner hosts now: follow to the new code
     } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
       // Partner changed bike — no label update needed (keep role-only labels)
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
@@ -8080,6 +8223,11 @@ export class Lobby {
     if (step === this.versusStep) {
       const cont = document.getElementById('btn-versus-continue');
       if (shown(cont)) return cont;
+    }
+    // #667: HOST INSTEAD, while offered, is the guest's one action on the room's level screen.
+    if (step === this.levelStep) {
+      const hi = document.getElementById('btn-host-instead');
+      if (hi && !hi.hidden && usable(hi)) return hi;
     }
     const preferred = centerItems[this._stepDefaultFocus.get(step) || 0] || null;
     if (usable(preferred)) return preferred;
