@@ -53,7 +53,7 @@ await locked.close();
 
 // ── SFB-02 unlocked: the picker, by mouse and by pad ──
 console.log('SFB-02 unlocked: the bot picker by mouse and pad');
-const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before: installFakeGamepads,
+const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }),
   storage: { ...BASE, tandemonium_achievements: earned(solo.slice(1)) } });
 await until(page, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
 await toSoloFlight(page);
@@ -70,8 +70,9 @@ check(c.bot === 'rivet' && c.bots.find(b => b.on).id === 'rivet' && saved === 'r
 await h.shot(page, 'sf-chooser-bot-picker-1080p');
 
 const pads = fakePads(page);
-const pi = await pads.plug('xbox');
-// the pad's hot-connect hands the mode step's focusables (the bot buttons among them) to the spatial focus
+const pi = 0;   // (plugged at boot: a pad plugged mid-smoke was sometimes never seen headless)
+await until(page, () => window._game.lobby.input && window._game.lobby.input.gamepadConnected, null, 30000);
+// the pad hands the mode step's focusables (the bot buttons among them) to the spatial focus
 const padReady = await until(page, () => window._game.lobby._stepFocus.items.some(e => e.classList && e.classList.contains('bot-pick')), null, 30000);
 if (!padReady) console.log('  (pad focus)', await page.evaluate(() => { const l = window._game.lobby, fc = l._stepFocus;
   return JSON.stringify({ step: l._currentStep && l._currentStep.id, gp: l.input.gamepadConnected, items: fc.items.map(e => e.id || (e.dataset && e.dataset.bot) || e.tagName), modal: l._activeModal }); }));
