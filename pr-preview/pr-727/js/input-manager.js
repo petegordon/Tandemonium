@@ -1,0 +1,1287 @@
+// ============================================================
+// INPUT MANAGER — keyboard + touch + device motion + gamepad
+// ============================================================
+
+import * as THREE from 'three';
+import { isMobile, TUNE, stickResponse } from './config.js';
+import { orientationToRawTilt, gravityToRawTilt } from './tilt-math.js';
+import * as analytics from './analytics.js';
+import { addHapticSource, removeHapticSource } from './haptics.js';
+import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+
+/**
+ * #596 · at-rest yaw return of the WebHID fusion, in seconds of half-life. The
+ * lab ships it on since controller-core 0.7 (2 s, what the game used to set
+ * here). Steering is untouched: it reads the gravity roll, never yaw.
+ */
+export { DEFAULT_YAW_RETURN_HALF_LIFE_S as YAW_RETURN_HALF_LIFE_S } from '../shared/yaw-return.js';
+/** #531 · phone tilt centring: the samples it averages must agree within this (degrees)... */
+const CALIB_STILL_DEG = 4;
+/** ...or, after this many samples without a still window, the median is taken. */
+const CALIB_MAX_TRIES = 60;
+/**
+ * #716 · ride-start centring: at GO the centre is the last still window, but
+ * only if that window is this recent (ms). Older means the phone was moving
+ * up to GO, so normal calibration finishes the job after GO.
+ */
+const RIDE_CENTRE_FRESH_MS = 1000;
+/** #716 · a ride-start centring nobody committed (no GO seen) ends itself after this (ms). */
+const RIDE_CENTRE_MAX_MS = 6000;
+/** Median of a short array. */
+function median(a) { const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
+
+// The ControllerManager that owns the WebHID pool. Set once at startup by
+// game.js. InputManager stays a pure consumer of slots; this exists only to
+// answer "is this controller ALREADY live on WebHID?" when arbitrating which
+// source owns a pad, which a slot-less InputManager cannot otherwise know.
+let _controllerManager = null;
+export function setControllerManager(mgr) {
+  _controllerManager = mgr;
+  if (typeof window !== 'undefined') window.__controllerManager = mgr;
+}
+
+// Debug: what the ControllerManager thinks each physical controller is. Run
+// `__whyNotHid()` in DevTools while a pad is missing: one row per unit with its
+// sources and presence (controller-core 0.7, docs/controller-units.md in the lab).
+if (typeof window !== 'undefined') {
+  window.__whyNotHid = () => {
+    const mgr = _controllerManager;
+    if (!mgr) return { managerWired: false, hint: 'setControllerManager() never ran' };
+    if (typeof mgr.allUnits !== 'function') return { managerWired: true, units: null };
+    const now = performance.now();
+    return {
+      managerWired: true,
+      units: mgr.allUnits().map((u) => ({
+        key: u.key,
+        name: u.identity.name,
+        presence: u.presence,
+        slot: u.slot ? u.slot.id : null,
+        sources: u.sources.map((s) => s.kind + (s.index != null ? ':' + s.index : '') + (s.frozen ? ' (frozen)' : '')),
+        msSinceReport: u.lastReportAt > 0 ? Math.round(now - u.lastReportAt) : null,
+        steamSlot: u.steamSlot,
+      })),
+    };
+  };
+}
+
+// Steam-family controller types. `getInputTypeForHandle` returns the raw
+// ESteamInputType enum, and main.js stringifies it — so this arrives as "14",
+// NOT "SteamDeckController". Accept both forms: 1 = SteamController,
+// 14 = SteamDeckController, which is what the 2026 Puck reports as.
+const STEAM_FAMILY_TYPE_IDS = new Set(['1', '14']);
+export function isSteamFamilyType(type) {
+  const t = String(type ?? '').trim().replace(/^k_ESteamInputType_/i, '');
+  return STEAM_FAMILY_TYPE_IDS.has(t) || /^steam/i.test(t);
+}
+
+// ── Steam's virtual XInput pads (#362, #581) ──
+// Under Steam every captured controller reaches Chromium as a generic
+// "Xbox 360 Controller (XInput STANDARD GAMEPAD)". Which physical controller
+// each one is, and whether it is just the echo of a controller we already read
+// over WebHID (its "twin"), is controller-core's job since 0.7: the game feeds
+// Steam's XInput slot map in each frame (steamXInputMap → setSteamInputMap) and
+// asks the manager's units. See docs/steam-input.md.
+const XINPUT_ID = /xinput/i;
+export function isXInputPadId(id) { return XINPUT_ID.test(String(id || '')); }
+
+/** Steam's XInput slot map, as main.js pushes it (null when not under Steam / empty). */
+export function steamXInputMap() {
+  const steamApi = (typeof window !== 'undefined' && window.steam && window.steam.input) ? window.steam.input : null;
+  const map = steamApi && typeof steamApi.getXInputMap === 'function' ? steamApi.getXInputMap() : null;
+  return Array.isArray(map) && map.length ? map : null;
+}
+
+/** Steam's controller type ('13' = PS5, '14' = Steam Controller, …) behind a
+ *  virtual XInput pad, or null when unknown / not under Steam. */
+export function steamTypeForGamepad(gp) {
+  if (!gp || !isXInputPadId(gp.id) || !_controllerManager || typeof _controllerManager.unitForPad !== 'function') return null;
+  const u = _controllerManager.unitForPad(gp.index);
+  return u && u.steamSlot ? String(u.steamSlot.type) : null;
+}
+
+/**
+ * #617 · where to send rumble for the Steam Controller behind `entry`: its XInput
+ * twin's Gamepad index (vibrationActuator) and/or Steam Input's handle for it
+ * (TriggerVibration / SetLEDColor), or null when neither is known. The manager
+ * links the twin to its controller (by Steam's slot map or by mirrored presses).
+ * With one Steam Controller and one Steam-family slot, that slot's handle is
+ * taken even before the twin is linked.
+ * @param {any} entry a Steam Controller HidEntry
+ * @returns {{ padIndex: number|null, handle: string|null }|null}
+ */
+export function steamTargetForEntry(entry) {
+  if (!entry || !entry.driver?.constructor?.needsSiblingFanout) return null;
+  const mgr = _controllerManager;
+  const u = mgr && typeof mgr.unitForDevice === 'function' ? mgr.unitForDevice(entry.device) : null;
+  const padIndex = u && u.twinPadIndex != null ? u.twinPadIndex : null;
+  let handle = u && u.steamSlot ? String(u.steamSlot.handle) : null;
+  if (!handle && mgr && typeof mgr.allUnits === 'function') {
+    const steamUnits = mgr.allUnits().filter((x) => x.entry && x.entry.driver?.constructor?.needsSiblingFanout && x.presence === 'present');
+    const fam = (steamXInputMap() || []).filter((e) => isSteamFamilyType(e.type));
+    if (steamUnits.length <= 1 && fam.length === 1) handle = String(fam[0].handle);
+  }
+  return padIndex == null && !handle ? null : { padIndex, handle };
+}
+
+/**
+ * #499 · is this slot's left stick Steam's gyro? A Steam Controller that only
+ * reaches us through Steam (no WebHID) is a virtual XInput pad, and the Steam
+ * layout routes its gyro onto the left stick ("Gyro To Joystick Deflection"),
+ * so "Stick steering: Off" must not zero it. True for a seat on a pad-only
+ * unit whose Steam slot is Steam-family, or one Steam has not named yet (#535).
+ */
+export function slotStickIsSteamGyro(slot) {
+  if (!slot || slot.state !== 'claimed' || slot._hidEntry) return false;
+  const u = slot.unit;
+  if (!u || u.entry || !u.steamSlot) return false;
+  const t = String(u.steamSlot.type ?? '').trim();
+  return isSteamFamilyType(t) || t === '' || t === '0';
+}
+
+/**
+ * Controller-gyro roll source (Issue #314):
+ *   'gravity' — roll from the gravity-corrected down vector (DEFAULT).
+ *               Drift-free and bounded (no ±180° wrap), so it can't exhibit
+ *               the "fuses to one side then bounces to the other" failure.
+ *   'euler'   — legacy roll from Euler-Z of the integrated orientation; kept
+ *               as a fallback via the Options toggle (relies on the drift-EMA
+ *               compensation in _applyTilt).
+ * Stored under 'tandemonium_gyro_roll_mode'; applied live. Defaults to 'gravity'.
+ */
+export function readGyroRollMode() {
+  try {
+    const v = localStorage.getItem('tandemonium_gyro_roll_mode');
+    if (v === 'euler') return v;
+  } catch (e) {}
+  return 'gravity';
+}
+
+// Controller state (gamepad binding, WebHID, sensor fusion, synthetic
+// gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
+// See shared/manager.js. InputManager is a thin consumer that
+// reads the slot's effective gamepad + fusion orientation each frame and
+// turns them into tilt/lean/trigger state for the game loop.
+
+// Phone remote NAV bits (js/remote/pad-protocol.js NAV) → standard-mapping
+// gamepad buttons: 12-15 d-pad, A/B (honouring the GameSir A/B swap), 9 Start.
+/** #424 · how long a dropped phone remote's lean takes to ease back to 0. */
+export const REMOTE_LEAN_EASE_MS = 300;
+
+const NAV_BUTTONS = [[1, 12], [2, 13], [4, 14], [8, 15], [128, 9]];
+const _PRESSED = Object.freeze({ pressed: true, touched: true, value: 1 });
+const _RELEASED = Object.freeze({ pressed: false, touched: false, value: 0 });
+
+/**
+ * A gamepad snapshot with the phone's held menu buttons OR-ed in. With no real
+ * pad it is a synthetic one (stick centred, no shoulders) so only navigation
+ * changes. Exported for tests.
+ * @param {any} real  a Gamepad-like snapshot, or null
+ * @param {number} nav @param {boolean} swapAB
+ */
+export function mergeRemoteNavPad(real, nav, swapAB) {
+  const n = Math.max(17, real ? real.buttons.length : 0);
+  const buttons = new Array(n);
+  for (let i = 0; i < n; i++) buttons[i] = (real && real.buttons[i]) || _RELEASED;
+  for (const [bit, idx] of NAV_BUTTONS) if (nav & bit) buttons[idx] = _PRESSED;
+  if (nav & 16) buttons[swapAB ? 1 : 0] = _PRESSED;   // OK = A
+  if (nav & 32) buttons[swapAB ? 0 : 1] = _PRESSED;   // Back = B
+  return {
+    id: real ? real.id : 'Phone remote',
+    index: real ? real.index : -1,
+    connected: true,
+    mapping: 'standard',
+    timestamp: performance.now(),
+    axes: real ? real.axes : [0, 0, 0, 0],
+    buttons,
+  };
+}
+
+// Gyro drift-correction taper (see _applyTilt). Full strength near centre,
+// fading linearly over a moderate lean so a deliberate turn is never
+// re-centred — but never reaching zero.
+//
+// TAPER_FLOOR stops the correction ever reaching zero. With a constant
+// uncorrected gyro bias (startup calibration aborted as too noisy — see
+// #365) rawGamma grows steadily: lean grows, so the taper shrinks, so
+// the correction weakens, so lean grows faster. Past ZERO_AT it stopped
+// entirely and could never recover — the "pulls to one side and sticks"
+// report. A floor keeps a slow pull-back alive through sustained leans
+// without meaningfully fighting a real turn: at 0.15 the offset moves
+// with a ~7s time constant, far longer than any deliberate corner but
+// far shorter than a whole ride.
+export const DRIFT_TAPER_FULL_BELOW = 0.2;   // tuning knobs (lean fraction)
+export const DRIFT_TAPER_ZERO_AT = 0.7;
+export const DRIFT_TAPER_FLOOR = 0.15;
+
+/**
+ * Drift-correction strength for a smoothed lean magnitude `L` (0..1).
+ * 1 at L <= FULL_BELOW, linear down to the floor at ZERO_AT, floor beyond.
+ * Exported for tests.
+ * @param {number} L  absolute smoothed lean
+ */
+export function driftTaper(L) {
+  const rawTaper = L <= DRIFT_TAPER_FULL_BELOW ? 1
+    : L >= DRIFT_TAPER_ZERO_AT ? 0
+    : (DRIFT_TAPER_ZERO_AT - L) / (DRIFT_TAPER_ZERO_AT - DRIFT_TAPER_FULL_BELOW);
+  return Math.max(DRIFT_TAPER_FLOOR, rawTaper);
+}
+
+export class InputManager {
+  /**
+   * @param {Object} [options]
+   * @param {import('../shared/manager.js').Slot|null} [options.slot=null]
+   *   — ControllerManager slot this InputManager consumes for gamepad +
+   *   gyro state. Null means no controller bound yet; the InputManager
+   *   still serves keyboard/touch/motion. Call `attachSlot(slot)` later
+   *   to bind after construction.
+   * @param {boolean} [options.enableKeyboard=true]
+   * @param {boolean} [options.enableTouch=true]
+   * @param {boolean} [options.enableMotion=true]
+   * @param {boolean} [options.remoteOnly=false]  #562 · a phone controller's
+   *   seat: driven only by its phone (feedRemoteTilt / setRemotePedals /
+   *   setRemoteNav). It never reads Steam Input, and it is "connected" while
+   *   its phone is (remotePresent), so seat drop checks treat it like a pad.
+   */
+  constructor(options = {}) {
+    const {
+      slot = null,
+      enableKeyboard = true,
+      enableTouch = true,
+      enableMotion = true,
+      remoteOnly = false,
+    } = options;
+    this.remoteOnly = !!remoteOnly;
+    /** #562 · the phone driving a remoteOnly seat is here. */
+    this.remotePresent = false;
+    this._slot = slot;
+    this._slotUnsubscribe = null;
+    this.keyboardActive = enableKeyboard;
+
+    this.keys = {};
+    this.touchLeft = false;
+    this.touchRight = false;
+    this._leftTapped = false;   // buffered tap: survives until consumeTaps()
+    this._rightTapped = false;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    this.motionEnabled = false;
+    this.motionReady = false;
+    this.onMotionEnabled = null; // callback when motionEnabled first becomes true
+    this.rawGamma = 0;
+    this.motionOffset = null;
+    this.motionRawRelative = 0;
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;       // for asymmetric smoothing direction detection
+    this._calibBuf = [];
+    this._calibrating = false;
+    this._warmupCount = 0;
+    /** #716 · true from the countdown's start until GO: the centre keeps following the still phone. */
+    this._rideCentring = false;
+    this._rideCentreStart = 0;
+    this._rideStillAt = 0;
+
+    // Time-based filtering for deviceorientation events
+    this._lastOrientTime = 0;
+    this._filteredRawTilt = null;
+    this._lastApplyTiltTime = 0;
+
+    // Velocity-dependent sensitivity: set by game loop each frame
+    this.bikeSpeed = 0;
+    this.bikeMaxSpeed = 19;
+
+    // Drift compensation (mobile tilt only)
+    this._driftEma = null;
+    this._driftRate = 0.015;
+    this._driftWindowK = 0.005;
+
+    // Derived gamepad state (updated by pollGamepad each frame from slot)
+    this.gamepadLean = 0;
+    this._gpTriggerLeftVal = 0;
+    this._gpTriggerRightVal = 0;
+    this._gpTriggerLeftPressed = false;
+    this._gpTriggerRightPressed = false;
+    this.suppressGamepadBadge = false;
+    this.suppressGamepadLean = false;
+    /** #646 · this seat's controller's own feel-scaled motion params (feelTuning), or null = TUNE. */
+    this.controllerTune = null;
+
+    // Quirk flag: Cyclone A/B swap. Set by attachSlot() / _onSlotChange.
+    this._gpSwapAB = false;
+
+    // Scratch for extracting lean from slot.fusion.orientation each frame.
+    this._tmpEuler = new THREE.Euler();
+
+    // Diagnostic properties (read by test/input.html + in-game HUD)
+    this._gpRawStickX = 0;
+    this._gpLB = false;
+    this._gpRB = false;
+    this._gyroRollAccum = 0;
+    this._accelRoll = 0;
+    this._lastApplyGyroTime = 0;
+
+    // Track last-seen connection state for the 'connected'/'disconnected'
+    // DOM badge updates and haptic source registration.
+    this._lastGamepadConnected = false;
+    this._lastHidBound = false;
+
+    // Held-detection: timestamp of the last user action on this controller
+    // (button press, trigger, stick past deadzone, or keyboard). Used by
+    // haptics + local-MP lean merge to identify a controller sitting idle
+    // on the desk during one-human local multiplayer. Seeded to "now" so
+    // controllers default to active before any input arrives.
+    this._lastActivityMs = performance.now();
+    // Edge-detect flag for "calibration just finished" auto-arm of
+    // motionEnabled. Set while fusion.calibrating, cleared after arm.
+    this._wasFusionCalibrating = false;
+
+    // Live debug handles. There is no other way to reach the attached slot's
+    // fusion from DevTools, and that's exactly what gyro triage needs.
+    // __inputManager is the most recently constructed instance; several exist
+    // (lobby picker, P1, versus seats) and only ONE is read by the balance
+    // controller, so __inputManagers exposes all of them — a gyro that reads
+    // correctly on the wrong instance looks identical to a broken gyro.
+    // Held as WeakRefs. A plain array would retain every InputManager ever
+    // constructed — versus creates one per join, so repeated lobby visits
+    // would leak them along with their slots, fusions and listeners. A debug
+    // handle must never be the reason an object stays alive.
+    if (typeof window !== 'undefined') {
+      window.__inputManager = this;
+      const refs = window.__inputManagerRefs || (window.__inputManagerRefs = []);
+      refs.push(new WeakRef(this));
+      window.__leanReport = () => {
+        const live = [];
+        for (let i = refs.length - 1; i >= 0; i--) {
+          const m = refs[i].deref();
+          if (!m) { refs.splice(i, 1); continue; }   // prune collected entries
+          live.unshift(m);
+        }
+        return live.map((m, i) => ({
+          i,
+          hasSlot: !!m._slot,
+          hasFusion: !!m._slot?.fusion,
+          motionEnabled: m.motionEnabled,
+          motionLean: +(m.motionLean || 0).toFixed(3),
+          getMotionLean: +(m.getMotionLean() || 0).toFixed(3),
+        }));
+      };
+    }
+    // Controller-gyro roll source (#314). Read at construction; updated live
+    // via setGyroRollMode() so the Options toggle takes effect immediately.
+    this._gyroRollMode = readGyroRollMode();
+
+    if (enableKeyboard) this._setupKeyboard();
+    if (isMobile) {
+      if (enableTouch) this._setupTouch();
+      if (enableMotion) this._setupMotion();
+    }
+
+    if (this._slot) this.attachSlot(this._slot);
+  }
+
+  // ── Slot accessors ──
+  // Read-only getters that delegate to the attached slot. ControllerManager
+  // owns the lifecycle; InputManager is a pure consumer.
+  get gamepadConnected() {
+    if (this.remoteOnly) return this.remotePresent;
+    // A switched-off Steam Controller keeps its slot mid-ride (the Puck stays
+    // plugged in) but is not connected (#581): the ride's disconnect pause and
+    // the versus freeze read this, and its first report back reconnects it.
+    // controller-core 0.7 tracks that presence (slot.connected).
+    if (this._slot?.state === 'claimed') return this._slot.connected !== false;
+    // A phone remote showing its menu pad (#421) is a gamepad to the menus.
+    if (this._remoteMenu) return true;
+    return false;
+  }
+  get gamepadIndex() { return this._slot?.gamepadIndex ?? null; }
+  /**
+   * Does the attached slot have a WebHID fusion that can actually steer?
+   * A fan-out receiver interface (Steam Puck) that has never streamed a
+   * report carries a fusion object that will never integrate anything — it
+   * must not count, or a seat bound to an idle Puck sibling would sit on the
+   * dead WebHID path while Steam Input (which does have the pad) is ignored.
+   * Non-fan-out entries count as soon as they are bound: real pads stream
+   * within tens of ms, and a transient "not yet" here would auto-arm motion.
+   */
+  _slotFusionIsLive() {
+    const slot = this._slot;
+    if (!slot || !slot.fusion) return false;
+    const entry = slot._hidEntry;
+    const fanout = !!(entry && entry.driver && entry.driver.constructor && entry.driver.constructor.needsSiblingFanout);
+    return fanout ? entry.hidActiveSince > 0 : true;
+  }
+  // A fusion OBJECT exists the moment an entry is attached, whether or not that
+  // entry has ever delivered a sample. On the Steam Controller Puck — five HID
+  // interfaces, one of which streams, bound at boot with no user input to gate
+  // it — the slot can hold an interface that never reports, and this getter
+  // would still claim gyro was available. Require evidence of actual data, so
+  // a mis-bound interface shows as "no gyro" instead of a toggle that does
+  // nothing. See tandemonium-controller-lab#111.
+  get gyroConnected() {
+    const entry = this._slot?._hidEntry;
+    return !!(this._slot?.fusion) && !!entry && entry.hidActiveSince > 0;
+  }
+  get gyroDevice() { return this._slot?.hidDevice ?? null; }
+  get _gpName() { return this._slot?.controllerLabel ?? ''; }
+  get _syntheticGamepad() { return this._slot?.synthetic ?? null; }
+  get _controllerDriver() { return this._slot?.driver ?? null; }
+  /** #617 · this player's Steam Controller twin / Steam Input handle (haptics.js rumbles it), or null. */
+  steamRumbleTarget() { return steamTargetForEntry(this._slot?._hidEntry ?? null); }
+  /** #499 · this seat's left stick carries Steam's gyro (a Steam Controller seen only through Steam). */
+  get stickIsSteamGyro() { return slotStickIsSteamGyro(this._slot); }
+  get _gyroConnType() { return this._slot?.driver?.connectionType ?? null; }
+
+  /**
+   * Bind (or rebind) a ControllerManager slot. Updates DOM badge + haptic
+   * registration + quirk flag to match the slot's current state. Safe to
+   * call with `null` to unbind.
+   */
+  attachSlot(slot) {
+    if (this._slotUnsubscribe) { this._slotUnsubscribe(); this._slotUnsubscribe = null; }
+    this._slot = slot || null;
+    if (!slot) {
+      this._onSlotChange(null, 'detached');
+      return;
+    }
+    this._slotUnsubscribe = slot.on((s, reason) => this._onSlotChange(s, reason));
+    // Prime from current state.
+    if (slot.state === 'claimed') this._onSlotChange(slot, 'claimed');
+  }
+
+  _onSlotChange(slot, reason) {
+    const connected = !!slot && slot.state === 'claimed';
+    const hidBound = !!slot && !!slot._hidEntry;
+
+    // Update Cyclone A/B quirk from the claimed controller label.
+    if (connected && slot.controllerLabel) {
+      this._gpSwapAB = !!ControllerRegistry.getGamepadQuirks(slot.controllerLabel).swapAB;
+    } else if (!connected) {
+      this._gpSwapAB = false;
+    }
+
+    // Badge / pedal-bar visibility — only for the primary input (!suppressGamepadBadge).
+    if (connected !== this._lastGamepadConnected) {
+      this._lastGamepadConnected = connected;
+      if (!this.suppressGamepadBadge) {
+        const badge = document.getElementById('gamepad-badge');
+        if (badge) badge.style.display = connected ? 'block' : 'none';
+        const pedalBar = document.getElementById('pedal-bar');
+        if (pedalBar) pedalBar.classList.toggle('gamepad-active', connected);
+      }
+      if (connected) {
+        const info = slot.controllerLabel ? ControllerRegistry.identifyFromGamepadId(slot.controllerLabel) : null;
+        analytics.setController(info ? info.driverName : (slot.controllerLabel || 'Gamepad'), 'standard');
+      } else {
+        this.gamepadLean = 0;
+        this._gpTriggerLeftPressed = false;
+        this._gpTriggerRightPressed = false;
+      }
+    }
+
+    // Haptic source registration follows HID binding (DualSense WebHID
+    // rumble path) — register whenever HID attaches, unregister on detach.
+    if (hidBound !== this._lastHidBound) {
+      this._lastHidBound = hidBound;
+      if (hidBound) addHapticSource(this);
+      else removeHapticSource(this);
+    }
+  }
+
+  _setupKeyboard() {
+    window.addEventListener('keydown', (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (['ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)) e.preventDefault();
+      this.keys[e.code] = true;
+      // Only count keyboard activity when this InputManager actually owns
+      // the keyboard (in local MP, P1's keyboard is released to P2 by
+      // setting keyboardActive=false — without this gate, P2's typing
+      // would falsely mark P1 as held).
+      if (this.keyboardActive) this._markActive();
+    });
+    window.addEventListener('keyup', (e) => {
+      const tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      this.keys[e.code] = false;
+    });
+  }
+
+  _setupTouch() {
+    const pedalBar = document.getElementById('pedal-bar');
+
+    // Track which touch identifiers are on each pedal
+    this._leftTouchId = null;
+    this._rightTouchId = null;
+    this._pedalMidX = 0;
+
+    // Use the full pedal-bar as the touch zone so the 10px gap between
+    // buttons isn't a dead spot.  Left/right is split at the midpoint.
+    pedalBar.style.pointerEvents = 'auto';
+
+    const assignTouch = (t) => {
+      if (t.clientX < this._pedalMidX) {
+        this._leftTouchId = t.identifier;
+        this.touchLeft = true;
+        this._leftTapped = true;   // buffered: persists until game loop reads it
+      } else {
+        this._rightTouchId = t.identifier;
+        this.touchRight = true;
+        this._rightTapped = true;
+      }
+      this._markActive();
+    };
+
+    pedalBar.addEventListener('touchstart', (e) => {
+      // Cache midpoint each touchstart (handles orientation changes)
+      const rect = pedalBar.getBoundingClientRect();
+      this._pedalMidX = rect.left + rect.width / 2;
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        assignTouch(e.changedTouches[i]);
+      }
+    }, { passive: true });
+
+    // Finger slides between pedals — reassign the touch to the new side
+    pedalBar.addEventListener('touchmove', (e) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const t = e.changedTouches[i];
+        const isLeft = t.clientX < this._pedalMidX;
+        if (isLeft && t.identifier === this._rightTouchId) {
+          this.touchRight = false; this._rightTouchId = null;
+          this._leftTouchId = t.identifier;
+          this.touchLeft = true; this._leftTapped = true;
+        } else if (!isLeft && t.identifier === this._leftTouchId) {
+          this.touchLeft = false; this._leftTouchId = null;
+          this._rightTouchId = t.identifier;
+          this.touchRight = true; this._rightTapped = true;
+        }
+      }
+    }, { passive: true });
+
+    // Global touchend — catches releases even if finger drifted off the button
+    const resetIfEmpty = (e) => {
+      for (let i = 0; i < e.changedTouches.length; i++) {
+        const id = e.changedTouches[i].identifier;
+        if (id === this._leftTouchId) { this.touchLeft = false; this._leftTouchId = null; }
+        if (id === this._rightTouchId) { this.touchRight = false; this._rightTouchId = null; }
+      }
+      // Safety: when no fingers remain on screen, clear any stuck state
+      if (e.touches.length === 0) {
+        this.touchLeft = false;
+        this.touchRight = false;
+        this._leftTouchId = null;
+        this._rightTouchId = null;
+      }
+    };
+    window.addEventListener('touchend', resetIfEmpty, { passive: true });
+    window.addEventListener('touchcancel', resetIfEmpty, { passive: true });
+  }
+
+  _setupMotion() {
+    // iOS 13+ requires a user-gesture-gated requestPermission() call
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      this.needsMotionPermission = true;
+    } else if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      this.needsMotionPermission = true;
+    } else if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
+      this._startMotionListening();
+    }
+  }
+
+  async requestMotionPermission() {
+    if (this.motionEnabled) return;
+    // NOTE: do NOT clear needsMotionPermission up front. iOS requires
+    // requestPermission() to be called from a user gesture; a non-gesture call
+    // (e.g. the lobby's auto-join) rejects without prompting. Clearing the flag
+    // eagerly would then permanently suppress the real, gesture-driven prompt
+    // (since the lobby and game share one InputManager). Only clear on a grant.
+    // iOS: DeviceMotionEvent.requestPermission() grants access to BOTH
+    // motion and orientation events — call it first (proven iOS API).
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceMotionEvent.requestPermission();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
+      } catch (e) {
+        console.warn('Motion permission error:', e);
+      }
+    }
+    // Also request orientation permission if available and not yet listening
+    if (!this.motionReady &&
+        typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      try {
+        const response = await DeviceOrientationEvent.requestPermission();
+        if (response === 'granted') { this.needsMotionPermission = false; this._startMotionListening(); }
+      } catch (e) {
+        console.warn('Orientation permission error:', e);
+      }
+    }
+  }
+
+  // Attach motion listeners directly when permission was already granted
+  // elsewhere on this origin (e.g. the lobby's InputManager requested it via a
+  // user gesture). iOS grants motion permission per page, so a second
+  // InputManager only needs to attach its listeners — no new prompt/gesture.
+  // Used so an invited player gets tilt even if the captain starts the
+  // countdown before they tap "tap to start". Safe to call when permission was
+  // NOT granted: listeners simply stay inert until/unless events fire.
+  ensureMotionListening() {
+    if (this.motionReady) return;
+    if (typeof DeviceOrientationEvent !== 'undefined' || typeof DeviceMotionEvent !== 'undefined') {
+      this._startMotionListening();
+    }
+  }
+
+  _startMotionListening() {
+    if (this.motionReady) return; // prevent duplicate listeners
+    this.motionReady = true;
+    this._useOrientation = false;
+    this._gx = 0; this._gy = 0; this._gz = 0;
+    this._gravityInit = false;
+
+    // Primary: deviceorientation (browser sensor fusion — smoother)
+    window.addEventListener('deviceorientation', (e) => {
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      const rawTilt = orientationToRawTilt(e.beta, e.gamma, orient);
+      if (rawTilt != null) this._onOrientationTilt(rawTilt);
+    });
+
+    // #716 · landscape 90 <-> 270 flips the tilt's sign (and portrait <->
+    // landscape swaps its axis), so the old centre is meaningless after a
+    // rotation. Both events can fire for one turn; re-centring twice is harmless.
+    const onRotate = () => this._onScreenRotate();
+    if (typeof screen !== 'undefined' && screen.orientation && typeof screen.orientation.addEventListener === 'function') {
+      screen.orientation.addEventListener('change', onRotate);
+    }
+    window.addEventListener('orientationchange', onRotate);
+
+    // Fallback: devicemotion (only if orientation events don't fire)
+    window.addEventListener('devicemotion', (e) => {
+      if (this._useOrientation) return;
+      const a = e.accelerationIncludingGravity;
+      if (!a || a.x == null) return;
+      if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+      this.motionEnabled = true;
+
+      const dtMs = e.interval || 16;  // event.interval is in ms; fallback 16ms ≈ 60Hz
+      const dt = dtMs / 1000;
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dt * 60);
+      if (!this._gravityInit) {
+        this._gx = a.x; this._gy = a.y; this._gz = a.z;
+        this._gravityInit = true;
+      } else {
+        this._gx += (a.x - this._gx) * k;
+        this._gy += (a.y - this._gy) * k;
+        this._gz += (a.z - this._gz) * k;
+      }
+
+      const orient = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+      this._applyTilt(gravityToRawTilt(this._gx, this._gy, orient));
+    });
+  }
+
+  /**
+   * One orientation-derived raw tilt sample (degrees), from this device's
+   * deviceorientation event or from a phone remote (#421). Time-based low-pass
+   * pre-filter on the raw angle, so TUNE.lowPassK works on this path too (the
+   * same frame-rate-independent formula as the devicemotion fallback), then
+   * the shared tilt pipeline.
+   * @param {number} rawTilt
+   */
+  _onOrientationTilt(rawTilt) {
+    this._useOrientation = true;
+    if (!this.motionEnabled && this.onMotionEnabled) this.onMotionEnabled();
+    this.motionEnabled = true;
+
+    const now = performance.now();
+    if (this._filteredRawTilt === null) {
+      this._filteredRawTilt = rawTilt;
+      this._lastOrientTime = now;
+    } else {
+      const dtSec = Math.min((now - this._lastOrientTime) / 1000, 0.1);
+      const k = 1 - Math.pow(1 - TUNE.lowPassK, dtSec * 60);
+      this._filteredRawTilt += (rawTilt - this._filteredRawTilt) * k;
+      this._lastOrientTime = now;
+    }
+
+    this._applyTilt(this._filteredRawTilt);
+  }
+
+  // ── Phone remote (#421) ──
+  // A phone on another device steers this InputManager: it sends the same raw
+  // tilt angle this device's own sensors would produce, and its pedal halves.
+  // The tilt pipeline (calibration, drift, curve, speed scaling) runs here.
+
+  /** A tilt sample from a phone remote. @param {number} rawTilt degrees */
+  feedRemoteTilt(rawTilt) {
+    if (!this._remoteTilt) this._motionBeforeRemote = this.motionEnabled;
+    this._remoteTilt = true;
+    this._leanEase = null;   // the phone is back: it steers again
+    this._onOrientationTilt(rawTilt);
+  }
+
+  /**
+   * Pedal state from a phone remote. `tapsL`/`tapsR` are presses since the
+   * last frame, so a tap shorter than a frame still pedals.
+   * @param {boolean} left @param {boolean} right
+   * @param {number} [tapsL] @param {number} [tapsR]
+   */
+  setRemotePedals(left, right, tapsL = 0, tapsR = 0) {
+    if (tapsL > 0) this._leftTapped = true;
+    if (tapsR > 0) this._rightTapped = true;
+    if (left !== !!this._remoteLeft || right !== !!this._remoteRight || tapsL || tapsR) this._markActive();
+    this._remoteLeft = left;
+    this._remoteRight = right;
+  }
+
+  /**
+   * The phone remote's menu pad (#421): while `active`, the phone shows a
+   * D-pad + OK/Back and this InputManager reports a gamepad whose buttons are
+   * the phone's (see mergeRemoteNavPad), so every menu, overlay and the
+   * "tap to start" screen work from the phone with no per-screen code.
+   * Off while riding, so ride-time "is a pad here?" checks are unchanged.
+   * @param {boolean} active @param {number} [nav] NAV bits held right now
+   */
+  setRemoteNav(active, nav = 0) {
+    this._remoteMenu = !!active;
+    this._remoteNav = active ? nav : 0;
+  }
+
+  /**
+   * #716 · the screen rotated: drop the filtered angle and the drift average
+   * (both are in the old orientation's frame) and take the centre again. The
+   * lean holds at 0 while it calibrates, mid-ride too.
+   */
+  _onScreenRotate() {
+    this._filteredRawTilt = null;
+    this._gravityInit = false;
+    this._driftEma = null;
+    if (this.motionOffset === null && !this._calibrating) return; // the first centring is still to come
+    this.startTiltCalibration();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+  }
+
+  /** The phone remote went away: release its pedals and its lean. */
+  detachRemote() {
+    this._remoteMenu = false;
+    this._remoteNav = 0;
+    this._remoteLeft = false;
+    this._remoteRight = false;
+    if (!this._remoteTilt) return;
+    this._remoteTilt = false;
+    // #424 · design §3.3: ease the lean back to 0 instead of snapping it, so
+    // a dropped phone doesn't yank the bike upright. The getters fade this out.
+    const lean = this.getMotionLean(), visual = this.getMotionLeanVisual();
+    this._leanEase = (lean || visual) ? { lean, visual, t0: performance.now() } : null;
+    this._filteredRawTilt = null;
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    // Steering falls back to keyboard / pad, unless this device tilts itself.
+    // Motion goes back to what it was before the phone (a gyro pad's own
+    // on/off choice, or this device's tilt).
+    this.motionEnabled = !!this._motionBeforeRemote || this.motionReady;
+  }
+
+  /**
+   * #531 · re-take phone tilt's centre at the start of a ride (the 3-2-1
+   * countdown). Phone tilt only (this device's or a phone remote's);
+   * controller gyro has its own recenter.
+   *
+   * #716 · the countdown starts on a tap, so the phone is still in the
+   * one-thumb tapping pose; the player settles into the two-thumb grip during
+   * the countdown. So the centre isn't taken once here: it follows every still
+   * window through the countdown (lean held at 0, no physics runs yet) and
+   * commitTiltCentre() at GO keeps the last one.
+   * @returns {boolean} whether a re-centre started
+   */
+  recenterTiltForRide() {
+    const phoneTilt = this._remoteTilt || (this.motionEnabled && !this.gyroConnected && this.motionOffset !== null);
+    if (!phoneTilt) return false;
+    this.startTiltCalibration();
+    this._rideCentring = true;
+    this._rideCentreStart = performance.now();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    return true;
+  }
+
+  /**
+   * #716 · GO: keep the centre from the last still window, if it is recent.
+   * If the phone was still moving, ordinary calibration carries on after GO
+   * (lean held at 0 until a still window or the median fallback).
+   * No-op unless recenterTiltForRide() started a ride centring.
+   */
+  commitTiltCentre() {
+    if (!this._rideCentring) return;
+    this._rideCentring = false;
+    this._calibTries = 0;
+    if (this._rideStillAt && performance.now() - this._rideStillAt <= RIDE_CENTRE_FRESH_MS) {
+      this._calibrating = false;
+      this._calibBuf = [];
+      this._driftEma = this.motionOffset;
+    }
+  }
+
+  startTiltCalibration() {
+    this._calibrating = true;
+    this._calibBuf = [];
+    this._calibTries = 0;
+    this._warmupCount = 5; // already warmed up if explicitly called
+    // #716 · a still window from before this restart (e.g. before a screen
+    // rotation) must not be committed at GO.
+    this._rideStillAt = 0;
+    // #716 · the drift average is frozen during calibration and still holds
+    // the old pose; it is seeded from the new centre when calibration ends.
+    this._driftEma = null;
+  }
+
+  _applyTilt(rawTilt, isGyro = false) {
+    this.rawGamma = rawTilt;
+
+    // Track time between calls for rate-independent output smoothing
+    const now = performance.now();
+    const dtSec = this._lastApplyTiltTime
+      ? Math.min((now - this._lastApplyTiltTime) / 1000, 0.1)
+      : 1 / 60; // assume 60Hz on first call
+    this._lastApplyTiltTime = now;
+
+    if (this.motionOffset === null && !this._calibrating) {
+      this._warmupCount++;
+      if (this._warmupCount >= 5) {
+        this.startTiltCalibration();
+      }
+      return;
+    }
+
+    if (this._calibrating && this._rideCentring) {
+      // #716 · countdown: every still window moves the centre; calibration
+      // stays on (lean held at 0) until commitTiltCentre() at GO.
+      if (now - this._rideCentreStart > RIDE_CENTRE_MAX_MS) {
+        this.commitTiltCentre();
+      } else {
+        const n = TUNE.calibSamples;
+        this._calibBuf.push(this.rawGamma);
+        if (this._calibBuf.length > n) this._calibBuf.shift();
+        if (this._calibBuf.length >= n && (isGyro || Math.max(...this._calibBuf) - Math.min(...this._calibBuf) <= CALIB_STILL_DEG)) {
+          this.motionOffset = this._calibBuf.reduce((a, b) => a + b, 0) / n;
+          this._rideStillAt = now;
+        }
+        return;
+      }
+    }
+
+    if (this._calibrating) {
+      this._calibBuf.push(this.rawGamma);
+      this._calibTries = (this._calibTries || 0) + 1;
+      const n = TUNE.calibSamples;
+      if (this._calibBuf.length >= n) {
+        // #531 · phone tilt: the centre is only taken from a still phone (the
+        // last n samples agree within CALIB_STILL_DEG), so a phone being
+        // turned over or held at a slant while it pairs doesn't become
+        // "level". The window slides until it is still; a hand that never
+        // steadies gets the median after CALIB_MAX_TRIES. Gyro is unchanged.
+        const win = this._calibBuf.slice(-n);
+        const still = isGyro || Math.max(...win) - Math.min(...win) <= CALIB_STILL_DEG;
+        if (still || this._calibTries >= CALIB_MAX_TRIES) {
+          this.motionOffset = still ? win.reduce((a, b) => a + b, 0) / n : median(win);
+          // #716 · drift tracking restarts at the new centre, not at the pose
+          // it last saw before calibration (the lobby's, for a ride start).
+          this._driftEma = this.motionOffset;
+          this._calibrating = false;
+          this._calibBuf = [];
+          this._calibTries = 0;
+        } else {
+          this._calibBuf = win.slice(1);
+        }
+      }
+      return;
+    }
+
+    // Drift compensation: nudge motionOffset toward the long-term average
+    // rawGamma so slow sensor drift can't accumulate into a one-way pull.
+    // Mobile tilt needs this for slow bias; gyro needs it MORE — the
+    // integrated orientation drifts continuously (especially over Bluetooth),
+    // and with no correction it pulls one way until steering saturates and the
+    // joystick can't bring it back (the DS4-BT "gradual pull" report). The EMA
+    // tracks the running center; we only chase it while leans are small, so an
+    // intentional turn is never cancelled, and the rate is slow enough to
+    // follow drift over seconds without fighting quick corrections. Gyro uses
+    // a tighter gate + slower rate for extra safety (L3 still hard-recenters).
+    if (this._driftEma === null) {
+      this._driftEma = this.rawGamma;
+    } else if (isGyro) {
+      // Gyro: taper drift learning + correction by lean magnitude instead of a
+      // hard on/off gate. Full strength near center; fades to a small floor by
+      // a large lean. This keeps GENTLY correcting through sustained moderate
+      // leans — where drift was creeping toward "fusing to one side" — while
+      // never re-centering a big intentional turn. A brief sharp turn spikes
+      // the lean, so the taper ≈ floor at its peak and it can't poison the
+      // neutral estimate (the bug that made it fuse fast on sharp turns). The
+      // floor is why a one-sided pull can always recover (#365) — see
+      // driftTaper() for the positive-feedback loop it breaks.
+      // #522: taper on the UNGAINED lean. _smoothedLean now carries
+      // TUNE.motionGain (0.3 on Chill), so a full held turn would read as a
+      // small lean and the drift tracker would chase it (the phone's B1 bug).
+      const taper = driftTaper(Math.abs(this.motionLeanVisual));
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK * taper;
+      this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate * taper;
+    } else {
+      // Mobile tilt (gravity-absolute): original always-on EMA + hard 0.3 gate.
+      this._driftEma += (this.rawGamma - this._driftEma) * this._driftWindowK;
+      // Gate on the UNGAINED lean (B1, PR #397 review): _smoothedLean carries
+      // TUNE.motionGain (0.3 on Chill), so it barely reaches 0.3 and the offset
+      // chased every held tilt — washing out turns and leaving the centre
+      // off by 10°+ afterwards (the tutorial's "back to center" timed out).
+      if (Math.abs(this.motionLeanVisual) < 0.3) {
+        this.motionOffset += (this._driftEma - this.motionOffset) * this._driftRate;
+      }
+    }
+
+    let relative = this.rawGamma - this.motionOffset;
+    if (relative > 180) relative -= 360;
+    else if (relative < -180) relative += 360;
+    this.motionRawRelative = relative;
+
+    // Select tuning parameters based on input source
+    // #646: a seat's controller may carry its own steering feel (controllerTune,
+    // from js/controller-settings.js); Player 1's lives in TUNE itself.
+    const T = this.controllerTune || TUNE;
+    const sensitivity = isGyro ? T.gyroSensitivity : T.sensitivity;
+    const deadzone = isGyro ? T.gyroDeadzone : T.deadzone;
+    const outputSmoothing = isGyro ? T.gyroOutputSmoothing : T.outputSmoothing;
+
+    const absRel = Math.abs(relative);
+    let lean;
+
+    // Piecewise response curve: linear zone near deadzone edge for fine control,
+    // then power curve beyond for aggressive large corrections
+    const linearZoneFrac = 0.15; // 15% of range is linear
+
+    if (isGyro) {
+      const norm = absRel < deadzone ? 0 : Math.min((absRel - deadzone) / (sensitivity - deadzone), 1.0);
+      if (norm <= linearZoneFrac) {
+        lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
+      } else {
+        const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
+        lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, T.gyroResponseCurve));
+      }
+    } else {
+      // Mobile tilt: same piecewise approach
+      if (absRel < deadzone) {
+        lean = 0;
+      } else {
+        const reduced = absRel - deadzone;
+        const range = sensitivity - deadzone;
+        const norm = Math.min(reduced / range, 1.0);
+        if (norm <= linearZoneFrac) {
+          lean = Math.sign(relative) * (norm / linearZoneFrac) * linearZoneFrac;
+        } else {
+          const curved = (norm - linearZoneFrac) / (1 - linearZoneFrac);
+          lean = Math.sign(relative) * (linearZoneFrac + (1 - linearZoneFrac) * Math.pow(curved, T.responseCurve));
+        }
+      }
+    }
+
+    // Motion gain (#522, TUNE.motionGain, set per difficulty): the same tilt or
+    // roll steers this fraction as much, on phone tilt and controller gyro alike.
+    const gain = Number.isFinite(TUNE.motionGain) ? TUNE.motionGain : 1;
+    lean *= gain;
+
+    // Velocity-dependent sensitivity: scale down lean at high speed for stability
+    const speedFrac = Math.min(this.bikeSpeed / this.bikeMaxSpeed, 1.0);
+    const velocityScale = 1.0 - speedFrac * 0.4; // 1.0 at rest → 0.6 at max speed
+    lean *= velocityScale;
+
+    // Asymmetric smoothing: less smoothing when initiating a turn (responsive),
+    // more smoothing when returning to center (stable)
+    // #522: the "starting a turn" threshold scales with the gain, so the
+    // ungained (visual) lean and the drift gate it feeds come out the same at
+    // any difficulty. 0.2 (phone) and 0.05 (gyro) of an UNGAINED lean are the
+    // thresholds each had before (0.05 of a lean at the old gains 0.25 and 1).
+    const startAt = (isGyro ? 0.05 : 0.2) * gain;
+    const initiating = Math.abs(lean) > Math.abs(this._prevLeanRaw) && Math.abs(lean) > startAt;
+    const baseSmooth = initiating ? Math.min(outputSmoothing * 1.6, 0.9) : outputSmoothing * 0.7;
+    this._prevLeanRaw = lean;
+
+    // Frame-rate-independent EMA: normalize so smoothing converges at the
+    // same wall-clock rate regardless of event frequency (60Hz vs 200Hz).
+    // At 60Hz, dtSec * 60 ≈ 1.0, so smoothK ≈ baseSmooth (unchanged).
+    // At 120Hz, dtSec * 60 ≈ 0.5, so smoothK is smaller per event but
+    // the per-second convergence rate is identical.
+    const smoothK = 1 - Math.pow(1 - baseSmooth, dtSec * 60);
+
+    this._smoothedLean += (lean - this._smoothedLean) * smoothK;
+    this.motionLean = this._smoothedLean;
+    // Every step after the gain (velocity scale, EMA) is linear, so dividing it
+    // back out gives exactly the lean the ungained tilt would have produced.
+    this.motionLeanVisual = gain > 0 ? Math.max(-1, Math.min(1, this._smoothedLean / gain)) : this._smoothedLean;
+  }
+
+  /**
+   * Called once per frame by the game/lobby raf loop. Reads the current
+   * effective gamepad from the attached slot, derives stick + trigger
+   * state, and (when the slot has an active sensor fusion) runs the
+   * orientation → lean projection that used to live in _handleGyroReport.
+   *
+   * Assumes the caller has already run manager.ingestFrame() for the
+   * current frame so the slot's state reflects the latest pads.
+   */
+  pollGamepad() {
+    const gp = this.getGamepadState();
+    if (gp) {
+      // Left stick X — dead zone + response curve (TUNE.stickDeadzone /
+      // stickResponseCurve; #399: the linear 0.08 stick was far too twitchy).
+      const rawX = gp.axes[0] || 0;
+      this._gpRawStickX = rawX;
+      // #499: Stick steering Off never zeroes Steam's gyro, which a Steam-only
+      // Steam Controller delivers on this stick.
+      this.gamepadLean = (this.suppressGamepadLean && !this.stickIsSteamGyro) ? 0 : stickResponse(rawX);
+
+      // Pedal buttons: LB/RB (buttons[4]/[5]) or LT/RT (buttons[6]/[7])
+      const THRESHOLD = 0.5;
+      this._gpLB = !!(gp.buttons[4] && gp.buttons[4].pressed);
+      this._gpRB = !!(gp.buttons[5] && gp.buttons[5].pressed);
+      this._gpTriggerLeftVal = gp.buttons[6] ? gp.buttons[6].value : 0;
+      this._gpTriggerRightVal = gp.buttons[7] ? gp.buttons[7].value : 0;
+      this._gpTriggerLeftPressed = this._gpLB || this._gpTriggerLeftVal >= THRESHOLD;
+      this._gpTriggerRightPressed = this._gpRB || this._gpTriggerRightVal >= THRESHOLD;
+
+      // Held-detection: stick/trigger/shoulder activity = human is touching
+      // this controller. Gyro motion is intentionally NOT used here — rumble
+      // shakes a resting controller's gyro and would falsely mark it held.
+      if (Math.abs(rawX) >= 0.08 ||
+          this._gpTriggerLeftPressed || this._gpTriggerRightPressed) {
+        this._markActive();
+      }
+    }
+
+    // A phone remote steers this seat (#421): it owns the lean, so a gyro
+    // controller on the same seat doesn't fight it for motionLean.
+    if (this._remoteTilt) return;
+
+    // Orientation → tilt projection. The slot's HidEntry ingests gyro at
+    // HID-report frequency (100–250Hz) independently; we read the output
+    // quaternion once per frame at raf rate. `_applyTilt` uses
+    // rate-independent EMA smoothing so cadence doesn't affect feel.
+    const fusion = this._slot?.fusion;
+    if (!fusion) { this._wasFusionCalibrating = false; return; }
+    if (fusion.calibrating) { this._wasFusionCalibrating = true; return; }
+    // Auto-arm motion pipeline ONCE when calibration transitions from
+    // active → done (matching the old `_finishGyroCalibration` edge).
+    // Arming on every frame while !motionEnabled would fight the user's
+    // "turn motion off" toggle — lobby sets input.motionEnabled=false,
+    // next frame pollGamepad would clobber it back to true.
+    if (this._wasFusionCalibrating) {
+      this._wasFusionCalibrating = false;
+      this.motionEnabled = true;
+      if (this.onMotionEnabled) this.onMotionEnabled();
+    }
+    if (!this.motionEnabled) return;
+
+    this._projectFusionToLean(fusion, 'hid');
+  }
+
+  /**
+   * Project a SensorFusion's world orientation to a lean angle and push it
+   * through _applyTilt (calibration + drift-EMA + smoothing). `label` tags
+   * __gyroDebug output.
+   */
+  _projectFusionToLean(fusion, label = 'hid') {
+    // Euler-Z roll from the integrated orientation (default). Prone to drift
+    // ("fuses to one side") and a ±180° wrap / gimbal-lock flip — see #314.
+    this._tmpEuler.setFromQuaternion(fusion.orientation, 'XYZ');
+    const eulerLeanDeg = -this._tmpEuler.z * (180 / Math.PI);
+
+    // Gravity-vector roll: derived from the gravity-corrected down vector, so it
+    // can't drift and is naturally bounded (no ±180° runaway). #314.
+    const gravLeanDeg = (typeof fusion.gravityRollRadians === 'function')
+      ? fusion.gravityRollRadians() * (180 / Math.PI)
+      : eulerLeanDeg;
+
+    const leanDeg = this._gyroRollMode === 'gravity' ? gravLeanDeg : eulerLeanDeg;
+
+    // Lightweight diagnostic (off unless window.__gyroDebug is set).
+    if (typeof window !== 'undefined' && window.__gyroDebug) {
+      // The gravity vector is the ground truth for "which way is the pad
+      // physically tilted". gravityRollRadians() reads ONLY x and y, so if a
+      // real tilt moves gravity into z instead, roll stays ~0 and steering is
+      // silent while every driver-side log looks healthy. Print the vector so
+      // the physical tilt axis can be identified without guessing.
+      const gv = fusion._gravityVec;
+      window.__gyroDebugState = {
+        source: label, mode: this._gyroRollMode, eulerLeanDeg, gravLeanDeg,
+        motionOffset: this.motionOffset, relative: this.motionRawRelative,
+        lean: this._smoothedLean,
+        gravVec: gv ? { x: gv.x, y: gv.y, z: gv.z } : null,
+      };
+      const t = performance.now();
+      if (!this._gyroDbgT || t - this._gyroDbgT > 250) {
+        this._gyroDbgT = t;
+        console.log('[gyro]', label, this._gyroRollMode,
+          'euler=' + eulerLeanDeg.toFixed(1), 'grav=' + gravLeanDeg.toFixed(1),
+          gv ? 'g=[' + gv.x.toFixed(2) + ',' + gv.y.toFixed(2) + ',' + gv.z.toFixed(2) + ']' : 'g=[none]',
+          'rel=' + (this.motionRawRelative || 0).toFixed(1), 'lean=' + this._smoothedLean.toFixed(2));
+      }
+    }
+
+    // Do NOT clamp before passing to _applyTilt — clamping the fusion input
+    // prevents gravity correction from tracking through extreme angles.
+    this._gyroRollAccum = -leanDeg;
+    this._accelRoll = leanDeg;
+    this._applyTilt(leanDeg, true);
+  }
+
+  // Switch the controller-gyro roll source live (Options toggle, #314).
+  setGyroRollMode(mode) {
+    this._gyroRollMode = (mode === 'gravity') ? 'gravity' : 'euler';
+  }
+
+  /**
+   * Return the current gamepad state — HID-synthetic when the slot's
+   * driver emits buttons (BT DualSense case), else the Gamepad API pad.
+   *
+   * @returns {Gamepad|null}
+   */
+  getGamepadState() {
+    const real = this._realGamepadState();
+    return this._remoteMenu ? mergeRemoteNavPad(real, this._remoteNav || 0, !!this._gpSwapAB) : real;
+  }
+
+  _realGamepadState() {
+    if (this._slot) {
+      const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      const slotPad = this._slot.effectiveGamepad(pads);
+      if (slotPad) return slotPad;
+    }
+    return null;
+  }
+
+  getGamepadLean() {
+    if (this.suppressGamepadLean && !this.stickIsSteamGyro) return 0;
+    return this.gamepadConnected ? this.gamepadLean : 0;
+  }
+
+  isPressed(code) {
+    // keyboardActive gates the raw key state so an InputManager instance can
+    // "release" the keyboard to another instance (local MP: P1 on gamepad
+    // stops reading keys when P2 is on keyboard).
+    const keyDown = this.keyboardActive && !!this.keys[code];
+    if (code === 'ArrowLeft') return keyDown || this.touchLeft || !!this._remoteLeft || this._leftTapped || this._gpTriggerLeftPressed;
+    if (code === 'ArrowRight') return keyDown || this.touchRight || !!this._remoteRight || this._rightTapped || this._gpTriggerRightPressed;
+    return keyDown;
+  }
+
+  /** Clear buffered tap flags — call once per frame after all input reading. */
+  consumeTaps() {
+    this._leftTapped = false;
+    this._rightTapped = false;
+  }
+
+  /** Restart the attached slot's initial bias-capture calibration. */
+  calibrateGyro() {
+    this._slot?.startGyroCalibration();
+  }
+
+  /**
+   * Recenter semantic: "whatever I'm holding right now = zero lean."
+   * Captures the current accel-derived roll as motionOffset so the tilt
+   * pipeline sees zero relative lean, then resets the slot's fusion so
+   * orientation re-converges from identity.
+   */
+  recenterGyro() {
+    if (this._accelRoll != null) {
+      this.motionOffset = -this._accelRoll;
+    } else {
+      this.motionOffset = 0;
+    }
+    console.log('Gyro recentered: rollAccum=' + this._gyroRollAccum.toFixed(1) +
+      ' accelRoll=' + (this._accelRoll != null ? this._accelRoll.toFixed(1) : 'null') +
+      ' offset=' + (this.motionOffset != null ? this.motionOffset.toFixed(1) : 'null') +
+      ' conn=' + (this._gyroConnType || 'unknown'));
+    this._gyroRollAccum = 0;
+    this._smoothedLean = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    // Re-seed drift compensation so the freshly-set center isn't immediately
+    // yanked by a stale long-term average.
+    this._driftEma = null;
+    this._slot?.fusion?.reset();
+  }
+
+  /** Full lean-input reset for tutorial/demo restarts. */
+  resetLeanState() {
+    this._leanEase = null;
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    if (this.gyroConnected && this._accelRoll != null) {
+      this.motionOffset = -this._accelRoll;
+    }
+    this._gyroRollAccum = 0;
+    this._slot?.fusion?.reset();
+    this._driftEma = null;
+  }
+
+
+
+  getMotionLean() {
+    const live = this.motionEnabled ? this.motionLean : 0;
+    return this._leanEase ? this._eased('lean', live) : live;
+  }
+
+  /** A dropped phone's last lean, fading into whatever steers now. */
+  _eased(key, live) {
+    const e = this._leanEase;
+    const f = 1 - (performance.now() - e.t0) / REMOTE_LEAN_EASE_MS;
+    if (f <= 0) { this._leanEase = null; return live; }
+    return e[key] * f + live * (1 - f);
+  }
+
+  /**
+   * The same lean without TUNE.motionGain: what the player is physically
+   * doing. The riders' body lean shows this, so a gentler steering gain
+   * doesn't make the geese look stiff. Physics uses getMotionLean().
+   */
+  getMotionLeanVisual() {
+    const live = this.motionEnabled ? this.motionLeanVisual : 0;
+    return this._leanEase ? this._eased('visual', live) : live;
+  }
+
+  /** Stamp this controller as "in use right now". */
+  _markActive() {
+    this._lastActivityMs = performance.now();
+  }
+
+  /**
+   * True if this controller has had user input within the last `timeoutMs`.
+   * Sources: keyboard, touch, gamepad stick (past deadzone), triggers,
+   * shoulder buttons. Gyro motion is deliberately excluded so rumble
+   * vibrations on a resting controller don't keep it falsely flagged as
+   * held. The default 10s window easily spans normal pedaling cadence
+   * (tandem MP requires constant pedal taps).
+   */
+  isActive(timeoutMs = 10000) {
+    return (performance.now() - this._lastActivityMs) < timeoutMs;
+  }
+
+  /**
+   * Called by the haptics module just before rumble fires on this
+   * controller. Suppresses the in-motion sensor-fusion bias-refinement
+   * calibration for the rumble duration plus a short settle margin, so
+   * rumble-induced accel noise can't corrupt the bias estimate. The
+   * initial one-shot and continuous stillness calibrations are
+   * naturally gated by their own thresholds.
+   */
+  onRumbleWillFire(durationMs) {
+    this._slot?.fusion?.suppressCalibrationFor(durationMs + 200);
+  }
+}
