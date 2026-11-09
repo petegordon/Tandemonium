@@ -133,6 +133,8 @@ function diffSelect(diff) {
 
 // Pete, 2026-11-09: the chooser turns to the next bike every 5 s until Player 1 takes it (_startChooserAttract)
 const CHOOSER_ATTRACT_MS = 5000;
+// the player's bike, remembered between sessions
+const BIKE_PICK_KEY = 'tandemonium_bike_pick';
 
 const BIKE_NAMES = {
   default: "Grandma's Classic",
@@ -8957,6 +8959,12 @@ export class Lobby {
       console.warn('Failed to load holiday bike presets:', e);
     }
     this._presetKeys = ['default', ...Object.keys(this._presetData), ...SPECIAL_BIKE_KEYS];
+    // Pete, 2026-11-09: remember the bike between sessions (a holiday bike that has gone, or none saved: the default)
+    try {
+      const saved = localStorage.getItem(BIKE_PICK_KEY);
+      const i = saved ? this._presetKeys.indexOf(saved) : -1;
+      if (i > 0) this._presetIndex = i;
+    } catch (e) { /* storage off */ }
 
     // Setup mini 3D preview
     const canvas = document.getElementById('bike-preview-canvas');
@@ -9074,12 +9082,14 @@ export class Lobby {
       this._stopChooserAttract();
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
     this._bikeNext = () => {
       this._stopChooserAttract();
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
     // a click or tap on the preview itself is the player taking the chooser too
@@ -9149,6 +9159,14 @@ export class Lobby {
     if (this._attractStopped) return;
     this._attractStopped = true;
     if (this._attractTimer) { clearInterval(this._attractTimer); this._attractTimer = null; }
+    this._saveBikePick();
+  }
+
+  /** Remember the player's bike for next time (only one they can ride: a locked reward bike keeps the last one). */
+  _saveBikePick() {
+    const key = this._presetKeys[this._presetIndex];
+    if (!key || this.selectedPresetKey !== key) return;
+    try { localStorage.setItem(BIKE_PICK_KEY, key); } catch (e) { /* storage off */ }
   }
 
   /** Off the mode screen mid-show: the player's own bike again (and the show starts over when they come back). */
