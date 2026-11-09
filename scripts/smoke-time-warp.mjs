@@ -133,6 +133,7 @@ const gs = async () => {
     const l = window._game.lobby, sp = l._specialPreviews.gold_standard, h = document.getElementById('bike-hint');
     return { name: document.getElementById('bike-name').textContent, hint: h && h.style.display !== 'none' ? h.textContent.replace(/\s+/g, ' ').trim() : '',
       dark: sp.dark, picked: l.selectedPresetKey, tandem: l._previewModel.visible, last: l._presetKeys[l._presetKeys.length - 1],
+      sparkle: sp.sparkle ? sp.sparkle.meshes.some(m => m.visible) : null,
       others: Object.entries(l._specialPreviews).filter(([k, v]) => k !== 'gold_standard' && v.model && v.model.visible).map(([k]) => k) };
   });
 };
@@ -142,6 +143,7 @@ check(g1.last === 'gold_standard' && g1.name.startsWith('\uD83D\uDD12') && g1.na
   'GS-01: the last entry is the locked Gold Standard, a dark silhouette; the ride stays on the default', g1);
 check(g1.hint.replace(/\s+/g, '') === '0of100achievements', 'GS-01: "0 of 100 achievements" over it', g1.hint);
 check(g1.others.length === 0 && !g1.tandem, 'GS-01: only its own model shows', g1);
+check(g1.sparkle === false, 'GS-01: a locked silhouette does not sparkle (#697)', g1.sparkle);
 await h.shot(page, 'gs01-locked');
 console.log('GS-02 all 100: its colours, the pick');
 await page.evaluate(async () => {
@@ -158,6 +160,7 @@ await page.evaluate(async () => {
 g1 = await gs();
 check(!g1.dark && !g1.hint && g1.picked === 'gold_standard' && g1.name.includes('Gold Standard') && !g1.name.startsWith('\uD83D\uDD12'),
   'GS-02: all 100, it shows in its own colours and is the pick', g1);
+check(g1.sparkle === true, 'GS-02: earned, its gold sparkles (#697)', g1.sparkle);
 await h.shot(page, 'gs02-unlocked');
 console.log('GS-03 the Gold Standard swapped in mid-ride (as the chooser does)');
 await page.evaluate(() => window._game._applyBikeChoice());
@@ -165,8 +168,10 @@ const gsLoaded = await until(page, () => { const b = window._game.bike; return b
 const gsRide = await page.evaluate(() => {
   const b = window._game.bike, g = b.goose, model = b.group.children[0];
   return { path: b._modelPath, seats: g ? Object.fromEntries(Object.entries(g.riders).map(([s, r]) => [s, r.root.parent && r.root.parent.name])) : null,
-    wheel: g ? +g.wheelCircumference.toFixed(3) : 0, scale: model ? +model.scale.x.toFixed(4) : 0 };
+    wheel: g ? +g.wheelCircumference.toFixed(3) : 0, scale: model ? +model.scale.x.toFixed(4) : 0,
+    sparkles: (() => { let n = 0; b.group.traverse(o => { if (o.material && o.material.name === 'bike-sparkle' && o.visible) n++; }); return n; })() };
 });
+check(gsRide.sparkles > 0, 'GS-03: its gold sparkles in the ride (#697)', gsRide.sparkles);
 check(gsLoaded && gsRide.seats && gsRide.seats.Captain === 'Seat_Captain' && gsRide.seats.Stoker === 'Seat_Stoker', 'GS-03: both geese seated on the Gold Standard', gsRide);
 check(gsRide.wheel > 3.5 && gsRide.wheel < 4.0, 'GS-03: the rear wheel measured', gsRide.wheel);
 check(Math.abs(gsRide.scale - 4.4 / 2.466) < 0.002, 'GS-03: sized like the goose tandem (same geese)', gsRide.scale);
