@@ -110,10 +110,24 @@ export function initSession(opts) {
 // was left a guest (Pete 2026-11-09: signed-in Steam players read as guests).
 // The server takes the account from the verified token, never from the client.
 let accountToken = null;
+// The Steam sign-in attaches the account itself (it sends the session id);
+// this covers the other sign-ins. A shared venue IP can hit the per-IP update
+// limit (429), so it tries again a few times, spread out.
+const ATTACH_RETRY_MS = [5000, 20000, 60000];
 export function attachAccount(token) {
   if (DISABLED || !token || token === accountToken) return;
   accountToken = token;
-  if (sessionId) beacon(`${API_BASE}/session/${sessionId}`, { account_token: token }, 'PUT');
+  const sid = sessionId;
+  if (!sid) return;
+  const send = (attempt) => {
+    if (accountToken !== token) return;   // signed in again since: that one carries on
+    fetch(`${API_BASE}/session/${sid}`, {
+      method: 'PUT', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ account_token: token }), keepalive: true, credentials: 'omit',
+    }).then((r) => { if (!r.ok) throw new Error(String(r.status)); })
+      .catch(() => { if (attempt < ATTACH_RETRY_MS.length) setTimeout(() => send(attempt + 1), ATTACH_RETRY_MS[attempt]); });
+  };
+  send(0);
 }
 /** Later session updates carry it too, in case the first one beat the create. */
 function withAccount(data) {
