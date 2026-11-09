@@ -22,7 +22,7 @@ One owner of "current step": `lobby.js` calls `_showStep(step)` → `flow.go(id)
 
 ```
 #victory-overlay       — Finish screen (YOU MADE IT! + stats)
-#gameover-overlay       — Crash screen (RESTART + options)
+#gameover-overlay       — Crash screen (CHECKPOINT RESTART + options)
 #stoker-cta-overlay     — Steam wishlist prompt (stoker only, unlicensed)
 #demo-end-overlay       — Demo limit (currently disabled)
 #tutorial-complete      — Tutorial finish (calibration results + steering feel)
@@ -44,7 +44,7 @@ what opened it. Only Player 1's pad drives menus.
 
 ```
 #pause-sheet       — Pause menu (#459 item 12): Start / Options / Esc / the quick menu's PAUSE
-                     mid-ride. RESUME · RESTART · SETTINGS · END RIDE (+ Help). The ride
+                     mid-ride. RESUME · CHECKPOINT RESTART · SETTINGS · END RIDE (+ Help). The ride
                      (physics + race clock) freezes through the disconnect pause's path
                      (_tickDropPause; _updateVersus in versus). Online co-op: local only.
 #sling-garage      — Garage (item 11): B / Esc / Close = its BACK / LOBBY.
@@ -119,7 +119,7 @@ MODE ──[SOLO RIDE click]──> LEVEL/DIFFICULTY
     GAME OVER         VICTORY
     (crash)           (finish)
         │               │
-        ├─[RESTART]──────> COUNTDOWN (same level)
+        ├─[CHECKPOINT RESTART]──> COUNTDOWN (same level)
         ├─[END RIDE]─────> MODE
         │               ├─[PLAY AGAIN]──> COUNTDOWN (same level)
         │               ├─[NEXT LEVEL]──> LEVEL/DIFFICULTY
@@ -524,7 +524,7 @@ Accent style (green) goes to NEXT LEVEL if visible, otherwise PLAY AGAIN.
 | Button | ID | Shown When | Action |
 |--------|----|-----------|--------|
 | SAVE CLIP | `btn-gameover-clip` | Recording buffer active | `recorder.saveClip()` |
-| RESTART | `btn-restart` | Always (accent) | Captain/solo: `_resetGame()`. Stoker: send EVT_RESET |
+| CHECKPOINT RESTART | `btn-restart` | Always (accent) | Captain/solo: `_resetGame()`. Stoker: send EVT_RESET |
 | SKIP CHECKPOINT | `btn-skip-checkpoint` | DDA recommends + solo only | Skip to next checkpoint |
 | RETURN TO ROOM | `btn-gameover-room` | Multiplayer (`this.net`) | `_returnToRoom()` → ROOM |
 | END RIDE | `btn-gameover-lobby` | Always | `_returnToLobby()` → MODE |
