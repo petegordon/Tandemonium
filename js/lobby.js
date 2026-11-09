@@ -46,14 +46,14 @@ const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
 const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
-import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
+import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
@@ -8890,6 +8890,18 @@ export class Lobby {
     };
   }
 
+  /**
+   * The bike the Dressing Room seats the geese on: the chooser's pick (Pete, 2026-11-09). A paint preset = the
+   * goose tandem in that paint; the Time Warp / Gold Standard = their own models. Solo Flight is a solo bike (a
+   * player bot on the back): with Player 1 alone it is the Penny-Farthing; with others in the room (a co-op ride)
+   * the goose tandem, as the ride does.
+   */
+  _dressingRoomBike() {
+    const key = this.selectedPresetKey || 'default';
+    const mode = this._roomPlayers().length > 1 ? 'local' : 'solo';
+    return { path: bikeModelPathFor(true, key, GOOSE_BIKE_MODEL_PATH, mode), preset: (this._presetData && this._presetData[key]) || null };
+  }
+
   /** Open the Dressing Room with player n's card in Edit (everyone else Ready). */
   _openDressingRoom(n) {
     if (!this._roomSheet || this._room) return;
@@ -8901,7 +8913,7 @@ export class Lobby {
       roster: () => this._roomPlayers(),
       padKeyFor: (p) => this._lookKeyFor(p),
       controllerManager: this.controllerManager,
-      makePreview: lowTier ? null : () => new DressingRoomPreview(),
+      makePreview: lowTier ? null : () => new DressingRoomPreview({ bike: this._dressingRoomBike() }),
       onLookChanged: (who, kind, val) => window.dispatchEvent(new CustomEvent('tandemonium:look-changed', { detail: { n: who, kind, val } })),
       onClose: () => this._onRoomClosed(),
       // #611: reward outfits (the robot) stay locked until this device's achievements earn them

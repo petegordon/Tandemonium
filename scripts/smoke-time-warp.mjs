@@ -14,6 +14,7 @@
 //   AT-01  the chooser turns to the next bike every 5 s on its own (Pete); AT-02 leaving the mode screen puts the
 //          player's own bike back; AT-03 RB stops it for good; locked reward bikes show the lock + their icon;
 //          AT-04 the bike is remembered between sessions (never a locked one)
+//   DR-01  the Dressing Room seats the goose on the chooser's pick (Gold Standard, a paint, Solo Flight when alone)
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
 //          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
 //   GS-01  the Gold Standard closes the chooser: a locked silhouette with "n of 100 achievements"
@@ -236,4 +237,33 @@ const r1 = await rp.evaluate(() => { window._game.lobby._bikeNext(); return { ke
 check(r1.saved === r1.key && r1.key !== 'bike_blue', 'AT-04: a new pick is saved for next time', r1);
 const r2 = await rp.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('gold_standard') - 1; l._bikeNext(); return { shown: l._presetKeys[l._presetIndex], saved: localStorage.getItem('tandemonium_bike_pick') }; });
 check(r2.shown === 'gold_standard' && r2.saved !== 'gold_standard', 'AT-04: a locked reward bike is never saved as the pick', r2);
+console.log('DR-01 the Dressing Room seats the goose on the bike picked in the chooser');
+const drBike = async (key) => {
+  const pg = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' } });
+  await until(pg, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
+  await pg.evaluate(async (k) => {
+    const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+    const a = window._game.lobby._achievements; for (const d of ACHIEVEMENTS) a._earned.set(d.id, { id: d.id, earnedAt: 1 });
+    const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf(k); l._applyPresetToPreview(); l._openDressingRoom(1);
+  }, key);
+  const seated = await until(pg, () => { const p = window._game.lobby._room && window._game.lobby._room._preview; return !!(p && p.loaded('p1')); });
+  const out = await pg.evaluate(() => {
+    const p = window._game.lobby._room._preview;
+    let sparkles = 0, red = false;
+    for (const sl of p._slots.values()) sl.bike && sl.bike.traverse((o) => {
+      if (o.material && o.material.name === 'bike-sparkle') sparkles++;
+      for (const m of [].concat(o.material || [])) if (m && m.color && m.color.r > 0.6 && m.color.g < 0.2 && m.color.b < 0.2) red = true;
+    });
+    return { bike: p.bikePath, sparkles, red };
+  });
+  await h.shot(pg, 'dr01-' + key);
+  await pg.close();
+  return { seated, ...out };
+};
+const dg = await drBike('gold_standard');
+check(dg.seated && /gold_standard_tandem\.glb$/.test(dg.bike) && dg.sparkles > 0, 'DR-01: on the Gold Standard (sparkling) when it is the pick', dg);
+const dr = await drBike('bike_red');
+check(dr.seated && /goose_tandem\.glb$/.test(dr.bike) && dr.red, 'DR-01: a paint pick: the goose tandem in that paint (not dimmed grey)', dr);
+const ds = await drBike('solo_flight');
+check(ds.seated && /solo_flight_tandem\.glb$/.test(ds.bike), 'DR-01: Solo Flight with Player 1 alone: the Penny-Farthing (pedalling with its own clips)', ds);
 await h.finish();
