@@ -1944,21 +1944,6 @@
   #speed-btn.speed-off {
     background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
   }
-  #assist-btn {
-    grid-area: speed;
-    grid-row: 3;
-    font-size: 10px;
-    font-weight: 700;
-    padding: 6px 4px;
-    border-radius: 8px;
-    margin-top: 4px;
-  }
-  #assist-btn.assist-on {
-    background: linear-gradient(to top, rgba(200,120,255,0.9) 0%, rgba(140,60,200,0.9) 100%);
-  }
-  #assist-btn.assist-off {
-    background: linear-gradient(to top, rgba(100,100,100,0.95) 0%, rgba(55,55,55,0.95) 100%);
-  }
 
   /* ── Quick menu ──
      One button in the corner the D-pad used to fill. Tap it to open a sheet of
@@ -5278,7 +5263,6 @@ ON</button>
   <button class="side-btn exit-btn" id="lobby-btn">LOBBY</button>
   <button class="side-btn reset-btn" id="reset-btn">RESET</button>
   <button class="side-btn speed-off" id="speed-btn">SPEED</button>
-  <button class="side-btn assist-off" id="assist-btn" style="display:none;">ASSIST</button>
 </div>
 
 <div id="quick-menu-overlay" role="dialog" aria-modal="true" aria-label="Ride controls">
@@ -5295,9 +5279,6 @@ ON</button>
       </button>
       <button class="qm-item" id="qm-speed">
         <span class="qm-icon">&#x26A1;</span><span class="qm-label">AUTO SPEED</span><span class="qm-state"></span>
-      </button>
-      <button class="qm-item" id="qm-assist">
-        <span class="qm-icon">&#x1F91D;</span><span class="qm-label">ASSIST</span><span class="qm-state"></span>
       </button>
       <button class="qm-item" id="qm-music">
         <span class="qm-icon">&#x1F3B5;</span><span class="qm-label">MUSIC</span><span class="qm-state"></span>
@@ -6451,7 +6432,6 @@ ON</button>
   <div class="shell-menu pause-toggles" id="pause-toggles">
     <uf-button id="btn-pause-safety">SAFETY <span class="pause-state"></span></uf-button>
     <uf-button id="btn-pause-speed">AUTO SPEED <span class="pause-state"></span></uf-button>
-    <uf-button id="btn-pause-assist">ASSIST <span class="pause-state"></span></uf-button>
     <uf-button id="btn-pause-clip">SAVE CLIP</uf-button>
   </div>
   <div slot="actions">
@@ -6527,7 +6507,6 @@ ON</button>
          first, the other ride actions, RETURN TO ROOM, END RIDE, then the extras. -->
     <div slot="actions">
       <uf-button variant="accent" id="btn-restart">CHECKPOINT RESTART</uf-button>
-      <uf-button id="btn-restart-assist" style="display:none;">&#x1F6DF; RESTART WITH ASSIST</uf-button>
       <uf-button id="btn-skip-checkpoint" style="display:none;">&#x1F451; Take the Royal Shortcut</uf-button>
       <uf-button id="btn-gameover-room" style="display:none;">RETURN TO ROOM</uf-button>
       <uf-button id="btn-gameover-lobby">END RIDE TOGETHER</uf-button>

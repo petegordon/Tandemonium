@@ -13,7 +13,7 @@ const byId = (id) => ACHIEVEMENTS.find(a => a.id === id);
 test('calendar = day counters and day streaks; multiplayer = together + versus + Full House', () => {
   for (const id of ['days_3', 'days_7', 'daily_streak_3', 'daily_streak_7', 'launch_week']) assert.ok(isCalendarAchievement(byId(id)), id);
   for (const id of ['coop_first', 'social_goose', 'versus_first', 'versus_win']) assert.ok(isMultiplayerAchievement(byId(id)), id);
-  for (const id of ['first_pedal', 'marathon', 'grandma_gold', 'sling_stage7', 'daily_launch']) assert.ok(isSoloAchievement(byId(id)), id);
+  for (const id of ['first_pedal', 'marathon', 'grandma_gold', 'sling_40', 'daily_launch']) assert.ok(isSoloAchievement(byId(id)), id);
   assert.ok(isMultiplayerAchievement({ id: 'full_house', section: 'explore' }), 'Full House (#608) needs co-op and versus');
 });
 

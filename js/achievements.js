@@ -463,7 +463,7 @@ export class AchievementManager {
       onCenterStrip: !!b.onCenterStrip,
       boosting: (b.boostTimer || 0) > 0,
       shaking,
-      assistOn: (game._assistWeight || 0) > 0,
+      helped: (() => { try { const h = game._helpFlags ? game._helpFlags() : null; return !!(h && (h.helped || h.skipped)); } catch (e) { return false; } })(),
     });
   }
 
