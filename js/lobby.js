@@ -39,6 +39,10 @@
 
 import * as THREE from 'three';
 import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
+
+// #611 · the Gold Standard in the chooser preview (its exposure is brighter than the ride's)
+const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
+const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
@@ -9111,7 +9115,12 @@ export class Lobby {
       model.traverse((o) => {
         if (!o.isMesh) return;
         o.material = o.material.clone();
-        if (env && isMirrorMaterial(o.material)) o.material.envMap = env;
+        if (env && isMirrorMaterial(o.material)) {
+          // the chooser's brighter exposure washes mirror gold to champagne: a deeper gold, softer reflections
+          o.material.envMap = env;
+          o.material.color.multiply(PREVIEW_GOLD_WARM);
+          o.material.envMapIntensity = PREVIEW_GOLD_ENV;
+        }
         o.castShadow = true;
         mats.push([o.material, o.material.clone()]);
       });
