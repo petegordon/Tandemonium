@@ -94,3 +94,17 @@ test('the Gold Standard GLB keeps the tandem rig', () => {
   assert.deepEqual(j.animations.map(a => a.name).sort(), ['Pedal', 'WheelSpin']);
   assert.ok(!(j.extensionsUsed || []).includes('KHR_draco_mesh_compression'), 'the chooser preview loads it without Draco');
 });
+
+test('Gold Standard mirror gold: full metal, its own sky to reflect (else it reads black)', async () => {
+  const { isMirrorBike } = await import('../../js/special-bikes.js');
+  const { isMirrorMaterial } = await import('../../js/mirror-env.js');
+  assert.ok(isMirrorBike(GOLD_STANDARD_BIKE_MODEL_PATH) && !isMirrorBike(TIME_WARP_BIKE_MODEL_PATH) && !isMirrorBike(GOOSE_BIKE_MODEL_PATH));
+  const b = fs.readFileSync(GOLD_STANDARD_BIKE_MODEL_PATH);
+  const j = JSON.parse(b.subarray(20, 20 + b.readUInt32LE(12)).toString('utf8'));
+  const pbr = n => j.materials.find(m => m.name === n).pbrMetallicRoughness;
+  const metal = p => (p.metallicFactor === undefined ? 1 : p.metallicFactor);
+  assert.ok(metal(pbr('gs_gold')) >= 0.95 && pbr('gs_gold').roughnessFactor <= 0.15, 'the gold is polished full metal');
+  assert.ok(metal(pbr('gs_gold_deep')) < 0.95, 'the deep-gold panel keeps the scene light (stays brown)');
+  assert.ok(isMirrorMaterial({ isMeshStandardMaterial: true, metalness: 1 }));
+  assert.ok(!isMirrorMaterial({ isMeshStandardMaterial: true, metalness: 0.75 }));
+});

@@ -38,6 +38,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
+import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
@@ -9106,9 +9107,11 @@ export class Lobby {
       const c = b2.getCenter(new THREE.Vector3());
       model.position.set(-c.x, -b2.min.y, -c.z);
       const mats = [];
+      const env = def.mirror ? mirrorEnvTexture() : null;   // mirror metal needs something to reflect, or it reads black
       model.traverse((o) => {
         if (!o.isMesh) return;
         o.material = o.material.clone();
+        if (env && isMirrorMaterial(o.material)) o.material.envMap = env;
         o.castShadow = true;
         mats.push([o.material, o.material.clone()]);
       });
@@ -9139,6 +9142,7 @@ export class Lobby {
         if (m.color) m.color.set(0x050505);
         if (m.emissive) m.emissive.set(0x000000);
         if (m.map) m.map = null;
+        m.envMap = null;
         m.metalness = 0; m.roughness = 1;
       } else {
         m.copy(orig);

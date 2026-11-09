@@ -34,6 +34,7 @@ export const GOLD_STANDARD_BIKE_MODEL_PATH = 'tandem-3d/goose/gold_standard_tand
  *   rideable  false = shown in the chooser, not ridden yet ("coming soon" once earned)
  *   soloOnly  rides only on a solo ride (Solo Flight: the bot takes the back seat); other modes ride the tandem
  *   fx        the bike's own looping clip, if any
+ *   mirror    mirror-finish metal: the chooser preview gives it reflections (the ride has the riders' environment)
  */
 export const SPECIAL_BIKES = Object.freeze({
   [SOLO_FLIGHT_BIKE_KEY]: Object.freeze({ name: 'Solo Flight', model: SOLO_FLIGHT_BIKE_MODEL_PATH, reward: 'playerBots',
@@ -41,7 +42,7 @@ export const SPECIAL_BIKES = Object.freeze({
   [TIME_WARP_BIKE_KEY]: Object.freeze({ name: 'Time Warp', model: TIME_WARP_BIKE_MODEL_PATH, reward: 'timeWarp',
     unit: 'non-calendar achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
   [GOLD_STANDARD_BIKE_KEY]: Object.freeze({ name: 'Gold Standard', model: GOLD_STANDARD_BIKE_MODEL_PATH, reward: 'goldStandard',
-    unit: 'achievements', rideable: true, icon: '\uD83D\uDC51', color: '#ffd34d', fx: null }),
+    unit: 'achievements', rideable: true, icon: '\uD83D\uDC51', color: '#ffd34d', fx: null, mirror: true }),
 });
 
 /** Chooser keys of the special bikes, in carousel order. */
@@ -74,6 +75,11 @@ export function ridesWithBot(bikeKey, mode) {
  * A special bike sized like the goose tandem, so its geese stay the goose tandem's size (see bike-model.js): the
  * Time Warp (the same rig, longer with its rockets), the Gold Standard (the same rig) and the Solo Flight (built in the same metres as the goose fit).
  */
+/** A mirror-finish special bike (js/mirror-env.js gives it something to reflect). */
+export function isMirrorBike(modelPath) {
+  return Object.values(SPECIAL_BIKES).some(d => d.mirror && d.model === modelPath);
+}
+
 export function isRigTwin(modelPath) {
   return modelPath === TIME_WARP_BIKE_MODEL_PATH || modelPath === SOLO_FLIGHT_BIKE_MODEL_PATH || modelPath === GOLD_STANDARD_BIKE_MODEL_PATH;
 }
