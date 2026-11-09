@@ -7,12 +7,13 @@
 // the shared renderer draws that card's scene at the card's size and the result is copied onto
 // the card's canvas (drawImage).
 //
-// Each card's scene is the game's goose tandem (GOOSE_BIKE_MODEL_PATH, loaded once and cloned per
-// card the way versus clones it) with ONE rider seated at the player's seat by js/goose-riders.js —
-// the exact rider GLB the ride will seat (goose-outfits.js resolveRider), pedalling slowly on a
-// gentle turntable, in the player's colourway; the other seat stays empty and the bike is dimmed
-// so the goose is the subject. Lazy: nothing loads until a card asks; dispose() frees the riders
-// when the room closes (the bike stays cached for the next open). Capped at 30 fps.
+// Each card's scene is the bike picked in the chooser (Pete, 2026-11-09: "show you on the selected bike"):
+// the goose tandem in that bike's paint, or the Time Warp / Gold Standard model (same rig; the Gold
+// Standard with its mirror gold and sparkle), loaded once per bike and cloned per card the way versus
+// clones it, with ONE rider seated at the player's seat by js/goose-riders.js — the exact rider GLB the
+// ride will seat (goose-outfits.js resolveRider), pedalling slowly on a gentle turntable, in the player's
+// colourway; the other seat stays empty. The framing keeps the goose the subject. Lazy: nothing loads
+// until a card asks; dispose() frees the riders when the room closes (bikes stay cached). 30 fps cap.
 
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -23,6 +24,9 @@ import { GOOSE_BIKE_MODEL_PATH } from './config.js';
 import { resolveRider } from './goose-outfits.js';
 import { colourwayParamsForBody, applyColourway } from './goose-colourways.js';
 import { GooseRiders, disposeTree } from './goose-riders.js';
+import { isMirrorBike, isSparkleBike } from './special-bikes.js';
+import { applyMirrorEnv } from './mirror-env.js';
+import { addBikeSparkle } from './bike-sparkle.js';
 
 const FRAME_MS = 1000 / 30;
 const TURN_RATE = 0.25;        // rad/s turntable (auto)
@@ -34,9 +38,8 @@ const curve = (a) => { const m = Math.abs(a); if (m < DEADZONE) return 0; const 
 const CRANK_RATE = 1.5;        // rad/s pedalling
 const ROLL_SPEED = 1.2;        // m/s the wheels roll at
 const NARROW_ASPECT = 0.8;     // a card narrower than this (w/h) backs the camera off to fit the width
-const BIKE_DIM = 0.45;         // the bike's colours × this, so the goose stays the subject
 
-let _bikePromise = null;       // the goose tandem, fetched once per page
+const _bikePromises = new Map(); // model path -> the GLB, fetched once per page
 let _loader = null;
 
 function getLoader() {
@@ -49,31 +52,48 @@ function getLoader() {
   return _loader;
 }
 
-function loadBike() {
-  if (!_bikePromise) _bikePromise = getLoader().loadAsync(GOOSE_BIKE_MODEL_PATH).then((gltf) => ({ scene: gltf.scene, animations: gltf.animations }));
-  return _bikePromise;
+function loadBike(path) {
+  if (!_bikePromises.has(path)) {
+    _bikePromises.set(path, getLoader().loadAsync(path).then((gltf) => ({ scene: gltf.scene, animations: gltf.animations })));
+  }
+  return _bikePromises.get(path);
 }
 
-/** Dim a bike clone's own meshes (never the geese): per-instance material clones, like versus's applyPreset. */
-function dimBike(model) {
+/**
+ * Dress a bike clone as the chooser's pick: its paint preset (the same entries bike-model.js applyPreset reads,
+ * keyed by mesh name), on per-instance material clones so the cached GLB stays clean. Never the geese.
+ * @param {THREE.Object3D} model
+ * @param {Record<string, any>|null} preset
+ */
+function paintBike(model, preset) {
   model.traverse((o) => {
     if (!o.isMesh || (o.userData && o.userData.gooseSeat)) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    const dimmed = mats.map((m) => {
+    const entry = preset && preset[o.name];
+    const one = (m) => {
       if (!m) return m;
       const c = m.clone();
-      if (c.color) { const hsl = {}; c.color.getHSL(hsl); c.color.setHSL(hsl.h, hsl.s * 0.35, hsl.l * BIKE_DIM); }
-      if ('roughness' in c) c.roughness = Math.min(1, (c.roughness ?? 0.5) + 0.3);
-      if ('metalness' in c) c.metalness = (c.metalness ?? 0) * 0.3;
+      if (!entry) return c;
+      if (entry.color && c.color) c.color.set(entry.color);
+      if (entry.emissive && c.emissive) c.emissive.set(entry.emissive);
+      if (entry.metalness !== undefined) c.metalness = entry.metalness;
+      if (entry.roughness !== undefined) c.roughness = entry.roughness;
+      if (entry.opacity !== undefined) { c.opacity = entry.opacity; c.transparent = entry.opacity < 1; }
+      if (entry.wireframe !== undefined) c.wireframe = entry.wireframe;
+      if (entry.side !== undefined) c.side = entry.side;
+      if (entry.disabledTextures) { for (const tk of entry.disabledTextures) c[tk] = null; c.needsUpdate = true; }
       return c;
-    });
-    o.material = Array.isArray(o.material) ? dimmed : dimmed[0];
-    o.userData.dimmedMaterial = true;
+    };
+    o.material = Array.isArray(o.material) ? o.material.map(one) : one(o.material);
+    o.userData.paintedMaterial = true;
   });
 }
 
 export class DressingRoomPreview {
-  constructor() {
+  /**
+   * @param {{bike?: {path: string, preset: Record<string, any>|null}}} [o] the chooser's pick (default: the plain goose tandem)
+   */
+  constructor(o = {}) {
+    this._bike = (o && o.bike && o.bike.path) ? o.bike : { path: GOOSE_BIKE_MODEL_PATH, preset: null };
     this._renderer = null;
     /** @type {Map<string, any>} */ this._slots = new Map();
     this._last = 0;
@@ -116,10 +136,13 @@ export class DressingRoomPreview {
         // auto = the slow turntable runs until the player's stick / mouse takes over (R3 restarts it).
         yaw: 0, zoom: 0, auto: true, far: null, near: null, dirty: true };
       this._slots.set(key, s);
-      s.bikeReady = loadBike().then(({ scene: src, animations }) => {
+      const bike = this._bike;
+      s.bikeReady = loadBike(bike.path).then(({ scene: src, animations }) => {
         if (!this._slots.has(key)) return;
         const model = cloneSkinned(src);
-        dimBike(model);
+        paintBike(model, bike.preset);
+        if (isMirrorBike(bike.path)) applyMirrorEnv(model);                    // #611 mirror gold
+        if (isSparkleBike(bike.path)) addBikeSparkle(model, { size: 0.05 });  // #697 its glints
         model.traverse((o) => { if (o.isSkinnedMesh) o.frustumCulled = false; });
         s.turntable.add(model);
         s.bike = model;
@@ -316,6 +339,9 @@ export class DressingRoomPreview {
     return true;
   }
 
+  /** The bike this room shows (tests / status). */
+  get bikePath() { return this._bike.path; }
+
   /** Has this card's goose been seated (tests / status)? */
   loaded(key) { const s = this._slots.get(key); return !!(s && s.riders && s.riders.riders[s.seat] && s.framed); }
   pathOf(key) { const s = this._slots.get(key); return s ? s.path : null; }
@@ -327,7 +353,7 @@ export class DressingRoomPreview {
     if (s.riders) for (const r of Object.values(s.riders.riders)) { r.mixer.stopAllAction(); if (r.root.parent) r.root.parent.remove(r.root); disposeTree(r.root); }
     if (s.bike) {
       // Our own dimmed materials go; the geometry is the cached bike's (shared), so it stays.
-      s.bike.traverse((o) => { if (o.isMesh && o.userData.dimmedMaterial) for (const m of [].concat(o.material)) m.dispose(); });
+      s.bike.traverse((o) => { if (o.isMesh && o.userData.paintedMaterial) for (const m of [].concat(o.material)) m.dispose(); });
       s.turntable.remove(s.bike);
     }
     this._slots.delete(key);
