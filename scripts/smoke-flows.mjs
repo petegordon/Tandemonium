@@ -137,6 +137,47 @@ console.log('lobby back + focus');
   await show('modeStep'); await sleep(500);
 }
 
+// ── Join keypad: the pad reaches JOIN once the code is complete ──
+// JOIN starts disabled (so out of the pad's scope); it must join the scope when
+// the 4th character enables it, and a backspace must not strand focus on it.
+console.log('join keypad JOIN');
+{
+  await show('modeStep'); await sleep(400);
+  await clickId(page, 'btn-together'); await sleep(500); await clickId(page, 'btn-stoker'); await sleep(1000);
+  const tvOn = await page.evaluate(() => !!document.getElementById('join-tv')?.classList.contains('on'));
+  if (check(tvOn, 'join keypad: shown on the join step')) {
+    // Type Y 6 G W with the pad: move focus onto each key, press A.
+    for (const k of 'Y6GW') {
+      await page.evaluate((key) => {
+        const l = window._game.lobby;
+        l._stepFocus.refreshSpatial(l._stepNavItems());
+        const el = document.querySelector(`#join-keypad-tv .ukp-key[data-key="${key}"]`);
+        l._stepFocus.focusedEl?.classList.remove('gamepad-focus');
+        l._stepFocus.focusedEl = el; el.classList.add('gamepad-focus');
+      }, k);
+      await pads.tap(0, 'A'); await sleep(200);
+    }
+    const code = await page.evaluate(() => document.getElementById('join-code-tv').value);
+    check(code === 'Y6GW', 'join keypad: A types the focused key', code);
+    // From the bottom-row "6" key, Down reaches Delete/JOIN; then Right reaches JOIN.
+    await page.evaluate(() => {
+      const l = window._game.lobby;
+      const del = document.querySelector('#join-keypad-tv uf-button[data-key="Delete"]');
+      l._stepFocus.focusedEl?.classList.remove('gamepad-focus');
+      l._stepFocus.focusedEl = del; del.classList.add('gamepad-focus');
+    });
+    await pads.tap(0, 'RIGHT'); await sleep(200);
+    let s = await look();
+    check(/JOIN/.test(s.focusText || '') && s.focusEnabled, 'join keypad: d-pad Right from Delete reaches an enabled JOIN', { focus: s.focus, text: s.focusText });
+    // Backspace (keyboard) disables JOIN: focus falls back to Delete, not a dead button.
+    await page.keyboard.press('Backspace'); await sleep(300);
+    s = await look();
+    check(/Delete/.test(s.focusText || ''), 'join keypad: JOIN disabling under focus moves it to Delete', { focus: s.focus, text: s.focusText });
+  }
+  await clickId(page, 'btn-back-role-join'); await sleep(500);
+  await show('modeStep'); await sleep(400);
+}
+
 // ── BL-08: Options open / close ──
 console.log('options');
 {
