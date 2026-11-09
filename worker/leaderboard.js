@@ -1454,8 +1454,43 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
     body.started_at || new Date().toISOString()
   ).run();
 
+  await saveRideSeats(env, body.id, body.seats);
+
   writeMetric(env, 'analytics_ride_start', body.level);
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+const clip = (v, n) => (typeof v === 'string' && v ? v.slice(0, n) : null);
+
+/**
+ * Everyone on the ride (migration 0016). A seat's account comes only from its
+ * own sign-in token, verified here. Never fails the ride's create: analytics
+ * extras must not cost the ride row (nor does a missing table, before the
+ * migration is applied).
+ */
+export async function saveRideSeats(env, rideId, seats) {
+  if (!Array.isArray(seats) || !seats.length) return;
+  try {
+    const rows = [];
+    const used = new Set();
+    for (const s of seats.slice(0, 4)) {
+      const seat = parseInt(s && s.seat, 10);
+      if (!(seat >= 1 && seat <= 4) || used.has(seat)) continue;
+      used.add(seat);
+      let userId = null;
+      if (typeof s.account_token === 'string' && env.JWT_SECRET) {
+        const sub = parseInt((await userFromToken(s.account_token, env)) ?? '', 10);
+        if (sub > 0) userId = sub;
+      }
+      rows.push(env.DB.prepare(
+        `INSERT OR IGNORE INTO ride_seats (ride_id, seat, user_id, role, team, input_type, controller)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(rideId, seat, userId, clip(s.role, 16), clip(s.team, 4), clip(s.input_type, 24), clip(s.controller, 80)));
+    }
+    if (rows.length) await env.DB.batch(rows);
+  } catch (e) {
+    console.error('ride seats not saved', e);
+  }
 }
 
 async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
@@ -2018,6 +2053,47 @@ async function dashPlayers(env, since, ex) {
   ).bind(since, ...sf.binds).all();
   const players = rows.results || [];
 
+  // Couch seats 2–4 (migration 0016): their rides count toward the seat's own
+  // account. Excluded by account only: a real player in seat 2 on the
+  // developer's machine still counts.
+  try {
+    const exAcc = ex && ex.accounts && ex.accounts.length ? ex.accounts : [];
+    const seatRows = await env.DB.prepare(
+      `SELECT rs.user_id AS acct, COUNT(*) AS rides, SUM(r.completed) AS finished,
+              ROUND(SUM(MIN(${PLAYER_SESSION_CAP_MIN}, COALESCE(r.duration_ms / 60000.0,
+                (julianday(r.ended_at) - julianday(r.started_at)) * 1440, 0))), 1) AS minutes,
+              COUNT(DISTINCT substr(r.started_at, 1, 10)) AS days,
+              MIN(r.started_at) AS first_seen, MAX(r.started_at) AS last_seen,
+              GROUP_CONCAT(DISTINCT rs.controller) AS controllers
+       FROM ride_seats rs JOIN rides r ON r.id = rs.ride_id
+       WHERE rs.seat > 1 AND rs.user_id IS NOT NULL AND r.started_at >= ?
+         ${exAcc.length ? `AND rs.user_id NOT IN (${exAcc.map(() => '?').join(',')})` : ''}
+       GROUP BY rs.user_id`
+    ).bind(since, ...exAcc).all();
+    const byAcct = new Map(players.filter(p => p.acct).map(p => [p.acct, p]));
+    for (const s of seatRows.results || []) {
+      let p = byAcct.get(s.acct);
+      if (!p) {
+        p = { acct: s.acct, sessions: 0, days: 0, minutes: 0, rides: 0, finished: 0,
+              first_seen: s.first_seen, last_seen: s.last_seen, platforms: '', controllers: null };
+        players.push(p);
+        byAcct.set(s.acct, p);
+      }
+      p.seat_rides = s.rides;
+      p.seat_minutes = s.minutes || 0;
+      p.minutes = Math.round(((p.minutes || 0) + (s.minutes || 0)) * 10) / 10;
+      p.rides += s.rides;
+      p.finished += s.finished || 0;
+      p.days = Math.max(p.days, s.days);
+      if (!p.first_seen || s.first_seen < p.first_seen) p.first_seen = s.first_seen;
+      if (!p.last_seen || s.last_seen > p.last_seen) p.last_seen = s.last_seen;
+      p.controllers = [p.controllers, s.controllers].filter(Boolean).join(',') || null;
+    }
+    players.sort((a, b) => (b.minutes || 0) - (a.minutes || 0));
+  } catch (e) {
+    if (!/no such table/.test(String(e && e.message))) throw e;
+  }
+
   // Each account's sign-ins, by name.
   const accts = [...new Set(players.map(p => p.acct).filter(Boolean))];
   const names = new Map();
@@ -2038,7 +2114,7 @@ async function dashPlayers(env, since, ex) {
       guest: !p.acct,
       sign_ins: p.acct ? (names.get(p.acct) || []) : [],
     })),
-    note: `Time = first to last activity in each session (at most ${PLAYER_SESSION_CAP_MIN / 60} h a session). Guests listed only if they rode.`,
+    note: `Time = first to last activity in each session (at most ${PLAYER_SESSION_CAP_MIN / 60} h a session), plus rides as couch Player 2–4. Guests listed only if they rode.`,
   };
 }
 

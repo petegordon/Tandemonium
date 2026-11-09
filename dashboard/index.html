@@ -877,7 +877,8 @@ function renderPlayers(p) {
           ? x.sign_ins.map(i => `${esc(i.name)} <span class="muted">${PROVIDER[i.provider] || esc(i.provider)}</span>`).join('<br>')
           : `<span class="muted">Account #${x.acct} (deleted)</span>`);
     const where = String(x.platforms || '').split(',').map(pl => pl === 'steam' ? 'Steam build' : pl === 'browser' ? 'Web' : pl).join(', ');
-    return `<tr><td>${who}</td><td>${esc(where)}</td><td>${fmtMinutes(x.minutes)}</td><td>${x.days}</td><td>${x.sessions}</td>
+    const seatNote = x.seat_rides ? `<br><span class="muted">incl. ${fmtMinutes(x.seat_minutes)} as Player 2–4</span>` : '';
+    return `<tr><td>${who}</td><td>${esc(where || 'Couch seat')}</td><td>${fmtMinutes(x.minutes)}${seatNote}</td><td>${x.days}</td><td>${x.sessions}</td>
       <td>${x.rides} (${x.finished})</td><td>${esc(x.controllers || '—')}</td>
       <td>${(x.first_seen || '').slice(0, 10)}</td><td>${(x.last_seen || '').slice(0, 10)}</td></tr>`;
   }).join('');

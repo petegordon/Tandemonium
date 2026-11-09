@@ -44,10 +44,12 @@ simple = { limit = 100, period = 60 }
 
 # Analytics rate limiting
 [[unsafe.bindings]]
+# 30 a minute per IP: a venue puts every machine on one IP, and a refused
+# create loses that whole session (Pete 2026-11-09).
 name = "ANALYTICS_SESSION_LIMITER"
 type = "ratelimit"
 namespace_id = "1004"
-simple = { limit = 10, period = 60 }
+simple = { limit = 30, period = 60 }
 
 # Session updates (controller changes, session end) get their own budget so
 # they can never use up the creates.
