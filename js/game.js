@@ -550,7 +550,6 @@ class Game {
 
     // DDA (Dynamic Difficulty Adjustment)
     this.ddaManager = null;
-    this._assistWeight = 0;
 
     // Calibration tip (shown once per session)
     this._shownCalibTip = false;
@@ -579,10 +578,6 @@ class Game {
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
       this.speedBtn.textContent = this.autoSpeed ? 'ON\nSPEED' : 'SPEED';
     });
-
-    // Assist button (hidden by default, shown by DDA)
-    this.assistBtn = document.getElementById('assist-btn');
-    this.assistBtn.addEventListener('click', () => this._setAssist(!(this._assistWeight > 0)));
 
     // Reset button
     document.getElementById('reset-btn').addEventListener('click', () => {
@@ -621,7 +616,6 @@ class Game {
     // single source of truth) and stay in the menu so the new ON / OFF shows.
     this._onTap('btn-pause-safety', () => { this.safetyBtn.click(); this._syncPauseToggles(); });
     this._onTap('btn-pause-speed', () => { this.speedBtn.click(); this._syncPauseToggles(); });
-    this._onTap('btn-pause-assist', () => { this.assistBtn.click(); this._syncPauseToggles(); });
     this._onTap('btn-pause-clip', () => { this._closePause('clip'); this.recorder.saveClip(); });
     this._onTap('btn-pause-end', () => {
       // END RIDE = the ride's own LOBBY / ROOM button (the ranked-run confirm lives there).
@@ -738,17 +732,6 @@ class Game {
       }
       this._hideGameOver();
       this._resetGame();
-    });
-
-    // Game Over: RESTART WITH ASSIST (Pete 2026-11-07): the same restart, with ASSIST
-    // on until the next checkpoint.
-    this._onTap('btn-restart-assist', () => {
-      if (this.mode === 'stoker') return;   // the captain's screen owns the offer
-      analytics.trackRideEvent('dda_assist_accepted', this.bike ? this.bike.distanceTraveled : 0, { type: 'restart_with_assist' });
-      if (this.ddaManager) this.ddaManager.acceptedCount++;
-      this._hideGameOver();
-      this._resetGame();
-      this._setAssist(true);
     });
 
     // Game Over: return to room (stay connected)
@@ -1575,6 +1558,7 @@ class Game {
         this._clearStokerTimeout();
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
+        this._commitPhoneCentres();
         if (this.raceManager) this.raceManager.start();
         this.achievements.ride.go();   // #401 False Start
         const flavorNum = document.getElementById('countdown-flavor-num');
@@ -2485,6 +2469,13 @@ class Game {
     }
   }
 
+  /** #716 · GO: each phone keeps the centre it took in the riding grip (see recenterTiltForRide). */
+  _commitPhoneCentres() {
+    for (const im of new Set([this.input, this.inputP2, ...(this.versusRigs || []).flatMap((r) => (r && r.inputs) || [])])) {
+      if (im && typeof im.commitTiltCentre === 'function') im.commitTiltCentre();
+    }
+  }
+
   _startCountdown() {
     // Versus has its own lean countdown path — no singleton HUD, DDA,
     // recorder, or contribution tracking.
@@ -2529,9 +2520,6 @@ class Game {
     this.ddaManager = !this._rideSystemOn('dda') ? null
       : (keepHelp ? this.ddaManager : new DDAManager(difficultyName));
     if (keepHelp) this.ddaManager.applyInvisibleAdjustments();
-    this._setAssist(false);
-    // A new ride starts without the ASSIST offer (a first-stretch retry keeps it).
-    if (!keepHelp && this.assistBtn) this.assistBtn.style.display = 'none';
 
     // Apply auto-speed from difficulty preset (Chill/Tutorial cruise automatically)
     if (TUNE.autoSpeed != null) {
@@ -2840,8 +2828,7 @@ class Game {
 
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
-    this.ddaManager = null; // no dynamic assist in versus — fair race
-    this._assistWeight = 0;
+    this.ddaManager = null; // no dynamic help in versus — fair race
     if (TUNE.autoSpeed != null) {
       this.autoSpeed = TUNE.autoSpeed;
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
@@ -2947,6 +2934,7 @@ class Game {
 
     if (this.countdownTimer <= 0) {
       this.state = 'playing';
+      this._commitPhoneCentres();
       // Show "GO!" in the flavor block
       const flavorIcon = document.getElementById('countdown-flavor-icon');
       const flavorText = document.getElementById('countdown-flavor-text');
@@ -3625,6 +3613,9 @@ class Game {
       if (!opts.timeout) {
         this.ddaManager.recordFailure(checkpointD);
         this._helpOnFailure(checkpointD);   // #403: the next attempt's tier, announced here
+        // #716 Did It Myself: three crashes at a checkpoint; finishing with no helping hand or
+        // Royal Shortcut earns it.
+        this.achievements.ride.stuck = true;
       }
       const ddaResult = this.ddaManager.evaluate(checkpointD);
 
@@ -3635,18 +3626,6 @@ class Game {
         if (ddaResult.offerSkip) this.ddaManager.markSkipOffered();
       }
 
-      // Show assist button if DDA recommends it
-      if (ddaResult.offerAssist) {
-        this.ddaManager.markAssistOffered();
-        this.achievements.ride.assistOffered = true;   // #401 Did It Myself
-        const assistBtn = document.getElementById('assist-btn');
-        if (assistBtn) assistBtn.style.display = '';
-      }
-    }
-    // RESTART WITH ASSIST: once ASSIST is offered for this stretch, every Game Over there shows it.
-    {
-      const ra = document.getElementById('btn-restart-assist');
-      if (ra) ra.style.display = (this.ddaManager && this.mode !== 'stoker' && this.ddaManager.assistOffered && !(this._assistWeight > 0)) ? '' : 'none';
     }
 
     // Clear HUD status text so "CRASHED! Resetting..." doesn't bleed through
@@ -3690,40 +3669,6 @@ class Game {
       // leave the stoker stuck on a "playing" screen.
       this.net.sendEventReliable(EVT_GAMEOVER);
     }
-  }
-
-  /**
-   * ASSIST on or off: 65 % auto-steer (toward the road and the presents, away from the
-   * pylons) plus a pull back upright. Turning it on makes the ride a 🛟 ride (#403).
-   * @param {boolean} on
-   */
-  _setAssist(on) {
-    if (!this.assistBtn) return;
-    if (on) {
-      this._assistWeight = 0.65;
-      this.assistBtn.style.display = '';
-      this.assistBtn.className = 'side-btn assist-on';
-      this.assistBtn.textContent = 'ASSIST\nON';
-      this._helpMarkAssisted();   // #403: an ASSIST finish is a 🛟 finish
-    } else {
-      this._assistWeight = 0;
-      this.assistBtn.className = 'side-btn assist-off';
-      this.assistBtn.textContent = 'ASSIST';
-    }
-  }
-
-  /** Pete 2026-11-07: ASSIST covers the one stretch you were stuck on; it ends at the next checkpoint. */
-  _endAssistAtCheckpoint() {
-    if (this.mode === 'stoker' || !this.assistBtn) return;
-    if (this._assistWeight > 0) {
-      this._setAssist(false);
-      const st = document.getElementById('status');
-      if (st) {
-        st.textContent = 'ASSIST OFF \u2014 you\u2019ve got this';
-        setTimeout(() => { if (st.textContent.startsWith('ASSIST OFF')) st.textContent = ''; }, 2500);
-      }
-    }
-    this.assistBtn.style.display = 'none';   // offered again only if the next stretch is a struggle too
   }
 
   _hideGameOver() {
@@ -5311,7 +5256,6 @@ class Game {
       if (this.ddaManager) {
         this.ddaManager.onCheckpointPassed(raceEvent.distance);
       }
-      this._endAssistAtCheckpoint();
       this._helpOnCheckpoint();   // #403: the count and the tier reset here
 
       // Notify stoker
@@ -7481,8 +7425,8 @@ class Game {
   /**
    * #576 · show / label the pause menu's ride toggles. Same rules as the quick
    * menu: only the rider who owns the ride controls (not a stoker), SAFETY and
-   * SPEED are gone on a ranked run (their buttons are disabled), ASSIST only
-   * once it is offered, SAVE CLIP only while a clip is buffering.
+   * SPEED are gone on a ranked run (their buttons are disabled), SAVE CLIP only
+   * while a clip is buffering.
    */
   _syncPauseToggles() {
     const sideButtons = document.getElementById('side-buttons');
@@ -7498,7 +7442,6 @@ class Game {
     const usable = (b) => !!b && !b.hasAttribute('disabled');
     set('btn-pause-safety', rideControls && usable(this.safetyBtn), !!this.safetyMode);
     set('btn-pause-speed', rideControls && usable(this.speedBtn), !!this.autoSpeed);
-    set('btn-pause-assist', rideControls && !!this.assistBtn && this.assistBtn.style.display !== 'none', this._assistWeight > 0);
     const share = document.getElementById('share-btn');
     set('btn-pause-clip', !!share && share.style.display !== 'none');
     const box = document.getElementById('pause-toggles');
@@ -8301,11 +8244,11 @@ class Game {
       this._botSync.update(dt);
       this.hud.setRemoteSync(this._botSync.offsetScore);
     }
-    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
+    const balanceResult = this.balanceCtrl.update(this.bike, 0, this.collectibleManager, this.obstacleManager);
     if (this.isSlingshot) this._slingLean = balanceResult.leanInput;   // #401 Straight Shooter
 
     // Sync balance assist to bike model
-    this.bike._balanceAssist = this._assistWeight;
+    this.bike._balanceAssist = 0;
 
     const wasFallen = this.bike.fallen;
     this.bike.update(pedalResult, balanceResult, dt, this.safetyMode, this._rideSystemOn('cruise') ? this.autoSpeed : false);
@@ -8398,8 +8341,8 @@ class Game {
     // Use shared pedal controller
     const pedalResult = this.sharedPedal.update(dt);
     this._playPedalTaps(this.sharedPedal);
-    const balanceResult = this.balanceCtrl.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
-    this.bike._balanceAssist = this._assistWeight;
+    const balanceResult = this.balanceCtrl.update(this.bike, 0, this.collectibleManager, this.obstacleManager);
+    this.bike._balanceAssist = 0;
 
     // Capture captain's own lean before merging
     const captainLean = balanceResult.leanInput;
@@ -8520,7 +8463,7 @@ class Game {
     // identical auto-steer when assist is engaged — without this, the back
     // seat felt "looser" than the front seat because DDA assist only
     // corrected captain's half of the merge.
-    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, this._assistWeight, this.collectibleManager, this.obstacleManager);
+    const balanceResultP2 = this.balanceCtrlP2.update(this.bike, 0, this.collectibleManager, this.obstacleManager);
     // One-human local MP: if P2's controller is idle on the desk, its gyro
     // drifts (and gets rumble-shaken) and dragging that into the 50/50 lean
     // merge makes steering feel loose. Zero the contribution until the
@@ -8897,7 +8840,7 @@ class Game {
     // Lean: average all members (same merge rule as co-op captain+stoker).
     // Bot teams ride with full balance assist — no human is steering them.
     // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
-    const assist = rig.members.some((m) => m.type === 'bot') ? 1 : this._assistWeight;
+    const assist = rig.members.some((m) => m.type === 'bot') ? 1 : 0;
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
     // #581: the geese lean by the look-only lean (visualLean: the rider's own
     // tilt before TUNE.motionGain), as the solo captain and the co-op riders
@@ -10314,11 +10257,10 @@ class Game {
       this._showCheckpointFlash();
       hapticCheckpoint();
 
-      // Reset DDA adjustments and assist for next phase
+      // Reset DDA adjustments for the next phase
       if (this.ddaManager) {
         this.ddaManager.onCheckpointPassed(tp);
       }
-      this._assistWeight = 0;
 
       // Accumulate collected presents
       if (this.collectibleManager) {
@@ -10569,10 +10511,10 @@ class Game {
       this.ddaManager.applyInvisibleAdjustments();
     }
 
-    // After 3+ crashes on the same phase, activate progressive assistance
+    // After 3+ crashes on the same phase, the bike rights itself a little harder. (It also
+    // blended in ASSIST's auto-steer, removed in #716: it steered wildly.)
     const phaseCrashes = this.ddaManager ? this.ddaManager.getFailureCount(this._tutTargetPhase) : 0;
     if (phaseCrashes >= 3) {
-      this._assistWeight = Math.min(0.3, (phaseCrashes - 2) * 0.1);
       if (this._tutPhaseAutoCorrectionStrengths) {
         this._tutPhaseAutoCorrectionStrengths[this._tutTargetPhase] = Math.min(8.0,
           (this._tutPhaseAutoCorrectionStrengths[this._tutTargetPhase] || 3.0) + 0.5);

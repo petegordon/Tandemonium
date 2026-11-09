@@ -124,13 +124,12 @@ async function failByTimeout(page) {
     };
   });
   await sleep(2000);   // the TOO SLOW beat, then the same sheet as a crash (Pete 2026-11-07)
-  const sheet = await page.evaluate(() => {
-    const ra = document.getElementById('btn-restart-assist');
-    return { overlay: document.getElementById('gameover-overlay').style.display,
-             title: document.getElementById('gameover-title').textContent,
-             reason: document.getElementById('gameover-reason').textContent,
-             ra: !!ra && ra.style.display !== 'none' };
-  });
+  const sheet = await page.evaluate(() => ({
+    overlay: document.getElementById('gameover-overlay').style.display,
+    title: document.getElementById('gameover-title').textContent,
+    reason: document.getElementById('gameover-reason').textContent,
+    restart: (document.getElementById('btn-restart').textContent || '').trim(),
+  }));
   return { ...seen, sheet };
 }
 
@@ -168,8 +167,8 @@ check('attempt 2 unchanged', a2.tier === 0 && a2.badge === '' && Math.abs(a2.pus
 // failure 2 (timeout) → attempt 3
 seen = await failByTimeout(page);
 check('failure 2 (timeout): no announcement', seen.flash && seen.announce === '', seen);
-check('a timeout stops on the same sheet: TOO SLOW!, the reason, RESTART WITH ASSIST',
-  seen.sheet.overlay === 'flex' && seen.sheet.title === 'TOO SLOW!' && /clock ran out/.test(seen.sheet.reason) && seen.sheet.ra, seen.sheet);
+check('a timeout stops on the same sheet: TOO SLOW!, the reason, CHECKPOINT RESTART (#716)',
+  seen.sheet.overlay === 'flex' && seen.sheet.title === 'TOO SLOW!' && /clock ran out/.test(seen.sheet.reason) && seen.sheet.restart === 'CHECKPOINT RESTART', seen.sheet);
 await retryFromModal(page);
 const a3 = await probe(page);
 check('attempt 3 unchanged', a3.tier === 0 && a3.badge === '' && Math.abs(a3.push - base.push) < 1e-6 && Math.abs(a3.timeTotal - base.timeTotal) < 1e-6, a3);
@@ -181,7 +180,7 @@ await retryFromModal(page);
 const a4 = await probe(page);
 console.log('  attempt 4:', JSON.stringify(a4));
 check('attempt 4: 💨 badge, half gusts, 1.25× time, safety untouched',
-  a4.tier === 1 && a4.badge === '💨' && Math.abs(a4.push - base.push * 0.5) < 1e-6
+  a4.tier === 1 && a4.badge === '💨' && Math.abs(a4.push - base.push * 0.5) < 1e-4 /* push is rounded to 5 places */
   && Math.abs(a4.timeTotal - base.timeTotal * 1.25) < 1e-6 && a4.safety === base.safety);
 
 // failure 4 (timeout) → attempt 5: Sir Winston
@@ -231,36 +230,18 @@ check('passing checkpoint 2 resets the count, the tier, the badge, gusts and saf
   passed.event === 'checkpoint' && after.tier === 0 && after.failures === 0 && after.badge === ''
   && after.push > 0 && after.timeScale === 1 && after.safety === base.safety);
 
-// ── 1b. RESTART WITH ASSIST (Pete 2026-11-07): offered at the first Game Over, ends at the checkpoint ──
-const raShown = () => page.evaluate(() => {
-  const b = document.getElementById('btn-restart-assist');
-  return { ra: !!b && b.style.display !== 'none', overlay: document.getElementById('gameover-overlay').style.display };
-});
-const freshGo = await (async () => { await failByCrash(page); return raShown(); })();
-check('the first Game Over at a checkpoint offers RESTART WITH ASSIST', freshGo.overlay === 'flex' && freshGo.ra, freshGo);
-const ra = await page.evaluate(() => {
-  const g = window._game;
-  document.getElementById('btn-restart-assist').click();
-  return { weight: g._assistWeight, helped: g._helpFlags().helped, overlay: document.getElementById('gameover-overlay').style.display,
-           btn: document.getElementById('assist-btn').className, ach: g.achievements.ride.assistOffered };
-});
-check('RESTART WITH ASSIST restarts with ASSIST on, and the ride counts as helped',
-  ra.weight > 0 && ra.helped && ra.overlay === 'none' && /assist-on/.test(ra.btn) && ra.ach, ra);
-const raAgain = await (async () => { await failByCrash(page); return raShown(); })();
-check('a Game Over with ASSIST already on does not offer it again', raAgain.overlay === 'flex' && !raAgain.ra, raAgain);
+// ── 1b. #716: ASSIST is gone; a Game Over at a checkpoint marks the ride for Did It Myself ──
+const go1b = await (async () => {
+  await failByCrash(page);
+  return page.evaluate(() => ({
+    overlay: document.getElementById('gameover-overlay').style.display,
+    assistUi: ['assist-btn', 'btn-restart-assist', 'btn-pause-assist', 'qm-assist'].filter((id) => document.getElementById(id)),
+    stuck: window._game.achievements.ride.stuck === true,
+  }));
+})();
+check('a Game Over offers no ASSIST anywhere, and counts toward Did It Myself',
+  go1b.overlay === 'flex' && go1b.assistUi.length === 0 && go1b.stuck, go1b);
 await retryFromModal(page);
-const raEnd = await page.evaluate(() => {
-  const g = window._game;
-  const cp3 = g.raceManager.checkpoints[2];
-  g.bike.resetToDistance(cp3 + 5);
-  const ev = g.raceManager.update(cp3 + 5, 0);
-  if (ev) g._handleRaceEvent(ev);
-  g.state = 'countdown'; g.countdownTimer = 1e9;
-  return { event: ev && ev.event, weight: g._assistWeight, shown: document.getElementById('assist-btn').style.display !== 'none',
-           status: document.getElementById('status').textContent };
-});
-check('ASSIST switches off at the next checkpoint and leaves the ride controls',
-  raEnd.event === 'checkpoint' && raEnd.weight === 0 && !raEnd.shown && /ASSIST OFF/.test(raEnd.status), raEnd);
 
 // ── 2. The assisted finish: bronze at most, 🛟, never over a real best ─────
 const fin = await page.evaluate(async () => {

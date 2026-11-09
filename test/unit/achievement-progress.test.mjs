@@ -28,7 +28,7 @@ test('foldBests keeps the highest value ever seen, and only for unearned ones', 
   L = foldBests(L, { speed: 42 / 3.6 }, new Set(['speed_demon']));
   assert.equal(L.bests.speed_demon, 30, 'earned: left alone');
   assert.equal(L.bests.terminal_goose, 42);
-  assert.deepEqual(bestProgress(byId('terminal_goose'), L), [42, 65]);
+  assert.deepEqual(bestProgress(byId('terminal_goose'), L), [42, 50]);   // #716: 65 -> 50 km/h
   assert.deepEqual(bestProgress(byId('collector'), L), [4, 10]);
   assert.deepEqual(bestProgress(byId('afterburner'), L), [0, 10]);
 });

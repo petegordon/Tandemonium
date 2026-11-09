@@ -38,7 +38,6 @@ export class QuickMenu {
     this.sideButtons = document.getElementById('side-buttons');
     this.safetyBtn = document.getElementById('safety-btn');
     this.speedBtn = document.getElementById('speed-btn');
-    this.assistBtn = document.getElementById('assist-btn');
     this.resetBtn = document.getElementById('reset-btn');
     this.lobbyBtn = document.getElementById('lobby-btn');
     this.shareBtn = document.getElementById('share-btn');
@@ -65,7 +64,6 @@ export class QuickMenu {
     // Toggles keep the sheet open so the new state is visible; actions close it.
     this._bind('qm-safety', this.safetyBtn, false);
     this._bind('qm-speed', this.speedBtn, false);
-    this._bind('qm-assist', this.assistBtn, false);
     this._bind('qm-music', this.musicBtn, false);
     this._bind('qm-clip', this.shareBtn, true);
     this._bind('qm-reset', this.resetBtn, true);
@@ -145,9 +143,6 @@ export class QuickMenu {
     this._setState('qm-speed', this._isOn(this.speedBtn, 'speed-on'));
 
     // Assist only exists once the difficulty manager offers it.
-    const assistOffered = this.assistBtn && this.assistBtn.style.display !== 'none';
-    this._show('qm-assist', !!assistOffered);
-    this._setState('qm-assist', this._isOn(this.assistBtn, 'assist-on'));
 
     // #music-btn carries `.muted` when the track is off.
     const musicOn = this.musicBtn && !this.musicBtn.classList.contains('muted');

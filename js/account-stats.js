@@ -41,7 +41,7 @@ export const ADD_KEYS = Object.freeze([
  * devices is one day (each device starts from the account's count, and the
  * merged day list fills in the rest).
  */
-export const MAX_KEYS = Object.freeze(['days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'dailyDayBest']);
+export const MAX_KEYS = Object.freeze(['days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'slingTopSpeed', 'dailyDayBest']);
 export const OR_KEYS = Object.freeze(['pedalled', 'maxedAny', 'maxedAll']);
 export const UNION_KEYS = Object.freeze(['golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished']);
 export const RECENT_KEYS = Object.freeze(['dayList']);

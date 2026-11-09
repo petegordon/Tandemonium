@@ -123,8 +123,9 @@ test('only the kinds we built ever appear — gust and cobbles (#400 removed the
 // big enough to feel. It was 0.55 lean-units/sec — about 6 degrees of lean,
 // under 8% of the crash threshold and roughly the size of a phone's tilt
 // deadzone. The banner said HOLD IT and there was nothing to hold.
+// #716 (Pete 2026-11-09): 3.5 was too hard; 2.0 still reaches ~16 degrees.
 test('the gust is strong enough to have to correct against', () => {
-  assert.ok(GUST_FORCE >= 2.5, 'a gust under 2.5 is inside the input noise floor');
+  assert.ok(GUST_FORCE >= 1.5, 'a gust under 1.5 is inside the input noise floor');
   assert.ok(GUST_FORCE <= 5, 'a gust over 5 stops being recoverable');
 });
 

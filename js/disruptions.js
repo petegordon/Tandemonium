@@ -57,7 +57,9 @@ export const COBBLES_DRAG = 0.22;
  * two seconds reach about 26 degrees on adventurous: you have to correct, and
  * you have time to.
  */
-export const GUST_FORCE = 3.5;
+// Pete 2026-11-09 (#716): 3.5 was too hard (~28 degrees on adventurous, ~37 on daredevil).
+// 2.0 reaches about 16 degrees: still a shove you correct, rarely a crash on its own.
+export const GUST_FORCE = 2.0;
 
 /**
  * The gust's shape over its own duration, as fractions of it.

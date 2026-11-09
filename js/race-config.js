@@ -43,6 +43,9 @@ export const LEVELS = [
     isDaily: true,
     // Pete 2026-11-07: the rider picks the difficulty (it was fixed at Adventurous), and gold is Grandma's pace.
     medalPace: 'grandma',
+    // Pete 2026-11-09 (#716): gold and silver 15% slower than that. Only the developer had
+    // beaten gold (fastest other finish 102 s against 90.6 s on Adventurous).
+    medalSlack: 1.15,
     treeCollision: true
   }
 ];
@@ -171,9 +174,10 @@ function medalsFor(level, difficulty) {
     const ref = getLevelById(level.medalPace);
     const per = medalsFor(ref, difficulty);
     const k = level.distance / ref.distance;
-    const gold = Math.round(per.gold * k);
+    const slack = level.medalSlack || 1;
+    const gold = Math.round(per.gold * k * slack);
     const bronze = Math.round(Math.min(per.bronze * k, budget * MEDAL_FRACTION.bronze));
-    const silver = Math.round(Math.min(per.silver * k, (gold + bronze) / 2));
+    const silver = Math.round(Math.min(per.silver * k * slack, (gold + bronze) / 2));
     return { gold, silver: Math.max(gold + 1000, silver), bronze: Math.max(gold + 2000, bronze) };
   }
   return {

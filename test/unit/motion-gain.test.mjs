@@ -44,7 +44,7 @@ test('each difficulty sets its own motion gain; Chill and the tutorial are the g
   assert.equal(DIFFICULTY_PRESETS.tutorial.motionGain, 0.3);
   assert.equal(DIFFICULTY_PRESETS.chill.motionGain, 0.3);
   assert.equal(DIFFICULTY_PRESETS.adventurous.motionGain, 0.6);
-  assert.equal(DIFFICULTY_PRESETS.daredevil.motionGain, 1.0);
+  assert.equal(DIFFICULTY_PRESETS.daredevil.motionGain, 0.75);   // #716: 1.0 was too twitchy
   assert.equal(BALANCE_DEFAULTS.motionGain, 0.3, 'before any ride, Chill\'s gain');
   keepTune(() => {
     for (const [name, p] of Object.entries(DIFFICULTY_PRESETS)) {
