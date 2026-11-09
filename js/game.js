@@ -2702,6 +2702,7 @@ class Game {
         difficulty: difficultyName,
         bike_preset: this.lobby.selectedPresetKey,
         steering_feel: TUNE.steeringFeel,
+        seats: this._rideSeats(false),
       });
     }
     this.hud.initProgress(level);
@@ -2923,6 +2924,7 @@ class Game {
         difficulty: difficultyName,
         bike_preset: this.lobby.selectedPresetKey,
         steering_feel: TUNE.steeringFeel,
+        seats: this._rideSeats(true),
       });
     }
     this.world.setRaceMarkers(level, this.versusRigs[0].camera);
@@ -5528,6 +5530,53 @@ class Game {
     }
     this._seatFinish();
     if (this.lobby) this.lobby._linkPromptDue = true;   // #612: back in the lobby, maybe "Link Discord"
+  }
+
+  /**
+   * Everyone on this ride, for analytics (Pete 2026-11-09): seat, role or team,
+   * controller, and the seat's own sign-in token (the server reads the account
+   * from it). Player 1 is the game's account; seats 2–4 their own sign-ins.
+   * An online partner is not a seat: their own game logs their ride.
+   */
+  _rideSeats(versus) {
+    const label = (input) => {
+      try {
+        const l = input && input._slot && input._slot.controllerLabel;
+        if (!l) return null;
+        const info = ControllerRegistry.identifyFromGamepadId(l);
+        return info ? info.driverName : l;
+      } catch (e) { return null; }
+    };
+    const token = (n) => {
+      try {
+        if (n === 1) return (this.lobby && this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.token) || undefined;
+        const a = this.lobby && this.lobby.seatAccounts && this.lobby.seatAccounts.get(n);
+        return (a && a.token) || undefined;
+      } catch (e) { return undefined; }
+    };
+    const seats = [];
+    try {
+      if (versus && this.versusRigs) {
+        for (const rig of this.versusRigs) {
+          for (const m of rig.members) {
+            const n = m.n || (m.isP1 ? 1 : null);
+            if (!n) continue;
+            const bot = m.type === 'bot';
+            seats.push({ seat: n, role: 'versus', team: rig.id, input_type: m.type || null,
+              controller: bot ? null : (label(m.input) || m.label || null), account_token: bot ? undefined : token(n) });
+          }
+        }
+      } else {
+        const local = this.mode === 'local';
+        seats.push({ seat: 1, role: local ? 'captain' : this.mode, input_type: analytics.getInputMethod() || null,
+          controller: label(this.input), account_token: token(1) });
+        if (local && this.inputP2) {
+          seats.push({ seat: 2, role: 'stoker', input_type: this.inputP2._slot ? 'gamepad' : null,
+            controller: label(this.inputP2), account_token: token(2) });
+        }
+      }
+    } catch (e) { /* analytics only */ }
+    return seats;
   }
 
   /** #612 · the account signed in on local seat 2 (Player 2), or null. */

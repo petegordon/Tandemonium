@@ -101,10 +101,10 @@ test('rides and conversions for a missing session are stored too', async () => {
 
 test('session updates have their own rate limit and cannot use up session creates', async () => {
   const db = freshDb();
-  let creates = 0;
+  // The per-player limit counts each kind of write in its own bucket.
+  const counts = new Map();
   const env = envFor(db, {
-    ANALYTICS_SESSION_LIMITER: limiter(() => ++creates <= 1),
-    ANALYTICS_SESSION_UPDATE_LIMITER: limiter(() => true),
+    PLAYER_LIMITER: { limit: async ({ key }) => { counts.set(key, (counts.get(key) || 0) + 1); return { success: counts.get(key) <= 30 }; } },
   });
   for (let i = 0; i < 20; i++) {
     const r = await post(env, `/api/analytics/session/${SID}`, { controller_name: 'Steam Controller ' + i }, 'PUT');

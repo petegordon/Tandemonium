@@ -176,6 +176,10 @@ console.log('MC-13 / MC-05 DualSense + Switch Pro');
     return { mode: window._game.mode, p1L: a.isPressed('ArrowLeft'), p2L: b.isPressed('ArrowLeft'), p1R: a.isPressed('ArrowRight'), p2R: b.isPressed('ArrowRight'), p1Lean: a.getGamepadLean(), p2Lean: b.getGamepadLean() };
   });
   check((await read()).mode === 'local', 'MC-05: local co-op ride started');
+  // Analytics: the ride lists both seats with their own controllers (ride_seats).
+  const rideSeats = await page.evaluate(() => window._game._rideSeats(false).map((s) => ({ seat: s.seat, role: s.role, controller: s.controller })));
+  check(rideSeats.length === 2 && rideSeats[0].role === 'captain' && rideSeats[1].role === 'stoker' && rideSeats[1].seat === 2 && !!rideSeats[1].controller,
+    'MC-05: the ride records Player 1 (captain) and Player 2 (stoker) with their controllers', rideSeats);
   await pads.hold(0, 'LT', true);
   await sleep(250);
   let r = await read();

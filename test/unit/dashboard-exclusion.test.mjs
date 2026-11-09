@@ -188,3 +188,63 @@ test('merging accounts moves the analytics sessions too', async () => {
   await mergeAccounts({ DB: d1(db) }, 26, 38);
   assert.equal(db.prepare("SELECT google_uid FROM sessions WHERE id = 'old-steam'").get().google_uid, '38');
 });
+
+// ── Couch seats 2–4 (migration 0016) ──
+async function postRide(db, body) {
+  const res = await worker.fetch(new Request('https://api.test/api/analytics/ride', {
+    method: 'POST', headers: { 'Content-Type': 'text/plain', 'CF-Connecting-IP': '3.3.3.3' }, body: JSON.stringify(body),
+  }), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+  assert.equal(res.status, 200);
+}
+const RIDE = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+
+test('a ride records every seat; accounts only from each seat\'s own token', async () => {
+  const db = seeded();
+  db.prepare("INSERT INTO sessions (id, started_at) VALUES (?, ?)").run(SID2, new Date().toISOString());
+  await postRide(db, {
+    id: RIDE, session_id: SID2, level: 'grandma', role: 'versus', input_method: 'gamepad_stick', started_at: new Date().toISOString(),
+    seats: [
+      { seat: 1, role: 'versus', team: 'A', input_type: 'gamepad', controller: 'DualSense', account_token: await token({ sub: 38 }) },
+      { seat: 2, role: 'versus', team: 'A', input_type: 'gamepad', controller: 'Xbox', account_token: await token({ sub: 12 }) },
+      { seat: 3, role: 'versus', team: 'B', input_type: 'phone', account_token: 'forged' },
+      { seat: 4, role: 'versus', team: 'B', input_type: 'bot' },
+      { seat: 9, role: 'versus' },
+    ],
+  });
+  const rows = db.prepare('SELECT seat, user_id, team, input_type, controller FROM ride_seats WHERE ride_id = ? ORDER BY seat').all(RIDE).map((r) => ({ ...r }));
+  assert.deepEqual(rows, [
+    { seat: 1, user_id: 38, team: 'A', input_type: 'gamepad', controller: 'DualSense' },
+    { seat: 2, user_id: 12, team: 'A', input_type: 'gamepad', controller: 'Xbox' },
+    { seat: 3, user_id: null, team: 'B', input_type: 'phone', controller: null },
+    { seat: 4, user_id: null, team: 'B', input_type: 'bot', controller: null },
+  ]);
+});
+
+test('players: couch seat time counts for the seat\'s account, even on the developer\'s machine', async () => {
+  const db = seeded();
+  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
+  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
+  const start = new Date(Date.now() - 30 * 60000).toISOString();
+  // Pete's session (account 1), Sam rides as Player 2 for 12 minutes and finishes.
+  db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed, duration_ms)
+              VALUES (?, 'pete-google', 'grandma', 'gamepad_stick', ?, ?, 1, 720000)`).run(RIDE, start, new Date().toISOString());
+  db.prepare("INSERT INTO ride_seats (ride_id, seat, user_id, role, controller) VALUES (?, 1, 1, 'captain', 'DualSense'), (?, 2, 50, 'stoker', 'Xbox')").run(RIDE, RIDE);
+  const r = await dash(db, 'players', 'exclude_accounts=1,38');
+  const sam = r.players.find((p) => p.acct === 50);
+  assert.ok(sam, 'a couch-only player is listed');
+  assert.equal(sam.seat_rides, 1);
+  assert.equal(sam.minutes, 12);
+  assert.equal(sam.finished, 1);
+  assert.deepEqual(sam.sign_ins, [{ provider: 'discord', name: 'sam' }]);
+  assert.ok(!r.players.some((p) => p.acct === 1), 'Pete still excluded');
+});
+
+test('merging accounts moves couch seats too', async () => {
+  const { mergeAccounts } = await import('../../worker/identity.js');
+  const db = seeded();
+  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (51, 'steam', 's-x', 'x')").run();
+  db.prepare("INSERT INTO rides (id, session_id, level, input_method, started_at) VALUES (?, 'player-a', 'grandma', 'k', ?)").run(RIDE, new Date().toISOString());
+  db.prepare("INSERT INTO ride_seats (ride_id, seat, user_id) VALUES (?, 2, 51)").run(RIDE);
+  await mergeAccounts({ DB: d1(db) }, 51, 38);
+  assert.equal(db.prepare('SELECT user_id FROM ride_seats WHERE ride_id = ?').get(RIDE).user_id, 38);
+});

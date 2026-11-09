@@ -236,6 +236,9 @@ export function startRide(opts) {
     bike_preset: opts.bike_preset || 'default',
     steering_feel: opts.steering_feel,
     started_at: new Date().toISOString(),
+    // Everyone on the ride: seat, role/team, controller, and each seat's own
+    // sign-in token (the server reads the account from it).
+    seats: Array.isArray(opts.seats) ? opts.seats : undefined,
   });
 
   return currentRideId;
