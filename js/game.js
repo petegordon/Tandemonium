@@ -1524,10 +1524,16 @@ class Game {
 
     this.net.onEventReceived = (eventType) => {
       if (this.mode === 'stoker') this._heardFromCaptain();
-      // Anything else from the captain means it is no longer paused.
-      if (this._partnerPaused && eventType !== EVT_PAUSE) this._endPartnerPause();
+      // Anything else from the partner means they are no longer paused.
+      if (eventType !== EVT_PAUSE) {
+        this._partnerWantsPause = false;
+        if (this._partnerPaused) this._endPartnerPause();
+      }
       if (eventType === EVT_PAUSE) {
-        if (this.mode === 'stoker') this._startPartnerPause();
+        // Pete 2026-11-09: either rider's pause stops the ride for both. Both paused at once:
+        // each keeps their own menu, and whoever resumes first waits on the other.
+        if (this._pause) this._partnerWantsPause = true;
+        else this._startPartnerPause();
       } else if (eventType === EVT_RESUME) {
         // (ended above)
       } else if (eventType === EVT_COUNTDOWN) {
@@ -1643,7 +1649,9 @@ class Game {
       // resend this side's room profile and the captain's helping-hand state.
       this._sendProfile();
       if (this.mode === 'captain' && this._help) this._sendHelpState();
-      if (this.mode === 'captain' && this._pause) this.net.sendEvent(EVT_PAUSE);   // a pause the drop hid
+      this._partnerWantsPause = false;
+      if (this._partnerPaused) this._endPartnerPause();   // re-sent below by the partner if still paused
+      if (this._onlineCoop() && this._pause) this.net.sendEvent(EVT_PAUSE);   // a pause the drop hid
       this._resendTouristBarrier();   // PR #397 m15
       // Re-establish media call after data reconnection (only if P2P is already up)
       if (this.mode === 'captain' && this.net.transport === 'p2p') {
@@ -3518,7 +3526,7 @@ class Game {
     this._clearOverlayButtons();
     this._freezeClock(false);
     this._overlayFocus.input = this.input;
-    if (this._partnerPaused) this._showPartnerPause();   // the captain is still paused
+    if (this._partnerPaused) this._showPartnerPause();   // the partner is still paused
     this._overlayFocus.reprime();
     // A button held to resume isn't a pedal stroke.
     this.input.consumeTaps();
@@ -7362,10 +7370,8 @@ class Game {
   // The ride freezes exactly as the disconnect pause freezes it
   // (_tickDropPause skips the mode update and holds the race clock); in
   // versus, _updateVersus has the same early return. Only P1's pad drives it.
-  // Online co-op: the pause is local — the protocol has no shared pause, so
-  // the partner's screen is not paused (the captain's physics stops, so the
-  // stoker sees the bike stand still; a stoker's pause only stops their own
-  // screen and input).
+  // Online co-op: either rider's pause stops the ride on both screens
+  // (EVT_PAUSE / EVT_RESUME); the other sees who paused it (_startPartnerPause).
   // ============================================================
 
   /** A ride is on and nothing else owns the screen. `phonePanel`: the phone's QR panel may be open (a dropped phone, #529). */
@@ -7412,12 +7418,17 @@ class Game {
         this.input.consumeTaps();
         if (this.inputP2) this.inputP2.consumeTaps();
         this._autoWatching = false;   // resuming hitches: a fresh Auto grace
-        if (this.mode === 'captain' && this.net && this.net.connected) this.net.sendEvent(EVT_RESUME);
+        if (this._onlineCoop() && this.net.connected) this.net.sendEvent(EVT_RESUME);
+        // The partner paused too while this menu was open: wait on them now.
+        if (this._partnerWantsPause && reason !== 'end' && reason !== 'restart') {
+          this._partnerWantsPause = false;
+          this._startPartnerPause();
+        }
         try { analytics.trackEvent('ride_pause_end', { reason, mode: this.mode }); } catch (e) {}
       },
     });
-    // Online co-op: the stoker's ride stops with the captain's, and its screen says so.
-    if (this.mode === 'captain' && this.net && this.net.connected) this.net.sendEvent(EVT_PAUSE);
+    // Online co-op: the partner's ride stops too, and their screen says who paused it.
+    if (this._onlineCoop() && this.net.connected) this.net.sendEvent(EVT_PAUSE);
     this._overlayCooldownUntil = performance.now() + 250;
     try { analytics.trackEvent('ride_pause', { mode: this.mode, state: this.state }); } catch (e) {}
   }
@@ -7448,8 +7459,14 @@ class Game {
     if (box) box.hidden = !box.querySelector('uf-button:not([hidden])');
   }
 
-  // The captain's pause, on the stoker's screen (Pete 2026-11-08): the ride freezes the same
-  // way (_tickDropPause) and a sheet says who paused it. Return to Lobby stays the way out.
+  /** An online co-op ride (captain or stoker, with a connection). */
+  _onlineCoop() {
+    return !!this.net && (this.mode === 'captain' || this.mode === 'stoker');
+  }
+
+  // The partner's pause, on this screen (Pete 2026-11-08 captain → stoker; 2026-11-09 both ways):
+  // the ride freezes the same way (_tickDropPause) and a sheet says who paused it. Return to
+  // Lobby stays the way out.
   _startPartnerPause() {
     if (this._partnerPaused || this.state !== 'playing') return;
     this._closePause();
@@ -7460,7 +7477,7 @@ class Game {
 
   _showPartnerPause() {
     if (this._drop) return;   // the drop's sheet wins; this comes back when it ends
-    const who = this._partnerDisplayName() || 'Your captain';
+    const who = this._partnerDisplayName() || (this.mode === 'stoker' ? 'Your captain' : 'Your stoker');
     const title = who + ' paused the ride';
     document.getElementById('disconnect-overlay').style.display = 'flex';
     document.getElementById('disconnect-msg').textContent = title;

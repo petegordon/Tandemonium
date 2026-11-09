@@ -15,6 +15,8 @@
 //   ORP-03  both finish; the CAPTAIN presses PLAY AGAIN: same
 //   ORP-04  the captain pauses: the stoker's screen says the captain paused the ride and its
 //           clock stops; the captain resumes: the notice goes and both ride on
+//   ORP-06  the stoker pauses: the captain's ride stops and its screen says the stoker paused;
+//           both pause at once: whoever resumes first waits on the other, then both ride on
 //   ORP-05  back in the room after a ride: the stoker's ROAD AHEAD panel is gone; a rebuild of the
 //           level list (sign-in, a controller or gyro coming on) keeps the ROOM's list on both
 //           screens (no Slingshot, the stoker can't pick) and the stoker keeps the captain's pick
@@ -224,6 +226,36 @@ try {
   const s3 = await g(sto);
   const frozen = await sto.evaluate(() => !!window._game.raceManager._pausedAt);
   check(resumed && s3.state === 'playing' && !frozen, 'ORP-04 the captain resumes: the notice goes and the stoker rides on', { ...s3, frozen });
+
+  // ── ORP-06 the stoker pauses (Pete 2026-11-09: a pause stops the ride for both) ──
+  console.log('ORP-06 the stoker pauses');
+  const capDist = () => cap.evaluate(() => window._game.bike.distanceTraveled);
+  const notice = (pg) => pg.evaluate(() => ({
+    shown: document.getElementById('disconnect-overlay').style.display === 'flex',
+    msg: document.getElementById('disconnect-msg').textContent, paused: !!window._game._partnerPaused }));
+  await sto.evaluate(() => window._game._openPause());
+  const capTold = await waitFor(cap, () => document.getElementById('disconnect-overlay').style.display === 'flex' && /paused/i.test(document.getElementById('disconnect-msg').textContent), null, 3000);
+  const d1 = await capDist();
+  await sleep(1500);
+  const d2 = await capDist();
+  check(capTold && Math.abs(d2 - d1) < 0.05, "ORP-06 the stoker's pause stops the captain's ride and says so", { ...(await notice(cap)), d1, d2 });
+  await sto.evaluate(() => window._game._closePause('resume'));
+  const capOn = await waitFor(cap, () => document.getElementById('disconnect-overlay').style.display !== 'flex' && !window._game._partnerPaused, null, 3000);
+  check(capOn, 'ORP-06 the stoker resumes: the captain rides on', await notice(cap));
+  // Both press pause at once: each keeps their own menu.
+  await Promise.all([cap.evaluate(() => window._game._openPause()), sto.evaluate(() => window._game._openPause())]);
+  await sleep(800);
+  const both = { cap: await cap.evaluate(() => ({ menu: !!window._game._pause, waits: !!window._game._partnerWantsPause })),
+    sto: await sto.evaluate(() => ({ menu: !!window._game._pause, waits: !!window._game._partnerWantsPause })) };
+  await cap.evaluate(() => window._game._closePause('resume'));
+  const capWaits = await waitFor(cap, () => !window._game._pause && !!window._game._partnerPaused, null, 3000);
+  const dw1 = await capDist(); await sleep(1000); const dw2 = await capDist();
+  check(both.cap.menu && both.sto.menu && capWaits && Math.abs(dw2 - dw1) < 0.05,
+    'ORP-06 both pause at once: the first to resume waits on the other (the ride stays stopped)', { both, capWaits, dw1, dw2 });
+  await sto.evaluate(() => window._game._closePause('resume'));
+  const allOn = await waitFor(cap, () => !window._game._partnerPaused && !window._game._pause, null, 3000)
+    && await waitFor(sto, () => !window._game._partnerPaused && !window._game._pause, null, 3000);
+  check(allOn, 'ORP-06 the second resumes: both ride on', { cap: await notice(cap), sto: await notice(sto) });
 
   // ── ORP-02 the stoker's PLAY AGAIN ──
   console.log("ORP-02 the stoker's PLAY AGAIN after the finish");
