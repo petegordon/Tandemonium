@@ -681,6 +681,7 @@ class SlingshotMode {
     // #401: the run, for the Slingshot achievements (Slingshot keeps ride checks off).
     this._economyEvent('slingRun', {
       distance: score.distance, record: score.isRecord, pot: !!run.pot, daily: !!daily,
+      topSpeed: run.topSpeed || 0,   // m/s, #716 Flung / Goose Cannonball
       fullTrails: sling.completedTrails(this.collectibleManager ? this.collectibleManager._items : []),
       straight: sling.isStraightShot(score.distance, run.steerAt),
     });

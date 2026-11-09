@@ -92,7 +92,7 @@ function maxedLifetime() {
 }
 
 const finishBase = { collectibles: 12, totalCollectibles: 12, crashes: 1, restarts: 0, medal: 'gold',
-  newBest: true, difficulty: 'adventurous', offroadT: 0, treeHits: 0, assistDeclined: true,
+  newBest: true, difficulty: 'adventurous', offroadT: 0, treeHits: 0, didItMyself: true,
   dailyRanked: true, dailyStreak: 30, pairRides: 10, pairDistanceKm: 100, pairWeekStreak: 4,
   touristFinished: true, isMultiplayer: true, safePct: 90 };
 const CANDIDATES = [
@@ -233,7 +233,7 @@ test('stats: the economy events', () => {
 // ── the ride tracker ─────────────────────────────────────────────
 
 const frame = (over = {}) => ({ ref: 'r1', playing: true, fallen: false, speed: 6, lateralOffset: 0,
-  onCenterStrip: false, boosting: false, shaking: false, assistOn: false, ...over });
+  onCenterStrip: false, boosting: false, shaking: false, helped: false, ...over });
 
 test('ride tracker: False Start and So Close', () => {
   const t = new RideTracker();
@@ -272,7 +272,7 @@ test('ride tracker: False Start only within 3 s of GO, versus included (m1)', ()
   assert.equal(u.crash({ ref: 'b' }).falseStart, false);
 });
 
-test('ride tracker: off-road, centre strip, boost chain, steady hands, assist', () => {
+test('ride tracker: off-road, centre strip, boost chain, steady hands, did it myself', () => {
   const t = new RideTracker();
   for (let i = 0; i < 31; i++) t.frame(1, frame({ onCenterStrip: true, boosting: i < 11 }));
   t.frame(1, frame({ shaking: true }));
@@ -282,10 +282,12 @@ test('ride tracker: off-road, centre strip, boost chain, steady hands, assist', 
   assert.equal(s.boostBest, 11);
   assert.equal(s.steadyBest, 31);
   assert.equal(s.offroadT, 5);
-  t.assistOffered = true;
-  assert.equal(t.snapshot().assistDeclined, true);
-  t.frame(1, frame({ assistOn: true }));
-  assert.equal(t.snapshot().assistDeclined, false);
+  // #716 Did It Myself: stuck at a checkpoint (a Game Over), then no helping hand or shortcut.
+  assert.equal(t.snapshot().didItMyself, false, 'never stuck');
+  t.stuck = true;
+  assert.equal(t.snapshot().didItMyself, true);
+  t.frame(1, frame({ helped: true }));
+  assert.equal(t.snapshot().didItMyself, false, 'the helping hand or the Royal Shortcut came in');
   // A new ride starts clean.
   t.frame(1, frame({ ref: 'r2' }));
   assert.equal(t.snapshot().offroadT, 0);
@@ -507,7 +509,7 @@ test('manager: the stoker (and local co-op) ride tracker earns ride-scoped achie
   m.demo = false;
   // The stoker's bike: remote state only (no physics), on the centre strip.
   const rm = { raceDistance: 500 };
-  const game = { state: 'playing', raceManager: rm, _assistWeight: 0,
+  const game = { state: 'playing', raceManager: rm,
     bike: { lean: 0, fallen: false, speed: 8, _lateralOffset: 0.2, onCenterStrip: true, boostTimer: 0 } };
   m.ride.go();
   const ids = [];
@@ -603,7 +605,7 @@ test('manager: an old player is granted what their saves already prove, once (m2
     'rides_10', 'days_3', 'daily_streak_3']) {
     assert.ok(ids.includes(id), `${id} should be granted (${ids.join(',')})`);
   }
-  for (const id of ['sling_stage5', 'all_gold', 'garage_royalty', 'days_7']) assert.ok(!ids.includes(id), `${id} is not proven`);
+  for (const id of ['sling_40', 'all_gold', 'garage_royalty', 'days_7']) assert.ok(!ids.includes(id), `${id} is not proven`);
   const saved = JSON.parse(localStorage.getItem('tandemonium_achievement_stats'));
   assert.equal(saved.v, STATS_VERSION);
   assert.equal(saved.cumulativeDistance, 1200);

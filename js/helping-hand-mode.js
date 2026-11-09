@@ -117,14 +117,6 @@ class HelpingHandMode {
     this._renderHelpAnnounce();
   }
 
-  /** ASSIST was switched on: the ride counts as helped. */
-  _helpMarkAssisted() {
-    const h = this._helpState();
-    if (h.helped || !this._helpEligible()) return;
-    h.helped = true;
-    this._sendHelpState();
-  }
-
   /** The Royal Shortcut was taken: no medal, no best for this ride. */
   _helpMarkSkipped() {
     this._helpState().skipped = true;

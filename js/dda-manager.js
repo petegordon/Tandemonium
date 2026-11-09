@@ -6,15 +6,11 @@ import { TUNE, DIFFICULTY_PRESETS } from './config.js';
 import { HELP_SKIP_AFTER } from './helping-hand.js';
 
 // Failures at one checkpoint before each kind of help appears.
-// #399 (5/5 playtesters found steering too sensitive, one quit): ASSIST is now
-// offered after 2 failures instead of 4. The silent tune is unchanged.
 // #403: SKIP CHECKPOINT ("Take the Royal Shortcut") after 5 failures, not 6 —
 // the helping hand's schedule (js/helping-hand.js) owns the number.
-// Pete 2026-11-07 ("I just tried to invoke ASSIST ... it never comes up"): ASSIST
-// is offered at the FIRST Game Over at a checkpoint (the third crash there, or a
-// timeout), as RESTART WITH ASSIST on that screen.
+// #716 (Pete 2026-11-09): ASSIST (auto-steer offered at a Game Over) was removed;
+// it steered wildly.
 export const DDA_SILENT_ADJUST_AFTER = 2;
-export const DDA_ASSIST_AFTER = 1;
 export const DDA_SKIP_AFTER = HELP_SKIP_AFTER;
 
 export class DDAManager {
@@ -24,7 +20,6 @@ export class DDAManager {
     this._failureCounts = {}; // checkpoint distance → failure count
     this._currentCheckpoint = 0;
     this._adjustmentsActive = false;
-    this._assistOffered = false;
     this._skipOffered = false;
 
     // Analytics counters
@@ -47,15 +42,11 @@ export class DDAManager {
     const failures = this.getFailureCount(checkpointD);
     const result = {
       adjustTune: false,
-      offerAssist: false,
       offerSkip: false,
     };
 
     if (failures >= DDA_SILENT_ADJUST_AFTER) {
       result.adjustTune = true;
-    }
-    if (failures >= DDA_ASSIST_AFTER && !this._assistOffered) {
-      result.offerAssist = true;
     }
     // #403: offered on every failure from the 5th, not once — the game-over
     // screen is rebuilt each time, and a hidden way out helps nobody.
@@ -92,16 +83,7 @@ export class DDAManager {
     // player was stuck on (#403 — the helping hand resets with it).
     this._failureCounts = {};
     this._currentCheckpoint = checkpointD;
-    this._assistOffered = false;
     this._skipOffered = false;
-  }
-
-  /** ASSIST has been offered for the stretch of road in front of the player. */
-  get assistOffered() { return this._assistOffered; }
-
-  markAssistOffered() {
-    this._assistOffered = true;
-    this.offeredCount++;
   }
 
   markSkipOffered() {
@@ -113,7 +95,6 @@ export class DDAManager {
     this._failureCounts = {};
     this._currentCheckpoint = 0;
     this._adjustmentsActive = false;
-    this._assistOffered = false;
     this._skipOffered = false;
     // Restore base TUNE values
     TUNE.crashThreshold = this._basePreset.crashThreshold;
