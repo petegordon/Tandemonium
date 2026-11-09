@@ -1331,6 +1331,9 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
     if (acct > 0) {
       sets.push('google_uid = COALESCE(google_uid, ?)');
       values.push(String(acct));
+      // This can beat the session's create: make the row now (the create
+      // fills in the rest and keeps the account).
+      await ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }])[0].run();
     }
   }
 
