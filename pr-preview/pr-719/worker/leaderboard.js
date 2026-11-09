@@ -73,59 +73,42 @@ export default {
     try {
       const path = url.pathname;
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      // Rate limits, one place for every route (see limitRequest).
+      const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
+      if (limited) return limited;
 
       // Auth routes
       if (path === '/auth/google' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleGoogleAuth(request, env, corsOrigin);
       }
       if (path === '/auth/steam' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamAuth(request, env, corsOrigin);
       }
 
       // #612 · Discord sign-in (redirect on the same device, or a device code for TV / Steam)
       if (path === '/auth/discord/begin' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordBegin(request, env, url, corsOrigin, identityDeps());
       }
       if (path === '/auth/discord/go' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordGo(request, env, url);
       }
       if (path === '/auth/discord/callback' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordCallback(request, env, url, identityDeps());
       }
       if (path === '/auth/discord/confirm' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordConfirm(request, env, url, identityDeps());
       }
       // #612 · Steam on the web ("Sign in through Steam"); the Steam build uses /auth/steam with a ticket.
       if (path === '/auth/steam/begin' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebBegin(request, env, url, corsOrigin, identityDeps());
       }
       if (path === '/auth/steam/go' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebGo(request, env, url);
       }
       if (path === '/auth/steam/callback' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebCallback(request, env, url, identityDeps());
       }
       if (path === '/auth/poll' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
 
@@ -133,38 +116,26 @@ export default {
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/me/games') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleMeGames(req, e, c, uid, identityDeps()));
       }
       // #612 · open another House Tandem site (dice) already signed in.
       if (path === '/auth/handoff' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleHandoffCreate(req, e, c, uid, identityDeps()));
       }
       if (path === '/auth/handoff/redeem' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
       }
       if (path === '/me/discord') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
       }
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, handleDeleteAccount);
       }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       // housetandem-web #37 · time in game (every game) and Tandemonium's lifetime stats, as deltas.
       const gameSync = path.match(/^\/games\/([a-z][a-z0-9_-]{0,19})\/sync$/);
       if (gameSync && request.method === 'POST') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleGameSync(request, env, corsOrigin, gameSync[1], identityDeps());
       }
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
@@ -172,8 +143,6 @@ export default {
       // actually ridden with. There is no global daily board (decision 5).
       if (path === '/pair') return withAuth(request, env, corsOrigin, handlePair);
       if (path === '/daily' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.SCORE_LIMITER || env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, handleDailySubmit);
       }
       if (path === '/daily') return withAuth(request, env, corsOrigin, handleDailyBoard);
@@ -188,50 +157,31 @@ export default {
       }
 
       if (path === '/leaderboard') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleLeaderboard(request, env, url, corsOrigin);
       }
       if (path.startsWith('/player/')) {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handlePlayerProfile(request, env, url, corsOrigin);
       }
 
       // ---- Analytics routes (fire-and-forget, no auth required) ----
       if (path === '/api/analytics/session' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsSession(request, env, corsOrigin, clientIP);
       }
       if (path.match(/^\/api\/analytics\/session\/[^/]+$/) && request.method === 'PUT') {
-        // Its own budget: updates used to share the create limit, so a burst of
-        // them (a controller seated over and over) made the NEXT session's
-        // create 429, and every event of that session then failed.
-        const limited = await checkRateLimit(env.ANALYTICS_SESSION_UPDATE_LIMITER || env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const sessId = path.split('/')[4];
         return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId, clientIP);
       }
       if (path === '/api/analytics/event/batch' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsEventBatch(request, env, corsOrigin);
       }
       if (path === '/api/analytics/ride' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsRideCreate(request, env, corsOrigin);
       }
       if (path.match(/^\/api\/analytics\/ride\/[^/]+$/) && request.method === 'PUT') {
-        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const rideId = path.split('/')[4];
         return handleAnalyticsRideUpdate(request, env, corsOrigin, rideId);
       }
       if (path.match(/^\/api\/analytics\/ride\/[^/]+\/events$/) && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const rideId = path.split('/')[4];
         return handleAnalyticsRideEvents(request, env, corsOrigin, rideId);
       }
@@ -248,8 +198,6 @@ export default {
 
       // ---- Dashboard query routes (authenticated, rate limited) ----
       if (path.startsWith('/api/analytics/dashboard/')) {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const dashRoute = path.replace('/api/analytics/dashboard/', '');
         return withDashboardAuth(request, env, corsOrigin, (_r, _e, _c, viewerId) =>
           handleDashboard(dashRoute, url, env, corsOrigin, { clientIP, viewerId })
@@ -1219,6 +1167,54 @@ async function verifyGoogleIdToken(token, expectedAud) {
 // RATE LIMITING
 // ============================================================
 
+// ── Rate limits (Pete 2026-11-09): two rules, the same for every route ──
+//   1. Per player: 30 a minute for each kind of write, keyed by the account
+//      when signed in, else by the session / device / ride id.
+//   2. Per IP: 300 a minute across every route. A venue puts every machine on
+//      one IP (one machine sends ~15-20 a minute while riding), and an id can
+//      be made up, so this ceiling is what stops a script.
+// Starting a sign-in has no player yet: 30 a minute per IP. Share uploads
+// keep their own tighter limit (they post publicly to Discord; worker/share.js).
+export const PLAYER_LIMIT = 30;
+export const IP_LIMIT = 300;
+const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
+  '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete']);
+
+/** Which per-player bucket a request writes to, or null (reads: the IP ceiling only). */
+export async function playerBucket(request, env, path, clientIP) {
+  const method = request.method;
+  if (method !== 'POST' && method !== 'PUT') return null;
+  const json = async () => { try { return JSON.parse(await request.clone().text()); } catch { return {}; } };
+  const seg = path.split('/');
+  if (path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/')) {
+    const kind = seg[3];   // session | event | ride | room | conversion
+    if (seg.length >= 5 && seg[4] !== 'batch') return `${kind}${seg[5] ? '-' + seg[5] : ''}:${seg[4]}`;   // /session/:id, /ride/:id(/events), /room/:code
+    const b = await json();
+    if (kind === 'session') return 'session-create:' + (b.device_id || b.id || 'ip:' + clientIP);
+    if (kind === 'event') return 'event:' + ((Array.isArray(b.events) && b.events[0] && b.events[0].session_id) || 'ip:' + clientIP);
+    if (kind === 'room') return 'room:' + (b.code || 'ip:' + clientIP);
+    return kind + ':' + (b.session_id || 'ip:' + clientIP);
+  }
+  if (path === '/score' || path === '/daily' || path === '/achievements/sync' || /^\/games\/[^/]+\/sync$/.test(path)) {
+    const auth = request.headers.get('Authorization') || '';
+    const sub = auth.startsWith('Bearer ') && env.JWT_SECRET ? await userFromToken(auth.slice(7), env) : null;
+    return path.split('/')[1] + ':' + (sub ? 'user:' + sub : 'ip:' + clientIP);
+  }
+  return null;
+}
+
+/** The two rules (plus sign-in starts) for this request: a 429 response or null. */
+export async function limitRequest(request, env, path, clientIP, corsOrigin) {
+  if (request.method === 'OPTIONS') return null;
+  const ip = await checkRateLimit(env.IP_LIMITER, 'ip:' + clientIP, corsOrigin, env);
+  if (ip) return ip;
+  if (SIGNIN_PATHS.has(path)) {
+    return checkRateLimit(env.SIGNIN_LIMITER, 'signin:' + clientIP, corsOrigin, env);
+  }
+  const bucket = await playerBucket(request, env, path, clientIP);
+  return bucket ? checkRateLimit(env.PLAYER_LIMITER, bucket, corsOrigin, env) : null;
+}
+
 async function checkRateLimit(limiter, key, corsOrigin, env) {
   if (!limiter) return null; // graceful fallback if binding not configured
   const { success } = await limiter.limit({ key });
@@ -1236,9 +1232,8 @@ async function checkRateLimit(limiter, key, corsOrigin, env) {
   return null;
 }
 
+// The per-player limit is applied in limitRequest, like every route's.
 async function submitScoreWithLimit(request, env, corsOrigin, userId) {
-  const limited = await checkRateLimit(env.SCORE_LIMITER, 'user:' + userId, corsOrigin, env);
-  if (limited) return limited;
   return submitScore(request, env, corsOrigin, userId);
 }
 
