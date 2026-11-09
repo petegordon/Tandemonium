@@ -11,7 +11,7 @@
 //   AD-04  B closes the card and the focus is back on the same badge, with the
 //          Achievements sheet still open.
 //   AD-05  Unlocked shows its date; a counter shows its progress with a bar; a
-//          best-so-far shows "45 / 65 km/h" and its "Best: <ride> · <date, time>"
+//          best-so-far shows "45 / 50 km/h" and its "Best: <ride> · <date, time>"
 //          line under the bar; a hidden one stays ??? / "Hidden".
 //          #634: the grid and the card are the kit's <uf-achievement-grid> /
 //          <uf-achievement-detail>.
@@ -32,7 +32,7 @@ const EARNED_AT = Date.UTC(2026, 10, 1, 15, 0, 0);   // 1 November 2026
 const storage = {
   tandemonium_tutorial_done: 'smoke',
   tandemonium_achievements: JSON.stringify([{ id: 'first_pedal', name: 'Kick Off', icon: '🦶', earnedAt: EARNED_AT }]),
-  // a best-so-far with where + when it was set (Terminal Goose: 45 of 65 km/h on the Daily Ride)
+  // a best-so-far with where + when it was set (Terminal Goose: 45 of 50 km/h on the Daily Ride)
   tandemonium_achievement_stats: JSON.stringify({ v: 2, rides: 1, bests: { terminal_goose: 45 }, bestsAt: { terminal_goose: { level: 'daily', at: Date.UTC(2026, 10, 7, 22, 0) } } }),
 };
 
@@ -232,10 +232,10 @@ const bestLine = await page.evaluate(() => {
   const b = document.querySelector('#ach-detail-card .ach-detail-best');
   return { text: b?.textContent || '', afterBar: !!b && b.previousElementSibling?.classList.contains('uad-bar'), beforeCount: !!b && b.nextElementSibling?.classList.contains('uad-count') };
 });
-check(!!best && best.state === 'progress' && best.status === '45 / 65 km/h' && best.bar, 'AD-05 a best-so-far shows its progress with the unit and a bar', best);
+check(!!best && best.state === 'progress' && best.status === '45 / 50 km/h' && best.bar, 'AD-05 a best-so-far shows its progress with the unit and a bar', best);
 check(/^Best: Daily Ride · November 7, 2026, \d{1,2}:\d\d [AP]M$/.test(bestLine.text) && bestLine.afterBar && bestLine.beforeCount, 'AD-05 …and where + when the best was set, under the bar', bestLine);
 const tile = await page.evaluate(() => document.querySelector('#achievements-modal .uag-item[data-ach="terminal_goose"] .uag-progress')?.textContent || '');
-check(tile === '45/65 km/h', 'AD-05 its badge on the grid reads 45/65 km/h', tile);
+check(tile === '45/50 km/h', 'AD-05 its badge on the grid reads 45/50 km/h', tile);
 await h.shot(page, '4c-tv-detail-best');
 await closeCard();
 const gold = await open('grandma_gold');

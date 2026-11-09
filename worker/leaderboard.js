@@ -73,59 +73,42 @@ export default {
     try {
       const path = url.pathname;
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
+      // Rate limits, one place for every route (see limitRequest).
+      const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
+      if (limited) return limited;
 
       // Auth routes
       if (path === '/auth/google' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleGoogleAuth(request, env, corsOrigin);
       }
       if (path === '/auth/steam' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamAuth(request, env, corsOrigin);
       }
 
       // #612 · Discord sign-in (redirect on the same device, or a device code for TV / Steam)
       if (path === '/auth/discord/begin' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordBegin(request, env, url, corsOrigin, identityDeps());
       }
       if (path === '/auth/discord/go' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordGo(request, env, url);
       }
       if (path === '/auth/discord/callback' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordCallback(request, env, url, identityDeps());
       }
       if (path === '/auth/discord/confirm' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleDiscordConfirm(request, env, url, identityDeps());
       }
       // #612 · Steam on the web ("Sign in through Steam"); the Steam build uses /auth/steam with a ticket.
       if (path === '/auth/steam/begin' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebBegin(request, env, url, corsOrigin, identityDeps());
       }
       if (path === '/auth/steam/go' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebGo(request, env, url);
       }
       if (path === '/auth/steam/callback' && request.method === 'GET') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleSteamWebCallback(request, env, url, identityDeps());
       }
       if (path === '/auth/poll' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
 
@@ -133,38 +116,26 @@ export default {
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
       if (path === '/me') return withAuth(request, env, corsOrigin, getMe);
       if (path === '/me/games') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleMeGames(req, e, c, uid, identityDeps()));
       }
       // #612 · open another House Tandem site (dice) already signed in.
       if (path === '/auth/handoff' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleHandoffCreate(req, e, c, uid, identityDeps()));
       }
       if (path === '/auth/handoff/redeem' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
       }
       if (path === '/me/discord') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
       }
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.AUTH_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, handleDeleteAccount);
       }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       // housetandem-web #37 · time in game (every game) and Tandemonium's lifetime stats, as deltas.
       const gameSync = path.match(/^\/games\/([a-z][a-z0-9_-]{0,19})\/sync$/);
       if (gameSync && request.method === 'POST') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleGameSync(request, env, corsOrigin, gameSync[1], identityDeps());
       }
       if (path === '/partners') return withAuth(request, env, corsOrigin, handlePartners);
@@ -172,8 +143,6 @@ export default {
       // actually ridden with. There is no global daily board (decision 5).
       if (path === '/pair') return withAuth(request, env, corsOrigin, handlePair);
       if (path === '/daily' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.SCORE_LIMITER || env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return withAuth(request, env, corsOrigin, handleDailySubmit);
       }
       if (path === '/daily') return withAuth(request, env, corsOrigin, handleDailyBoard);
@@ -188,50 +157,31 @@ export default {
       }
 
       if (path === '/leaderboard') {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleLeaderboard(request, env, url, corsOrigin);
       }
       if (path.startsWith('/player/')) {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handlePlayerProfile(request, env, url, corsOrigin);
       }
 
       // ---- Analytics routes (fire-and-forget, no auth required) ----
       if (path === '/api/analytics/session' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsSession(request, env, corsOrigin, clientIP);
       }
       if (path.match(/^\/api\/analytics\/session\/[^/]+$/) && request.method === 'PUT') {
-        // Its own budget: updates used to share the create limit, so a burst of
-        // them (a controller seated over and over) made the NEXT session's
-        // create 429, and every event of that session then failed.
-        const limited = await checkRateLimit(env.ANALYTICS_SESSION_UPDATE_LIMITER || env.ANALYTICS_SESSION_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const sessId = path.split('/')[4];
         return handleAnalyticsSessionUpdate(request, env, corsOrigin, sessId, clientIP);
       }
       if (path === '/api/analytics/event/batch' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsEventBatch(request, env, corsOrigin);
       }
       if (path === '/api/analytics/ride' && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         return handleAnalyticsRideCreate(request, env, corsOrigin);
       }
       if (path.match(/^\/api\/analytics\/ride\/[^/]+$/) && request.method === 'PUT') {
-        const limited = await checkRateLimit(env.ANALYTICS_RIDE_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const rideId = path.split('/')[4];
         return handleAnalyticsRideUpdate(request, env, corsOrigin, rideId);
       }
       if (path.match(/^\/api\/analytics\/ride\/[^/]+\/events$/) && request.method === 'POST') {
-        const limited = await checkRateLimit(env.ANALYTICS_EVENT_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const rideId = path.split('/')[4];
         return handleAnalyticsRideEvents(request, env, corsOrigin, rideId);
       }
@@ -248,11 +198,9 @@ export default {
 
       // ---- Dashboard query routes (authenticated, rate limited) ----
       if (path.startsWith('/api/analytics/dashboard/')) {
-        const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-        if (limited) return limited;
         const dashRoute = path.replace('/api/analytics/dashboard/', '');
-        return withDashboardAuth(request, env, corsOrigin, () =>
-          handleDashboard(dashRoute, url, env, corsOrigin)
+        return withDashboardAuth(request, env, corsOrigin, (_r, _e, _c, viewerId) =>
+          handleDashboard(dashRoute, url, env, corsOrigin, { clientIP, viewerId })
         );
       }
 
@@ -379,6 +327,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
   const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
+  // The Steam build signs in just after launch: this ride's analytics session
+  // takes the account here, in the same request (no extra request to lose).
+  await attachSessionAccount(env, body.session_id, userId);
 
   const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
 
@@ -1216,6 +1167,54 @@ async function verifyGoogleIdToken(token, expectedAud) {
 // RATE LIMITING
 // ============================================================
 
+// ── Rate limits (Pete 2026-11-09): two rules, the same for every route ──
+//   1. Per player: 30 a minute for each kind of write, keyed by the account
+//      when signed in, else by the session / device / ride id.
+//   2. Per IP: 300 a minute across every route. A venue puts every machine on
+//      one IP (one machine sends ~15-20 a minute while riding), and an id can
+//      be made up, so this ceiling is what stops a script.
+// Starting a sign-in has no player yet: 30 a minute per IP. Share uploads
+// keep their own tighter limit (they post publicly to Discord; worker/share.js).
+export const PLAYER_LIMIT = 30;
+export const IP_LIMIT = 300;
+const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
+  '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete']);
+
+/** Which per-player bucket a request writes to, or null (reads: the IP ceiling only). */
+export async function playerBucket(request, env, path, clientIP) {
+  const method = request.method;
+  if (method !== 'POST' && method !== 'PUT') return null;
+  const json = async () => { try { return JSON.parse(await request.clone().text()); } catch { return {}; } };
+  const seg = path.split('/');
+  if (path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/')) {
+    const kind = seg[3];   // session | event | ride | room | conversion
+    if (seg.length >= 5 && seg[4] !== 'batch') return `${kind}${seg[5] ? '-' + seg[5] : ''}:${seg[4]}`;   // /session/:id, /ride/:id(/events), /room/:code
+    const b = await json();
+    if (kind === 'session') return 'session-create:' + (b.device_id || b.id || 'ip:' + clientIP);
+    if (kind === 'event') return 'event:' + ((Array.isArray(b.events) && b.events[0] && b.events[0].session_id) || 'ip:' + clientIP);
+    if (kind === 'room') return 'room:' + (b.code || 'ip:' + clientIP);
+    return kind + ':' + (b.session_id || 'ip:' + clientIP);
+  }
+  if (path === '/score' || path === '/daily' || path === '/achievements/sync' || /^\/games\/[^/]+\/sync$/.test(path)) {
+    const auth = request.headers.get('Authorization') || '';
+    const sub = auth.startsWith('Bearer ') && env.JWT_SECRET ? await userFromToken(auth.slice(7), env) : null;
+    return path.split('/')[1] + ':' + (sub ? 'user:' + sub : 'ip:' + clientIP);
+  }
+  return null;
+}
+
+/** The two rules (plus sign-in starts) for this request: a 429 response or null. */
+export async function limitRequest(request, env, path, clientIP, corsOrigin) {
+  if (request.method === 'OPTIONS') return null;
+  const ip = await checkRateLimit(env.IP_LIMITER, 'ip:' + clientIP, corsOrigin, env);
+  if (ip) return ip;
+  if (SIGNIN_PATHS.has(path)) {
+    return checkRateLimit(env.SIGNIN_LIMITER, 'signin:' + clientIP, corsOrigin, env);
+  }
+  const bucket = await playerBucket(request, env, path, clientIP);
+  return bucket ? checkRateLimit(env.PLAYER_LIMITER, bucket, corsOrigin, env) : null;
+}
+
 async function checkRateLimit(limiter, key, corsOrigin, env) {
   if (!limiter) return null; // graceful fallback if binding not configured
   const { success } = await limiter.limit({ key });
@@ -1233,9 +1232,8 @@ async function checkRateLimit(limiter, key, corsOrigin, env) {
   return null;
 }
 
+// The per-player limit is applied in limitRequest, like every route's.
 async function submitScoreWithLimit(request, env, corsOrigin, userId) {
-  const limited = await checkRateLimit(env.SCORE_LIMITER, 'user:' + userId, corsOrigin, env);
-  if (limited) return limited;
   return submitScore(request, env, corsOrigin, userId);
 }
 
@@ -1323,6 +1321,14 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
     }
   }
 
+  // Player 1 signed in after the session started (the Steam build's ticket
+  // sign-in finishes after launch): attach the account from the verified
+  // token. Only to a guest session, so it can't move one between accounts.
+  if (typeof body.account_token === 'string' && env.JWT_SECRET) {
+    const acct = parseInt((await userFromToken(body.account_token, env)) ?? '', 10);
+    if (acct > 0) await attachSessionAccount(env, sessionId, acct);
+  }
+
   // Always update IP address (captures it even for sessions created before migration)
   if (clientIP) {
     sets.push('ip_address = ?');
@@ -1339,6 +1345,26 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   ).bind(...values).run();
 
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+/**
+ * Player 1 signed in during this session: a guest session takes the account.
+ * Safe under any ordering or repeat: the placeholder insert is a no-op when
+ * the row exists, the create's upsert keeps the account (COALESCE), and
+ * COALESCE here never moves a session that already has one. Never fails the
+ * caller (a sign-in must not fail over analytics).
+ */
+export async function attachSessionAccount(env, sessionId, userId) {
+  const acct = parseInt(userId, 10);
+  if (!isValidUUID(sessionId) || !(acct > 0)) return;
+  try {
+    await env.DB.batch([
+      ...ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }]),
+      env.DB.prepare('UPDATE sessions SET google_uid = COALESCE(google_uid, ?) WHERE id = ?').bind(String(acct), sessionId),
+    ]);
+  } catch (e) {
+    console.error('session account attach failed', e);
+  }
 }
 
 /**
@@ -1423,8 +1449,43 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
     body.started_at || new Date().toISOString()
   ).run();
 
+  await saveRideSeats(env, body.id, body.seats);
+
   writeMetric(env, 'analytics_ride_start', body.level);
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+const clip = (v, n) => (typeof v === 'string' && v ? v.slice(0, n) : null);
+
+/**
+ * Everyone on the ride (migration 0016). A seat's account comes only from its
+ * own sign-in token, verified here. Never fails the ride's create: analytics
+ * extras must not cost the ride row (nor does a missing table, before the
+ * migration is applied).
+ */
+export async function saveRideSeats(env, rideId, seats) {
+  if (!Array.isArray(seats) || !seats.length) return;
+  try {
+    const rows = [];
+    const used = new Set();
+    for (const s of seats.slice(0, 4)) {
+      const seat = parseInt(s && s.seat, 10);
+      if (!(seat >= 1 && seat <= 4) || used.has(seat)) continue;
+      used.add(seat);
+      let userId = null;
+      if (typeof s.account_token === 'string' && env.JWT_SECRET) {
+        const sub = parseInt((await userFromToken(s.account_token, env)) ?? '', 10);
+        if (sub > 0) userId = sub;
+      }
+      rows.push(env.DB.prepare(
+        `INSERT OR IGNORE INTO ride_seats (ride_id, seat, user_id, role, team, input_type, controller)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).bind(rideId, seat, userId, clip(s.role, 16), clip(s.team, 4), clip(s.input_type, 24), clip(s.controller, 80)));
+    }
+    if (rows.length) await env.DB.batch(rows);
+  } catch (e) {
+    console.error('ride seats not saved', e);
+  }
 }
 
 async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
@@ -1589,14 +1650,12 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
 // DASHBOARD QUERIES
 // ============================================================
 
-async function handleDashboard(route, url, env, corsOrigin) {
+async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
   const days = parseInt(url.searchParams.get('days') || '30');
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
-  // Developer exclusion: comma-separated IPs and/or google_uids
-  const excludeIPs = (url.searchParams.get('exclude_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
-  const excludeUIDs = (url.searchParams.get('exclude_uids') || '').split(',').map(s => s.trim()).filter(Boolean);
-  const ex = { ips: excludeIPs, uids: excludeUIDs };
+  // Developer exclusion: IPs (a trailing * matches a prefix) and accounts.
+  const ex = await resolveDevExclusions(env, parseDevExclusions(url));
 
   const handlers = {
     daily: () => dashDaily(env, since, ex),
@@ -1622,16 +1681,40 @@ async function handleDashboard(route, url, env, corsOrigin) {
     }),
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
+    players: () => dashPlayers(env, since, ex),
   };
 
-  // Also expose a 'dev_ips' route so the dashboard can show known developer IPs
+  // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
+  // excluded accounts rode from in the last 30 days (older ones may be a venue
+  // other players shared). An IPv6 address comes back as its /64, since home
+  // IPv6 addresses change every day or so.
   if (route === 'dev_ips') {
-    const rows = await env.DB.prepare(
-      `SELECT DISTINCT ip_address FROM sessions
-       WHERE google_uid IN ('pete@usersfirst.com', 'pete@petegordon.com')
-       AND ip_address IS NOT NULL`
-    ).all();
-    return jsonResponse({ ips: (rows.results || []).map(r => r.ip_address) }, 200, corsOrigin);
+    const ips = new Map();
+    const add = (ip, note) => { const k = ipForExclusion(ip); if (k && !ips.has(k)) ips.set(k, note); };
+    add(viewer.clientIP, 'this browser, now');
+    const viewerAccount = parseInt(viewer.viewerId, 10) || null;
+    const accounts = [...new Set([...ex.accounts, ...(viewerAccount ? [viewerAccount] : [])])];
+    if (accounts.length) {
+      const recent = new Date(Date.now() - 30 * 86400000).toISOString();
+      const rows = await env.DB.prepare(
+        `SELECT ip_address, COUNT(*) AS n, MAX(started_at) AS last FROM sessions
+         WHERE ip_address IS NOT NULL AND started_at >= ?
+           AND CAST(google_uid AS INTEGER) IN (${accounts.map(() => '?').join(',')})
+         GROUP BY ip_address ORDER BY n DESC`
+      ).bind(recent, ...accounts).all();
+      // A /64 gathers many addresses: add their counts up.
+      const seen = new Map();
+      for (const r of rows.results || []) {
+        const k = ipForExclusion(r.ip_address);
+        if (!k) continue;
+        const s = seen.get(k) || { n: 0, last: '' };
+        s.n += r.n;
+        if (String(r.last) > s.last) s.last = String(r.last);
+        seen.set(k, s);
+      }
+      for (const [k, s] of seen) add(k, `${s.n} sessions, last ${s.last.slice(0, 10)}`);
+    }
+    return jsonResponse({ ips: [...ips].map(([ip, note]) => ({ ip, note })), viewer_account: viewerAccount }, 200, corsOrigin);
   }
 
   const handler = handlers[route];
@@ -1641,49 +1724,103 @@ async function handleDashboard(route, url, env, corsOrigin) {
   return jsonResponse(data, 200, corsOrigin);
 }
 
-// Build SQL exclusion for filtering out developer sessions.
-// Two forms depending on whether the query already joins the sessions table:
-//
-// sessionFilter(ex, 's')  → " AND s.ip_address NOT IN (?) AND s.google_uid NOT IN (?)"
-//   Use when query already has sessions aliased as 's'.
-//
-// sessionFilter(ex)       → same, default alias 's'
-//
-// For queries on tables that have session_id but no sessions join, use:
-//   excludedSessionSubquery(ex) → "session_id NOT IN (SELECT id FROM sessions WHERE ip_address IN (?) OR google_uid IN (?))"
-//   This returns { clause, binds } where clause is empty when no exclusions.
+// ── Developer exclusion ──
+// The dashboard sends:
+//   exclude_ips       IPs; one ending in * matches by prefix (an IPv6 /64)
+//   exclude_accounts  account numbers (users.id), or provider:id sign-ins
+//                     (steam:7656…, discord:…, google:…) looked up to their account
+// sessions.google_uid holds the signed-in account's number (as text, often
+// "38.0"), whichever sign-in it was: Google, Discord or Steam. It never held an
+// email, so the old email list matched nothing.
 
-function sessionFilter(ex, alias = 's') {
-  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
-  const parts = [];
-  const binds = [];
-  if (ex.ips.length > 0) {
-    parts.push(`${alias}.ip_address NOT IN (${ex.ips.map(() => '?').join(',')})`);
-    binds.push(...ex.ips);
+/** Read the exclusion params (no database). Unknown tokens are ignored. */
+export function parseDevExclusions(url) {
+  const list = (k) => (url.searchParams.get(k) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const ips = [];
+  const prefixes = [];
+  for (const ip of list('exclude_ips')) {
+    if (ip.endsWith('*')) {
+      const p = ip.slice(0, -1);
+      if (/^[0-9a-fA-F:.]{3,}$/.test(p)) prefixes.push(p);
+    } else ips.push(ip);
   }
-  if (ex.uids.length > 0) {
-    parts.push(`${alias}.google_uid NOT IN (${ex.uids.map(() => '?').join(',')})`);
-    binds.push(...ex.uids);
+  const accounts = new Set();
+  const identities = [];
+  // exclude_uids is what older dashboards sent (emails, which match nothing).
+  for (const t of [...list('exclude_accounts'), ...list('exclude_uids')]) {
+    if (/^\d+(\.0)?$/.test(t)) { const n = parseInt(t, 10); if (n > 0) accounts.add(n); continue; }
+    const m = /^(google|discord|steam):(.+)$/i.exec(t);
+    if (m) identities.push({ provider: m[1].toLowerCase(), providerId: m[2] });
   }
-  return { clause: ' AND ' + parts.join(' AND '), binds };
+  return { ips, prefixes, accounts: [...accounts], identities };
 }
 
-function excludedSessionSubquery(ex) {
-  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
+/** Turn provider:id sign-ins into account numbers. */
+async function resolveDevExclusions(env, ex) {
+  if (!ex.identities.length) return ex;
+  const accounts = new Set(ex.accounts);
+  for (const { provider, providerId } of ex.identities) {
+    const row = await env.DB.prepare(
+      'SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?'
+    ).bind(provider, providerId).first();
+    if (row && row.user_id) accounts.add(Number(row.user_id));
+  }
+  return { ...ex, accounts: [...accounts] };
+}
+
+/** An IP as an exclusion entry: IPv4 as is, IPv6 as its /64 prefix with a *. */
+export function ipForExclusion(ip) {
+  if (!ip || ip === 'unknown') return null;
+  if (!ip.includes(':')) return ip;
+  if (ip.endsWith(':*')) return ip;
+  let groups;
+  if (ip.includes('::')) {
+    const [head, tail] = ip.split('::');
+    const h = head ? head.split(':') : [];
+    const t = tail ? tail.split(':') : [];
+    groups = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  } else groups = ip.split(':');
+  return groups.slice(0, 4).join(':') + ':*';
+}
+
+/**
+ * "This session is the developer's" as SQL, or null when nothing is excluded.
+ * Never NULL itself: a NOT IN against an empty column is NULL, which dropped
+ * every signed-out session (most players) instead of keeping it.
+ */
+export function devSessionCondition(ex, alias = '') {
+  if (!ex) return null;
+  const col = (c) => (alias ? `${alias}.${c}` : c);
   const conds = [];
   const binds = [];
-  if (ex.ips.length > 0) {
-    conds.push(`ip_address IN (${ex.ips.map(() => '?').join(',')})`);
+  if (ex.ips.length) {
+    conds.push(`COALESCE(${col('ip_address')}, '') IN (${ex.ips.map(() => '?').join(',')})`);
     binds.push(...ex.ips);
   }
-  if (ex.uids.length > 0) {
-    conds.push(`google_uid IN (${ex.uids.map(() => '?').join(',')})`);
-    binds.push(...ex.uids);
+  for (const p of ex.prefixes) {
+    conds.push(`COALESCE(${col('ip_address')}, '') LIKE ?`);
+    binds.push(p + '%');
   }
-  return {
-    clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${conds.join(' OR ')})`,
-    binds,
-  };
+  if (ex.accounts.length) {
+    conds.push(`COALESCE(CAST(${col('google_uid')} AS INTEGER), 0) IN (${ex.accounts.map(() => '?').join(',')})`);
+    binds.push(...ex.accounts);
+  }
+  return conds.length ? { cond: `(${conds.join(' OR ')})`, binds } : null;
+}
+
+// For a query that has sessions aliased as 's': " AND NOT (…)".
+export function sessionFilter(ex, alias = 's') {
+  const d = devSessionCondition(ex, alias);
+  return d ? { clause: ` AND NOT ${d.cond}`, binds: d.binds } : { clause: '', binds: [] };
+}
+
+// For a table with a session_id column and no sessions join. Callers may
+// rename session_id to r.session_id, so it must appear once, at the front.
+export function excludedSessionSubquery(ex) {
+  const d = devSessionCondition(ex);
+  return d
+    ? { clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${d.cond})`, binds: d.binds }
+    : { clause: '', binds: [] };
 }
 
 // ============================================================
@@ -1868,6 +2005,111 @@ async function dashPairs(env, since, ex) {
     repeat_share: pairs.length ? +(repeat.length / pairs.length).toFixed(3) : 0,
     median_days_between_rides: median,
     note: 'Signed-in accounts only. Guest pairs are invisible here until D-9.'
+  };
+}
+
+// Who played, and for how long (Pete 2026-11-09). One row per signed-in
+// account (Steam, Discord, Google: its sign-ins by name) and one per guest
+// device that rode at least once (bots and bounces never ride).
+// A session's time runs from its start to its last event or ride end: the game
+// never recorded a session's end. One session counts at most 2 hours, so a
+// window left open overnight doesn't read as a marathon.
+export const PLAYER_SESSION_CAP_MIN = 120;
+async function dashPlayers(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
+  const rows = await env.DB.prepare(
+    `WITH ss AS (
+       SELECT s.id, s.started_at, s.platform, s.controller_name,
+              CAST(s.google_uid AS INTEGER) AS acct,
+              CASE WHEN s.google_uid IS NOT NULL THEN 'a:' || CAST(s.google_uid AS INTEGER)
+                   ELSE 'g:' || COALESCE(s.device_id, s.ip_address, s.id) END AS who
+       FROM sessions s WHERE s.started_at >= ?${sf.clause}
+     ),
+     ev AS (SELECT session_id, MAX(created_at) AS last FROM events
+            WHERE session_id IN (SELECT id FROM ss) GROUP BY session_id),
+     rd AS (SELECT session_id, COUNT(*) AS rides, SUM(completed) AS done,
+                   MAX(COALESCE(ended_at, started_at)) AS last
+            FROM rides WHERE session_id IN (SELECT id FROM ss) GROUP BY session_id),
+     per AS (
+       SELECT ss.*, COALESCE(rd.rides, 0) AS rides, COALESCE(rd.done, 0) AS done,
+              MIN(${PLAYER_SESSION_CAP_MIN}, MAX(0, (julianday(MAX(COALESCE(ev.last, ss.started_at), COALESCE(rd.last, ss.started_at)))
+                - julianday(ss.started_at)) * 1440)) AS mins
+       FROM ss LEFT JOIN ev ON ev.session_id = ss.id LEFT JOIN rd ON rd.session_id = ss.id
+     )
+     SELECT who, MAX(acct) AS acct, COUNT(*) AS sessions, COUNT(DISTINCT substr(started_at, 1, 10)) AS days,
+            ROUND(SUM(mins), 1) AS minutes, SUM(rides) AS rides, SUM(done) AS finished,
+            MIN(started_at) AS first_seen, MAX(started_at) AS last_seen,
+            GROUP_CONCAT(DISTINCT platform) AS platforms,
+            GROUP_CONCAT(DISTINCT controller_name) AS controllers
+     FROM per GROUP BY who
+     HAVING acct IS NOT NULL OR SUM(rides) > 0
+     ORDER BY minutes DESC
+     LIMIT 300`
+  ).bind(since, ...sf.binds).all();
+  const players = rows.results || [];
+
+  // Couch seats 2–4 (migration 0016): their rides count toward the seat's own
+  // account. Excluded by account only: a real player in seat 2 on the
+  // developer's machine still counts.
+  try {
+    const exAcc = ex && ex.accounts && ex.accounts.length ? ex.accounts : [];
+    const seatRows = await env.DB.prepare(
+      `SELECT rs.user_id AS acct, COUNT(*) AS rides, SUM(r.completed) AS finished,
+              ROUND(SUM(MIN(${PLAYER_SESSION_CAP_MIN}, COALESCE(r.duration_ms / 60000.0,
+                (julianday(r.ended_at) - julianday(r.started_at)) * 1440, 0))), 1) AS minutes,
+              COUNT(DISTINCT substr(r.started_at, 1, 10)) AS days,
+              MIN(r.started_at) AS first_seen, MAX(r.started_at) AS last_seen,
+              GROUP_CONCAT(DISTINCT rs.controller) AS controllers
+       FROM ride_seats rs JOIN rides r ON r.id = rs.ride_id
+       WHERE rs.seat > 1 AND rs.user_id IS NOT NULL AND r.started_at >= ?
+         ${exAcc.length ? `AND rs.user_id NOT IN (${exAcc.map(() => '?').join(',')})` : ''}
+       GROUP BY rs.user_id`
+    ).bind(since, ...exAcc).all();
+    const byAcct = new Map(players.filter(p => p.acct).map(p => [p.acct, p]));
+    for (const s of seatRows.results || []) {
+      let p = byAcct.get(s.acct);
+      if (!p) {
+        p = { acct: s.acct, sessions: 0, days: 0, minutes: 0, rides: 0, finished: 0,
+              first_seen: s.first_seen, last_seen: s.last_seen, platforms: '', controllers: null };
+        players.push(p);
+        byAcct.set(s.acct, p);
+      }
+      p.seat_rides = s.rides;
+      p.seat_minutes = s.minutes || 0;
+      p.minutes = Math.round(((p.minutes || 0) + (s.minutes || 0)) * 10) / 10;
+      p.rides += s.rides;
+      p.finished += s.finished || 0;
+      p.days = Math.max(p.days, s.days);
+      if (!p.first_seen || s.first_seen < p.first_seen) p.first_seen = s.first_seen;
+      if (!p.last_seen || s.last_seen > p.last_seen) p.last_seen = s.last_seen;
+      p.controllers = [p.controllers, s.controllers].filter(Boolean).join(',') || null;
+    }
+    players.sort((a, b) => (b.minutes || 0) - (a.minutes || 0));
+  } catch (e) {
+    if (!/no such table/.test(String(e && e.message))) throw e;
+  }
+
+  // Each account's sign-ins, by name.
+  const accts = [...new Set(players.map(p => p.acct).filter(Boolean))];
+  const names = new Map();
+  if (accts.length) {
+    const ids = await env.DB.prepare(
+      `SELECT user_id, provider, display_name FROM user_identities
+       WHERE user_id IN (${accts.map(() => '?').join(',')}) ORDER BY id`
+    ).bind(...accts).all();
+    for (const r of ids.results || []) {
+      if (!names.has(r.user_id)) names.set(r.user_id, []);
+      names.get(r.user_id).push({ provider: r.provider, name: r.display_name });
+    }
+  }
+  return {
+    players: players.map(p => ({
+      ...p,
+      who: undefined,
+      guest: !p.acct,
+      sign_ins: p.acct ? (names.get(p.acct) || []) : [],
+    })),
+    note: `Time = first to last activity in each session (at most ${PLAYER_SESSION_CAP_MIN / 60} h a session), plus rides as couch Player 2–4. Guests listed only if they rode.`,
   };
 }
 

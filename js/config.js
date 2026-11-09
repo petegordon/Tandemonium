@@ -365,17 +365,19 @@ export const DIFFICULTY_PRESETS = {
   },
   daredevil: {
     safetyDefault: false,
-    crashThreshold: 1.2,        // falls at ~69° of lean
+    // Pete 2026-11-09 (#716): "Daredevil is crazy". Softened the twitchy parts; it keeps more
+    // pylons, less time and more wind events than adventurous.
+    crashThreshold: 1.3,        // falls at ~74° of lean (was 1.2)
     gravityForce: 1.5,          // moderate topple force
     wobbleMultiplier: 0.3,      // light wobble
-    dangerOnset: 0.55,          // warning from |lean| 0.66
+    dangerOnset: 0.65,          // warning from |lean| 0.85 (was 0.66, which a gust alone reached)
     timeMultiplier: 0.9,
     maxSpeed: 19,
     scoreMultiplier: 1.5,
     autoCorrection: true,       // still has auto-correction
-    autoCorrectionStrength: 2.5, // barely there — you are riding this one
+    autoCorrectionStrength: 3.0, // light — you are riding this one (was 2.5)
     pedalLeanKickScale: 0.3,    // light pedal kicks
-    motionGain: 1.0,            // #522: the full lean range from tilt/gyro
+    motionGain: 0.75,           // #522 tilt/gyro range; 1.0 was too twitchy (#716)
   },
 };
 

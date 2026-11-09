@@ -155,6 +155,10 @@ export async function mergeAccounts(env, from, to, deps = {}) {
   await q('UPDATE user_identities SET user_id = ? WHERE user_id = ?', to, from);
   await q('UPDATE scores SET user_id = ? WHERE user_id = ?', to, from);
   await q('UPDATE score_contributions SET player_user_id = ? WHERE player_user_id = ?', to, from);
+  // Analytics sessions name the account by number ("26.0"): they follow it too.
+  await q('UPDATE sessions SET google_uid = ? WHERE CAST(google_uid AS INTEGER) = ?', String(to), from);
+  // Seats 2–4 on couch rides (migration 0016; absent before it is applied).
+  try { await q('UPDATE ride_seats SET user_id = ? WHERE user_id = ?', to, from); } catch (e) { if (!/no such table/.test(String(e && e.message))) throw e; }
   await q(`INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, earned_at, score_id)
            SELECT ?, achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?`, to, from);
   await q('DELETE FROM user_achievements WHERE user_id = ?', from);

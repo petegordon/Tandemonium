@@ -106,27 +106,31 @@ export async function padCredential(secret, { qr = null, phone = null } = {}) {
 }
 
 /**
- * Cloudflare's free plan: rooms opened by a script could use up the daily
- * request and storage limits. The PAD_LIMITER binding (wrangler-pad.toml,
- * 30 a minute) caps /pad connects per IP. (A Worker module may only export
- * functions and classes, so the limit lives in the toml.)
- *
- * May this /pad request go on? Uses the PAD_LIMITER rate-limit binding, keyed
- * by the caller's IP. Fails open: no binding (local dev, tests), no IP, or a
- * binding error lets the request through. Exported for tests.
- * @param {any} env @param {Request} request
+ * May this /pad connect go on? The same two rules as the API (Pete 2026-11-09;
+ * the numbers live in wrangler-pad.toml, since a Worker module with a Durable
+ * Object may only export functions and classes):
+ *   1. per player: 30 a minute for one seat of one room (code + role), so a
+ *      phone or game redialling in a loop is cut off;
+ *   2. per IP: 300 a minute (PAD_IP_LIMITER). A venue puts every phone and
+ *      game on one IP; a script opening rooms still stops here (#454: the free
+ *      plan's daily request and storage limits).
+ * Fails open: no binding (local dev, tests), no key, or a binding error lets
+ * the request through. Exported for tests.
+ * @param {any} env @param {Request} request @param {string} [code] @param {string|null} [role]
  */
-export async function padRateOk(env, request) {
-  const limiter = env && env.PAD_LIMITER;
-  if (!limiter || typeof limiter.limit !== 'function') return true;
+export async function padRateOk(env, request, code = '', role = '') {
+  const ok = async (limiter, key) => {
+    if (!limiter || typeof limiter.limit !== 'function' || !key) return true;
+    try {
+      const { success } = await limiter.limit({ key });
+      return success !== false;
+    } catch {
+      return true;
+    }
+  };
   const ip = request.headers.get('CF-Connecting-IP');
-  if (!ip) return true;
-  try {
-    const { success } = await limiter.limit({ key: ip });
-    return success !== false;
-  } catch {
-    return true;
-  }
+  if (ip && !(await ok(env && env.PAD_IP_LIMITER, 'ip:' + ip))) return false;
+  return ok(env && env.PAD_PLAYER_LIMITER, code ? `pad:${code}:${role || ''}` : '');
 }
 
 export class PadRoom {
@@ -304,7 +308,7 @@ export default {
     // Checked before the Durable Object: a refused request costs no DO request
     // or storage. Normal play (a game and a phone redialling with backoff)
     // stays far below the limit.
-    if (!(await padRateOk(env, request))) return new Response('Too many requests', { status: 429 });
+    if (!(await padRateOk(env, request, code, parsePadRole(url.searchParams.get('role')) || 'other'))) return new Response('Too many requests', { status: 429 });
     const obj = env.PAD_ROOM.get(env.PAD_ROOM.idFromName(code));
     return obj.fetch(request);
   },

@@ -102,8 +102,7 @@ export async function handleShareRoute(request, env, { path, url, clientIP, cors
   }
   const m = path.match(/^\/share\/([A-Za-z0-9]+)(\/image)?$/);
   if (m && request.method === 'GET') {
-    const limited = await deps.checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
-    if (limited) return limited;
+    // Reads: the worker-wide per-IP ceiling (limitRequest) covers them.
     return m[2] ? getShareImage(env, m[1], corsOrigin, deps) : getShareMeta(env, m[1], url, corsOrigin, deps);
   }
   return null;

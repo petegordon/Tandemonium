@@ -16,7 +16,7 @@
 //     polls the API with a secret only it holds.
 
 import { API_BASE } from './config.js';
-import { getDeviceId } from './analytics.js';
+import { getDeviceId, getSessionId, attachAccount } from './analytics.js';
 
 /**
  * #678 · this device's id, sent with Player 1's sign-in so the rides it
@@ -25,6 +25,11 @@ import { getDeviceId } from './analytics.js';
  */
 function deviceIdForSignIn() {
   try { return getDeviceId() || undefined; } catch (e) { return undefined; }
+}
+
+/** This launch's analytics session: the sign-in attaches the account to it. */
+function sessionIdForSignIn() {
+  try { return getSessionId() || undefined; } catch (e) { return undefined; }
 }
 
 const STORAGE_USER = 'tandemonium_auth_user';
@@ -129,6 +134,7 @@ export class AuthManager {
     else if (prev.provider) this.user.provider = prev.provider;
     this.lastAuthError = null;
     this._save();
+    try { attachAccount(token); } catch (e) { /* analytics only */ }
   }
 
   /**
@@ -284,7 +290,7 @@ export class AuthManager {
       const res = await fetch(`${API_BASE}/auth/steam`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ steamId, personaName, ticket, device_id: deviceIdForSignIn() }),
+        body: JSON.stringify({ steamId, personaName, ticket, device_id: deviceIdForSignIn(), session_id: sessionIdForSignIn() }),
       });
       if (!res.ok) {
         const errBody = await res.text().catch(() => '');

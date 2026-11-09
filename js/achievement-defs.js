@@ -191,11 +191,13 @@ export const ACHIEVEMENTS = [
   { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
-  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash three times at one checkpoint, then finish without using ASSIST',       condition: s => fin(s) && s.assistDeclined === true },
+  { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash three times at one checkpoint, then finish without the helping hand or the Royal Shortcut', condition: s => fin(s) && s.didItMyself === true },
 
   // ── 6. Speed and boost ───────────────────────────────────
-  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 50 km/h on a ride',                     condition: s => s.speed >= 13.9, ...best(50, 'km/h', s => n(s.speed) * 3.6) },
-  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 65 km/h on a ride',                         condition: s => s.speed >= 65 / 3.6, ...best(65, 'km/h', s => n(s.speed) * 3.6) },
+  // #716 (Pete 2026-11-09): 50 and 65 km/h were 40 and 50 out of reach (adventurous tops out at 50 km/h,
+  // 65 only on Daredevil). Now 40 (any difficulty but Chill's 43 cap is close) and 50.
+  { id: 'speed_demon',    section: 'speed', name: 'Speed Demon',         icon: '⚡', desc: 'Hit 40 km/h on a ride',                     condition: s => s.speed >= 40 / 3.6, ...best(40, 'km/h', s => n(s.speed) * 3.6) },
+  { id: 'terminal_goose', section: 'speed', name: 'Terminal Goose',      icon: '☄️', desc: 'Hit 50 km/h on a ride',                         condition: s => s.speed >= 50 / 3.6, ...best(50, 'km/h', s => n(s.speed) * 3.6) },
   { id: 'boost_25',       section: 'speed', name: 'Boost Junkie',        icon: '🔋', desc: 'Trigger 25 boosts',                   ...count('boosts', 25) },
   { id: 'afterburner',    section: 'speed', name: 'Afterburner',         icon: '🔥', desc: 'Chain pickups to keep boosting for 10 s straight', condition: s => n(s.boostBest) >= 10, ...best(10, 's', s => n(s.boostBest)) },
 
@@ -209,8 +211,9 @@ export const ACHIEVEMENTS = [
   { id: 'sling_first',    section: 'sling', name: 'Fire!',               icon: '🪃', desc: 'Launch from the slingshot',            ...count('slingLaunches', 1) },
   { id: 'sling_stage1',   section: 'sling', name: 'Stage One',           icon: '1️⃣', desc: 'Clear Slingshot stage 1 (300 m)',     ...count('slingStage', 1), stage: 1 },
   { id: 'sling_stage3',   section: 'sling', name: 'Getting the Hang of It', icon: '3️⃣', desc: 'Clear Slingshot stage 3',       ...count('slingStage', 3), stage: 3 },
-  { id: 'sling_stage5',   section: 'sling', name: 'Long Shot',           icon: '5️⃣', desc: 'Clear Slingshot stage 5',             ...count('slingStage', 5), stage: 5 },
-  { id: 'sling_stage7',   section: 'sling', name: 'Slingshot Royalty',   icon: '7️⃣', desc: 'Clear Slingshot stage 7 (1,050 m)',   ...count('slingStage', 7), stage: 7 },
+  // #716 (Pete 2026-11-09): stages 5 and 7 were too many stage goals; launch speeds instead.
+  { id: 'sling_25',       section: 'sling', name: 'Flung',               icon: '💨', desc: 'Hit 25 km/h in a Slingshot launch',   ...count('slingTopSpeed', 25), unit: 'km/h' },
+  { id: 'sling_40',       section: 'sling', name: 'Goose Cannonball',    icon: '🚀', desc: 'Hit 40 km/h in a Slingshot launch',   ...count('slingTopSpeed', 40), unit: 'km/h' },
   { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm' },
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
@@ -361,7 +364,7 @@ const NUMERIC = [
   'cumulativeDistance', 'rides', 'days', 'tutorialDone', 'tutorialClean', 'finishes',
   'crashes', 'boosts', 'pickups', 'personalBests', 'gusts', 'weathered', 'falseStarts', 'soCloses',
   'coinsEarned', 'coinsSpent', 'upgrades', 'rebuilds', 'rideCoins', 'bestRideCoins',
-  'slingLaunches', 'slingBest', 'slingStage', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
+  'slingLaunches', 'slingBest', 'slingStage', 'slingTopSpeed', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
   'straightShots', 'medalKeys', 'dailyPractice', 'shares', 'dailyDayRun', 'dailyDayBest',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
   'versus1v2Wins', 'versusClean',
@@ -672,6 +675,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
       L.rides += 1;
       noteDay(L, today);
       L.slingBest = Math.max(L.slingBest, Math.floor(n(d.distance)));
+      L.slingTopSpeed = Math.max(n(L.slingTopSpeed), Math.floor(n(d.topSpeed) * 3.6));   // #716: km/h, the run's fastest
       L.modesFinished = addUnique(L.modesFinished || [], 'slingshot');
       if (d.pot && d.record) L.doubleDowns += 1;
       if (n(d.fullTrails) > 0) L.fullTrails += Math.floor(n(d.fullTrails));
@@ -727,8 +731,8 @@ export class RideTracker {
     this.steadyRun = 0; this.steadyBest = 0;
     this.crashes = 0;
     this.treeHits = 0;
-    this.assistOffered = false;
-    this.assistUsed = false;
+    this.stuck = false;       // three crashes at one checkpoint (a Game Over), #716
+    this.helpUsed = false;    // the helping hand or the Royal Shortcut, this ride
     this.gustActive = false;
     this.gustCrashed = false;
   }
@@ -745,7 +749,7 @@ export class RideTracker {
 
   /**
    * One ride frame.
-   * f: { ref, playing, fallen, speed, lateralOffset, onCenterStrip, boosting, shaking, assistOn }
+   * f: { ref, playing, fallen, speed, lateralOffset, onCenterStrip, boosting, shaking, helped }
    */
   frame(dt, f) {
     this.sync(f.ref);
@@ -761,7 +765,7 @@ export class RideTracker {
     if (f.fallen || f.shaking) this.steadyRun = 0;
     else if (steady) this.steadyRun += dt;
     this.steadyBest = Math.max(this.steadyBest, this.steadyRun);
-    if (f.assistOn && this.assistOffered) this.assistUsed = true;
+    if (f.helped) this.helpUsed = true;
     return this.snapshot();
   }
 
@@ -803,7 +807,7 @@ export class RideTracker {
       steadyBest: this.steadyBest,
       treeHits: this.treeHits,
       rideCrashes: this.crashes,
-      assistDeclined: this.assistOffered && !this.assistUsed,
+      didItMyself: this.stuck && !this.helpUsed,
     };
   }
 }

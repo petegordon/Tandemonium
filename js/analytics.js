@@ -105,6 +105,35 @@ export function initSession(opts) {
   return sessionId;
 }
 
+// The account this session belongs to, once Player 1 signs in. The session row
+// is created at launch, before the Steam build's ticket sign-in finishes, so it
+// was left a guest (Pete 2026-11-09: signed-in Steam players read as guests).
+// The server takes the account from the verified token, never from the client.
+let accountToken = null;
+// The Steam sign-in attaches the account itself (it sends the session id);
+// this covers the other sign-ins. A shared venue IP can hit the per-IP update
+// limit (429), so it tries again a few times, spread out.
+const ATTACH_RETRY_MS = [5000, 20000, 60000];
+export function attachAccount(token) {
+  if (DISABLED || !token || token === accountToken) return;
+  accountToken = token;
+  const sid = sessionId;
+  if (!sid) return;
+  const send = (attempt) => {
+    if (accountToken !== token) return;   // signed in again since: that one carries on
+    fetch(`${API_BASE}/session/${sid}`, {
+      method: 'PUT', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ account_token: token }), keepalive: true, credentials: 'omit',
+    }).then((r) => { if (!r.ok) throw new Error(String(r.status)); })
+      .catch(() => { if (attempt < ATTACH_RETRY_MS.length) setTimeout(() => send(attempt + 1), ATTACH_RETRY_MS[attempt]); });
+  };
+  send(0);
+}
+/** Later session updates carry it too, in case the first one beat the create. */
+function withAccount(data) {
+  return accountToken ? { ...data, account_token: accountToken } : data;
+}
+
 export function getSessionId() {
   if (!sessionId) {
     sessionId = sessionStorage.getItem('tandemonium_session_id');
@@ -182,10 +211,10 @@ export function setController(name, connection) {
     const now = `${currentControllerName || ''}|${currentControllerConnection || ''}`;
     if (now === controllerSent) return;
     controllerSent = now;
-    beacon(`${API_BASE}/session/${sessionId}`, {
+    beacon(`${API_BASE}/session/${sessionId}`, withAccount({
       controller_name: currentControllerName,
       controller_connection: currentControllerConnection,
-    }, 'PUT');
+    }), 'PUT');
   }, 10000);
 }
 
@@ -207,6 +236,9 @@ export function startRide(opts) {
     bike_preset: opts.bike_preset || 'default',
     steering_feel: opts.steering_feel,
     started_at: new Date().toISOString(),
+    // Everyone on the ride: seat, role/team, controller, and each seat's own
+    // sign-in token (the server reads the account from it).
+    seats: Array.isArray(opts.seats) ? opts.seats : undefined,
   });
 
   return currentRideId;
@@ -349,9 +381,9 @@ if (typeof window !== 'undefined') {
     flushUIEvents();
     // End session for duration tracking
     if (sessionId) {
-      beacon(`${API_BASE}/session/${sessionId}`, {
+      beacon(`${API_BASE}/session/${sessionId}`, withAccount({
         ended_at: new Date().toISOString(),
-      }, 'PUT');
+      }), 'PUT');
     }
   });
   window.addEventListener('visibilitychange', () => {

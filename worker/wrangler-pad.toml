@@ -18,12 +18,20 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["PadRoom"]
 
-# #454: cap /pad connects per IP (padRateOk in pad-relay.js), so rooms opened
-# by a script can't use up the free plan's daily request and storage limits.
-# Normal play is a few connects a minute. namespace_id must be unique in the
-# account (1001-1006 are tandemonium-api, 2001 is usersfirst-store).
+# Rate limits: the same two rules as the API (Pete 2026-11-09; padRateOk in
+# pad-relay.js). namespace_id must be unique in the account (1008-1011 are
+# tandemonium-api, 2001 is usersfirst-store).
+# 1. Per player: 30 connects a minute for one seat of one room (code + role).
 [[unsafe.bindings]]
-name = "PAD_LIMITER"
+name = "PAD_PLAYER_LIMITER"
 type = "ratelimit"
-namespace_id = "3001"
+namespace_id = "3002"
 simple = { limit = 30, period = 60 }
+
+# 2. Per IP: 300 a minute. A venue puts every phone and game on one IP; a
+#    script opening rooms still stops here (#454: the free plan's daily limits).
+[[unsafe.bindings]]
+name = "PAD_IP_LIMITER"
+type = "ratelimit"
+namespace_id = "3003"
+simple = { limit = 300, period = 60 }

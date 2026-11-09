@@ -732,3 +732,22 @@ test('#678 Discord redirect and Steam on the web claim the device too; a seat si
     assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_lo LIKE 'guest:%' OR user_hi LIKE 'guest:%'").get().n, 0);
   } finally { restore(); }
 });
+
+test('the Steam sign-in attaches its analytics session to the account, before or after the create', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const early = '44444444-5555-4666-8777-888888888888';   // sign-in lands first
+    const late = '55555555-6666-4777-8888-999999999999';    // session row already there
+    db.prepare("INSERT INTO sessions (id, started_at, platform) VALUES (?, '2026-11-09T10:00:00.000Z', 'steam')").run(late);
+    const a = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: early } })).json();
+    await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: late } });
+    const uid = (id) => db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(id).google_uid;
+    assert.equal(uid(early), String(a.user.id));
+    assert.equal(uid(late), String(a.user.id));
+    // A bad session id never fails the sign-in.
+    const bad = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: 'nope' } });
+    assert.equal(bad.status, 200);
+  } finally { restore(); }
+});

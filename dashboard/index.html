@@ -89,13 +89,14 @@
     <h3 style="font-size:0.9em;color:#aaa;margin-bottom:10px;">Developer Session Exclusions</h3>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
       <div>
-        <label style="font-size:0.8em;color:#888;">Excluded IPs (one per line)</label>
-        <textarea id="exclude-ips" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+        <label style="font-size:0.8em;color:#888;">Excluded IPs (one per line; a trailing * matches a prefix, e.g. an IPv6 /64; # starts a note)</label>
+        <textarea id="exclude-ips" rows="6" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
         <button onclick="autoDetectIPs()" style="background:#333;border-color:#555;font-size:0.75em;margin-top:4px;">Auto-detect my IPs</button>
+        <span id="exclude-detect-status" style="font-size:0.75em;color:#888;margin-left:6px;"></span>
       </div>
       <div>
-        <label style="font-size:0.8em;color:#888;">Excluded Google UIDs (one per line)</label>
-        <textarea id="exclude-uids" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+        <label style="font-size:0.8em;color:#888;">Excluded accounts (one per line: account number, or steam:… / discord:… / google:… sign-in id; # starts a note)</label>
+        <textarea id="exclude-uids" rows="6" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
       </div>
     </div>
     <div style="margin-top:8px;display:flex;gap:8px;">
@@ -145,9 +146,11 @@ function signOut() {
 function showDashboard() {
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('dashboard-ui').style.display = '';
-  // Seed default exclusion UIDs on first use
-  if (!localStorage.getItem('dash_exclusions')) {
-    setExclusions({ ips: [], uids: ['pete@usersfirst.com', 'pete@petegordon.com'] });
+  // Seed the developer's accounts on first use, and replace the old email list
+  // (sessions store account numbers, so emails never matched anything).
+  const ex = getExclusions();
+  if (!ex.v) {
+    setExclusions({ v: 2, ips: ex.ips || [], accounts: DEFAULT_DEV_ACCOUNTS.slice() });
   }
   loadAll();
 }
@@ -162,6 +165,17 @@ if (dashToken) {
 function getDays() { return document.getElementById('days').value; }
 
 // ── Exclusion state (persisted in localStorage) ──
+// Pete's accounts (users.id). Each covers every sign-in linked to it.
+const DEFAULT_DEV_ACCOUNTS = [
+  '1   # Pete Gordon (Google)',
+  '26  # Pete, older Steam account (deleted)',
+  '38  # petegordon (Discord) + pete (Steam)',
+  '39  # Pete, test account (deleted)',
+  '40  # petegordonusa (Steam) + House Tandem (Discord)',
+];
+/** The value of a textarea line: drop the # note and spaces. */
+function entryValue(line) { return String(line).split('#')[0].trim(); }
+function entryValues(lines) { return (lines || []).map(entryValue).filter(Boolean); }
 function getExclusions() {
   try {
     return JSON.parse(localStorage.getItem('dash_exclusions') || '{}');
@@ -182,8 +196,10 @@ async function fetchJSON(route) {
   // Append exclusion params if toggle is on
   if (isExcludeEnabled()) {
     const ex = getExclusions();
-    if (ex.ips && ex.ips.length) url += '&exclude_ips=' + encodeURIComponent(ex.ips.join(','));
-    if (ex.uids && ex.uids.length) url += '&exclude_uids=' + encodeURIComponent(ex.uids.join(','));
+    const ips = entryValues(ex.ips);
+    const accounts = entryValues(ex.accounts);
+    if (ips.length) url += '&exclude_ips=' + encodeURIComponent(ips.join(','));
+    if (accounts.length) url += '&exclude_accounts=' + encodeURIComponent(accounts.join(','));
   }
 
   const r = await fetch(url, { headers });
@@ -235,15 +251,17 @@ async function loadAll() {
     // C-1: retention / dropoff / pairs are the three questions this pipeline
     // was built for and never asked.
     const [overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
-           retention, dropoff, pairs] = await Promise.all([
+           retention, dropoff, pairs, players] = await Promise.all([
       fetchJSON('overview'), fetchJSON('daily'), fetchJSON('funnel'),
       fetchJSON('rides'), fetchJSON('crashes'), fetchJSON('conversions'),
       fetchJSON('network'), fetchJSON('devices'), fetchJSON('dda'),
       fetchJSON('retention'), fetchJSON('dropoff'), fetchJSON('pairs'),
+      // A panel the worker doesn't know yet (deploy lag) must not blank the page.
+      fetchJSON('players').catch(() => null),
     ]);
 
     renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
-                    retention, dropoff, pairs);
+                    retention, dropoff, pairs, players);
     document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
@@ -253,7 +271,8 @@ async function loadAll() {
 }
 
 function renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
-                         retention, dropoff, pairs) {
+                         retention, dropoff, pairs, players) {
+  lastPlayers = players;
   const o = overview;
   const totalSessions = o.sessions?.total || 0;
   const totalRides = o.rides?.total || 0;
@@ -276,6 +295,19 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
         <div class="sub">${fmt(stokersJoined)} joined (${pct(stokersJoined, roomsCreated)}%)</div></div>
       <div class="kpi"><div class="value">${fmt(o.rides?.tutorials || 0)}</div><div class="label">Tutorials</div></div>
       <div class="kpi"><div class="value">${fmt(o.conversions?.replays || 0)}</div><div class="label">Replays</div></div>
+    </div>
+
+    <div class="section">
+      <h2>Players</h2>
+      <div class="card">
+        <label style="font-size:0.82em;color:#aaa;">Show
+          <select id="players-filter" onchange="onPlayersFilter()">
+            ${[['signed', 'Signed in (Steam, Discord, Google)'], ['steam', 'Played the Steam build'], ['all', 'Everyone who rode']]
+              .map(([v, t]) => `<option value="${v}"${playersFilter() === v ? ' selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </label>
+        <div id="players-table" style="margin-top:8px">${renderPlayers(players)}</div>
+      </div>
     </div>
 
     <!-- C-1 · Retention, drop-off, pairs -->
@@ -692,15 +724,15 @@ function toggleExcludePanel() {
     // Populate textareas from stored exclusions
     const ex = getExclusions();
     document.getElementById('exclude-ips').value = (ex.ips || []).join('\n');
-    document.getElementById('exclude-uids').value = (ex.uids || []).join('\n');
+    document.getElementById('exclude-uids').value = (ex.accounts || []).join('\n');
+    document.getElementById('exclude-detect-status').textContent = '';
   }
   panel.style.display = visible ? 'none' : 'block';
 }
 
 function saveExclusions() {
-  const ips = document.getElementById('exclude-ips').value.split('\n').map(s => s.trim()).filter(Boolean);
-  const uids = document.getElementById('exclude-uids').value.split('\n').map(s => s.trim()).filter(Boolean);
-  setExclusions({ ips, uids });
+  const lines = (id) => document.getElementById(id).value.split('\n').map(s => s.trim()).filter(Boolean);
+  setExclusions({ v: 2, ips: lines('exclude-ips'), accounts: lines('exclude-uids') });
   document.getElementById('exclude-panel').style.display = 'none';
   // Auto-enable the toggle
   document.getElementById('exclude-dev').checked = true;
@@ -708,19 +740,32 @@ function saveExclusions() {
   if (dashToken) loadAll();
 }
 
+// Adds this browser's IP and the IPs the listed accounts rode from lately.
 async function autoDetectIPs() {
+  const status = document.getElementById('exclude-detect-status');
+  status.textContent = 'Detecting…';
   try {
     const headers = {};
     if (dashToken) headers['Authorization'] = 'Bearer ' + dashToken;
-    const r = await fetch(`${API}/dev_ips`, { headers });
-    if (!r.ok) throw new Error(r.status);
+    const accounts = entryValues(document.getElementById('exclude-uids').value.split('\n'));
+    const q = accounts.length ? '?exclude_accounts=' + encodeURIComponent(accounts.join(',')) : '';
+    const r = await fetch(`${API}/dev_ips${q}`, { headers });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     const textarea = document.getElementById('exclude-ips');
-    const existing = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
-    const merged = [...new Set([...existing, ...(data.ips || [])])];
-    textarea.value = merged.join('\n');
+    const lines = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const have = new Set(entryValues(lines));
+    let added = 0;
+    for (const { ip, note } of data.ips || []) {
+      if (have.has(ip)) continue;
+      lines.push(note ? `${ip}  # ${note}` : ip);
+      have.add(ip);
+      added++;
+    }
+    textarea.value = lines.join('\n');
+    status.textContent = added ? `Added ${added}.` : 'Nothing new.';
   } catch (e) {
-    alert('Failed to detect IPs: ' + e.message);
+    status.textContent = 'Could not detect: ' + e.message;
   }
 }
 
@@ -799,6 +844,47 @@ function renderPairs(p) {
     <p class="muted">${p.note || ''}</p>
     <table><thead><tr><th>Pair</th><th>Rides</th><th>First</th><th>Last</th></tr></thead>
     <tbody>${rows || '<tr><td colspan="4" class="muted">No pairs yet.</td></tr>'}</tbody></table>`;
+}
+
+// ── Players ──
+let lastPlayers = null;
+function playersFilter() {
+  try { return localStorage.getItem('dash_players_filter') || 'signed'; } catch { return 'signed'; }
+}
+function onPlayersFilter() {
+  const v = document.getElementById('players-filter').value;
+  try { localStorage.setItem('dash_players_filter', v); } catch {}
+  document.getElementById('players-table').innerHTML = renderPlayers(lastPlayers);
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function fmtMinutes(m) {
+  m = Math.round(m || 0);
+  return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
+}
+function renderPlayers(p) {
+  if (!p) return '<p class="muted">Players needs the latest worker.</p>';
+  const filter = playersFilter();
+  const list = (p.players || []).filter(x =>
+    filter === 'signed' ? !x.guest :
+    filter === 'steam' ? String(x.platforms || '').includes('steam') : true);
+  const PROVIDER = { steam: 'Steam', discord: 'Discord', google: 'Google' };
+  const rows = list.map(x => {
+    const who = x.guest
+      ? '<span class="muted">Guest (not signed in)</span>'
+      : (x.sign_ins.length
+          ? x.sign_ins.map(i => `${esc(i.name)} <span class="muted">${PROVIDER[i.provider] || esc(i.provider)}</span>`).join('<br>')
+          : `<span class="muted">Account #${x.acct} (deleted)</span>`);
+    const where = String(x.platforms || '').split(',').map(pl => pl === 'steam' ? 'Steam build' : pl === 'browser' ? 'Web' : pl).join(', ');
+    const seatNote = x.seat_rides ? `<br><span class="muted">incl. ${fmtMinutes(x.seat_minutes)} as Player 2–4</span>` : '';
+    return `<tr><td>${who}</td><td>${esc(where || 'Couch seat')}</td><td>${fmtMinutes(x.minutes)}${seatNote}</td><td>${x.days}</td><td>${x.sessions}</td>
+      <td>${x.rides} (${x.finished})</td><td>${esc(x.controllers || '—')}</td>
+      <td>${(x.first_seen || '').slice(0, 10)}</td><td>${(x.last_seen || '').slice(0, 10)}</td></tr>`;
+  }).join('');
+  return `<p class="muted">${list.length} players. ${esc(p.note || '')}</p>
+    <table><thead><tr><th>Player</th><th>Played on</th><th>Time</th><th>Days</th><th>Sessions</th><th>Rides (finished)</th><th>Controller</th><th>First</th><th>Last</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="9" class="muted">No players in this range.</td></tr>'}</tbody></table>`;
 }
 
 /** Generic table for an array of flat rows. */

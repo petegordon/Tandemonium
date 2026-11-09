@@ -119,6 +119,8 @@ console.log('seats');
   await startRace(page);
   let v = await raceInfo(page);
   check(v.rigs === 2 && v.members.join() === '2,2', '2v2: two rigs, two riders each', v);
+  const seats = await page.evaluate(() => window._game._rideSeats(true).map((s) => `${s.seat}${s.team}:${s.controller ? 'pad' : '-'}`).sort());
+  check(seats.join() === '1A:pad,2B:pad,3A:pad,4B:pad', '2v2: the ride records all four seats, their teams and controllers', seats);
   check(v.halves === 2 && v.leftRight[0] === 0 && v.leftRight[1] > 0, '2v2: each frame draws two split-screen halves', v);
   await h.shot(page, 'race-2v2');
 
