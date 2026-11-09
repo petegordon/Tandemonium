@@ -251,8 +251,8 @@ export default {
         const limited = await checkRateLimit(env.READ_LIMITER, clientIP, corsOrigin, env);
         if (limited) return limited;
         const dashRoute = path.replace('/api/analytics/dashboard/', '');
-        return withDashboardAuth(request, env, corsOrigin, () =>
-          handleDashboard(dashRoute, url, env, corsOrigin)
+        return withDashboardAuth(request, env, corsOrigin, (_r, _e, _c, viewerId) =>
+          handleDashboard(dashRoute, url, env, corsOrigin, { clientIP, viewerId })
         );
       }
 
@@ -1589,14 +1589,12 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
 // DASHBOARD QUERIES
 // ============================================================
 
-async function handleDashboard(route, url, env, corsOrigin) {
+async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
   const days = parseInt(url.searchParams.get('days') || '30');
   const since = new Date(Date.now() - days * 86400000).toISOString();
 
-  // Developer exclusion: comma-separated IPs and/or google_uids
-  const excludeIPs = (url.searchParams.get('exclude_ips') || '').split(',').map(s => s.trim()).filter(Boolean);
-  const excludeUIDs = (url.searchParams.get('exclude_uids') || '').split(',').map(s => s.trim()).filter(Boolean);
-  const ex = { ips: excludeIPs, uids: excludeUIDs };
+  // Developer exclusion: IPs (a trailing * matches a prefix) and accounts.
+  const ex = await resolveDevExclusions(env, parseDevExclusions(url));
 
   const handlers = {
     daily: () => dashDaily(env, since, ex),
@@ -1624,14 +1622,37 @@ async function handleDashboard(route, url, env, corsOrigin) {
     pairs: () => dashPairs(env, since, ex),
   };
 
-  // Also expose a 'dev_ips' route so the dashboard can show known developer IPs
+  // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
+  // excluded accounts rode from in the last 30 days (older ones may be a venue
+  // other players shared). An IPv6 address comes back as its /64, since home
+  // IPv6 addresses change every day or so.
   if (route === 'dev_ips') {
-    const rows = await env.DB.prepare(
-      `SELECT DISTINCT ip_address FROM sessions
-       WHERE google_uid IN ('pete@usersfirst.com', 'pete@petegordon.com')
-       AND ip_address IS NOT NULL`
-    ).all();
-    return jsonResponse({ ips: (rows.results || []).map(r => r.ip_address) }, 200, corsOrigin);
+    const ips = new Map();
+    const add = (ip, note) => { const k = ipForExclusion(ip); if (k && !ips.has(k)) ips.set(k, note); };
+    add(viewer.clientIP, 'this browser, now');
+    const viewerAccount = parseInt(viewer.viewerId, 10) || null;
+    const accounts = [...new Set([...ex.accounts, ...(viewerAccount ? [viewerAccount] : [])])];
+    if (accounts.length) {
+      const recent = new Date(Date.now() - 30 * 86400000).toISOString();
+      const rows = await env.DB.prepare(
+        `SELECT ip_address, COUNT(*) AS n, MAX(started_at) AS last FROM sessions
+         WHERE ip_address IS NOT NULL AND started_at >= ?
+           AND CAST(google_uid AS INTEGER) IN (${accounts.map(() => '?').join(',')})
+         GROUP BY ip_address ORDER BY n DESC`
+      ).bind(recent, ...accounts).all();
+      // A /64 gathers many addresses: add their counts up.
+      const seen = new Map();
+      for (const r of rows.results || []) {
+        const k = ipForExclusion(r.ip_address);
+        if (!k) continue;
+        const s = seen.get(k) || { n: 0, last: '' };
+        s.n += r.n;
+        if (String(r.last) > s.last) s.last = String(r.last);
+        seen.set(k, s);
+      }
+      for (const [k, s] of seen) add(k, `${s.n} sessions, last ${s.last.slice(0, 10)}`);
+    }
+    return jsonResponse({ ips: [...ips].map(([ip, note]) => ({ ip, note })), viewer_account: viewerAccount }, 200, corsOrigin);
   }
 
   const handler = handlers[route];
@@ -1641,49 +1662,103 @@ async function handleDashboard(route, url, env, corsOrigin) {
   return jsonResponse(data, 200, corsOrigin);
 }
 
-// Build SQL exclusion for filtering out developer sessions.
-// Two forms depending on whether the query already joins the sessions table:
-//
-// sessionFilter(ex, 's')  → " AND s.ip_address NOT IN (?) AND s.google_uid NOT IN (?)"
-//   Use when query already has sessions aliased as 's'.
-//
-// sessionFilter(ex)       → same, default alias 's'
-//
-// For queries on tables that have session_id but no sessions join, use:
-//   excludedSessionSubquery(ex) → "session_id NOT IN (SELECT id FROM sessions WHERE ip_address IN (?) OR google_uid IN (?))"
-//   This returns { clause, binds } where clause is empty when no exclusions.
+// ── Developer exclusion ──
+// The dashboard sends:
+//   exclude_ips       IPs; one ending in * matches by prefix (an IPv6 /64)
+//   exclude_accounts  account numbers (users.id), or provider:id sign-ins
+//                     (steam:7656…, discord:…, google:…) looked up to their account
+// sessions.google_uid holds the signed-in account's number (as text, often
+// "38.0"), whichever sign-in it was: Google, Discord or Steam. It never held an
+// email, so the old email list matched nothing.
 
-function sessionFilter(ex, alias = 's') {
-  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
-  const parts = [];
-  const binds = [];
-  if (ex.ips.length > 0) {
-    parts.push(`${alias}.ip_address NOT IN (${ex.ips.map(() => '?').join(',')})`);
-    binds.push(...ex.ips);
+/** Read the exclusion params (no database). Unknown tokens are ignored. */
+export function parseDevExclusions(url) {
+  const list = (k) => (url.searchParams.get(k) || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const ips = [];
+  const prefixes = [];
+  for (const ip of list('exclude_ips')) {
+    if (ip.endsWith('*')) {
+      const p = ip.slice(0, -1);
+      if (/^[0-9a-fA-F:.]{3,}$/.test(p)) prefixes.push(p);
+    } else ips.push(ip);
   }
-  if (ex.uids.length > 0) {
-    parts.push(`${alias}.google_uid NOT IN (${ex.uids.map(() => '?').join(',')})`);
-    binds.push(...ex.uids);
+  const accounts = new Set();
+  const identities = [];
+  // exclude_uids is what older dashboards sent (emails, which match nothing).
+  for (const t of [...list('exclude_accounts'), ...list('exclude_uids')]) {
+    if (/^\d+(\.0)?$/.test(t)) { const n = parseInt(t, 10); if (n > 0) accounts.add(n); continue; }
+    const m = /^(google|discord|steam):(.+)$/i.exec(t);
+    if (m) identities.push({ provider: m[1].toLowerCase(), providerId: m[2] });
   }
-  return { clause: ' AND ' + parts.join(' AND '), binds };
+  return { ips, prefixes, accounts: [...accounts], identities };
 }
 
-function excludedSessionSubquery(ex) {
-  if (!ex || (ex.ips.length === 0 && ex.uids.length === 0)) return { clause: '', binds: [] };
+/** Turn provider:id sign-ins into account numbers. */
+async function resolveDevExclusions(env, ex) {
+  if (!ex.identities.length) return ex;
+  const accounts = new Set(ex.accounts);
+  for (const { provider, providerId } of ex.identities) {
+    const row = await env.DB.prepare(
+      'SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?'
+    ).bind(provider, providerId).first();
+    if (row && row.user_id) accounts.add(Number(row.user_id));
+  }
+  return { ...ex, accounts: [...accounts] };
+}
+
+/** An IP as an exclusion entry: IPv4 as is, IPv6 as its /64 prefix with a *. */
+export function ipForExclusion(ip) {
+  if (!ip || ip === 'unknown') return null;
+  if (!ip.includes(':')) return ip;
+  if (ip.endsWith(':*')) return ip;
+  let groups;
+  if (ip.includes('::')) {
+    const [head, tail] = ip.split('::');
+    const h = head ? head.split(':') : [];
+    const t = tail ? tail.split(':') : [];
+    groups = [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  } else groups = ip.split(':');
+  return groups.slice(0, 4).join(':') + ':*';
+}
+
+/**
+ * "This session is the developer's" as SQL, or null when nothing is excluded.
+ * Never NULL itself: a NOT IN against an empty column is NULL, which dropped
+ * every signed-out session (most players) instead of keeping it.
+ */
+export function devSessionCondition(ex, alias = '') {
+  if (!ex) return null;
+  const col = (c) => (alias ? `${alias}.${c}` : c);
   const conds = [];
   const binds = [];
-  if (ex.ips.length > 0) {
-    conds.push(`ip_address IN (${ex.ips.map(() => '?').join(',')})`);
+  if (ex.ips.length) {
+    conds.push(`COALESCE(${col('ip_address')}, '') IN (${ex.ips.map(() => '?').join(',')})`);
     binds.push(...ex.ips);
   }
-  if (ex.uids.length > 0) {
-    conds.push(`google_uid IN (${ex.uids.map(() => '?').join(',')})`);
-    binds.push(...ex.uids);
+  for (const p of ex.prefixes) {
+    conds.push(`COALESCE(${col('ip_address')}, '') LIKE ?`);
+    binds.push(p + '%');
   }
-  return {
-    clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${conds.join(' OR ')})`,
-    binds,
-  };
+  if (ex.accounts.length) {
+    conds.push(`COALESCE(CAST(${col('google_uid')} AS INTEGER), 0) IN (${ex.accounts.map(() => '?').join(',')})`);
+    binds.push(...ex.accounts);
+  }
+  return conds.length ? { cond: `(${conds.join(' OR ')})`, binds } : null;
+}
+
+// For a query that has sessions aliased as 's': " AND NOT (…)".
+export function sessionFilter(ex, alias = 's') {
+  const d = devSessionCondition(ex, alias);
+  return d ? { clause: ` AND NOT ${d.cond}`, binds: d.binds } : { clause: '', binds: [] };
+}
+
+// For a table with a session_id column and no sessions join. Callers may
+// rename session_id to r.session_id, so it must appear once, at the front.
+export function excludedSessionSubquery(ex) {
+  const d = devSessionCondition(ex);
+  return d
+    ? { clause: ` AND session_id NOT IN (SELECT id FROM sessions WHERE ${d.cond})`, binds: d.binds }
+    : { clause: '', binds: [] };
 }
 
 // ============================================================

@@ -89,13 +89,14 @@
     <h3 style="font-size:0.9em;color:#aaa;margin-bottom:10px;">Developer Session Exclusions</h3>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
       <div>
-        <label style="font-size:0.8em;color:#888;">Excluded IPs (one per line)</label>
-        <textarea id="exclude-ips" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+        <label style="font-size:0.8em;color:#888;">Excluded IPs (one per line; a trailing * matches a prefix, e.g. an IPv6 /64; # starts a note)</label>
+        <textarea id="exclude-ips" rows="6" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
         <button onclick="autoDetectIPs()" style="background:#333;border-color:#555;font-size:0.75em;margin-top:4px;">Auto-detect my IPs</button>
+        <span id="exclude-detect-status" style="font-size:0.75em;color:#888;margin-left:6px;"></span>
       </div>
       <div>
-        <label style="font-size:0.8em;color:#888;">Excluded Google UIDs (one per line)</label>
-        <textarea id="exclude-uids" rows="4" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
+        <label style="font-size:0.8em;color:#888;">Excluded accounts (one per line: account number, or steam:… / discord:… / google:… sign-in id; # starts a note)</label>
+        <textarea id="exclude-uids" rows="6" style="width:100%;background:#0f1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:8px;font-size:0.82em;font-family:monospace;margin-top:4px;resize:vertical;"></textarea>
       </div>
     </div>
     <div style="margin-top:8px;display:flex;gap:8px;">
@@ -145,9 +146,11 @@ function signOut() {
 function showDashboard() {
   document.getElementById('auth-gate').style.display = 'none';
   document.getElementById('dashboard-ui').style.display = '';
-  // Seed default exclusion UIDs on first use
-  if (!localStorage.getItem('dash_exclusions')) {
-    setExclusions({ ips: [], uids: ['pete@usersfirst.com', 'pete@petegordon.com'] });
+  // Seed the developer's accounts on first use, and replace the old email list
+  // (sessions store account numbers, so emails never matched anything).
+  const ex = getExclusions();
+  if (!ex.v) {
+    setExclusions({ v: 2, ips: ex.ips || [], accounts: DEFAULT_DEV_ACCOUNTS.slice() });
   }
   loadAll();
 }
@@ -162,6 +165,17 @@ if (dashToken) {
 function getDays() { return document.getElementById('days').value; }
 
 // ── Exclusion state (persisted in localStorage) ──
+// Pete's accounts (users.id). Each covers every sign-in linked to it.
+const DEFAULT_DEV_ACCOUNTS = [
+  '1   # Pete Gordon (Google)',
+  '26  # Pete, older Steam account (deleted)',
+  '38  # petegordon (Discord) + pete (Steam)',
+  '39  # Pete, test account (deleted)',
+  '40  # petegordonusa (Steam) + House Tandem (Discord)',
+];
+/** The value of a textarea line: drop the # note and spaces. */
+function entryValue(line) { return String(line).split('#')[0].trim(); }
+function entryValues(lines) { return (lines || []).map(entryValue).filter(Boolean); }
 function getExclusions() {
   try {
     return JSON.parse(localStorage.getItem('dash_exclusions') || '{}');
@@ -182,8 +196,10 @@ async function fetchJSON(route) {
   // Append exclusion params if toggle is on
   if (isExcludeEnabled()) {
     const ex = getExclusions();
-    if (ex.ips && ex.ips.length) url += '&exclude_ips=' + encodeURIComponent(ex.ips.join(','));
-    if (ex.uids && ex.uids.length) url += '&exclude_uids=' + encodeURIComponent(ex.uids.join(','));
+    const ips = entryValues(ex.ips);
+    const accounts = entryValues(ex.accounts);
+    if (ips.length) url += '&exclude_ips=' + encodeURIComponent(ips.join(','));
+    if (accounts.length) url += '&exclude_accounts=' + encodeURIComponent(accounts.join(','));
   }
 
   const r = await fetch(url, { headers });
@@ -692,15 +708,15 @@ function toggleExcludePanel() {
     // Populate textareas from stored exclusions
     const ex = getExclusions();
     document.getElementById('exclude-ips').value = (ex.ips || []).join('\n');
-    document.getElementById('exclude-uids').value = (ex.uids || []).join('\n');
+    document.getElementById('exclude-uids').value = (ex.accounts || []).join('\n');
+    document.getElementById('exclude-detect-status').textContent = '';
   }
   panel.style.display = visible ? 'none' : 'block';
 }
 
 function saveExclusions() {
-  const ips = document.getElementById('exclude-ips').value.split('\n').map(s => s.trim()).filter(Boolean);
-  const uids = document.getElementById('exclude-uids').value.split('\n').map(s => s.trim()).filter(Boolean);
-  setExclusions({ ips, uids });
+  const lines = (id) => document.getElementById(id).value.split('\n').map(s => s.trim()).filter(Boolean);
+  setExclusions({ v: 2, ips: lines('exclude-ips'), accounts: lines('exclude-uids') });
   document.getElementById('exclude-panel').style.display = 'none';
   // Auto-enable the toggle
   document.getElementById('exclude-dev').checked = true;
@@ -708,19 +724,32 @@ function saveExclusions() {
   if (dashToken) loadAll();
 }
 
+// Adds this browser's IP and the IPs the listed accounts rode from lately.
 async function autoDetectIPs() {
+  const status = document.getElementById('exclude-detect-status');
+  status.textContent = 'Detecting…';
   try {
     const headers = {};
     if (dashToken) headers['Authorization'] = 'Bearer ' + dashToken;
-    const r = await fetch(`${API}/dev_ips`, { headers });
-    if (!r.ok) throw new Error(r.status);
+    const accounts = entryValues(document.getElementById('exclude-uids').value.split('\n'));
+    const q = accounts.length ? '?exclude_accounts=' + encodeURIComponent(accounts.join(',')) : '';
+    const r = await fetch(`${API}/dev_ips${q}`, { headers });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
     const data = await r.json();
     const textarea = document.getElementById('exclude-ips');
-    const existing = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
-    const merged = [...new Set([...existing, ...(data.ips || [])])];
-    textarea.value = merged.join('\n');
+    const lines = textarea.value.split('\n').map(s => s.trim()).filter(Boolean);
+    const have = new Set(entryValues(lines));
+    let added = 0;
+    for (const { ip, note } of data.ips || []) {
+      if (have.has(ip)) continue;
+      lines.push(note ? `${ip}  # ${note}` : ip);
+      have.add(ip);
+      added++;
+    }
+    textarea.value = lines.join('\n');
+    status.textContent = added ? `Added ${added}.` : 'Nothing new.';
   } catch (e) {
-    alert('Failed to detect IPs: ' + e.message);
+    status.textContent = 'Could not detect: ' + e.message;
   }
 }
 
