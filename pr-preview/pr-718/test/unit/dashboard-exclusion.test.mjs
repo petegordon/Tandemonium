@@ -34,7 +34,11 @@ function d1(db) {
     first: async () => db.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...args) }),
   });
-  return { prepare: (sql) => ({ bind: (...args) => bound(sql, args), ...bound(sql, []) }) };
+  const stmt = (sql, args) => ({ _sql: sql, _args: args, ...bound(sql, args) });
+  return {
+    prepare: (sql) => ({ bind: (...args) => stmt(sql, args), ...stmt(sql, []) }),
+    batch: async (list) => { for (const x of list) db.prepare(x._sql).run(...x._args); return list.map(() => ({ success: true })); },
+  };
 }
 
 const b64url = (s) => Buffer.from(s).toString('base64url');

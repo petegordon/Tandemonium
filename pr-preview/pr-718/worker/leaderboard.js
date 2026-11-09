@@ -379,6 +379,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
   const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
+  // The Steam build signs in just after launch: this ride's analytics session
+  // takes the account here, in the same request (no extra request to lose).
+  await attachSessionAccount(env, body.session_id, userId);
 
   const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
 
@@ -1328,13 +1331,7 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   // token. Only to a guest session, so it can't move one between accounts.
   if (typeof body.account_token === 'string' && env.JWT_SECRET) {
     const acct = parseInt((await userFromToken(body.account_token, env)) ?? '', 10);
-    if (acct > 0) {
-      sets.push('google_uid = COALESCE(google_uid, ?)');
-      values.push(String(acct));
-      // This can beat the session's create: make the row now (the create
-      // fills in the rest and keeps the account).
-      await ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }])[0].run();
-    }
+    if (acct > 0) await attachSessionAccount(env, sessionId, acct);
   }
 
   // Always update IP address (captures it even for sessions created before migration)
@@ -1353,6 +1350,26 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   ).bind(...values).run();
 
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+/**
+ * Player 1 signed in during this session: a guest session takes the account.
+ * Safe under any ordering or repeat: the placeholder insert is a no-op when
+ * the row exists, the create's upsert keeps the account (COALESCE), and
+ * COALESCE here never moves a session that already has one. Never fails the
+ * caller (a sign-in must not fail over analytics).
+ */
+export async function attachSessionAccount(env, sessionId, userId) {
+  const acct = parseInt(userId, 10);
+  if (!isValidUUID(sessionId) || !(acct > 0)) return;
+  try {
+    await env.DB.batch([
+      ...ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }]),
+      env.DB.prepare('UPDATE sessions SET google_uid = COALESCE(google_uid, ?) WHERE id = ?').bind(String(acct), sessionId),
+    ]);
+  } catch (e) {
+    console.error('session account attach failed', e);
+  }
 }
 
 /**
