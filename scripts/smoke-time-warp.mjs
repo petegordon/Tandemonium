@@ -10,6 +10,10 @@
 //          (cut to the clock + flame bones), the wheel measured, and sized exactly like the goose tandem
 //   TW-04  Show Riders off rides the plain frame; on again brings the Time Warp back
 //   TW-05  picking a paint preset again rides the goose tandem
+//   TW-06  at 1080p the count is readable and the bike's name shows inside the preview
+//   AT-01  the chooser turns to the next bike every 5 s on its own (Pete); AT-02 leaving the mode screen puts the
+//          player's own bike back; AT-03 RB stops it for good; locked reward bikes show the lock + their icon;
+//          AT-04 the bike is remembered between sessions (never a locked one)
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
 //          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
 //   GS-01  the Gold Standard closes the chooser: a locked silhouette with "n of 100 achievements"
@@ -185,5 +189,51 @@ const bigSizes = await big.evaluate(() => { const l = window._game.lobby; l._pre
   const h = document.getElementById('bike-hint'); const sp = h.querySelectorAll('span');
   return { text: h.textContent.replace(/\s+/g, ' ').trim(), count: parseFloat(getComputedStyle(sp[0]).fontSize), label: parseFloat(getComputedStyle(sp[1]).fontSize) }; });
 check(bigSizes.count >= bigSizes.label && /non-calendar achievements$/.test(bigSizes.text), 'TW-06: at 1080p the count is at least as big as "non-calendar achievements"', bigSizes);
+const nameBox = await big.evaluate(() => {
+  const n = document.getElementById('bike-name').getBoundingClientRect(), w = document.getElementById('bike-preview-wrap').getBoundingClientRect();
+  return { text: document.getElementById('bike-name').textContent, inside: n.top >= w.top && n.bottom <= w.bottom && n.left >= w.left && n.right <= w.right, h: Math.round(n.height) };
+});
+check(nameBox.inside && nameBox.h > 0 && /Time Warp/.test(nameBox.text), 'TW-06: the bike name shows inside the preview (it clips; a name above it was cut off)', nameBox);
 await h.shot(big, 'tw06-1080p');
+
+console.log('AT-01..03 the chooser shows itself off (every 5 s) until Player 1 takes it');
+const at = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on', tandemonium_chooser_attract: 'on' } });
+await until(at, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
+const nKeys = await at.evaluate(() => window._game.lobby._presetKeys.length);
+const idx = () => at.evaluate(() => ({ i: window._game.lobby._presetIndex, key: window._game.lobby._presetKeys[window._game.lobby._presetIndex],
+  picked: window._game.lobby.selectedPresetKey, name: document.getElementById('bike-name').textContent }));
+const a0 = await idx();
+await sleep(5600);
+const a1 = await idx();
+check(a1.i === (a0.i + 1) % nKeys, 'AT-01: after 5 s the chooser turns to the next bike on its own', [a0, a1]);
+await sleep(5200);
+const a2 = await idx();
+check(a2.i === (a1.i + 1) % nKeys, 'AT-01: and again 5 s later', [a1, a2]);
+console.log("AT-02 leaving the mode screen mid-show puts the player's own bike back");
+await at.evaluate(() => document.getElementById('btn-solo').click());
+await sleep(700);
+const a3 = await idx();
+check(a3.key === 'default' && a3.picked === 'default', "AT-02: Solo Ride while it turns: the ride keeps the player's own bike", a3);
+await at.evaluate(() => window._game.lobby._showStep(window._game.lobby.modeStep));
+await sleep(5600);
+const a4 = await idx();
+check(a4.i !== a3.i, 'AT-02: back on the mode screen it shows itself off again', [a3, a4]);
+console.log('AT-03 RB (or a click on the arrows) stops it: the bike showing is theirs');
+await at.evaluate(() => window._game.lobby._bikeNext());
+const a5 = await idx();
+await sleep(6000);
+const a6 = await idx();
+check(a6.i === a5.i && a6.key === a5.key, 'AT-03: after Player 1 takes the chooser it stays put', [a5, a6]);
+const lockName = await at.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); return document.getElementById('bike-name').textContent; });
+check(lockName.startsWith('\uD83D\uDD12') && lockName.includes('\uD83E\uDEB6') && lockName.includes('Solo Flight'), 'AT-03: a locked reward bike shows the lock and its own icon', lockName);
+console.log('AT-04 the bike is remembered between sessions');
+const rp = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on', tandemonium_bike_pick: 'bike_blue' } });
+await until(rp, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
+await sleep(500);
+const r0 = await rp.evaluate(() => ({ key: window._game.lobby._presetKeys[window._game.lobby._presetIndex], picked: window._game.lobby.selectedPresetKey, name: document.getElementById('bike-name').textContent }));
+check(r0.key === 'bike_blue' && r0.picked === 'bike_blue', 'AT-04: the saved bike is the one the chooser opens on (and rides)', r0);
+const r1 = await rp.evaluate(() => { window._game.lobby._bikeNext(); return { key: window._game.lobby.selectedPresetKey, saved: localStorage.getItem('tandemonium_bike_pick') }; });
+check(r1.saved === r1.key && r1.key !== 'bike_blue', 'AT-04: a new pick is saved for next time', r1);
+const r2 = await rp.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('gold_standard') - 1; l._bikeNext(); return { shown: l._presetKeys[l._presetIndex], saved: localStorage.getItem('tandemonium_bike_pick') }; });
+check(r2.shown === 'gold_standard' && r2.saved !== 'gold_standard', 'AT-04: a locked reward bike is never saved as the pick', r2);
 await h.finish();

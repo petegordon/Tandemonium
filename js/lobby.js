@@ -131,6 +131,11 @@ function diffSelect(diff) {
   document.querySelectorAll('.difficulty-btn').forEach(b => b.classList.toggle('selected', b.dataset.difficulty === diff));
 }
 
+// Pete, 2026-11-09: the chooser turns to the next bike every 5 s until Player 1 takes it (_startChooserAttract)
+const CHOOSER_ATTRACT_MS = 5000;
+// the player's bike, remembered between sessions
+const BIKE_PICK_KEY = 'tandemonium_bike_pick';
+
 const BIKE_NAMES = {
   default: "Grandma's Classic",
   bike_orange: 'Marmalade Express',
@@ -147,21 +152,6 @@ const BIKE_NAMES = {
   gold_standard: 'Gold Standard',
 };
 
-const BIKE_COLORS = {
-  default: 'rgba(68, 255, 102, 0.7)',
-  bike_orange: '#fd892b',
-  bike_magenta: '#ff61f2',
-  bike_red: '#ff4444',
-  bike_blue: '#66aaff',
-  bike_green: '#00ff00',
-  bike_yellow: '#ffff00',
-  bike_christmas: '#2eff46',
-  bike_newyears: '#fbff00',
-  bike_birthday: '#66ff00',
-  solo_flight: '#9fd8ff',
-  time_warp: '#f0b860',
-  gold_standard: '#ffd34d',
-};
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
 const BIKE_ACHIEVEMENT_MAP = {
@@ -8969,6 +8959,12 @@ export class Lobby {
       console.warn('Failed to load holiday bike presets:', e);
     }
     this._presetKeys = ['default', ...Object.keys(this._presetData), ...SPECIAL_BIKE_KEYS];
+    // Pete, 2026-11-09: remember the bike between sessions (a holiday bike that has gone, or none saved: the default)
+    try {
+      const saved = localStorage.getItem(BIKE_PICK_KEY);
+      const i = saved ? this._presetKeys.indexOf(saved) : -1;
+      if (i > 0) this._presetIndex = i;
+    } catch (e) { /* storage off */ }
 
     // Setup mini 3D preview
     const canvas = document.getElementById('bike-preview-canvas');
@@ -9083,15 +9079,22 @@ export class Lobby {
     const prevBtn = document.getElementById('bike-prev');
     const nextBtn = document.getElementById('bike-next');
     this._bikePrev = () => {
+      this._stopChooserAttract();
       this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
     this._bikeNext = () => {
+      this._stopChooserAttract();
       this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
       this._applyPresetToPreview();
+      this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
+    // a click or tap on the preview itself is the player taking the chooser too
+    document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
+    this._startChooserAttract();
     this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
@@ -9111,6 +9114,69 @@ export class Lobby {
         else this._bikePrev();
       }
     }, { passive: true });
+  }
+
+  /**
+   * Pete, 2026-11-09: the bike chooser shows itself off. On the mode screen it moves to the next bike every
+   * CHOOSER_ATTRACT_MS until Player 1 takes it: LB / RB, clicking or tapping the arrows or the preview, a swipe,
+   * or the controller's focus landing on the arrows. Then it stops for the session and the bike showing is theirs.
+   * Leaving the mode screen while it still runs puts their own pick back (so a ride never takes a passing bike).
+   * Off under automation unless localStorage tandemonium_chooser_attract = 'on' (the smokes set bikes directly).
+   */
+  _startChooserAttract() {
+    if (this._attractTimer) return;
+    let mode = null;
+    try { mode = localStorage.getItem('tandemonium_chooser_attract'); } catch (e) { /* storage off */ }
+    if (mode === 'off' || (navigator.webdriver && mode !== 'on')) return;
+    this._attractStopped = false;
+    this._attractPick = this._presetKeys[this._presetIndex] || 'default';   // the player's own bike
+    this._attractShown = this._presetIndex;
+    this._attractElapsed = 0;
+    const TICK = 250;
+    this._attractTimer = setInterval(() => {
+      if (this._attractStopped) return;
+      if (this._presetIndex !== this._attractShown) { this._stopChooserAttract(); return; }   // moved by something else
+      const onMode = this._currentStep === this.modeStep && !this._activeModal && !document.hidden;
+      if (!onMode) {
+        if (this._currentStep !== this.modeStep) this._restoreAttractPick();
+        this._attractElapsed = 0;
+        return;
+      }
+      const f = this._stepFocus && this._stepFocus.focused;
+      if (f && (f.id === 'bike-prev' || f.id === 'bike-next')) { this._stopChooserAttract(); return; }
+      this._attractElapsed += TICK;
+      if (this._attractElapsed < CHOOSER_ATTRACT_MS || !this._previewModel) return;
+      this._attractElapsed = 0;
+      this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
+      this._attractShown = this._presetIndex;
+      this._attractTurning = true;            // (not a player's pick: no bike_color_change event)
+      try { this._applyPresetToPreview(); } finally { this._attractTurning = false; }
+    }, TICK);
+  }
+
+  /** Player 1 took the chooser: no more turning; the bike showing is now theirs. */
+  _stopChooserAttract() {
+    if (this._attractStopped) return;
+    this._attractStopped = true;
+    if (this._attractTimer) { clearInterval(this._attractTimer); this._attractTimer = null; }
+    this._saveBikePick();
+  }
+
+  /** Remember the player's bike for next time (only one they can ride: a locked reward bike keeps the last one). */
+  _saveBikePick() {
+    const key = this._presetKeys[this._presetIndex];
+    if (!key || this.selectedPresetKey !== key) return;
+    try { localStorage.setItem(BIKE_PICK_KEY, key); } catch (e) { /* storage off */ }
+  }
+
+  /** Off the mode screen mid-show: the player's own bike again (and the show starts over when they come back). */
+  _restoreAttractPick() {
+    const i = this._presetKeys.indexOf(this._attractPick);
+    if (i < 0 || i === this._presetIndex) return;
+    this._presetIndex = i;
+    this._attractShown = i;
+    this._attractTurning = true;
+    try { this._applyPresetToPreview(); } finally { this._attractTurning = false; }
   }
 
   /** Earned achievement ids (the AchievementManager when the lobby has it, else its store). */
@@ -9227,8 +9293,9 @@ export class Lobby {
     this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
-      nameEl.style.color = 'rgba(255,255,255,0.3)';
-      nameEl.textContent = '\uD83D\uDD12 ' + def.name;
+      nameEl.style.color = '';                       // the logo-coloured name (index.html #bike-name), parchment while locked
+      nameEl.classList.add('locked');
+      nameEl.textContent = '\uD83D\uDD12 ' + def.icon + ' ' + def.name;   // the lock, then its own icon
       hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
@@ -9239,7 +9306,8 @@ export class Lobby {
       hintEl.style.display = '';
       return;
     }
-    nameEl.style.color = def.color;
+    nameEl.style.color = '';
+    nameEl.classList.remove('locked');
     nameEl.textContent = def.icon + ' ' + def.name;
     if (!def.rideable) {
       this.selectedPresetKey = 'default';
@@ -9253,7 +9321,7 @@ export class Lobby {
     hintEl.title = '';
     delete hintEl.dataset.special;
     this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
-    analytics.trackEvent('bike_color_change', { preset_key: key });
+    if (!this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });   // not the chooser's own show
   }
 
   /**
@@ -9364,7 +9432,8 @@ export class Lobby {
     // colours show, shut, as the full game's.
     const demoLocked = !bikeAllowed(getEditionRules(), key);
     const locked = demoLocked || (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
-    nameEl.style.color = locked ? 'rgba(255,255,255,0.3)' : (BIKE_COLORS[key] || 'rgba(68, 255, 102, 0.7)');
+    nameEl.style.color = '';                         // every name in the logo's colours (index.html #bike-name)
+    nameEl.classList.toggle('locked', !!locked);
 
     // Reset all materials to originals
     if (this._previewModel && this._previewOriginalMats) {
@@ -9378,7 +9447,7 @@ export class Lobby {
     }
 
     this.selectedPresetKey = locked ? 'default' : key;
-    if (!locked) analytics.trackEvent('bike_color_change', { preset_key: key });
+    if (!locked && !this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });
 
     if (locked) {
       nameEl.textContent = '\uD83D\uDD12 ' + (BIKE_NAMES[key] || key);
