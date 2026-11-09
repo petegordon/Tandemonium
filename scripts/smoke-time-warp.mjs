@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // smoke:time-warp · #611 the Time Warp bike: a special bike in the chooser, its own model on the tandem's rig.
 //
-//   TW-01  the chooser's last entry is the Time Warp: locked it shows a dark silhouette with "n of N" over it
+//   TW-01  the Time Warp sits before the Gold Standard at the chooser's end: locked it shows a dark silhouette with "n of N" over it
 //          (N = the non-calendar achievements less 5: 90 once the #608 swap lands),
 //          and picking it leaves the ride on the default bike
 //   TW-02  with all non-calendar achievements but 5 it unlocks: its colours come back, its clock and flames
@@ -12,6 +12,9 @@
 //   TW-05  picking a paint preset again rides the goose tandem
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
 //          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
+//   GS-01  the Gold Standard closes the chooser: a locked silhouette with "n of 100 achievements"
+//   GS-02  with all 100 it shows in its own colours and is the pick
+//   GS-03  a solo ride loads gold_standard_tandem.glb: both geese seated on its sockets, sized like the goose tandem
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8974, outDir: 'tandemonium-time-warp' });
@@ -37,8 +40,8 @@ console.log('TW-01 locked: the silhouette and its count');
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('time_warp'); l._applyPresetToPreview(); });
 await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).time_warp; return !!(sp && sp.model && sp.model.visible); });
 let c = await chooser();
-check(c.key === 'time_warp' && /Time Warp/.test(c.name) && c.name.startsWith('🔒'), 'TW-01: the last chooser entry is the locked Time Warp', c);
-check(await page.evaluate(() => window._game.lobby._presetKeys.slice(-2).join(',')) === 'solo_flight,time_warp', 'TW-01: Solo Flight then Time Warp close the chooser (the reward ladder)');
+check(c.key === 'time_warp' && /Time Warp/.test(c.name) && c.name.startsWith('🔒'), 'TW-01: the Time Warp is locked', c);
+check(await page.evaluate(() => window._game.lobby._presetKeys.slice(-3).join(',')) === 'solo_flight,time_warp,gold_standard', 'TW-01: Solo Flight, Time Warp, then Gold Standard close the chooser (the reward ladder)');
 
 console.log('SF-01 Solo Flight: locked silhouette, "n of N solo achievements"; earned = in colour, the pick');
 const sf = async () => {
@@ -122,6 +125,54 @@ check(await until(page, () => window._game.bike._modelPath.endsWith('time_warp_t
 console.log('TW-05 back to a paint preset');
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('bike_red'); l._applyPresetToPreview(); window._game._applyBikeChoice(); });
 check(await until(page, () => window._game.bike._modelPath.endsWith('goose_tandem.glb')), 'TW-05: a paint preset rides the goose tandem again', await page.evaluate(() => window._game.bike._modelPath));
+console.log('GS-01 Gold Standard locked: the silhouette and "0 of 100 achievements"');
+const gs = async () => {
+  await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('gold_standard'); l._applyPresetToPreview(); });
+  await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).gold_standard; return !!(sp && sp.model && sp.model.visible); });
+  return page.evaluate(() => {
+    const l = window._game.lobby, sp = l._specialPreviews.gold_standard, h = document.getElementById('bike-hint');
+    return { name: document.getElementById('bike-name').textContent, hint: h && h.style.display !== 'none' ? h.textContent.replace(/\s+/g, ' ').trim() : '',
+      dark: sp.dark, picked: l.selectedPresetKey, tandem: l._previewModel.visible, last: l._presetKeys[l._presetKeys.length - 1],
+      others: Object.entries(l._specialPreviews).filter(([k, v]) => k !== 'gold_standard' && v.model && v.model.visible).map(([k]) => k) };
+  });
+};
+await page.evaluate(() => { const ach = window._game.lobby._achievements; window.__gsBackup = new Map(ach._earned); ach._earned = new Map(); });
+let g1 = await gs();
+check(g1.last === 'gold_standard' && g1.name.startsWith('\uD83D\uDD12') && g1.name.includes('Gold Standard') && g1.dark && g1.picked === 'default',
+  'GS-01: the last entry is the locked Gold Standard, a dark silhouette; the ride stays on the default', g1);
+check(g1.hint.replace(/\s+/g, '') === '0of100achievements', 'GS-01: "0 of 100 achievements" over it', g1.hint);
+check(g1.others.length === 0 && !g1.tandem, 'GS-01: only its own model shows', g1);
+await h.shot(page, 'gs01-locked');
+console.log('GS-02 all 100: its colours, the pick');
+await page.evaluate(async () => {
+  const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+  const ach = window._game.lobby._achievements;
+  for (const a of ACHIEVEMENTS.slice(1)) ach._earned.set(a.id, { id: a.id, earnedAt: 1 });
+});
+g1 = await gs();
+check(g1.dark && g1.hint.replace(/\s+/g, '') === '99of100achievements', 'GS-02: 99 of 100 is still locked', g1);
+await page.evaluate(async () => {
+  const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+  window._game.lobby._achievements._earned.set(ACHIEVEMENTS[0].id, { id: ACHIEVEMENTS[0].id, earnedAt: 1 });
+});
+g1 = await gs();
+check(!g1.dark && !g1.hint && g1.picked === 'gold_standard' && g1.name.includes('Gold Standard') && !g1.name.startsWith('\uD83D\uDD12'),
+  'GS-02: all 100, it shows in its own colours and is the pick', g1);
+await h.shot(page, 'gs02-unlocked');
+console.log('GS-03 the Gold Standard swapped in mid-ride (as the chooser does)');
+await page.evaluate(() => window._game._applyBikeChoice());
+const gsLoaded = await until(page, () => { const b = window._game.bike; return b._modelPath.endsWith('gold_standard_tandem.glb') && b.modelLoaded && b.goose && Object.keys(b.goose.riders).length === 2; }, null, 180000);
+const gsRide = await page.evaluate(() => {
+  const b = window._game.bike, g = b.goose, model = b.group.children[0];
+  return { path: b._modelPath, seats: g ? Object.fromEntries(Object.entries(g.riders).map(([s, r]) => [s, r.root.parent && r.root.parent.name])) : null,
+    wheel: g ? +g.wheelCircumference.toFixed(3) : 0, scale: model ? +model.scale.x.toFixed(4) : 0 };
+});
+check(gsLoaded && gsRide.seats && gsRide.seats.Captain === 'Seat_Captain' && gsRide.seats.Stoker === 'Seat_Stoker', 'GS-03: both geese seated on the Gold Standard', gsRide);
+check(gsRide.wheel > 3.5 && gsRide.wheel < 4.0, 'GS-03: the rear wheel measured', gsRide.wheel);
+check(Math.abs(gsRide.scale - 4.4 / 2.466) < 0.002, 'GS-03: sized like the goose tandem (same geese)', gsRide.scale);
+await sleep(1500);
+await h.shot(page, 'gs03-ride');
+await page.evaluate(() => { window._game.lobby._achievements._earned = window.__gsBackup; });
 console.log('TW-06 the count on a 1080p screen (the TV / Steam big-screen lobby)');
 const big = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' } });
 await until(big, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);

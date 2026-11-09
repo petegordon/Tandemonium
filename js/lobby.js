@@ -138,6 +138,7 @@ const BIKE_NAMES = {
   bike_birthday: 'Birthday Express',
   solo_flight: 'Solo Flight',   // #611 · special bikes (their own models, js/special-bikes.js)
   time_warp: 'Time Warp',
+  gold_standard: 'Gold Standard',
 };
 
 const BIKE_COLORS = {
@@ -153,6 +154,7 @@ const BIKE_COLORS = {
   bike_birthday: '#66ff00',
   solo_flight: '#9fd8ff',
   time_warp: '#f0b860',
+  gold_standard: '#ffd34d',
 };
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
@@ -9184,7 +9186,9 @@ export class Lobby {
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
-        : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
+        : def.reward === 'goldStandard'
+          ? `${def.name}: all ${prog.total} achievements`
+          : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
       hintEl.style.display = '';
       return;
     }

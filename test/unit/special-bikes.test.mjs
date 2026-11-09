@@ -4,8 +4,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { ACHIEVEMENTS } from '../../js/achievement-defs.js';
-import { timeWarpProgress, isCalendarAchievement, TIME_WARP_SLACK } from '../../js/rewards.js';
-import { bikeModelPathFor, TIME_WARP_BIKE_KEY, TIME_WARP_BIKE_MODEL_PATH, SOLO_FLIGHT_BIKE_KEY, SOLO_FLIGHT_BIKE_MODEL_PATH, SPECIAL_BIKES, SPECIAL_BIKE_KEYS, isSpecialBike, isRigTwin, ridesWithBot } from '../../js/special-bikes.js';
+import { timeWarpProgress, goldStandardProgress, rewardProgress, isCalendarAchievement, TIME_WARP_SLACK } from '../../js/rewards.js';
+import { bikeModelPathFor, TIME_WARP_BIKE_KEY, TIME_WARP_BIKE_MODEL_PATH, SOLO_FLIGHT_BIKE_KEY, SOLO_FLIGHT_BIKE_MODEL_PATH, GOLD_STANDARD_BIKE_KEY, GOLD_STANDARD_BIKE_MODEL_PATH, SPECIAL_BIKES, SPECIAL_BIKE_KEYS, isSpecialBike, isRigTwin, ridesWithBot } from '../../js/special-bikes.js';
 import { GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, FUSED_RIDERS_MODEL_PATH } from '../../js/config.js';
 import { boneFilterFor } from '../../js/goose-rider-clips.js';
 
@@ -24,7 +24,8 @@ test('Time Warp: any 90 of the 95 non-calendar achievements; calendar ones never
 });
 
 test('the chooser pick picks the GLB: Time Warp only with Show Riders on the goose tandem', () => {
-  assert.deepEqual(SPECIAL_BIKE_KEYS, [SOLO_FLIGHT_BIKE_KEY, TIME_WARP_BIKE_KEY], 'the reward ladder: Solo Flight, then Time Warp');
+  assert.deepEqual(SPECIAL_BIKE_KEYS, [SOLO_FLIGHT_BIKE_KEY, TIME_WARP_BIKE_KEY, GOLD_STANDARD_BIKE_KEY],
+    'the reward ladder: Solo Flight, Time Warp, then Gold Standard');
   assert.equal(SPECIAL_BIKES.solo_flight.reward, 'playerBots');
   assert.equal(SPECIAL_BIKES.solo_flight.rideable, true, '#644: Solo Flight rides');
   assert.equal(SPECIAL_BIKES.solo_flight.soloOnly, true, 'a solo bike: the bot takes the back seat');
@@ -63,4 +64,33 @@ test('the Time Warp GLB keeps the tandem rig and carries its effect clip', () =>
     'Grip_C_L', 'Grip_S_R', 'PedalPin_FL', 'PedalPin_RR', 'ClockM_L', 'FlameB_0', 'FlameO_3',
     'seat_cycle_0', 'seat.001_cycle_0', 'TW_Wheel_R']) assert.ok(names.has(n), n);
   assert.deepEqual(j.animations.map(a => a.name).sort(), ['Pedal', 'TimeWarpFX', 'WheelSpin']);
+});
+
+test('Gold Standard: every achievement, ridden on the tandem rig in every mode but versus paint', () => {
+  const all = ACHIEVEMENTS.map(a => a.id);
+  assert.equal(all.length, 100, 'the 100');
+  assert.deepEqual(goldStandardProgress([]), { have: 0, need: 100, total: 100, unlocked: false });
+  assert.equal(goldStandardProgress(all.slice(1)).unlocked, false, 'one short');
+  assert.equal(goldStandardProgress([...all, ...all, 'not_an_achievement']).have, 100, 'duplicates and unknown ids ignored');
+  assert.equal(goldStandardProgress(all).unlocked, true);
+  assert.deepEqual(rewardProgress('goldStandard', all), goldStandardProgress(all));
+  const d = SPECIAL_BIKES.gold_standard;
+  assert.equal(d.reward, 'goldStandard');
+  assert.equal(d.rideable, true);
+  assert.ok(!d.soloOnly && !d.fx);
+  assert.equal(bikeModelPathFor(true, GOLD_STANDARD_BIKE_KEY, GOOSE_BIKE_MODEL_PATH), GOLD_STANDARD_BIKE_MODEL_PATH);
+  assert.equal(bikeModelPathFor(true, GOLD_STANDARD_BIKE_KEY, GOOSE_BIKE_MODEL_PATH, 'local'), GOLD_STANDARD_BIKE_MODEL_PATH, 'co-op rides it too');
+  assert.equal(bikeModelPathFor(false, GOLD_STANDARD_BIKE_KEY, GOOSE_BIKE_MODEL_PATH), CHOOSER_MODEL_PATH, 'riders off: the plain frame');
+  assert.ok(isRigTwin(GOLD_STANDARD_BIKE_MODEL_PATH), 'sized like the goose tandem (same geese)');
+  assert.ok(!ridesWithBot(GOLD_STANDARD_BIKE_KEY, 'solo'));
+});
+
+test('the Gold Standard GLB keeps the tandem rig', () => {
+  const b = fs.readFileSync(GOLD_STANDARD_BIKE_MODEL_PATH);
+  const j = JSON.parse(b.subarray(20, 20 + b.readUInt32LE(12)).toString('utf8'));
+  const names = new Set(j.nodes.map(n => n.name));
+  for (const n of ['Bike_root', 'Steer', 'Wheel_F', 'Wheel_R', 'Crank_F', 'Crank_R', 'Seat_Captain', 'Seat_Stoker',
+    'Grip_C_L', 'Grip_S_R', 'PedalPin_FL', 'PedalPin_RR', 'seat_cycle_0', 'seat.001_cycle_0', 'GS_frame', 'GS_Wheel_R']) assert.ok(names.has(n), n);
+  assert.deepEqual(j.animations.map(a => a.name).sort(), ['Pedal', 'WheelSpin']);
+  assert.ok(!(j.extensionsUsed || []).includes('KHR_draco_mesh_compression'), 'the chooser preview loads it without Draco');
 });
