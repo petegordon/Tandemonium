@@ -108,3 +108,21 @@ test('Gold Standard mirror gold: full metal, its own sky to reflect (else it rea
   assert.ok(isMirrorMaterial({ isMeshStandardMaterial: true, metalness: 1 }));
   assert.ok(!isMirrorMaterial({ isMeshStandardMaterial: true, metalness: 0.75 }));
 });
+
+test('#697 Gold Standard sparkles: only it, and only on its polished gold', async () => {
+  const THREE = await import('three');
+  const { isSparkleBike } = await import('../../js/special-bikes.js');
+  const { addBikeSparkle } = await import('../../js/bike-sparkle.js');
+  assert.ok(isSparkleBike(GOLD_STANDARD_BIKE_MODEL_PATH) && !isSparkleBike(TIME_WARP_BIKE_MODEL_PATH) && !isSparkleBike(GOOSE_BIKE_MODEL_PATH));
+  const root = new THREE.Group(), part = new THREE.Group();
+  root.add(part);
+  const gold = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1, 4, 4, 4), new THREE.MeshStandardMaterial({ metalness: 1 }));
+  const leather = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1, 4, 4, 4), new THREE.MeshStandardMaterial({ metalness: 0 }));
+  part.add(gold, leather);
+  const sp = addBikeSparkle(root, { count: 20 });
+  assert.equal(sp.meshes.length, 1, 'one draw for the part');
+  assert.equal(sp.meshes[0].parent, part, 'rides with the gold part (on its parent, which batching never hides)');
+  assert.equal(sp.meshes[0].geometry.attributes.position.count, 20 * 6, 'every star on the gold, none on the leather');
+  sp.setVisible(false);
+  assert.ok(sp.meshes.every(m => !m.visible));
+});

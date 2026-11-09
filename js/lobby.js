@@ -39,6 +39,7 @@
 
 import * as THREE from 'three';
 import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
+import { addBikeSparkle } from './bike-sparkle.js';
 
 // #611 · the Gold Standard in the chooser preview (its exposure is brighter than the ride's)
 const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
@@ -3493,6 +3494,8 @@ export class Lobby {
         if (status) { status.textContent = 'Connecting...'; status.className = 'conn-status'; status.style.display = ''; }
         this._joinRoom('TNDM-' + e.detail.code);
       });
+      // JOIN enables on the 4th character: let the pad reach it (after the keypad syncs it).
+      joinCode.addEventListener('input', () => requestAnimationFrame(() => this._refreshJoinKeypadFocus()));
       // A physical keyboard types straight in while the keypad is up.
       window.addEventListener('keydown', (e) => {
         if (!$('join-tv')?.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -8595,6 +8598,45 @@ export class Lobby {
   }
 
   /**
+   * The center column a step hands the spatial FocusController.
+   * @param {HTMLElement} step @returns {{centerItems: HTMLElement[], waitBtns: HTMLElement[]}}
+   */
+  _stepSpatialCenterItems(step) {
+    // Desktop join step: the keypad's keys + Delete / Join are the scope.
+    const tvJoin = step === this.joinStep && document.getElementById('join-tv');
+    const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
+    let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+    // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
+    if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
+    // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
+    // Joined and waiting, the code entry is hidden: only the wait's buttons.
+    const waitBtns = this._roomWaitButtons(step);
+    if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
+    else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
+    return { centerItems, waitBtns };
+  }
+
+  /**
+   * The keypad's JOIN is disabled (and so left out of the pad scope) until the
+   * code is complete. Rebuild the scope on every code change so the pad can
+   * reach JOIN once it enables, keeping focus where it is — or on Delete when
+   * a backspace disables JOIN under it.
+   */
+  _refreshJoinKeypadFocus() {
+    if (this._currentStep !== this.joinStep || !document.getElementById('join-tv')?.classList.contains('on')) return;
+    if (!this.input || !this.input.gamepadConnected) return;
+    const { centerItems } = this._stepSpatialCenterItems(this.joinStep);
+    this._modeColumns[1] = centerItems;
+    const items = this._stepNavItems();
+    const cur = this._stepFocus.focused;
+    if (cur && items.indexOf(cur) < 0 && cur.closest('#join-keypad-tv')) {
+      this._stepFocus.setSpatial(items, /** @type {HTMLElement|null} */ (document.querySelector('#join-keypad-tv uf-button[data-key="Delete"]')));
+    } else {
+      this._stepFocus.refreshSpatial(items);
+    }
+  }
+
+  /**
    * Hand the current step's full focusable set (all toggle columns + the
    * active step's center items) to the spatial FocusController, focusing the
    * step's primary action. Only highlights when a gamepad is connected
@@ -8604,17 +8646,7 @@ export class Lobby {
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
-      // Desktop join step: the keypad's keys + Delete / Join are the scope.
-      const tvJoin = step === this.joinStep && document.getElementById('join-tv');
-      const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
-      let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
-      // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
-      if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
-      // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
-      // Joined and waiting, the code entry is hidden: only the wait's buttons.
-      const waitBtns = this._roomWaitButtons(step);
-      if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
-      else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
+      const { centerItems, waitBtns } = this._stepSpatialCenterItems(step);
       this._modeColumns[1] = centerItems;
       const waitFocus = waitBtns.find((b) => b.getAttribute('variant') === 'accent');
       const defaultEl = waitFocus || this._stepPrimaryFocus(step, centerItems);
@@ -9135,9 +9167,10 @@ export class Lobby {
         fx.play();
         fx.paused = true;
       }
+      const sparkle = def.sparkle ? addBikeSparkle(model, { size: 0.11 }) : null;   // #697 (off while locked)
       model.visible = false;
       if (this._previewPivot) this._previewPivot.add(model);
-      Object.assign(sp, { model, mats, mixer, fx, dark: false });
+      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false });
       onReady(sp);
     }, undefined, (err) => console.warn(def.name + ' preview failed to load:', err));
   }
@@ -9159,6 +9192,7 @@ export class Lobby {
       m.needsUpdate = true;
     }
     if (dark && sp.fx) { sp.fx.time = 0; sp.mixer.update(0); }   // (the orange pops tucked away)
+    if (sp.sparkle) sp.sparkle.setVisible(!dark);                  // a silhouette doesn't sparkle
   }
 
   /** Hide every special bike's preview model (a paint preset or another special bike is showing). */
