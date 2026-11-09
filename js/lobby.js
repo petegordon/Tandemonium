@@ -38,6 +38,11 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
+import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
+
+// #611 · the Gold Standard in the chooser preview (its exposure is brighter than the ride's)
+const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
+const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
@@ -138,6 +143,7 @@ const BIKE_NAMES = {
   bike_birthday: 'Birthday Express',
   solo_flight: 'Solo Flight',   // #611 · special bikes (their own models, js/special-bikes.js)
   time_warp: 'Time Warp',
+  gold_standard: 'Gold Standard',
 };
 
 const BIKE_COLORS = {
@@ -153,6 +159,7 @@ const BIKE_COLORS = {
   bike_birthday: '#66ff00',
   solo_flight: '#9fd8ff',
   time_warp: '#f0b860',
+  gold_standard: '#ffd34d',
 };
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
@@ -9104,9 +9111,16 @@ export class Lobby {
       const c = b2.getCenter(new THREE.Vector3());
       model.position.set(-c.x, -b2.min.y, -c.z);
       const mats = [];
+      const env = def.mirror ? mirrorEnvTexture() : null;   // mirror metal needs something to reflect, or it reads black
       model.traverse((o) => {
         if (!o.isMesh) return;
         o.material = o.material.clone();
+        if (env && isMirrorMaterial(o.material)) {
+          // the chooser's brighter exposure washes mirror gold to champagne: a deeper gold, softer reflections
+          o.material.envMap = env;
+          o.material.color.multiply(PREVIEW_GOLD_WARM);
+          o.material.envMapIntensity = PREVIEW_GOLD_ENV;
+        }
         o.castShadow = true;
         mats.push([o.material, o.material.clone()]);
       });
@@ -9137,6 +9151,7 @@ export class Lobby {
         if (m.color) m.color.set(0x050505);
         if (m.emissive) m.emissive.set(0x000000);
         if (m.map) m.map = null;
+        m.envMap = null;
         m.metalness = 0; m.roughness = 1;
       } else {
         m.copy(orig);
@@ -9184,7 +9199,9 @@ export class Lobby {
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
-        : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
+        : def.reward === 'goldStandard'
+          ? `${def.name}: all ${prog.total} achievements`
+          : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
       hintEl.style.display = '';
       return;
     }
