@@ -73,6 +73,19 @@ export function timeWarpProgress(earnedIds, defs = ACHIEVEMENTS) {
 export const TIME_WARP_SLACK = 5;
 
 /**
+ * #611 · progress toward the Gold Standard bike: every achievement (all 100).
+ * @param {Iterable<string>} earnedIds
+ * @returns {{have: number, need: number, total: number, unlocked: boolean}}
+ */
+export function goldStandardProgress(earnedIds, defs = ACHIEVEMENTS) {
+  const all = new Set(defs.map(d => d.id));
+  let have = 0;
+  for (const id of new Set(earnedIds || [])) if (all.has(id)) have++;
+  const total = all.size;
+  return { have, need: total, total, unlocked: total > 0 && have >= total };
+}
+
+/**
  * Outfits a player has not unlocked yet (the Dressing Room / Settings hook, #574). Today only the
  * reward outfits: `reward: 'timeWarp'` (or 'playerBots') in js/goose-outfits.js.
  * @param {Record<string, {reward?: string}>} outfits GOOSE_OUTFITS
@@ -87,9 +100,10 @@ export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS) {
   return locked;
 }
 
-/** Progress toward a reward by its key ('timeWarp' | 'playerBots'); null = not a reward. */
+/** Progress toward a reward by its key ('timeWarp' | 'playerBots' | 'goldStandard'); null = not a reward. */
 export function rewardProgress(reward, earnedIds, defs = ACHIEVEMENTS) {
   if (reward === 'timeWarp') return timeWarpProgress(earnedIds, defs);
+  if (reward === 'goldStandard') return goldStandardProgress(earnedIds, defs);
   if (reward === 'playerBots') return playerBotsProgress(earnedIds, defs);
   return null;
 }

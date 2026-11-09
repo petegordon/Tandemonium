@@ -38,6 +38,11 @@
 // ═══════════════════════════════════════════════════════════════
 
 import * as THREE from 'three';
+import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
+
+// #611 · the Gold Standard in the chooser preview (its exposure is brighter than the ride's)
+const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
+const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY } from './special-bikes.js';
@@ -138,6 +143,7 @@ const BIKE_NAMES = {
   bike_birthday: 'Birthday Express',
   solo_flight: 'Solo Flight',   // #611 · special bikes (their own models, js/special-bikes.js)
   time_warp: 'Time Warp',
+  gold_standard: 'Gold Standard',
 };
 
 const BIKE_COLORS = {
@@ -153,6 +159,7 @@ const BIKE_COLORS = {
   bike_birthday: '#66ff00',
   solo_flight: '#9fd8ff',
   time_warp: '#f0b860',
+  gold_standard: '#ffd34d',
 };
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
@@ -3486,6 +3493,8 @@ export class Lobby {
         if (status) { status.textContent = 'Connecting...'; status.className = 'conn-status'; status.style.display = ''; }
         this._joinRoom('TNDM-' + e.detail.code);
       });
+      // JOIN enables on the 4th character: let the pad reach it (after the keypad syncs it).
+      joinCode.addEventListener('input', () => requestAnimationFrame(() => this._refreshJoinKeypadFocus()));
       // A physical keyboard types straight in while the keypad is up.
       window.addEventListener('keydown', (e) => {
         if (!$('join-tv')?.classList.contains('on') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -8588,6 +8597,45 @@ export class Lobby {
   }
 
   /**
+   * The center column a step hands the spatial FocusController.
+   * @param {HTMLElement} step @returns {{centerItems: HTMLElement[], waitBtns: HTMLElement[]}}
+   */
+  _stepSpatialCenterItems(step) {
+    // Desktop join step: the keypad's keys + Delete / Join are the scope.
+    const tvJoin = step === this.joinStep && document.getElementById('join-tv');
+    const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
+    let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+    // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
+    if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
+    // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
+    // Joined and waiting, the code entry is hidden: only the wait's buttons.
+    const waitBtns = this._roomWaitButtons(step);
+    if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
+    else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
+    return { centerItems, waitBtns };
+  }
+
+  /**
+   * The keypad's JOIN is disabled (and so left out of the pad scope) until the
+   * code is complete. Rebuild the scope on every code change so the pad can
+   * reach JOIN once it enables, keeping focus where it is — or on Delete when
+   * a backspace disables JOIN under it.
+   */
+  _refreshJoinKeypadFocus() {
+    if (this._currentStep !== this.joinStep || !document.getElementById('join-tv')?.classList.contains('on')) return;
+    if (!this.input || !this.input.gamepadConnected) return;
+    const { centerItems } = this._stepSpatialCenterItems(this.joinStep);
+    this._modeColumns[1] = centerItems;
+    const items = this._stepNavItems();
+    const cur = this._stepFocus.focused;
+    if (cur && items.indexOf(cur) < 0 && cur.closest('#join-keypad-tv')) {
+      this._stepFocus.setSpatial(items, /** @type {HTMLElement|null} */ (document.querySelector('#join-keypad-tv uf-button[data-key="Delete"]')));
+    } else {
+      this._stepFocus.refreshSpatial(items);
+    }
+  }
+
+  /**
    * Hand the current step's full focusable set (all toggle columns + the
    * active step's center items) to the spatial FocusController, focusing the
    * step's primary action. Only highlights when a gamepad is connected
@@ -8597,17 +8645,7 @@ export class Lobby {
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
-      // Desktop join step: the keypad's keys + Delete / Join are the scope.
-      const tvJoin = step === this.joinStep && document.getElementById('join-tv');
-      const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
-      let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
-      // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
-      if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
-      // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
-      // Joined and waiting, the code entry is hidden: only the wait's buttons.
-      const waitBtns = this._roomWaitButtons(step);
-      if (step === this.joinStep && step.classList.contains('room-waiting')) centerItems = waitBtns;
-      else if (waitBtns.length) centerItems = [...waitBtns, ...centerItems.filter((e) => !waitBtns.includes(e))];
+      const { centerItems, waitBtns } = this._stepSpatialCenterItems(step);
       this._modeColumns[1] = centerItems;
       const waitFocus = waitBtns.find((b) => b.getAttribute('variant') === 'accent');
       const defaultEl = waitFocus || this._stepPrimaryFocus(step, centerItems);
@@ -9104,9 +9142,16 @@ export class Lobby {
       const c = b2.getCenter(new THREE.Vector3());
       model.position.set(-c.x, -b2.min.y, -c.z);
       const mats = [];
+      const env = def.mirror ? mirrorEnvTexture() : null;   // mirror metal needs something to reflect, or it reads black
       model.traverse((o) => {
         if (!o.isMesh) return;
         o.material = o.material.clone();
+        if (env && isMirrorMaterial(o.material)) {
+          // the chooser's brighter exposure washes mirror gold to champagne: a deeper gold, softer reflections
+          o.material.envMap = env;
+          o.material.color.multiply(PREVIEW_GOLD_WARM);
+          o.material.envMapIntensity = PREVIEW_GOLD_ENV;
+        }
         o.castShadow = true;
         mats.push([o.material, o.material.clone()]);
       });
@@ -9137,6 +9182,7 @@ export class Lobby {
         if (m.color) m.color.set(0x050505);
         if (m.emissive) m.emissive.set(0x000000);
         if (m.map) m.map = null;
+        m.envMap = null;
         m.metalness = 0; m.roughness = 1;
       } else {
         m.copy(orig);
@@ -9184,7 +9230,9 @@ export class Lobby {
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
-        : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
+        : def.reward === 'goldStandard'
+          ? `${def.name}: all ${prog.total} achievements`
+          : `${def.name}: any ${prog.need} of the ${prog.total} solo achievements (player bots)`;
       hintEl.style.display = '';
       return;
     }
