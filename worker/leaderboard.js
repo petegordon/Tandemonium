@@ -1323,6 +1323,17 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
     }
   }
 
+  // Player 1 signed in after the session started (the Steam build's ticket
+  // sign-in finishes after launch): attach the account from the verified
+  // token. Only to a guest session, so it can't move one between accounts.
+  if (typeof body.account_token === 'string' && env.JWT_SECRET) {
+    const acct = parseInt((await userFromToken(body.account_token, env)) ?? '', 10);
+    if (acct > 0) {
+      sets.push('google_uid = COALESCE(google_uid, ?)');
+      values.push(String(acct));
+    }
+  }
+
   // Always update IP address (captures it even for sessions created before migration)
   if (clientIP) {
     sets.push('ip_address = ?');
@@ -1620,6 +1631,7 @@ async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
     }),
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
+    players: () => dashPlayers(env, since, ex),
   };
 
   // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
@@ -1943,6 +1955,70 @@ async function dashPairs(env, since, ex) {
     repeat_share: pairs.length ? +(repeat.length / pairs.length).toFixed(3) : 0,
     median_days_between_rides: median,
     note: 'Signed-in accounts only. Guest pairs are invisible here until D-9.'
+  };
+}
+
+// Who played, and for how long (Pete 2026-11-09). One row per signed-in
+// account (Steam, Discord, Google: its sign-ins by name) and one per guest
+// device that rode at least once (bots and bounces never ride).
+// A session's time runs from its start to its last event or ride end: the game
+// never recorded a session's end. One session counts at most 2 hours, so a
+// window left open overnight doesn't read as a marathon.
+export const PLAYER_SESSION_CAP_MIN = 120;
+async function dashPlayers(env, since, ex) {
+  const sf = sessionFilter(ex, 's');
+  const rows = await env.DB.prepare(
+    `WITH ss AS (
+       SELECT s.id, s.started_at, s.platform, s.controller_name,
+              CAST(s.google_uid AS INTEGER) AS acct,
+              CASE WHEN s.google_uid IS NOT NULL THEN 'a:' || CAST(s.google_uid AS INTEGER)
+                   ELSE 'g:' || COALESCE(s.device_id, s.ip_address, s.id) END AS who
+       FROM sessions s WHERE s.started_at >= ?${sf.clause}
+     ),
+     ev AS (SELECT session_id, MAX(created_at) AS last FROM events
+            WHERE session_id IN (SELECT id FROM ss) GROUP BY session_id),
+     rd AS (SELECT session_id, COUNT(*) AS rides, SUM(completed) AS done,
+                   MAX(COALESCE(ended_at, started_at)) AS last
+            FROM rides WHERE session_id IN (SELECT id FROM ss) GROUP BY session_id),
+     per AS (
+       SELECT ss.*, COALESCE(rd.rides, 0) AS rides, COALESCE(rd.done, 0) AS done,
+              MIN(${PLAYER_SESSION_CAP_MIN}, MAX(0, (julianday(MAX(COALESCE(ev.last, ss.started_at), COALESCE(rd.last, ss.started_at)))
+                - julianday(ss.started_at)) * 1440)) AS mins
+       FROM ss LEFT JOIN ev ON ev.session_id = ss.id LEFT JOIN rd ON rd.session_id = ss.id
+     )
+     SELECT who, MAX(acct) AS acct, COUNT(*) AS sessions, COUNT(DISTINCT substr(started_at, 1, 10)) AS days,
+            ROUND(SUM(mins), 1) AS minutes, SUM(rides) AS rides, SUM(done) AS finished,
+            MIN(started_at) AS first_seen, MAX(started_at) AS last_seen,
+            GROUP_CONCAT(DISTINCT platform) AS platforms,
+            GROUP_CONCAT(DISTINCT controller_name) AS controllers
+     FROM per GROUP BY who
+     HAVING acct IS NOT NULL OR SUM(rides) > 0
+     ORDER BY minutes DESC
+     LIMIT 300`
+  ).bind(since, ...sf.binds).all();
+  const players = rows.results || [];
+
+  // Each account's sign-ins, by name.
+  const accts = [...new Set(players.map(p => p.acct).filter(Boolean))];
+  const names = new Map();
+  if (accts.length) {
+    const ids = await env.DB.prepare(
+      `SELECT user_id, provider, display_name FROM user_identities
+       WHERE user_id IN (${accts.map(() => '?').join(',')}) ORDER BY id`
+    ).bind(...accts).all();
+    for (const r of ids.results || []) {
+      if (!names.has(r.user_id)) names.set(r.user_id, []);
+      names.get(r.user_id).push({ provider: r.provider, name: r.display_name });
+    }
+  }
+  return {
+    players: players.map(p => ({
+      ...p,
+      who: undefined,
+      guest: !p.acct,
+      sign_ins: p.acct ? (names.get(p.acct) || []) : [],
+    })),
+    note: `Time = first to last activity in each session (at most ${PLAYER_SESSION_CAP_MIN / 60} h a session). Guests listed only if they rode.`,
   };
 }
 

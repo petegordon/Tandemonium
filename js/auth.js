@@ -16,7 +16,7 @@
 //     polls the API with a secret only it holds.
 
 import { API_BASE } from './config.js';
-import { getDeviceId } from './analytics.js';
+import { getDeviceId, attachAccount } from './analytics.js';
 
 /**
  * #678 · this device's id, sent with Player 1's sign-in so the rides it
@@ -129,6 +129,7 @@ export class AuthManager {
     else if (prev.provider) this.user.provider = prev.provider;
     this.lastAuthError = null;
     this._save();
+    try { attachAccount(token); } catch (e) { /* analytics only */ }
   }
 
   /**

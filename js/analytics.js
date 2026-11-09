@@ -105,6 +105,21 @@ export function initSession(opts) {
   return sessionId;
 }
 
+// The account this session belongs to, once Player 1 signs in. The session row
+// is created at launch, before the Steam build's ticket sign-in finishes, so it
+// was left a guest (Pete 2026-11-09: signed-in Steam players read as guests).
+// The server takes the account from the verified token, never from the client.
+let accountToken = null;
+export function attachAccount(token) {
+  if (DISABLED || !token || token === accountToken) return;
+  accountToken = token;
+  if (sessionId) beacon(`${API_BASE}/session/${sessionId}`, { account_token: token }, 'PUT');
+}
+/** Later session updates carry it too, in case the first one beat the create. */
+function withAccount(data) {
+  return accountToken ? { ...data, account_token: accountToken } : data;
+}
+
 export function getSessionId() {
   if (!sessionId) {
     sessionId = sessionStorage.getItem('tandemonium_session_id');
@@ -182,10 +197,10 @@ export function setController(name, connection) {
     const now = `${currentControllerName || ''}|${currentControllerConnection || ''}`;
     if (now === controllerSent) return;
     controllerSent = now;
-    beacon(`${API_BASE}/session/${sessionId}`, {
+    beacon(`${API_BASE}/session/${sessionId}`, withAccount({
       controller_name: currentControllerName,
       controller_connection: currentControllerConnection,
-    }, 'PUT');
+    }), 'PUT');
   }, 10000);
 }
 
@@ -349,9 +364,9 @@ if (typeof window !== 'undefined') {
     flushUIEvents();
     // End session for duration tracking
     if (sessionId) {
-      beacon(`${API_BASE}/session/${sessionId}`, {
+      beacon(`${API_BASE}/session/${sessionId}`, withAccount({
         ended_at: new Date().toISOString(),
-      }, 'PUT');
+      }), 'PUT');
     }
   });
   window.addEventListener('visibilitychange', () => {
