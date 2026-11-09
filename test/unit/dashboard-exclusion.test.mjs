@@ -161,3 +161,26 @@ test('players: signed-in accounts by sign-in name, guests only if they rode, dev
   assert.ok(!r.players.some((p) => p.acct === 1 || p.acct === 38), 'developer excluded');
   assert.ok(r.players.some((p) => p.acct === 12), 'a signed-in player who never rode still shows');
 });
+
+test('the sign-in update can beat the create: the row is made, and the create keeps the account', async () => {
+  const db = seeded();
+  const SID3 = '33333333-4444-4555-8666-777777777777';
+  await putSession(db, SID3, { account_token: await token({ sub: 28 }) });
+  assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID3).google_uid, '28');
+  const res = await worker.fetch(new Request('https://api.test/api/analytics/session', {
+    method: 'POST', headers: { 'Content-Type': 'text/plain', 'CF-Connecting-IP': '3.3.3.3' },
+    body: JSON.stringify({ id: SID3, started_at: '2026-10-17T21:26:51.000Z', platform: 'steam', google_uid: null }),
+  }), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+  assert.equal(res.status, 200);
+  const row = db.prepare('SELECT google_uid, platform, started_at FROM sessions WHERE id = ?').get(SID3);
+  assert.deepEqual({ ...row }, { google_uid: '28', platform: 'steam', started_at: '2026-10-17T21:26:51.000Z' });
+});
+
+test('merging accounts moves the analytics sessions too', async () => {
+  const { mergeAccounts } = await import('../../worker/identity.js');
+  const db = seeded();
+  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (26, 'steam', 's-old', 'pete')").run();
+  db.prepare("INSERT INTO sessions (id, started_at, google_uid) VALUES ('old-steam', ?, '26.0')").run(new Date().toISOString());
+  await mergeAccounts({ DB: d1(db) }, 26, 38);
+  assert.equal(db.prepare("SELECT google_uid FROM sessions WHERE id = 'old-steam'").get().google_uid, '38');
+});
