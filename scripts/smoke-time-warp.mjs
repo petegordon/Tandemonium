@@ -10,6 +10,7 @@
 //          (cut to the clock + flame bones), the wheel measured, and sized exactly like the goose tandem
 //   TW-04  Show Riders off rides the plain frame; on again brings the Time Warp back
 //   TW-05  picking a paint preset again rides the goose tandem
+//   TW-06  at 1080p the count is readable and the bike's name shows inside the preview
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
 //          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
 //   GS-01  the Gold Standard closes the chooser: a locked silhouette with "n of 100 achievements"
@@ -185,5 +186,10 @@ const bigSizes = await big.evaluate(() => { const l = window._game.lobby; l._pre
   const h = document.getElementById('bike-hint'); const sp = h.querySelectorAll('span');
   return { text: h.textContent.replace(/\s+/g, ' ').trim(), count: parseFloat(getComputedStyle(sp[0]).fontSize), label: parseFloat(getComputedStyle(sp[1]).fontSize) }; });
 check(bigSizes.count >= bigSizes.label && /non-calendar achievements$/.test(bigSizes.text), 'TW-06: at 1080p the count is at least as big as "non-calendar achievements"', bigSizes);
+const nameBox = await big.evaluate(() => {
+  const n = document.getElementById('bike-name').getBoundingClientRect(), w = document.getElementById('bike-preview-wrap').getBoundingClientRect();
+  return { text: document.getElementById('bike-name').textContent, inside: n.top >= w.top && n.bottom <= w.bottom && n.left >= w.left && n.right <= w.right, h: Math.round(n.height) };
+});
+check(nameBox.inside && nameBox.h > 0 && /Time Warp/.test(nameBox.text), 'TW-06: the bike name shows inside the preview (it clips; a name above it was cut off)', nameBox);
 await h.shot(big, 'tw06-1080p');
 await h.finish();

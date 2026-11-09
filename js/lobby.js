@@ -147,21 +147,6 @@ const BIKE_NAMES = {
   gold_standard: 'Gold Standard',
 };
 
-const BIKE_COLORS = {
-  default: 'rgba(68, 255, 102, 0.7)',
-  bike_orange: '#fd892b',
-  bike_magenta: '#ff61f2',
-  bike_red: '#ff4444',
-  bike_blue: '#66aaff',
-  bike_green: '#00ff00',
-  bike_yellow: '#ffff00',
-  bike_christmas: '#2eff46',
-  bike_newyears: '#fbff00',
-  bike_birthday: '#66ff00',
-  solo_flight: '#9fd8ff',
-  time_warp: '#f0b860',
-  gold_standard: '#ffd34d',
-};
 
 // Map bike preset keys to their per-bike Grandma's House achievement IDs
 const BIKE_ACHIEVEMENT_MAP = {
@@ -9227,7 +9212,8 @@ export class Lobby {
     this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
-      nameEl.style.color = 'rgba(255,255,255,0.3)';
+      nameEl.style.color = '';                       // the logo-coloured name (index.html #bike-name), parchment while locked
+      nameEl.classList.add('locked');
       nameEl.textContent = '\uD83D\uDD12 ' + def.name;
       hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
         + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
@@ -9239,7 +9225,8 @@ export class Lobby {
       hintEl.style.display = '';
       return;
     }
-    nameEl.style.color = def.color;
+    nameEl.style.color = '';
+    nameEl.classList.remove('locked');
     nameEl.textContent = def.icon + ' ' + def.name;
     if (!def.rideable) {
       this.selectedPresetKey = 'default';
@@ -9364,7 +9351,8 @@ export class Lobby {
     // colours show, shut, as the full game's.
     const demoLocked = !bikeAllowed(getEditionRules(), key);
     const locked = demoLocked || (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
-    nameEl.style.color = locked ? 'rgba(255,255,255,0.3)' : (BIKE_COLORS[key] || 'rgba(68, 255, 102, 0.7)');
+    nameEl.style.color = '';                         // every name in the logo's colours (index.html #bike-name)
+    nameEl.classList.toggle('locked', !!locked);
 
     // Reset all materials to originals
     if (this._previewModel && this._previewOriginalMats) {
