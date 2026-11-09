@@ -34,7 +34,11 @@ function d1(db) {
     first: async () => db.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...args) }),
   });
-  return { prepare: (sql) => ({ bind: (...args) => bound(sql, args), ...bound(sql, []) }) };
+  const stmt = (sql, args) => ({ _sql: sql, _args: args, ...bound(sql, args) });
+  return {
+    prepare: (sql) => ({ bind: (...args) => stmt(sql, args), ...stmt(sql, []) }),
+    batch: async (list) => { for (const x of list) db.prepare(x._sql).run(...x._args); return list.map(() => ({ success: true })); },
+  };
 }
 
 const b64url = (s) => Buffer.from(s).toString('base64url');
@@ -115,7 +119,72 @@ test('parse + IPv6 helpers', () => {
 });
 
 test('every dashboard panel runs with exclusions on', async () => {
-  for (const route of ['daily', 'funnel', 'rides', 'crashes', 'conversions', 'network', 'devices', 'dda', 'overview', 'retention', 'dropoff', 'pairs']) {
+  for (const route of ['daily', 'funnel', 'rides', 'crashes', 'conversions', 'network', 'devices', 'dda', 'overview', 'retention', 'dropoff', 'pairs', 'players']) {
     await dash(seeded(), route, 'exclude_ips=9.9.9.9,2603:6013:1400:66:*&exclude_accounts=1,steam:7656-pete');
   }
+});
+
+// ── Signed in after launch: the session row picks the account up ──
+async function putSession(db, id, body) {
+  const res = await worker.fetch(new Request(`https://api.test/api/analytics/session/${id}`, {
+    method: 'PUT', headers: { 'Content-Type': 'text/plain', 'CF-Connecting-IP': '3.3.3.3' }, body: JSON.stringify(body),
+  }), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+  assert.equal(res.status, 200);
+}
+const SID2 = '22222222-3333-4444-8555-666666666666';
+
+test('a sign-in after launch attaches the account to the guest session, once', async () => {
+  const db = seeded();
+  db.prepare('INSERT INTO sessions (id, started_at, platform) VALUES (?, ?, ?)').run(SID2, new Date().toISOString(), 'steam');
+  await putSession(db, SID2, { account_token: 'not-a-token' });
+  assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID2).google_uid, null, 'a bad token attaches nothing');
+  await putSession(db, SID2, { account_token: await token({ sub: 42 }) });
+  assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID2).google_uid, '42');
+  await putSession(db, SID2, { ended_at: 'x', account_token: await token({ sub: 7 }) });
+  assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID2).google_uid, '42', 'never moves to another account');
+});
+
+test('players: signed-in accounts by sign-in name, guests only if they rode, developer excluded', async () => {
+  const db = seeded();
+  const now = Date.now();
+  const iso = (m) => new Date(now + m * 60000).toISOString();
+  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
+  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
+  db.prepare('UPDATE sessions SET started_at = ? ').run(iso(-60));
+  db.prepare("INSERT INTO sessions (id, started_at, google_uid, platform) VALUES ('wolf-1', ?, '28.0', 'steam')").run(iso(-50));
+  db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed)
+              VALUES ('r1', 'wolf-1', 'grandma', 'gamepad_stick', ?, ?, 1), ('r2', 'player-a', 'tutorial', 'keyboard', ?, ?, 0)`)
+    .run(iso(-49), iso(-30), iso(-59), iso(-58));
+  const r = await dash(db, 'players', 'exclude_accounts=1,38');
+  const wolf = r.players.find((p) => p.acct === 28);
+  assert.deepEqual(wolf.sign_ins, [{ provider: 'steam', name: 'wolfg4m3r' }]);
+  assert.equal(wolf.minutes, 20);
+  assert.equal(wolf.finished, 1);
+  const guests = r.players.filter((p) => p.guest);
+  assert.equal(guests.length, 1, 'player-a rode; player-b never did');
+  assert.ok(!r.players.some((p) => p.acct === 1 || p.acct === 38), 'developer excluded');
+  assert.ok(r.players.some((p) => p.acct === 12), 'a signed-in player who never rode still shows');
+});
+
+test('the sign-in update can beat the create: the row is made, and the create keeps the account', async () => {
+  const db = seeded();
+  const SID3 = '33333333-4444-4555-8666-777777777777';
+  await putSession(db, SID3, { account_token: await token({ sub: 28 }) });
+  assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID3).google_uid, '28');
+  const res = await worker.fetch(new Request('https://api.test/api/analytics/session', {
+    method: 'POST', headers: { 'Content-Type': 'text/plain', 'CF-Connecting-IP': '3.3.3.3' },
+    body: JSON.stringify({ id: SID3, started_at: '2026-10-17T21:26:51.000Z', platform: 'steam', google_uid: null }),
+  }), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+  assert.equal(res.status, 200);
+  const row = db.prepare('SELECT google_uid, platform, started_at FROM sessions WHERE id = ?').get(SID3);
+  assert.deepEqual({ ...row }, { google_uid: '28', platform: 'steam', started_at: '2026-10-17T21:26:51.000Z' });
+});
+
+test('merging accounts moves the analytics sessions too', async () => {
+  const { mergeAccounts } = await import('../../worker/identity.js');
+  const db = seeded();
+  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (26, 'steam', 's-old', 'pete')").run();
+  db.prepare("INSERT INTO sessions (id, started_at, google_uid) VALUES ('old-steam', ?, '26.0')").run(new Date().toISOString());
+  await mergeAccounts({ DB: d1(db) }, 26, 38);
+  assert.equal(db.prepare("SELECT google_uid FROM sessions WHERE id = 'old-steam'").get().google_uid, '38');
 });
