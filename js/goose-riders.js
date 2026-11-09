@@ -87,7 +87,8 @@ export class GooseRiders {
   /** Measure the wheel in world units (call after the model is scaled and placed). */
   measureWheel() {
     const tyre = this.model.getObjectByName('Cylinder008_cycle_0') || this.model.getObjectByName('tyre_rear_low_cycle_0')
-      || this.model.getObjectByName('TW_Wheel_R');   // #611 · the Time Warp's rear wheel (one mesh, tyre outermost)
+      || this.model.getObjectByName('TW_Wheel_R')    // #611 · the Time Warp's rear wheel (one mesh, tyre outermost)
+      || this.model.getObjectByName('GS_Wheel_R');   // #611 · the Gold Standard's (likewise)
     if (!tyre) return;
     this.model.updateMatrixWorld(true);
     const size = new THREE.Box3().setFromObject(tyre, true).getSize(new THREE.Vector3());
