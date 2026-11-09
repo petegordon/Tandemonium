@@ -592,17 +592,18 @@ test('relay: a pad joins with its own key (paired) or the QR (qr), nothing else'
   assert.equal(await padCredential(null, hashes), null);
 });
 
-test('relay rate limit: by IP through the binding, and open when the binding is missing or fails', async () => {
+test('relay rate limit: per IP and per seat of a room, and open when a binding is missing or fails', async () => {
   const req = (ip) => ({ headers: new Map(ip ? [['CF-Connecting-IP', ip]] : []) });
   const keys = [];
   const limiter = (success) => ({ limit: async ({ key }) => { keys.push(key); return { success }; } });
-  assert.equal(await padRateOk({}, req('1.2.3.4')), true, 'no binding (local dev)');
+  assert.equal(await padRateOk({}, req('1.2.3.4'), 'ABCDEF', 'host'), true, 'no binding (local dev)');
   assert.equal(await padRateOk(undefined, req('1.2.3.4')), true);
-  assert.equal(await padRateOk({ PAD_LIMITER: limiter(true) }, req('1.2.3.4')), true);
-  assert.equal(await padRateOk({ PAD_LIMITER: limiter(false) }, req('1.2.3.4')), false);
-  assert.deepEqual(keys, ['1.2.3.4', '1.2.3.4']);
-  assert.equal(await padRateOk({ PAD_LIMITER: limiter(false) }, req(null)), true, 'no IP: not limited');
-  assert.equal(await padRateOk({ PAD_LIMITER: { limit: async () => { throw new Error('down'); } } }, req('1.2.3.4')), true, 'a binding error fails open');
+  assert.equal(await padRateOk({ PAD_IP_LIMITER: limiter(true), PAD_PLAYER_LIMITER: limiter(true) }, req('1.2.3.4'), 'ABCDEF', 'pad2'), true);
+  assert.deepEqual(keys, ['ip:1.2.3.4', 'pad:ABCDEF:pad2']);
+  assert.equal(await padRateOk({ PAD_IP_LIMITER: limiter(false) }, req('1.2.3.4'), 'ABCDEF', 'host'), false, 'over the IP ceiling');
+  assert.equal(await padRateOk({ PAD_PLAYER_LIMITER: limiter(false) }, req('1.2.3.4'), 'ABCDEF', 'host'), false, 'one seat over its limit');
+  assert.equal(await padRateOk({ PAD_IP_LIMITER: limiter(false) }, req(null), 'ABCDEF', 'host'), true, 'no IP: no IP limit');
+  assert.equal(await padRateOk({ PAD_IP_LIMITER: { limit: async () => { throw new Error('down'); } } }, req('1.2.3.4')), true, 'a binding error fails open');
 });
 
 /** A host with a room already set up (no network). */
