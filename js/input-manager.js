@@ -19,6 +19,14 @@ export { DEFAULT_YAW_RETURN_HALF_LIFE_S as YAW_RETURN_HALF_LIFE_S } from '../sha
 const CALIB_STILL_DEG = 4;
 /** ...or, after this many samples without a still window, the median is taken. */
 const CALIB_MAX_TRIES = 60;
+/**
+ * #716 · ride-start centring: at GO the centre is the last still window, but
+ * only if that window is this recent (ms). Older means the phone was moving
+ * up to GO, so normal calibration finishes the job after GO.
+ */
+const RIDE_CENTRE_FRESH_MS = 1000;
+/** #716 · a ride-start centring nobody committed (no GO seen) ends itself after this (ms). */
+const RIDE_CENTRE_MAX_MS = 6000;
 /** Median of a short array. */
 function median(a) { const b = [...a].sort((x, y) => x - y), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
 
@@ -267,6 +275,10 @@ export class InputManager {
     this._calibBuf = [];
     this._calibrating = false;
     this._warmupCount = 0;
+    /** #716 · true from the countdown's start until GO: the centre keeps following the still phone. */
+    this._rideCentring = false;
+    this._rideCentreStart = 0;
+    this._rideStillAt = 0;
 
     // Time-based filtering for deviceorientation events
     this._lastOrientTime = 0;
@@ -635,6 +647,15 @@ export class InputManager {
       if (rawTilt != null) this._onOrientationTilt(rawTilt);
     });
 
+    // #716 · landscape 90 <-> 270 flips the tilt's sign (and portrait <->
+    // landscape swaps its axis), so the old centre is meaningless after a
+    // rotation. Both events can fire for one turn; re-centring twice is harmless.
+    const onRotate = () => this._onScreenRotate();
+    if (typeof screen !== 'undefined' && screen.orientation && typeof screen.orientation.addEventListener === 'function') {
+      screen.orientation.addEventListener('change', onRotate);
+    }
+    window.addEventListener('orientationchange', onRotate);
+
     // Fallback: devicemotion (only if orientation events don't fire)
     window.addEventListener('devicemotion', (e) => {
       if (this._useOrientation) return;
@@ -727,6 +748,23 @@ export class InputManager {
     this._remoteNav = active ? nav : 0;
   }
 
+  /**
+   * #716 · the screen rotated: drop the filtered angle and the drift average
+   * (both are in the old orientation's frame) and take the centre again. The
+   * lean holds at 0 while it calibrates, mid-ride too.
+   */
+  _onScreenRotate() {
+    this._filteredRawTilt = null;
+    this._gravityInit = false;
+    this._driftEma = null;
+    if (this.motionOffset === null && !this._calibrating) return; // the first centring is still to come
+    this.startTiltCalibration();
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+  }
+
   /** The phone remote went away: release its pedals and its lean. */
   detachRemote() {
     this._remoteMenu = false;
@@ -752,16 +790,22 @@ export class InputManager {
 
   /**
    * #531 · re-take phone tilt's centre at the start of a ride (the 3-2-1
-   * countdown): the player is holding the phone the way they'll ride, and a
-   * remote sends at 30 Hz there. Phone tilt only (this device's or a phone
-   * remote's); controller gyro has its own recenter. The lean holds at 0
-   * until the still-phone centre is taken (well inside the countdown).
+   * countdown). Phone tilt only (this device's or a phone remote's);
+   * controller gyro has its own recenter.
+   *
+   * #716 · the countdown starts on a tap, so the phone is still in the
+   * one-thumb tapping pose; the player settles into the two-thumb grip during
+   * the countdown. So the centre isn't taken once here: it follows every still
+   * window through the countdown (lean held at 0, no physics runs yet) and
+   * commitTiltCentre() at GO keeps the last one.
    * @returns {boolean} whether a re-centre started
    */
   recenterTiltForRide() {
     const phoneTilt = this._remoteTilt || (this.motionEnabled && !this.gyroConnected && this.motionOffset !== null);
     if (!phoneTilt) return false;
     this.startTiltCalibration();
+    this._rideCentring = true;
+    this._rideCentreStart = performance.now();
     this._smoothedLean = 0;
     this._prevLeanRaw = 0;
     this.motionLean = 0;
@@ -769,11 +813,34 @@ export class InputManager {
     return true;
   }
 
+  /**
+   * #716 · GO: keep the centre from the last still window, if it is recent.
+   * If the phone was still moving, ordinary calibration carries on after GO
+   * (lean held at 0 until a still window or the median fallback).
+   * No-op unless recenterTiltForRide() started a ride centring.
+   */
+  commitTiltCentre() {
+    if (!this._rideCentring) return;
+    this._rideCentring = false;
+    this._calibTries = 0;
+    if (this._rideStillAt && performance.now() - this._rideStillAt <= RIDE_CENTRE_FRESH_MS) {
+      this._calibrating = false;
+      this._calibBuf = [];
+      this._driftEma = this.motionOffset;
+    }
+  }
+
   startTiltCalibration() {
     this._calibrating = true;
     this._calibBuf = [];
     this._calibTries = 0;
     this._warmupCount = 5; // already warmed up if explicitly called
+    // #716 · a still window from before this restart (e.g. before a screen
+    // rotation) must not be committed at GO.
+    this._rideStillAt = 0;
+    // #716 · the drift average is frozen during calibration and still holds
+    // the old pose; it is seeded from the new centre when calibration ends.
+    this._driftEma = null;
   }
 
   _applyTilt(rawTilt, isGyro = false) {
@@ -794,6 +861,23 @@ export class InputManager {
       return;
     }
 
+    if (this._calibrating && this._rideCentring) {
+      // #716 · countdown: every still window moves the centre; calibration
+      // stays on (lean held at 0) until commitTiltCentre() at GO.
+      if (now - this._rideCentreStart > RIDE_CENTRE_MAX_MS) {
+        this.commitTiltCentre();
+      } else {
+        const n = TUNE.calibSamples;
+        this._calibBuf.push(this.rawGamma);
+        if (this._calibBuf.length > n) this._calibBuf.shift();
+        if (this._calibBuf.length >= n && (isGyro || Math.max(...this._calibBuf) - Math.min(...this._calibBuf) <= CALIB_STILL_DEG)) {
+          this.motionOffset = this._calibBuf.reduce((a, b) => a + b, 0) / n;
+          this._rideStillAt = now;
+        }
+        return;
+      }
+    }
+
     if (this._calibrating) {
       this._calibBuf.push(this.rawGamma);
       this._calibTries = (this._calibTries || 0) + 1;
@@ -808,6 +892,9 @@ export class InputManager {
         const still = isGyro || Math.max(...win) - Math.min(...win) <= CALIB_STILL_DEG;
         if (still || this._calibTries >= CALIB_MAX_TRIES) {
           this.motionOffset = still ? win.reduce((a, b) => a + b, 0) / n : median(win);
+          // #716 · drift tracking restarts at the new centre, not at the pose
+          // it last saw before calibration (the lobby's, for a ride start).
+          this._driftEma = this.motionOffset;
           this._calibrating = false;
           this._calibBuf = [];
           this._calibTries = 0;

@@ -1575,6 +1575,7 @@ class Game {
         this._clearStokerTimeout();
         // Stoker receives GO from captain — clear countdown flavor so "1" doesn't stick
         this.state = 'playing';
+        this._commitPhoneCentres();
         if (this.raceManager) this.raceManager.start();
         this.achievements.ride.go();   // #401 False Start
         const flavorNum = document.getElementById('countdown-flavor-num');
@@ -2485,6 +2486,13 @@ class Game {
     }
   }
 
+  /** #716 · GO: each phone keeps the centre it took in the riding grip (see recenterTiltForRide). */
+  _commitPhoneCentres() {
+    for (const im of new Set([this.input, this.inputP2, ...(this.versusRigs || []).flatMap((r) => (r && r.inputs) || [])])) {
+      if (im && typeof im.commitTiltCentre === 'function') im.commitTiltCentre();
+    }
+  }
+
   _startCountdown() {
     // Versus has its own lean countdown path — no singleton HUD, DDA,
     // recorder, or contribution tracking.
@@ -2947,6 +2955,7 @@ class Game {
 
     if (this.countdownTimer <= 0) {
       this.state = 'playing';
+      this._commitPhoneCentres();
       // Show "GO!" in the flavor block
       const flavorIcon = document.getElementById('countdown-flavor-icon');
       const flavorText = document.getElementById('countdown-flavor-text');
