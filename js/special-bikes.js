@@ -35,6 +35,7 @@ export const GOLD_STANDARD_BIKE_MODEL_PATH = 'tandem-3d/goose/gold_standard_tand
  *   soloOnly  rides only on a solo ride (Solo Flight: the bot takes the back seat); other modes ride the tandem
  *   fx        the bike's own looping clip, if any
  *   mirror    mirror-finish metal: the chooser preview gives it reflections (the ride has the riders' environment)
+ *   sparkle   twinkling stars over its gold, like the Tandem Token's (js/bike-sparkle.js, #697)
  */
 export const SPECIAL_BIKES = Object.freeze({
   [SOLO_FLIGHT_BIKE_KEY]: Object.freeze({ name: 'Solo Flight', model: SOLO_FLIGHT_BIKE_MODEL_PATH, reward: 'playerBots',
@@ -42,7 +43,7 @@ export const SPECIAL_BIKES = Object.freeze({
   [TIME_WARP_BIKE_KEY]: Object.freeze({ name: 'Time Warp', model: TIME_WARP_BIKE_MODEL_PATH, reward: 'timeWarp',
     unit: 'non-calendar achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
   [GOLD_STANDARD_BIKE_KEY]: Object.freeze({ name: 'Gold Standard', model: GOLD_STANDARD_BIKE_MODEL_PATH, reward: 'goldStandard',
-    unit: 'achievements', rideable: true, icon: '\uD83D\uDC51', color: '#ffd34d', fx: null, mirror: true }),
+    unit: 'achievements', rideable: true, icon: '\uD83D\uDC51', color: '#ffd34d', fx: null, mirror: true, sparkle: true }),
 });
 
 /** Chooser keys of the special bikes, in carousel order. */
@@ -78,6 +79,11 @@ export function ridesWithBot(bikeKey, mode) {
 /** A mirror-finish special bike (js/mirror-env.js gives it something to reflect). */
 export function isMirrorBike(modelPath) {
   return Object.values(SPECIAL_BIKES).some(d => d.mirror && d.model === modelPath);
+}
+
+/** A special bike with twinkling stars on its gold (js/bike-sparkle.js). */
+export function isSparkleBike(modelPath) {
+  return Object.values(SPECIAL_BIKES).some(d => d.sparkle && d.model === modelPath);
 }
 
 export function isRigTwin(modelPath) {

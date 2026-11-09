@@ -26,7 +26,8 @@ import { CrankMotion } from './crank-motion.js';
 import { fallLean } from './crash-tumble.js';
 import { shakeAt } from './crash-wobble.js';
 import { batchSplit, hasParts } from './physics/bike-parts.js';
-import { isRigTwin, isMirrorBike } from './special-bikes.js';
+import { isRigTwin, isMirrorBike, isSparkleBike } from './special-bikes.js';
+import { addBikeSparkle } from './bike-sparkle.js';
 import { applyMirrorEnv } from './mirror-env.js';
 import { botStokerLook, tintBot, untintBot } from './player-bots.js';
 import { trackBone } from './goose-rider-clips.js';
@@ -399,6 +400,7 @@ export class BikeModel {
       const scale = isGoose && isRigTwin(modelPath) ? targetLength / GOOSE_TANDEM_LENGTH : targetLength / maxDim;
       model.scale.setScalar(scale);
       if (isMirrorBike(modelPath)) applyMirrorEnv(model);   // #611 · mirror gold: its own sky to reflect
+      if (isSparkleBike(modelPath)) addBikeSparkle(model, { size: 0.2 });   // #697 · glints running over the gold
 
       // Face the riders model down the road. Applied before the bounds scan so
       // recentering happens in the final orientation.

@@ -39,6 +39,7 @@
 
 import * as THREE from 'three';
 import { mirrorEnvTexture, isMirrorMaterial } from './mirror-env.js';
+import { addBikeSparkle } from './bike-sparkle.js';
 
 // #611 · the Gold Standard in the chooser preview (its exposure is brighter than the ride's)
 const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
@@ -9166,9 +9167,10 @@ export class Lobby {
         fx.play();
         fx.paused = true;
       }
+      const sparkle = def.sparkle ? addBikeSparkle(model, { size: 0.11 }) : null;   // #697 (off while locked)
       model.visible = false;
       if (this._previewPivot) this._previewPivot.add(model);
-      Object.assign(sp, { model, mats, mixer, fx, dark: false });
+      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false });
       onReady(sp);
     }, undefined, (err) => console.warn(def.name + ' preview failed to load:', err));
   }
@@ -9190,6 +9192,7 @@ export class Lobby {
       m.needsUpdate = true;
     }
     if (dark && sp.fx) { sp.fx.time = 0; sp.mixer.update(0); }   // (the orange pops tucked away)
+    if (sp.sparkle) sp.sparkle.setVisible(!dark);                  // a silhouette doesn't sparkle
   }
 
   /** Hide every special bike's preview model (a paint preset or another special bike is showing). */
