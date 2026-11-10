@@ -2796,6 +2796,8 @@
     font-size: 11px;
     z-index: 1;
   }
+  /* Pete, 2026-11-10: a bike with its outfit geese riding: the line drops below them (their heads and outfits show) */
+  #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { top: auto !important; bottom: 4%; transform: translateX(-50%) !important; }
   .bike-carousel-nav {
     width: 44px;
     height: 44px;
@@ -6204,7 +6206,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ab67cb9 | 11-09-2026 22:28</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.31513d4 | 11-10-2026 04:08</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6718,6 +6720,14 @@ ON</button>
         <button class="opt-btn" id="opt-solo-off">Off</button>
       </div>
       <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
+    </div>
+    <div class="opt-section">
+      <div class="label" id="opt-chooser-geese-label">Bike Chooser Geese</div>
+      <div class="options-row" id="opt-chooser-geese-row">
+        <button class="opt-btn" id="opt-chooser-geese-ride">On the bike</button>
+        <button class="opt-btn" id="opt-chooser-geese-stand">Beside the bike</button>
+      </div>
+      <div class="options-note">A reward bike's outfit geese, riding it or standing beside it — applies immediately</div>
     </div>
     <!-- #548: these three rows are Player 1's look (js/player-look.js). Every other player
          dresses their own goose in the Wardrobe on the seat screens (co-op room / versus). -->
