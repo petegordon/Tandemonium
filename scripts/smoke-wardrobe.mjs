@@ -24,7 +24,8 @@ import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
 
 const h = await startHarness({ port: 8967, outDir: 'tandemonium-wardrobe' });
 const { check } = h;
-const STORAGE = { tandemonium_tutorial_done: 'smoke' };
+// #736 · a player from before the holiday outfits became rewards: they kept Cyclists, Fancy and Georgian
+const STORAGE = { tandemonium_tutorial_done: 'smoke', tandemonium_outfits_kept: JSON.stringify(['cyclists', 'fancy', 'georgian']) };
 const until = (page, fn, arg, timeout = 8000) => page.waitForFunction(fn, { timeout }, arg).then(() => true, () => false);
 
 async function open(atBoot) {
@@ -141,6 +142,15 @@ check(buzz2 && buzzN === 2, 'WD-03: two quick light picks buzz once more, not tw
 const noteGone = await until(page, () => { const h = document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint'); return !!h && h.textContent === ''; }, null, 6000);
 check(noteGone, '#623: "Buzzing Player 2\'s controller…" clears once the buzz is over', await page.evaluate(() => document.querySelector('#dr-cards .dr-card[data-n="2"] .dr-hint')?.textContent));
 // #611 · the robot outfit: locked behind the Solo Flight reward (all solo achievements but one, #736)
+// #736 · a new player: the holiday outfits are locked until their bikes, with the bike's hint
+const fresh = await page.evaluate(async () => {
+  const { lockedOutfits, outfitLockHint } = await import('/js/rewards.js');
+  const { GOOSE_OUTFITS } = await import('/js/goose-outfits.js');
+  const l = lockedOutfits(GOOSE_OUTFITS, [], undefined, new Set());
+  return { locked: [...l].sort(), hint: outfitLockHint(GOOSE_OUTFITS.georgian, []) };
+});
+check(fresh.locked.join() === 'cyclists,fancy,georgian,robot' && /^Birthday Express reward: finish Grandma's on /.test(fresh.hint),
+  'WD-03h: a new player: Cyclists, Fancy and Georgian wait for their holiday bikes (Victorian is free)', fresh);
 const robot = await page.evaluate(() => {
   const b = document.querySelector('#dr-cards .dr-card[data-n="2"] button[data-pick="outfit"][data-val="robot"]');
   return b ? { locked: b.dataset.locked === '1', title: b.title } : null;

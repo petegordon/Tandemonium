@@ -45,7 +45,7 @@ import { addBikeSparkle } from './bike-sparkle.js';
 const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
 const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
-import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
+import { seedKeptOutfits, lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
@@ -469,6 +469,8 @@ export class Lobby {
     // ride unlocks all touch the same list). A second copy here re-awarded a signed-in player's
     // achievements at the next ride start and saved over the merged list.
     this._achievements = achievements || new AchievementManager();
+    // #736 · holiday outfits the players already wear stay theirs (recorded once)
+    try { seedKeptOutfits(GOOSE_OUTFITS, [1, 2, 3, 4].map((n) => playerLooks.get(n).outfit)); } catch (e) { /* looks not ready */ }
     // #736 · "New bike!" — each bike that unlocks is celebrated once, at a calm moment
     this.bikeCelebration = new BikeCelebration({
       showcase: () => new BikeShowcase(this._presetData),   // the turning bikes on the cards

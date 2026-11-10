@@ -90,21 +90,11 @@ const pic = await until(page, () => {
   return lit > 2000;
 }, null, 20000);
 const nameLine = await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-name').textContent);
-const geese4 = await until(page, () => { const sc = window._game.lobby.bikeCelebration._showcase; return sc.mode === 'standing' && sc.geese('bike_green') === 2; }, null, 30000);
-await until(page, () => { const e = window._game.lobby.bikeCelebration._showcase._entries[0]; const ro = e && e.roll; return !!ro && ro.t > ro.delay + 0.12 && ro.t < ro.delay + 0.5; }, null, 15000);
-await h.shot(page, 'bl04-rolling-in');   // (the bike on its way in, behind a goose)
-await sleep(5000);   // they walk in, turn and start greeting
-const greeting = await page.evaluate(() => {
-  const e = window._game.lobby.bikeCelebration._showcase._entries[0];
-  return e.actors.map(a => ({ goose: a.name, playing: a.cur ? a.cur.c.clip.name : null, x: +a.root.position.x.toFixed(2) }));
-});
-const outfitLine = await page.evaluate(() => (document.querySelector('#new-bike-sheet .nb-outfit') || {}).textContent);
-await h.shot(page, 'bl04-new-bike-turning');
-await sleep(4000);
-await h.shot(page, 'bl04-greeting');
-check(geese4 && greeting.length === 2, 'BL-04: one new bike: the two outfit geese stand beside it', greeting);
-check(await page.evaluate(() => window._game.lobby.bikeCelebration._showcase.rolledIn('bike_green')), 'BL-04: the bike has rolled in and stopped');
-check(outfitLine === 'With your 🎩 Victorian geese', 'BL-04: whose geese, the outfit icon first', outfitLine);
+// Pete, 2026-11-09: a bike that brings no outfit rolls in alone (no geese)
+const alone = await until(page, () => window._game.lobby.bikeCelebration._showcase.rolledIn('bike_green'), null, 15000);
+await h.shot(page, 'bl04-new-bike-alone');
+check(alone && await page.evaluate(() => window._game.lobby.bikeCelebration._showcase.geese('bike_green')) === 0 && !(await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-gift'))),
+  'BL-04: Jungle brings no outfit: the bike rolls in alone and stops');
 check(pic && nameLine === '🌿 Jungle Cruiser', 'BL-04: the bike turns in the card, its name below with the icon in front', { pic, nameLine });
 await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-ride').click());
 const rode = await until(page, () => { const l = window._game.lobby; return l._currentStep === l.levelStep && l.selectedPresetKey === 'bike_green'; }, null, 5000);
@@ -119,11 +109,14 @@ console.log('BL-05 two bikes at once');
 await grant(page, 50, ['grandma_red', 'grandma_green']);
 await page.evaluate(() => { const l = window._game.lobby; l._showStep(l.modeStep); });
 await until(page, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open); }, null, 5000);
-await sleep(1400);
+await sleep(4500);   // (both have rolled in)
 const s5 = await sheet(page);
 await h.shot(page, 'bl05-two-bikes');
 check(s5.heading === '2 new bikes!' && s5.bikes.join() === 'bike_yellow,bike_christmas' && s5.ride.length === 2,
   'BL-05: "2 new bikes!" — Banana Delivery and Christmas Cruiser on one screen', s5);
+const gift = await page.evaluate(() => (document.querySelector('#new-bike-sheet .nb-card[data-bike="bike_christmas"] .nb-gift') || {}).textContent);
+const cyclists = await until(page, () => { const sc = window._game.lobby.bikeCelebration._showcase; const e = sc._entries.find(x => x.key === 'bike_christmas'); return !!e && e.actors.length === 2 && e.actors.every(a => /cyclist/.test(a.name)); }, null, 60000);
+check(gift === '+ 🚴 Cyclists outfit' && cyclists, 'BL-05: the Christmas Cruiser brings the Cyclists: said on its card, and its geese wear them', { gift, cyclists });
 await page.evaluate(() => document.getElementById('new-bike-later').click());
 await sleep(300);
 check(!(await sheet(page)).open, 'BL-05: LATER closes it');
@@ -149,6 +142,31 @@ check(/^Next bike: \d+ more .+ to .+/.test(goalLine), 'BL-06: the end screen say
 await page.evaluate(() => { window._game._hideVictory(); window._game.state = 'lobby'; });
 check(!(await sheet(page)).open, 'BL-06: leaving the end screen closes it');
 
+// ── BL-08 the Solo Flight: a full-screen reward first, its Robot geese; then the other new bikes ──
+console.log('BL-08 the Solo Flight, full screen');
+await page.evaluate(async () => {
+  const { soloAchievementIds } = await import('/js/rewards.js');
+  const ach = window._game.lobby._achievements;
+  for (const id of soloAchievementIds().slice(1)) ach._earned.set(id, { id, earnedAt: 1 });
+  const l = window._game.lobby; l._showStep(l.modeStep);
+});
+await until(page, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open); }, null, 5000);
+const hero = await page.evaluate(() => {
+  const s = document.getElementById('new-bike-sheet'); const r = s.querySelector('.uf-sheet__card').getBoundingClientRect();
+  return { hero: s.hasAttribute('data-hero'), bikes: [...s.querySelectorAll('.nb-card')].map(c => c.dataset.bike), full: r.width >= innerWidth - 2 && r.height >= innerHeight - 2,
+    gift: (s.querySelector('.nb-gift') || {}).textContent, next: (document.getElementById('new-bike-later') || {}).textContent };
+});
+const robots = await until(page, () => { const e = window._game.lobby.bikeCelebration._showcase._entries[0]; return !!e && e.actors.length === 2 && e.actors.every(a => /robot/.test(a.name)); }, null, 30000);
+await until(page, () => window._game.lobby.bikeCelebration._showcase.rolledIn('solo_flight'), null, 20000);
+await sleep(1500);
+await h.shot(page, 'bl08-solo-flight-hero');
+check(hero.hero && hero.full && hero.bikes.join() === 'solo_flight' && hero.gift === '+ 🤖 Robot outfit' && robots && hero.next === 'NEXT',
+  'BL-08: the Solo Flight fills the screen on its own, its Robot geese with it; NEXT for the rest', { ...hero, robots });
+await page.evaluate(() => document.getElementById('new-bike-later').click());
+const rest = await until(page, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open && !s.hasAttribute('data-hero') && s.querySelectorAll('.nb-card').length > 0); }, null, 5000);
+check(rest, 'BL-08: then the other new bikes, on the card screen', await page.evaluate(() => [...document.querySelectorAll('#new-bike-sheet .nb-card')].map(c => c.dataset.bike)));
+await page.evaluate(() => document.getElementById('new-bike-later').click());
+
 // ── BL-07 demo → full game ──
 console.log('BL-07 demo → full game');
 const ids = await page.evaluate(async () => {
@@ -162,8 +180,8 @@ const full = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage:
 } });
 await ready(full);
 await until(full, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open); }, null, 15000);
-const riding = await until(full, () => { const sc = window._game.lobby.bikeCelebration._showcase; return !!sc && sc.mode === 'riding' && ['bike_magenta', 'bike_red', 'bike_green', 'bike_yellow'].every(k => sc.drawn(k) && sc.geese(k) === 2); }, null, 40000);
-check(riding, 'BL-07: four new bikes: the geese ride each one');
+const riding = await until(full, () => { const sc = window._game.lobby.bikeCelebration._showcase; return !!sc && sc.mode === 'riding' && ['bike_magenta', 'bike_red', 'bike_green', 'bike_yellow'].every(k => sc.drawn(k) && sc.geese(k) === 0); }, null, 40000);
+check(riding, 'BL-07: four colour bikes (no outfits): four bikes turning, no geese');
 await sleep(800);
 const s7 = await sheet(full);
 await h.shot(full, 'bl07-demo-welcome');

@@ -34,7 +34,7 @@ const TURN_RATE = 0.6;      // rad/s, the bike's turntable
 const CRANK_RATE = 2.2;     // rad/s, the riders' pedalling
 const THREE_QUARTER = 0.8;  // rad the standing scene's bike settles at, off side-on
 const ROLL_DELAY = 0.3;     // s after the goose on its side stops walking (plus up to 0.8 s at random) that the bike rolls in
-const ROLL_FALLBACK = 6;    // s: it rolls in by then anyway
+const ROLL_FALLBACK = 3.5;  // s: it rolls in by then anyway (geese still loading walk out after it)
 const ROLL_TIME = 2.6;      // s it takes to roll in and stop
 const ROLL_FROM = 7;        // m out of shot it starts
 const GOOSE_Z = 0.6;        // m the standing geese stand in front of the bike's line (it rolls behind them)
@@ -135,6 +135,27 @@ const cachedLoader = {
   },
 };
 
+/** A promise that gives up after ms. */
+function within(p, ms) {
+  return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
+}
+
+/**
+ * A Goose Studio goose, from the shared cache; a load that hangs (seen once in the smoke, two big GLBs
+ * at once) is tried again with a loader of its own instead of leaving the card without that goose.
+ */
+async function loadActor(name, random) {
+  try { return await within(GooseActor.load(cachedLoader, name, { dir: GOOSE_DIR, random }), 12000); }
+  catch (err) {
+    console.warn('New bike goose slow to load, trying again:', name, err && err.message);
+    const draco = new DRACOLoader();
+    draco.setDecoderPath(dracoDecoderPath('libs/draco/'));
+    const fresh = new GLTFLoader();
+    fresh.setDRACOLoader(draco);
+    return within(GooseActor.load(fresh, name, { dir: GOOSE_DIR, random }), 20000);
+  }
+}
+
 export class BikeShowcase {
   /** @param {Record<string, object>} presetData the chooser's paint presets, by bike key */
   constructor(presetData = {}) {
@@ -194,11 +215,15 @@ export class BikeShowcase {
     if (!looks) { try { looks = getSeatLooks('solo'); } catch (e) { looks = null; } }
     const random = opts.random || Math.random;
     this.mode = mode;
-    this._entries = items.map(({ key, canvas }) => {
+    this._entries = items.map(({ key, canvas, outfit, hero }) => {
       const e = { key, canvas, ctx: canvas.getContext('2d'), scene: this._scene(), camera: new THREE.PerspectiveCamera(30, 1.5, 0.05, 80),
         turntable: new THREE.Group(), bike: null, riders: null, actors: [], fit: null, crank: 0, dist: 0, drawn: false };
       e.scene.add(e.turntable);
-      this._build(e, mode, looks, random, gen).catch((err) => console.warn('New bike picture failed to load:', key, err));
+      // a holiday bike's card: the geese wear the outfit it just brought (its own colours)
+      // Pete, 2026-11-09: geese only when the bike brings an outfit (they wear it); otherwise just the bike
+      const own = outfit && looks ? { Captain: { ...looks.Captain, outfit, colourway: 'default' }, Stoker: { ...looks.Stoker, outfit, colourway: 'default' } } : null;
+      e.hero = !!hero;
+      this._build(e, mode, own, random, gen).catch((err) => console.warn('New bike picture failed to load:', key, err));
       return e;
     });
     this._last = 0;
@@ -220,7 +245,7 @@ export class BikeShowcase {
     model.position.x -= c.x; model.position.z -= c.z; model.position.y -= box.min.y;
     const size = box.getSize(new THREE.Vector3());
     const len = Math.max(size.x, size.z), height = size.y;
-    if (!looks) { e.fit = { w: len, h: height, cx: 0 }; return; }
+    if (!looks && mode === 'riding') { e.fit = { w: len, h: height + 0.3, cx: 0 }; return; }
     if (mode === 'riding') {
       e.riders = new GooseRiders(model, animations);
       e.riders.measureWheel();
@@ -244,7 +269,8 @@ export class BikeShowcase {
     // its own, so two new bikes never play alike.
     const half = len / 2;
     const side = half * 0.8 + 0.55;    // where each goose stands, either side of the bike
-    e.fit = { w: side * 2 + 1.3, h: Math.max(height, 1.85), cx: (random() - 0.5) * 0.25, lift: 0.08 + random() * 0.1 };
+    e.fit = looks ? { w: side * 2 + 1.3, h: Math.max(height, 1.85), cx: (random() - 0.5) * 0.25, lift: 0.08 + random() * 0.1 }
+      : { w: len * 1.25, h: height * 1.3, cx: (random() - 0.5) * 0.15, lift: 0.08 + random() * 0.1 };   // the bike alone
     // the bike's forward (its captain's seat is in front of the stoker's), as a heading
     const cap = model.getObjectByName('Seat_Captain'), sto = model.getObjectByName('Seat_Stoker');
     let fwd = size.x >= size.z ? Math.PI / 2 : 0;
@@ -261,14 +287,16 @@ export class BikeShowcase {
     e.wheels = new GooseRiders(model, animations);
     e.wheels.measureWheel();
     // it rolls once the goose on its side has taken its spot (so it passes behind them); a fallback if that goose never comes
-    e.roll = { t: 0, delay: ROLL_FALLBACK, dur: ROLL_TIME, from: ROLL_FROM, dx: Math.sin(travel), dz: Math.cos(travel), dist: 0 };
+    e.roll = { t: 0, delay: looks ? ROLL_FALLBACK : 0.4 + random() * 0.4, dur: ROLL_TIME * (e.hero ? 1.4 : 1), from: ROLL_FROM,
+      dx: Math.sin(travel), dz: Math.cos(travel), dist: 0 };
     e.turntable.visible = false;
+    if (!looks) return;   // no outfit with this bike: it rolls in alone
     const seats = ['Captain', 'Stoker'];
     const orders = greetingOrder(seats.map((s) => looks[s].body), random);
     const fromLeft = random() < 0.5;   // which goose comes out on which side
     seats.forEach(async (seat, i) => {
       try {
-        const actor = await GooseActor.load(cachedLoader, studioGooseFor(looks[seat]), { dir: GOOSE_DIR, random });
+        const actor = await loadActor(studioGooseFor(looks[seat]), random);
         if (gen !== this._gen) return;
         try { actor.setColourway(looks[seat].colourway || 'default'); } catch (err) { /* the outfit's own colours */ }
         const dir = (i === 0) === fromLeft ? -1 : 1;    // -1: the left side
@@ -316,10 +344,10 @@ export class BikeShowcase {
   _aim(e, aspect) {
     const { w, h, cx } = e.fit;   // (lift: the camera's height, a little different each showing)
     const tan = Math.tan((e.camera.fov * Math.PI / 180) / 2);
-    const dist = Math.max((h * 1.15 / 2) / tan, (w * 1.08 / 2) / (tan * aspect));
+    const dist = Math.max((h * 1.3 / 2) / tan, (w * 1.08 / 2) / (tan * aspect));
     e.camera.aspect = aspect;
     e.camera.position.set(cx, h * 0.55 + dist * (e.fit.lift != null ? e.fit.lift : 0.12), dist);
-    e.camera.lookAt(cx, h * 0.45, 0);
+    e.camera.lookAt(cx, h * 0.42, 0.2);
     e.camera.updateProjectionMatrix();
   }
 

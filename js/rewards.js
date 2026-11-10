@@ -16,6 +16,30 @@
 //   solo        -- everything else
 
 import { ACHIEVEMENTS } from './achievement-defs.js';
+import { HOLIDAY_BIKES, holidayUnlocked } from './holiday-bikes.js';
+
+/**
+ * #736 · outfits a player already wore before they became rewards stay theirs (Pete: "they keep what they
+ * have"). Recorded once, the first time this version runs (seedKeptOutfits), per browser.
+ */
+export const OUTFITS_KEPT_KEY = 'tandemonium_outfits_kept';
+
+/** The kept outfits (empty off a browser or with storage off). */
+export function keptOutfits(storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  try { const raw = storage && storage.getItem(OUTFITS_KEPT_KEY); return new Set(raw ? JSON.parse(raw) : []); } catch (e) { return new Set(); }
+}
+
+/**
+ * Record, once, the holiday outfits the players are wearing now (they keep them).
+ * @param {string[]} wearing the outfits players 1-4 have on
+ */
+export function seedKeptOutfits(outfits, wearing, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  try {
+    if (!storage || storage.getItem(OUTFITS_KEPT_KEY) != null) return;
+    const keep = [...new Set(wearing)].filter(k => outfits[k] && outfits[k].unlock);
+    storage.setItem(OUTFITS_KEPT_KEY, JSON.stringify(keep));
+  } catch (e) { /* storage off */ }
+}
 
 export const MULTIPLAYER_SECTIONS = Object.freeze(['together', 'versus']);
 export const MULTIPLAYER_IDS = Object.freeze(['full_house']);
@@ -91,11 +115,13 @@ export function goldStandardProgress(earnedIds, defs = ACHIEVEMENTS) {
  * @param {Record<string, {reward?: string}>} outfits GOOSE_OUTFITS
  * @param {Iterable<string>} earnedIds
  */
-export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS) {
+export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS, kept = keptOutfits()) {
   const locked = new Set();
   for (const [key, o] of Object.entries(outfits)) {
     const p = rewardProgress(o.reward, earnedIds, defs);
     if (p && !p.unlocked) locked.add(key);
+    // #736 · a holiday bike's outfit: earned with that bike, or kept from before
+    if (o.unlock && !holidayUnlocked(o.unlock, earnedIds) && !kept.has(key)) locked.add(key);
   }
   return locked;
 }
@@ -110,6 +136,10 @@ export function rewardProgress(reward, earnedIds, defs = ACHIEVEMENTS) {
 
 /** The line a locked reward outfit shows ("Time Warp reward: 63 of 88 achievements"). */
 export function outfitLockHint(outfit, earnedIds, defs = ACHIEVEMENTS) {
+  if (outfit && outfit.unlock && HOLIDAY_BIKES[outfit.unlock]) {
+    const h = HOLIDAY_BIKES[outfit.unlock];
+    return `${h.name} reward: finish Grandma's on ${h.needs}`;
+  }
   const p = outfit && rewardProgress(outfit.reward, earnedIds, defs);
   if (!p) return 'Coming to the store';
   return outfit.reward === 'timeWarp'

@@ -40,9 +40,10 @@ test('player bots: all solo but one', () => {
 test('the robot outfit is locked until the Solo Flight reward (all solo achievements but one), with a progress hint', () => {
   const solo = soloAchievementIds();
   const need = playerBotsProgress([]).need;
-  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, [])], ['robot']);
-  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, solo.slice(2))], ['robot']);
-  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, solo.slice(1))], [], 'the Solo Flight brings it');
+  const robotOnly = { robot: GOOSE_OUTFITS.robot };
+  assert.deepEqual([...lockedOutfits(robotOnly, [])], ['robot']);
+  assert.deepEqual([...lockedOutfits(robotOnly, solo.slice(2))], ['robot']);
+  assert.deepEqual([...lockedOutfits(robotOnly, solo.slice(1))], [], 'the Solo Flight brings it');
   assert.equal(outfitLockHint(GOOSE_OUTFITS.robot, solo.slice(0, 5)), `Solo Flight reward: 5 of ${need} solo achievements`);
   assert.equal(outfitLockHint(GOOSE_OUTFITS.victorian, []), 'Coming to the store');
   assert.equal(rewardProgress('nope', []), null);
@@ -54,4 +55,35 @@ test('a Time Warp reward outfit (none today, #736) still reads its own progress'
   assert.deepEqual([...lockedOutfits(tw, nonCal.slice(6))], ['suit']);
   assert.deepEqual([...lockedOutfits(tw, nonCal.slice(5))], []);
   assert.equal(outfitLockHint(tw.suit, nonCal.slice(0, 5)), `Time Warp reward: 5 of ${timeWarpProgress([]).need} achievements`);
+});
+
+// #736 · Victorian is free; Cyclists, Fancy and Georgian come with the holiday bikes; worn ones are kept.
+test('the holiday outfits: Christmas → Cyclists, New Year → Fancy, Birthday → Georgian', async () => {
+  const { outfitForBike } = await import('../../js/goose-outfits.js');
+  assert.equal(outfitForBike('bike_christmas'), 'cyclists');
+  assert.equal(outfitForBike('bike_newyears'), 'fancy');
+  assert.equal(outfitForBike('bike_birthday'), 'georgian');
+  assert.equal(outfitForBike('bike_green'), null);
+  const none = new Set();
+  assert.deepEqual([...lockedOutfits(GOOSE_OUTFITS, [], ACHIEVEMENTS, none)].sort(), ['cyclists', 'fancy', 'georgian', 'robot']);
+  const christmas = ['grandma_green', 'grandma_red'];
+  assert.ok(!lockedOutfits(GOOSE_OUTFITS, christmas, ACHIEVEMENTS, none).has('cyclists'));
+  const newYear = ['grandma_yellow', 'grandma_default'];
+  assert.ok(!lockedOutfits(GOOSE_OUTFITS, newYear, ACHIEVEMENTS, none).has('fancy'));
+  const all5 = ['grandma_red', 'grandma_blue', 'grandma_yellow', 'grandma_green', 'grandma_default'];
+  const l = lockedOutfits(GOOSE_OUTFITS, all5, ACHIEVEMENTS, none);
+  assert.ok(!l.has('georgian') && !l.has('cyclists') && !l.has('fancy'));
+  assert.ok(!lockedOutfits(GOOSE_OUTFITS, [], ACHIEVEMENTS, none).has('victorian'), 'Victorian is free');
+  assert.equal(outfitLockHint(GOOSE_OUTFITS.cyclists, []), "Christmas Cruiser reward: finish Grandma's on Jungle Cruiser and Cherry Bomb");
+});
+
+test('outfits already worn before #736 are kept (recorded once)', async () => {
+  const { seedKeptOutfits, keptOutfits, OUTFITS_KEPT_KEY } = await import('../../js/rewards.js');
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v) };
+  seedKeptOutfits(GOOSE_OUTFITS, ['fancy', 'victorian', 'robot', 'fancy'], storage);
+  assert.deepEqual([...keptOutfits(storage)], ['fancy'], 'only holiday outfits; Robot still needs the Solo Flight');
+  seedKeptOutfits(GOOSE_OUTFITS, ['georgian'], storage);
+  assert.deepEqual(JSON.parse(mem.get(OUTFITS_KEPT_KEY)), ['fancy'], 'once only');
+  assert.ok(!lockedOutfits(GOOSE_OUTFITS, [], ACHIEVEMENTS, keptOutfits(storage)).has('fancy'));
 });
