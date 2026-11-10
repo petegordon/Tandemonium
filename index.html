@@ -2797,7 +2797,13 @@
     z-index: 1;
   }
   /* Pete, 2026-11-10: a bike with its outfit geese riding: the line drops below them (their heads and outfits show) */
-  #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { top: auto !important; bottom: 4%; transform: translateX(-50%) !important; }
+  #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { top: auto !important; bottom: 3%; transform: translateX(-50%) !important;
+    width: max-content !important; max-width: 92%; padding-top: 5px; padding-bottom: 5px; background: rgba(0,0,0,0.62); }
+  /* a holiday bike's rides as short chips that wrap (✓ won / ✗ not yet) */
+  #bike-hint .bike-reqs { display: flex; flex-wrap: wrap; justify-content: center; gap: 1px 8px; font-size: 0.85em; margin-bottom: 2px; }
+  #bike-hint .bike-req { color: rgba(255,255,255,0.45); white-space: nowrap; }
+  #bike-hint .bike-gift { white-space: nowrap; }
+  #bike-hint .bike-req.done { color: rgba(100,255,100,0.8); }
   .bike-carousel-nav {
     width: 44px;
     height: 44px;
