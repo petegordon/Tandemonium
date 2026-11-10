@@ -181,6 +181,9 @@ export async function seatOutfitRiders(model, animations, outfit, looks = null) 
   return riders;
 }
 
+/** A Goose Studio goose for the bike chooser's "beside the bike" geese (the same cache and retry as these cards). */
+export function loadStudioGoose(name, random = Math.random) { return loadActor(name, random); }
+
 /** A promise that gives up after ms. */
 function within(p, ms) {
   return Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('timed out')), ms))]);
