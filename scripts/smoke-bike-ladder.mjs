@@ -81,6 +81,17 @@ await h.shot(page, 'bl04-new-bike');
 check(s4.open && s4.heading === 'New bike!' && s4.bikes.join() === 'bike_green' && s4.ride.join() === 'RIDE IT NOW',
   'BL-04: "New bike!" with Jungle Cruiser and RIDE IT NOW', s4);
 check(s4.next === 'Next: 15 more achievements to Banana Delivery', 'BL-04: it says the next bike', s4.next);
+const pic = await until(page, () => {
+  const sc = window._game.lobby.bikeCelebration._showcase;
+  const c = document.querySelector('#new-bike-sheet canvas.nb-bike');
+  if (!sc || !c || !sc.drawn('bike_green')) return false;
+  const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+  let lit = 0; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) lit++;
+  return lit > 2000;
+}, null, 20000);
+const nameLine = await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-name').textContent);
+await h.shot(page, 'bl04-new-bike-turning');
+check(pic && nameLine === '🌿 Jungle Cruiser', 'BL-04: the bike turns in the card, its name below with the icon in front', { pic, nameLine });
 await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-ride').click());
 const rode = await until(page, () => { const l = window._game.lobby; return l._currentStep === l.levelStep && l.selectedPresetKey === 'bike_green'; }, null, 5000);
 check(rode && !(await sheet(page)).open, 'BL-04: RIDE IT NOW picks Jungle Cruiser and opens SOLO RIDE', await page.evaluate(() => ({
@@ -137,10 +148,11 @@ const full = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage:
 } });
 await ready(full);
 await until(full, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open); }, null, 15000);
-await sleep(1600);
+await until(full, () => { const sc = window._game.lobby.bikeCelebration._showcase; return !!sc && ['bike_magenta', 'bike_red', 'bike_green', 'bike_yellow'].every(k => sc.drawn(k)); }, null, 20000);
+await sleep(800);
 const s7 = await sheet(full);
 await h.shot(full, 'bl07-demo-welcome');
 check(s7.welcome === 'Your demo riding earned you 32 achievements and 4 new bikes.' && s7.heading === '4 new bikes!'
-  && s7.bikes.join() === 'bike_magenta,bike_red,bike_green,bike_yellow', 'BL-07: the demo → full game welcome, one screen', s7);
+  && s7.bikes.join() === 'bike_magenta,bike_red,bike_green,bike_yellow' && s7.ride.join() === 'RIDE,RIDE,RIDE,RIDE', 'BL-07: the demo → full game welcome, one screen', s7);
 
 await h.finish();
