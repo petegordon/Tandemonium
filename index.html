@@ -2669,6 +2669,9 @@
   /* the room's bike row (Pete, 2026-11-09): the tandem's bike, picked where the players are seated */
   .room-bike-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 4px; }
   .room-bike-row[hidden] { display: none; }
+  .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .host-bot-row[hidden] { display: none; }
+  .host-bot-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
   .versus-bikes { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
   .versus-bike-row[data-team="A"] .room-bike-label { color: var(--versus-team-a); }
   .versus-bike-row[data-team="B"] .room-bike-label { color: var(--versus-team-b); }
@@ -5974,6 +5977,11 @@ ON</button>
               <span class="room-bike-name"></span>
               <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><uf-controller-glyph button="rb" size="sm" class="pad-only"></uf-controller-glyph><span class="bike-nav-arrow">&#8250;</span></button>
               <span class="room-bike-note"></span>
+            </div>
+            <!-- Pete, 2026-11-09: with one controller seated and player bots earned, a bot can take the back seat -->
+            <div class="host-bot-row" id="host-bot-row" hidden>
+              <span class="room-bike-label">Back seat</span>
+              <div class="host-bot-picks" role="radiogroup" aria-label="Who rides the back seat"></div>
             </div>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
             <!-- #548: "Press Y for wardrobe" (lobby._renderWardrobeButtons); a seated pad's △ / Y opens its own. -->

@@ -1264,14 +1264,18 @@ class Game {
     // partner. The chooser only leaves solo_flight picked once player bots are earned.
     // (not on a Tourist route, in Slingshot or in the tutorial: no partner there)
     const plain = !this.isTourist && !this.isSlingshot && !(this.lobby && this.lobby._forceWizard);
-    const seat = (this.lobby && this.lobby.selectedBot) || 'bolt';
-    const flight = plain && ridesWithBot(key, this.mode);
+    // Pete, 2026-11-09 · the couch room with one controller and a bot on the back seat: that bot rides along, any bike
+    const roomBot = this.mode === 'solo' && this.lobby && this.lobby._hostBotRide && this.lobby._hostBot && this.lobby._hostBot !== NO_BOT
+      ? this.lobby._hostBot : null;
+    const seat = roomBot || (this.lobby && this.lobby.selectedBot) || 'bolt';
+    const soloFlight = plain && ridesWithBot(key, this.mode);
+    const flight = soloFlight || (plain && !!roomBot);
     this._botRide = flight && seat !== NO_BOT ? seat : null;
     this._botSync = this._botRide ? new BotSync() : null;
     this.bike.setBotStoker(this._botRide);
     this.bike.setEmptySeat(flight && seat === NO_BOT);   // #644 step 2 · "Nobody": the back seat stays empty
     // #644 step 2 · race a bot ghost team (the Solo Flight card's Race row); the level decides at the countdown
-    this._botRaceTier = flight && this.lobby && RACE_TIERS[this.lobby.selectedRace] ? this.lobby.selectedRace : null;
+    this._botRaceTier = soloFlight && !roomBot && this.lobby && RACE_TIERS[this.lobby.selectedRace] ? this.lobby.selectedRace : null;
     if (this.mode === 'solo' && this.hud) this.hud.setSeat('captain', !!this._botRide);   // the sync row: you and the bot
   }
 

@@ -253,4 +253,52 @@ const preset = await page.evaluate(() => {
   return { preset: g.bike._modelPath, presetBot: g.bike._botStoker };
 });
 check(/goose_tandem\.glb$/.test(preset.preset) && preset.presetBot === null, 'SFB-06: a paint preset rides the goose tandem again', preset);
+// ── SFB-07 the couch room: one controller seated, a bot takes the back seat (any bike; Pete, 2026-11-09) ──
+console.log('SFB-07 the couch room with one controller: a bot on the back seat');
+{
+  const rp = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' } });
+  await until(rp, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
+  const toHost = async () => {
+    await rp.evaluate(() => { const l = window._game.lobby; l._hostBot = null; l._showStep(l.modeStep); });
+    await sleep(400);
+    await rp.evaluate(() => document.getElementById('btn-together').click());
+    await sleep(600);
+    await rp.evaluate(() => document.getElementById('btn-captain').click());
+    await until(rp, () => window._game.lobby._currentStep === window._game.lobby.hostStep);
+    await sleep(800);
+    return rp.evaluate(() => { const l = window._game.lobby; l._refreshHostNext(); const row = document.getElementById('host-bot-row'), sto = document.getElementById('host-seat-stoker');
+      return { row: !row.hidden, active: [...row.querySelectorAll('.bot-pick.active')].map((b) => b.dataset.bot), next: !document.getElementById('btn-host-local-next').disabled,
+        seat: sto.who, badge: sto.badge }; });
+  };
+  await rp.evaluate(() => { window._game.lobby._achievements._earned = new Map(); });   // (earlier rides in this run earned some)
+  const r0 = await toHost();
+  check(!r0.row && !r0.next, 'SFB-07: player bots not earned: no Back seat picker, CHOOSE LEVEL waits for a second controller', r0);
+  await rp.evaluate(async () => { const { soloAchievementIds } = await import('/js/rewards.js'); const a = window._game.lobby._achievements; for (const id of soloAchievementIds()) a._earned.set(id, { id, earnedAt: 1 }); });
+  const r1 = await toHost();
+  check(r1.row && r1.active.length === 1 && r1.active[0] !== 'none' && r1.next && r1.badge === 'BOT', 'SFB-07: bots earned, multiplayer achievements left: a bot is on the back seat by default and CHOOSE LEVEL is open', r1);
+  await rp.evaluate(async () => { const { ACHIEVEMENTS } = await import('/js/achievement-defs.js'); const a = window._game.lobby._achievements; for (const d of ACHIEVEMENTS) a._earned.set(d.id, { id: d.id, earnedAt: 1 }); });
+  const r2 = await toHost();
+  check(r2.row && r2.active[0] === 'none' && !r2.next, 'SFB-07: every multiplayer achievement earned: "Wait for a player" by default (no bot)', r2);
+  await rp.evaluate(() => { document.querySelector('#host-bot-row .bot-pick[data-bot="rivet"]').click(); });
+  const r3 = await rp.evaluate(() => ({ next: !document.getElementById('btn-host-local-next').disabled, seat: document.getElementById('host-seat-stoker').who }));
+  check(r3.next && r3.seat === 'Rivet', 'SFB-07: picking Rivet seats her and opens CHOOSE LEVEL', r3);
+  await h.shot(rp, 'sfb07-room');
+  await rp.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('bike_red'); l._applyPresetToPreview(); });
+  await rp.evaluate(() => document.getElementById('btn-host-local-next').click());
+  await rp.waitForFunction(() => !!document.querySelector('#level-cards .level-card[data-level-id="grandma"]'), { timeout: 20000 });
+  await rp.evaluate(() => {
+    document.querySelector('#level-cards .level-card[data-level-id="grandma"]').click();
+    const d = Array.from(document.querySelectorAll('.difficulty-btn')).find(x => x.dataset.difficulty === 'chill'); d && d.click();
+  });
+  await sleep(300);
+  await rp.evaluate(() => { const b = Array.from(document.querySelectorAll('button, uf-button')).find(x => x.offsetParent !== null && /start ride/i.test(x.textContent || '')); b && b.click(); });
+  await rp.waitForFunction(() => window._game?.state === 'playing', { timeout: 120000 });
+  const ok = await until(rp, () => { const b = window._game.bike; return b._modelPath.endsWith('goose_tandem.glb') && b._botStoker === 'rivet' && b.goose && b.goose.riders.Stoker; }, null, 120000);
+  const ride = await rp.evaluate(() => ({ path: window._game.bike._modelPath, bot: window._game.bike._botStoker, partner: window._game._botRideId(), mode: window._game.mode }));
+  check(ok && ride.partner === 'rivet', 'SFB-07: the ride: Rivet on the back of the painted tandem, as this ride\'s partner', ride);
+  await sleep(1500);
+  await h.shot(rp, 'sfb07-ride');
+  await rp.close();
+}
+
 await h.finish();
