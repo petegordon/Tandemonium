@@ -230,13 +230,13 @@ check(a6.i === a5.i && a6.key === a5.key, 'AT-03: after Player 1 takes the choos
 const lockName = await at.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); return document.getElementById('bike-name').textContent; });
 check(lockName.startsWith('\uD83D\uDD12') && lockName.includes('\uD83E\uDEB6') && lockName.includes('Solo Flight'), 'AT-03: a locked reward bike shows the lock and its own icon', lockName);
 console.log('AT-04 the bike is remembered between sessions');
-const rp = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on', tandemonium_bike_pick: 'bike_blue' } });
+const rp = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on', tandemonium_bike_pick: 'bike_orange' } });
 await until(rp, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
 await sleep(500);
 const r0 = await rp.evaluate(() => ({ key: window._game.lobby._presetKeys[window._game.lobby._presetIndex], picked: window._game.lobby.selectedPresetKey, name: document.getElementById('bike-name').textContent }));
-check(r0.key === 'bike_blue' && r0.picked === 'bike_blue', 'AT-04: the saved bike is the one the chooser opens on (and rides)', r0);
+check(r0.key === 'bike_orange' && r0.picked === 'bike_orange', 'AT-04: the saved bike is the one the chooser opens on (and rides)', r0);
 const r1 = await rp.evaluate(() => { window._game.lobby._bikeNext(); return { key: window._game.lobby.selectedPresetKey, saved: localStorage.getItem('tandemonium_bike_pick') }; });
-check(r1.saved === r1.key && r1.key !== 'bike_blue', 'AT-04: a new pick is saved for next time', r1);
+check(r1.saved === r1.key && r1.key !== 'bike_orange', 'AT-04: a new pick is saved for next time', r1);
 const r2 = await rp.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('gold_standard') - 1; l._bikeNext(); return { shown: l._presetKeys[l._presetIndex], saved: localStorage.getItem('tandemonium_bike_pick') }; });
 check(r2.shown === 'gold_standard' && r2.saved !== 'gold_standard', 'AT-04: a locked reward bike is never saved as the pick', r2);
 console.log('DR-01 the Dressing Room seats the goose on the bike picked in the chooser');

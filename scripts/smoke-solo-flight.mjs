@@ -54,7 +54,9 @@ await locked.close();
 // ── SFB-02 unlocked: the picker, by mouse and by pad ──
 console.log('SFB-02 unlocked: the bot picker by mouse and pad');
 const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }),
-  storage: { ...BASE, tandemonium_achievements: earned(solo.slice(1)) } });
+  // (#736: the Solo Flight's "New bike!" screen already seen, so it doesn't cover the chooser)
+  storage: { ...BASE, tandemonium_achievements: earned(solo.slice(1)),
+    tandemonium_bike_ladder: JSON.stringify({ bikes: ['default', 'bike_orange', 'bike_magenta', 'bike_red', 'bike_blue', 'bike_green', 'bike_yellow', 'bike_newyears', 'bike_christmas', 'bike_birthday', 'solo_flight', 'time_warp', 'gold_standard'], edition: 'full', count: 100 }) } });
 await until(page, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
 await toSoloFlight(page);
 await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible && !sp.dark); });

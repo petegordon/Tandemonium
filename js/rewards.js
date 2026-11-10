@@ -6,8 +6,8 @@
 //   Solo Flight bike  -> "player bots"  : any 80 of the 81 SOLO achievements (all solo but one)
 //   Time Warp bike    -> time warp mode : any 90 of the 95 non-calendar achievements (timeWarpProgress)
 //   Gold Standard bike                  : all 100
-// The robot outfit (the Canada Goose bot's suit) comes with the Time Warp reward (Pete, 2026-11-07, #644;
-// it was the player-bots reward until then).
+// The robot outfit (the Canada Goose bot's suit) comes with the Solo Flight / player bots reward again
+// (Pete, 2026-11-09, #736; it was the Time Warp's from 2026-11-07, #644).
 //
 // Groups are read from the definitions, so the counts follow the achievement swap (#608) on their own:
 //   calendar    -- needs real days: a `unit: 'days'` counter (days_3, days_7, launch_week, ...) or a Daily Ride
@@ -16,6 +16,30 @@
 //   solo        -- everything else
 
 import { ACHIEVEMENTS } from './achievement-defs.js';
+import { HOLIDAY_BIKES, holidayUnlocked } from './holiday-bikes.js';
+
+/**
+ * #736 · outfits a player already wore before they became rewards stay theirs (Pete: "they keep what they
+ * have"). Recorded once, the first time this version runs (seedKeptOutfits), per browser.
+ */
+export const OUTFITS_KEPT_KEY = 'tandemonium_outfits_kept';
+
+/** The kept outfits (empty off a browser or with storage off). */
+export function keptOutfits(storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  try { const raw = storage && storage.getItem(OUTFITS_KEPT_KEY); return new Set(raw ? JSON.parse(raw) : []); } catch (e) { return new Set(); }
+}
+
+/**
+ * Record, once, the holiday outfits the players are wearing now (they keep them).
+ * @param {string[]} wearing the outfits players 1-4 have on
+ */
+export function seedKeptOutfits(outfits, wearing, storage = (typeof localStorage !== 'undefined' ? localStorage : null)) {
+  try {
+    if (!storage || storage.getItem(OUTFITS_KEPT_KEY) != null) return;
+    const keep = [...new Set(wearing)].filter(k => outfits[k] && outfits[k].unlock);
+    storage.setItem(OUTFITS_KEPT_KEY, JSON.stringify(keep));
+  } catch (e) { /* storage off */ }
+}
 
 export const MULTIPLAYER_SECTIONS = Object.freeze(['together', 'versus']);
 export const MULTIPLAYER_IDS = Object.freeze(['full_house']);
@@ -91,11 +115,13 @@ export function goldStandardProgress(earnedIds, defs = ACHIEVEMENTS) {
  * @param {Record<string, {reward?: string}>} outfits GOOSE_OUTFITS
  * @param {Iterable<string>} earnedIds
  */
-export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS) {
+export function lockedOutfits(outfits, earnedIds, defs = ACHIEVEMENTS, kept = keptOutfits()) {
   const locked = new Set();
   for (const [key, o] of Object.entries(outfits)) {
     const p = rewardProgress(o.reward, earnedIds, defs);
     if (p && !p.unlocked) locked.add(key);
+    // #736 · a holiday bike's outfit: earned with that bike, or kept from before
+    if (o.unlock && !holidayUnlocked(o.unlock, earnedIds) && !kept.has(key)) locked.add(key);
   }
   return locked;
 }
@@ -110,9 +136,13 @@ export function rewardProgress(reward, earnedIds, defs = ACHIEVEMENTS) {
 
 /** The line a locked reward outfit shows ("Time Warp reward: 63 of 88 achievements"). */
 export function outfitLockHint(outfit, earnedIds, defs = ACHIEVEMENTS) {
+  if (outfit && outfit.unlock && HOLIDAY_BIKES[outfit.unlock]) {
+    const h = HOLIDAY_BIKES[outfit.unlock];
+    return `${h.name} reward: finish Grandma's on ${h.needs}`;
+  }
   const p = outfit && rewardProgress(outfit.reward, earnedIds, defs);
   if (!p) return 'Coming to the store';
   return outfit.reward === 'timeWarp'
     ? `Time Warp reward: ${p.have} of ${p.need} achievements`
-    : `Player Bots reward: ${p.have} of ${p.need} solo achievements`;
+    : `Solo Flight reward: ${p.have} of ${p.need} solo achievements`;
 }
