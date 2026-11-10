@@ -27,6 +27,7 @@ import { colourwayParamsForBody, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { GooseActor, GEESE } from './goose-studio/goose-actor.js';
 import { applyMirrorEnv } from './mirror-env.js';
+import { warmUp, WarmQueue } from './gpu-warmup.js';
 
 const GOOSE_DIR = 'tandem-3d/goose/';
 const FRAME_MS = 1000 / 30;
@@ -121,19 +122,67 @@ export function applyPresetMaterials(model, preset) {
 
 let _loader = null;
 const _cache = new Map();   // path -> Promise<gltf>
+const STALL_MS = 15000;     // a load with no progress this long is tried again (a slow download keeps going)
+
+function newLoader() {
+  const draco = new DRACOLoader();
+  draco.setDecoderPath(dracoDecoderPath('libs/draco/'));
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  return loader;
+}
+
+/** Load a GLB, giving up when it stops making progress for STALL_MS (seen in the smokes: a rider GLB that never arrived). */
+function loadOrStall(loader, path) {
+  return new Promise((resolve, reject) => {
+    let timer = 0;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => reject(new Error('stalled: ' + path)), STALL_MS); };
+    arm();
+    loader.load(path, (g) => { clearTimeout(timer); resolve(g); }, arm, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 /** A loader that fetches each GLB once and hands out skinned clones (GooseRiders / GooseActor take it as theirs). */
 const cachedLoader = {
   loadAsync(path) {
-    if (!_loader) {
-      const draco = new DRACOLoader();
-      draco.setDecoderPath(dracoDecoderPath('libs/draco/'));
-      _loader = new GLTFLoader();
-      _loader.setDRACOLoader(draco);
-    }
-    if (!_cache.has(path)) _cache.set(path, _loader.loadAsync(path).catch((e) => { _cache.delete(path); throw e; }));
+    if (!_loader) _loader = newLoader();
+    // a stalled load is tried once more with a loader (and decoder) of its own, so one stuck fetch can't
+    // leave every later screen without that goose
+    if (!_cache.has(path)) _cache.set(path, loadOrStall(_loader, path)
+      .catch((e) => { console.warn('GLB load slow, trying again:', path, e && e.message); return loadOrStall(newLoader(), path); })
+      .catch((e) => { _cache.delete(path); throw e; }));
     return _cache.get(path).then((g) => ({ ...g, scene: cloneSkinned(g.scene), animations: g.animations }));
   },
 };
+
+/** The shared GLB loader (fetched once per page, skinned clones), for the bike chooser's reward bikes too. */
+export const showcaseLoader = cachedLoader;
+
+/**
+ * Pete, 2026-11-10: the bike chooser shows a reward bike with the outfit it brings, its geese riding it.
+ * Seats both geese on the bike model in that outfit's own colours (each in the player's body), posed and ready
+ * for setCrank / update. looks: getSeatLooks (only the bodies are used); none = the outfit's own bodies.
+ */
+export async function seatOutfitRiders(model, animations, outfit, looks = null) {
+  const riders = new GooseRiders(model, animations);
+  riders.measureWheel();
+  const paths = {}, bodies = {};
+  for (const seat of ['Captain', 'Stoker']) {
+    const r = resolveRider(seat, outfit, looks && looks[seat] ? looks[seat].body : undefined);
+    paths[seat] = r.path; bodies[seat] = r.body;
+  }
+  await riders.loadRiders(cachedLoader, paths);
+  for (const seat of ['Captain', 'Stoker']) {
+    const r = riders.riders[seat];
+    if (r) applyColourway(r.root, colourwayParamsForBody(outfit, 'default', bodies[seat]) || {});
+  }
+  riders.setLeans(0, 0);
+  riders.update();
+  return riders;
+}
+
+/** A Goose Studio goose for the bike chooser's "beside the bike" geese (the same cache and retry as these cards). */
+export function loadStudioGoose(name, random = Math.random) { return loadActor(name, random); }
 
 /** A promise that gives up after ms. */
 function within(p, ms) {
@@ -166,6 +215,7 @@ export class BikeShowcase {
     this._gen = 0;
     this._last = 0;
     this.mode = null;
+    this._warm = new WarmQueue();   // new models' first draws, one a frame (js/gpu-warmup.js)
   }
 
   _getRenderer() {
@@ -237,6 +287,8 @@ export class BikeShowcase {
   async _build(e, mode, looks, random, gen) {
     const { model, animations } = await this._bike(e.key);
     if (gen !== this._gen) return;
+    await warmUp(this._getRenderer(), model, e.camera, e.scene, { queue: this._warm });   // (no freeze on its first frame)
+    if (gen !== this._gen) return;
     e.turntable.add(model);
     e.bike = model;
     model.updateMatrixWorld(true);
@@ -258,6 +310,11 @@ export class BikeShowcase {
         const r = e.riders.riders[seat];
         if (r) applyColourway(r.root, colourwayParamsForBody(looks[seat].outfit, looks[seat].colourway, bodies[seat]) || {});
       }
+      const roots = Object.values(e.riders.riders).filter(Boolean).map((r) => r.root);
+      for (const r of roots) r.visible = false;   // (seated hidden until warmed up, in their colourway)
+      for (const r of roots) await warmUp(this._getRenderer(), r, e.camera, e.scene, { queue: this._warm });
+      if (gen !== this._gen) return;
+      for (const r of roots) r.visible = true;
       e.riders.setLeans(0, 0);
       e.riders.update();
       return;
@@ -303,6 +360,8 @@ export class BikeShowcase {
         const x = dir * side;
         actor.setHeading(-dir * Math.PI / 2);            // walking in toward the bike
         actor.root.position.set(x + dir * 6, 0, GOOSE_Z);   // out of shot until it walks
+        await warmUp(this._getRenderer(), actor.root, e.camera, e.scene, { queue: this._warm });
+        if (gen !== this._gen) return;
         e.scene.add(actor.root);
         e.actors.push(actor);
         await new Promise((r) => setTimeout(r, 300 + random() * 1500));
@@ -356,6 +415,7 @@ export class BikeShowcase {
     const dt = this._last ? Math.min(0.1, (now - this._last) / 1000) : 1 / 30;
     this._last = now;
     const r = this._getRenderer();
+    this._warm.step();   // a new model's first draw (the cards' renders below paint over it)
     for (const e of this._entries) {
       if (!e.fit || !e.canvas.isConnected) continue;
       const w = e.canvas.clientWidth | 0, h = e.canvas.clientHeight | 0;
@@ -395,6 +455,7 @@ export class BikeShowcase {
   /** Stop and let the pictures go (the renderer and the fetched GLBs stay for next time). */
   stop() {
     this._gen++;
+    this._warm.flush();
     cancelAnimationFrame(this._raf);
     this._raf = 0;
     for (const e of this._entries) {

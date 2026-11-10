@@ -2796,6 +2796,8 @@
     font-size: 11px;
     z-index: 1;
   }
+  /* Pete, 2026-11-10: a bike with its outfit geese riding: the line drops below them (their heads and outfits show) */
+  #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { top: auto !important; bottom: 4%; transform: translateX(-50%) !important; }
   .bike-carousel-nav {
     width: 44px;
     height: 44px;
@@ -6718,6 +6720,14 @@ ON</button>
         <button class="opt-btn" id="opt-solo-off">Off</button>
       </div>
       <div class="options-note">Solo rides show one goose (the captain) — applies immediately</div>
+    </div>
+    <div class="opt-section">
+      <div class="label" id="opt-chooser-geese-label">Bike Chooser Geese</div>
+      <div class="options-row" id="opt-chooser-geese-row">
+        <button class="opt-btn" id="opt-chooser-geese-ride">On the bike</button>
+        <button class="opt-btn" id="opt-chooser-geese-stand">Beside the bike</button>
+      </div>
+      <div class="options-note">A reward bike's outfit geese, riding it or standing beside it — applies immediately</div>
     </div>
     <!-- #548: these three rows are Player 1's look (js/player-look.js). Every other player
          dresses their own goose in the Wardrobe on the seat screens (co-op room / versus). -->

@@ -64,7 +64,7 @@ const sf = async () => {
 let s1 = await sf();
 const sfNeed = await page.evaluate(async () => (await import('/js/rewards.js')).playerBotsProgress([]).need);
 check(s1.name.startsWith('\uD83D\uDD12') && s1.name.includes('Solo Flight') && s1.dark && s1.picked === 'default', 'SF-01: Solo Flight is a locked dark silhouette; the ride stays on the default', s1);
-check(s1.hint.replace(/\s+/g, '') === `0of${sfNeed}soloachievements`, 'SF-01: "n of N solo achievements" over it (N = solo less 1: 80 once #608 lands)', [s1.hint, sfNeed]);
+check(s1.hint.replace(/\s+/g, '') === `0of${sfNeed}soloachievements+🤖Robotoutfit`, 'SF-01: "n of N solo achievements" (and its Robot outfit) over it (N = solo less 1: 80 once #608 lands)', [s1.hint, sfNeed]);
 check(s1.others.length === 0 && !s1.tandem, 'SF-01: only its own model shows', s1);
 await page.evaluate(async () => {
   const { soloAchievementIds } = await import('/js/rewards.js');

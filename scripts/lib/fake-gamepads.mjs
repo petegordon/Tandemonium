@@ -7,7 +7,7 @@
 //   await installFakeGamepads(page);          // before page.goto (harness `before`)
 //   const pads = fakePads(page);
 //   const i = await pads.plug('dualsense');   // → gamepad index; fires gamepadconnected
-//   await pads.press(i, 'A');                 // down for 150 ms, then up
+//   await pads.press(i, 'A');                 // down for 150 ms (and until the game has read it), then up; resolves once the release is read too
 //   await pads.hold(i, 'RT', true);           // stays down until hold(i, 'RT', false)
 //   await pads.stick(i, 'LX', -0.8);          // left stick x
 //   await pads.unplug(i);                     // slot goes null; fires gamepaddisconnected
@@ -50,6 +50,14 @@ function browserFake(PAD_IDS, BUTTONS, AXES) {
     window.dispatchEvent(ev);
   };
   const touch = (p) => { p.timestamp = performance.now(); };
+  /** fn after n animation frames (the game's pad reads); a 3 s cap in case frames stop (a hidden page). */
+  const afterFrames = (n, fn) => {
+    let done = false;
+    const go = () => { if (!done) { done = true; fn(); } };
+    const tick = () => { if (--n <= 0) go(); else requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    setTimeout(go, 3000);
+  };
   const api = {
     plug(model, index = null) {
       const id = PAD_IDS[model] || model;
@@ -89,10 +97,20 @@ function browserFake(PAD_IDS, BUTTONS, AXES) {
       touch(p);
       return true;
     },
+    // Held for at least ms AND two whole animation frames, then released, and it resolves once two more frames
+    // have passed. The game reads pads once a frame: a fixed 150 ms press used to start and end between two
+    // reads when a headless frame ran long (a GLB decoding, skinned geese in the chooser), so the press was
+    // never seen and the smoke failed at random. Now every press is seen, down and up, however slow the frame.
     press(i, name, ms = 150) {
       if (!api.hold(i, name, true)) return false;
-      setTimeout(() => api.hold(i, name, false), ms);
-      return true;
+      return new Promise((resolve) => {
+        const t0 = performance.now();
+        afterFrames(2, () => {
+          const release = () => { api.hold(i, name, false); afterFrames(2, () => resolve(true)); };
+          const left = ms - (performance.now() - t0);
+          if (left > 0) setTimeout(release, left); else release();
+        });
+      });
     },
     stick(i, axis, v) {
       const p = slots[i];
@@ -127,7 +145,7 @@ export function fakePads(page) {
     press: (i, b, ms) => call('press', i, b, ms ?? 150),
     stick: (i, a, v) => call('stick', i, a, v),
     list: () => call('list'),
-    /** press and wait long enough for a couple of game frames to see it. */
-    async tap(i, b, ms = 180) { await call('press', i, b, ms); await new Promise((r) => setTimeout(r, ms + 120)); },
+    /** press (it already waits until the game has seen the press and the release). */
+    async tap(i, b, ms = 180) { await call('press', i, b, ms); },
   };
 }
