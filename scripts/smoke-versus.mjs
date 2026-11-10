@@ -19,6 +19,7 @@
 //   drop      unplugging a pad mid-race freezes BOTH teams with versus's own
 //             notice — not the co-op 20 s take-over — and replugging resumes
 //             (VS-07)
+//   bikes     each team rides its own bike: its paint to start, its captain's LB / RB, reward bikes once earned (VB-01..03)
 //   looks     the two teams' geese wear different outfits, each in its team's
 //             colourway; back in the lobby the bike has its saved colours (VS-09)
 import { startHarness, sleep, clickId } from './lib/smoke-harness.mjs';
@@ -264,4 +265,40 @@ console.log('race 1v1 + finish');
 }
 
 check(h.errors.length === 0, 'no page errors', h.errors);
+// ── VB-01..03 each team rides its own bike (Pete, 2026-11-09) ──
+console.log('team bikes');
+{
+  const { page, pads } = await openVersus(['xbox']);
+  const second = await join(pads, 'dualsense');
+  const bikes = () => page.evaluate(() => ({
+    a: document.querySelector('#versus-bike-a .room-bike-name').textContent, b: document.querySelector('#versus-bike-b .room-bike-name').textContent,
+    shown: !document.getElementById('versus-bike-a').hidden && !document.getElementById('versus-bike-b').hidden,
+    keys: { ...window._game.lobby._versusBikes }, teams: window._game.lobby._versusPlayers.map((p) => p.team) }));
+  const b0 = await bikes();
+  check(b0.shown && b0.a === 'Ocean Breeze' && b0.b === 'Cherry Bomb', 'VB-01: each team shows its bike, its team paint to start', b0);
+  await page.evaluate(() => window._game.lobby._bikeNext());   // P1's RB (the lobby's bumper handler)
+  const b1 = await bikes();
+  check(b1.keys.A !== 'bike_blue' && b1.keys.B === 'bike_red', "VB-02: P1's RB changes P1's team's bike only", b1);
+  await pads.tap(second, 'RB');
+  const b2 = await bikes();
+  check(b2.keys.B !== 'bike_red' && b2.keys.A === b1.keys.A, "VB-02: the other team's captain changes their team's bike with their own RB", b2);
+  const walk = await page.evaluate(() => { const l = window._game.lobby; const seen = []; for (let k = 0; k < l._presetKeys.length; k++) { l._cycleVersusBike('A', 1); seen.push(l._versusBikes.A); } return seen; });
+  check(!walk.includes('gold_standard') && !walk.includes('time_warp'), 'VB-02: reward bikes not earned are skipped', walk);
+  await page.evaluate(async () => {
+    const { ACHIEVEMENTS } = await import('/js/achievement-defs.js');
+    const a = window._game.lobby._achievements; for (const d of ACHIEVEMENTS) a._earned.set(d.id, { id: d.id, earnedAt: 1 });
+    const l = window._game.lobby; let k = 0; while (l._versusBikes.A !== 'gold_standard' && k++ < 40) l._cycleVersusBike('A', 1);
+    l._versusBikes.B = 'bike_green'; l._syncRoomBikeRows();
+  });
+  const b3 = await bikes();
+  check(b3.keys.A === 'gold_standard' && /Gold Standard/.test(b3.a), 'VB-02: earned, a team can pick a reward bike', b3);
+  await startRace(page);
+  const rigs = await page.evaluate(() => window._game.versusRigs.map((r) => ({ path: r.bike._modelPath, tag: !!r.bike.group.getObjectByName('teamTag'),
+    frame: (() => { let c = null; r.bike.group.traverse((o) => { if (!c && o.isMesh && o.material && o.material.color && /frame|Cylinder/i.test(o.name)) c = o.material.color.getHexString(); }); return c; })() })));
+  check(/gold_standard_tandem\.glb$/.test(rigs[0].path) && /goose_tandem\.glb$/.test(rigs[1].path), 'VB-03: team A races the Gold Standard, team B its painted tandem', rigs);
+  check(rigs.every((r) => r.tag), 'VB-03: each bike carries its team-colour tag', rigs);
+  await h.shot(page, 'vb03-race');
+  await page.close();
+}
+
 await h.finish();
