@@ -52,6 +52,7 @@ import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holid
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
 import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
+import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
@@ -9488,6 +9489,7 @@ export class Lobby {
         if (o.isSkinnedMesh) o.frustumCulled = false;
       });
       track(model);
+      if (geeseMode === 'stand') this._addPedestal(model, Math.max(size.x, size.z) * model.scale.x / 2);
       const mixer = new THREE.AnimationMixer(model);
       const clip = def && def.fx && gltf.animations.find(x => x.name === def.fx);
       let fx = null;
@@ -9575,6 +9577,20 @@ export class Lobby {
         }
       } catch (err) { console.warn('Chooser goose failed to load:', seat, err); }
     });
+  }
+
+  /**
+   * Pete, 2026-11-10: beside its standing geese, the smaller bike stands on a pedestal that turns with it (js/bike-pedestal.js).
+   * A child of the bike (it shows, hides and turns with it) and not part of its silhouette.
+   */
+  _addPedestal(model, bikeHalf) {
+    const PEDESTAL_H = 0.2;
+    const s = model.scale.x, p = model.position;
+    p.y += PEDESTAL_H;                                   // the bike stands on its top
+    const ped = makePedestal(bikeHalf * 0.98, PEDESTAL_H);
+    ped.scale.setScalar(1 / s);                          // (in the chooser's units, under the scaled bike)
+    ped.position.set(-p.x / s, -p.y / s, -p.z / s);      // centred under the turning pivot, on the ground
+    model.add(ped);
   }
 
   /** The Bike Chooser Geese setting changed: the bikes with outfit geese build again, the new way. */
@@ -9830,15 +9846,16 @@ export class Lobby {
         + '<br><span style="color:rgba(255,255,255,0.55)">achievements</span>';
       hintEl.title = `${BIKE_NAMES[key] || key}: earn any ${countProg.need} achievements`;
     } else {
-      // per-bike progress: ✓ won / ✗ not yet, then the outfit it brings
+      // per-bike progress, ✓ won / ✗ not yet, as short chips that wrap (Pete, 2026-11-10: a list one per line
+      // hid the bike), then the outfit it brings; the full names in the tooltip
       const earnedIds = this._earnedAchievementIds();
-      hintEl.innerHTML = HOLIDAY_BIKES[key].requires.map(k => {
+      const reqs = HOLIDAY_BIKES[key].requires.map(k => {
         const achId = BIKE_ACHIEVEMENT_MAP[k];
-        const name = BIKE_NAMES[k] || k;
-        return achId && earnedIds.includes(achId)
-          ? `<span style="color:rgba(100,255,100,0.7)">✓ ${name}</span>`
-          : `<span style="color:rgba(255,255,255,0.4)">✗ ${name}</span>`;
-      }).join('<br>') + this._outfitLine(key);
+        return { name: BIKE_NAMES[k] || k, done: !!(achId && earnedIds.includes(achId)) };
+      });
+      hintEl.innerHTML = '<span class="bike-reqs">' + reqs.map(r => `<span class="bike-req${r.done ? ' done' : ''}">${r.done ? '✓' : '✗'} ${r.name.split(' ')[0]}</span>`).join('') + '</span>'
+        + this._outfitLine(key, true);
+      hintEl.title = `${BIKE_NAMES[key] || key}: finish Grandma's on ` + reqs.map(r => r.name + (r.done ? ' ✓' : '')).join(', ');
     }
   }
 
