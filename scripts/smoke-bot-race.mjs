@@ -25,7 +25,9 @@ import { soloAchievementIds } from '../js/rewards.js';
 const h = await startHarness({ port: 8979, outDir: 'tandemonium-bot-race' });
 const { check } = h;
 const until = (page, fn, arg, timeout = 90000) => page.waitForFunction(fn, { timeout, polling: 100 }, arg).then(() => true, () => false);
-const BASE = { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' };
+// (every bike already celebrated: #736's full-screen Solo Flight would cover the chooser)
+const BASE = { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on',
+  tandemonium_bike_ladder: JSON.stringify({ bikes: ['default', 'bike_orange', 'bike_magenta', 'bike_red', 'bike_blue', 'bike_green', 'bike_yellow', 'bike_newyears', 'bike_christmas', 'bike_birthday', 'solo_flight', 'time_warp', 'gold_standard'], edition: 'full', count: 100 }) };
 const earned = (ids) => JSON.stringify(ids.map(id => ({ id, earnedAt: 1 })));
 const solo = soloAchievementIds();
 const VERSUS = ['versus_first', 'versus_win', 'versus_2v2', 'versus_comeback', 'versus_10', 'versus_underdog', 'versus_clean'];
@@ -74,13 +76,17 @@ await page.evaluate(() => {
   const fc = window._game.lobby._stepFocus, el = document.querySelector('.race-pick[data-race="off"]');
   fc._clearSpatialFocus(); fc.focusedEl = el; el.classList.add(fc.focusClass);
 });
-for (let i = 0; i < 3; i++) { await pads.press(0, 'RIGHT'); await sleep(250); }
+// each press, then wait for the focus to move (no fixed sleeps)
+for (const want of ['easy', 'medium', 'hard']) {
+  await pads.press(0, 'RIGHT');
+  await until(page, (w) => { const f = window._game.lobby._stepFocus.focusedEl; return !!(f && f.dataset && f.dataset.race === w); }, want, 5000);
+}
 const focused = await page.evaluate(() => { const f = window._game.lobby._stepFocus.focusedEl; return f && f.dataset ? f.dataset.race || f.dataset.bot || f.id : null; });
 await pads.press(0, 'A');
 await until(page, () => window._game.lobby.selectedRace === 'hard', null, 5000);
 // up from the Race row reaches the back seat row
 await pads.press(0, 'UP');
-await sleep(250);
+await until(page, () => { const f = window._game.lobby._stepFocus.focusedEl; return !!(f && f.dataset && f.dataset.bot); }, null, 5000);
 const upTo = await page.evaluate(() => { const f = window._game.lobby._stepFocus.focusedEl; return f && f.dataset ? (f.dataset.bot ? 'seat' : f.dataset.race ? 'race' : f.id) : null; });
 c = await card(page);
 check(focused === 'hard' && c.race === 'hard', 'BR-02: a pad walks the Race row with the D-pad and A picks Hard', { focused, race: c.race });

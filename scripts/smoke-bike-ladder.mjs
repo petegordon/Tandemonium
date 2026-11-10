@@ -7,6 +7,7 @@
 //   BL-04  35 achievements, back on the menu: "New bike!" with Jungle Cruiser; RIDE IT NOW picks it and opens SOLO RIDE
 //   BL-05  the Jungle ride to Grandma's that is also the 50th: "2 new bikes!" (Banana Delivery + Christmas Cruiser), one screen
 //   BL-06  the end-of-ride screen: the next-bike line in the unlocked list, and "New bike!" over it with RIDE IT NOW
+//   BL-09  the chooser: a locked colour bike keeps its paint; holiday bikes lit with their outfit geese; reward bikes silhouettes
 //   BL-07  demo → full game: one welcome screen, "Your demo riding earned you 32 achievements and 4 new bikes."
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
@@ -166,6 +167,55 @@ await page.evaluate(() => document.getElementById('new-bike-later').click());
 const rest = await until(page, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open && !s.hasAttribute('data-hero') && s.querySelectorAll('.nb-card').length > 0); }, null, 5000);
 check(rest, 'BL-08: then the other new bikes, on the card screen', await page.evaluate(() => [...document.querySelectorAll('#new-bike-sheet .nb-card')].map(c => c.dataset.bike)));
 await page.evaluate(() => document.getElementById('new-bike-later').click());
+
+// ── BL-09 the chooser's locked bikes (Pete, 2026-11-10) ──
+//   a locked colour bike keeps its paint (a lock on its name); a holiday bike shows fully lit, locked or not,
+//   its outfit geese riding it and "+ 🚴 Cyclists outfit" under it; the reward bikes stay silhouettes (Solo Flight's
+//   Robot geese with it)
+console.log('BL-09 the chooser: paint, outfit geese, silhouettes');
+await grant(page, 10);
+const pick = (k) => page.evaluate((k) => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf(k); l._applyPresetToPreview(); }, k);
+const view = (k) => page.evaluate((k) => {
+  const l = window._game.lobby, sp = (l._specialPreviews || {})[k], hint = document.getElementById('bike-hint');
+  let grey = 0, painted = 0;
+  if (!sp) l._previewModel.traverse((o) => { if (o.isMesh && o.material.color) { if (o.material.color.getHex() === 0x444444) grey++; else painted++; } });
+  return { name: document.getElementById('bike-name').textContent, picked: l.selectedPresetKey,
+    hint: hint && hint.style.display !== 'none' ? hint.innerText.replace(/\s+/g, ' ').trim() : '',
+    frame: !!l._previewModel.visible, grey, painted,
+    special: sp ? { visible: !!(sp.model && sp.model.visible), dark: sp.dark, riders: !!sp.riders, outfit: sp.outfit } : null };
+}, k);
+const seated = (k) => until(page, (k) => { const sp = (window._game.lobby._specialPreviews || {})[k]; return !!(sp && sp.model && sp.model.visible && sp.riders); }, k, 60000);
+
+await pick('bike_green');
+const jungle = await view('bike_green');
+await h.shot(page, 'bl09-jungle-locked');
+check(jungle.name.startsWith('🔒') && jungle.picked === 'default' && jungle.frame && jungle.grey === 0 && jungle.painted > 0,
+  'BL-09: a locked colour bike shows its paint, with a lock', jungle);
+
+await pick('bike_christmas');
+check(await seated('bike_christmas'), 'BL-09: the Christmas Cruiser\'s Cyclists geese are seated');
+const xmas = await view('bike_christmas');
+await sleep(500);
+await h.shot(page, 'bl09-christmas-locked');
+check(xmas.name.startsWith('🔒') && xmas.picked === 'default' && !xmas.frame && xmas.special.visible && xmas.special.dark === false
+  && xmas.special.outfit === 'cyclists' && xmas.hint.endsWith('+ 🚴 Cyclists outfit'),
+  'BL-09: a locked holiday bike: fully lit, its Cyclists geese riding, the outfit named', xmas);
+
+await pick('solo_flight');
+check(await seated('solo_flight'), 'BL-09: the Solo Flight\'s Robot geese are seated');
+const solo = await view('solo_flight');
+await h.shot(page, 'bl09-solo-flight-locked');
+check(solo.special.dark === true && solo.special.outfit === 'robot' && solo.hint.endsWith('+ 🤖 Robot outfit'),
+  'BL-09: a locked reward bike stays a silhouette (its Robot geese too), the outfit named', solo);
+
+await grant(page, 40, ['grandma_green', 'grandma_red']);
+await pick('bike_christmas');
+const xmas2 = await view('bike_christmas');
+await sleep(600);
+await h.shot(page, 'bl09-christmas-earned');
+check(xmas2.name.startsWith('🏆') && xmas2.picked === 'bike_christmas' && xmas2.special.dark === false && xmas2.hint === '+ 🚴 Cyclists outfit',
+  'BL-09: the earned Christmas Cruiser: rideable, its geese pedalling', xmas2);
+await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = 0; l._applyPresetToPreview(); });
 
 // ── BL-07 demo → full game ──
 console.log('BL-07 demo → full game');

@@ -121,19 +121,64 @@ export function applyPresetMaterials(model, preset) {
 
 let _loader = null;
 const _cache = new Map();   // path -> Promise<gltf>
+const STALL_MS = 15000;     // a load with no progress this long is tried again (a slow download keeps going)
+
+function newLoader() {
+  const draco = new DRACOLoader();
+  draco.setDecoderPath(dracoDecoderPath('libs/draco/'));
+  const loader = new GLTFLoader();
+  loader.setDRACOLoader(draco);
+  return loader;
+}
+
+/** Load a GLB, giving up when it stops making progress for STALL_MS (seen in the smokes: a rider GLB that never arrived). */
+function loadOrStall(loader, path) {
+  return new Promise((resolve, reject) => {
+    let timer = 0;
+    const arm = () => { clearTimeout(timer); timer = setTimeout(() => reject(new Error('stalled: ' + path)), STALL_MS); };
+    arm();
+    loader.load(path, (g) => { clearTimeout(timer); resolve(g); }, arm, (e) => { clearTimeout(timer); reject(e); });
+  });
+}
+
 /** A loader that fetches each GLB once and hands out skinned clones (GooseRiders / GooseActor take it as theirs). */
 const cachedLoader = {
   loadAsync(path) {
-    if (!_loader) {
-      const draco = new DRACOLoader();
-      draco.setDecoderPath(dracoDecoderPath('libs/draco/'));
-      _loader = new GLTFLoader();
-      _loader.setDRACOLoader(draco);
-    }
-    if (!_cache.has(path)) _cache.set(path, _loader.loadAsync(path).catch((e) => { _cache.delete(path); throw e; }));
+    if (!_loader) _loader = newLoader();
+    // a stalled load is tried once more with a loader (and decoder) of its own, so one stuck fetch can't
+    // leave every later screen without that goose
+    if (!_cache.has(path)) _cache.set(path, loadOrStall(_loader, path)
+      .catch((e) => { console.warn('GLB load slow, trying again:', path, e && e.message); return loadOrStall(newLoader(), path); })
+      .catch((e) => { _cache.delete(path); throw e; }));
     return _cache.get(path).then((g) => ({ ...g, scene: cloneSkinned(g.scene), animations: g.animations }));
   },
 };
+
+/** The shared GLB loader (fetched once per page, skinned clones), for the bike chooser's reward bikes too. */
+export const showcaseLoader = cachedLoader;
+
+/**
+ * Pete, 2026-11-10: the bike chooser shows a reward bike with the outfit it brings, its geese riding it.
+ * Seats both geese on the bike model in that outfit's own colours (each in the player's body), posed and ready
+ * for setCrank / update. looks: getSeatLooks (only the bodies are used); none = the outfit's own bodies.
+ */
+export async function seatOutfitRiders(model, animations, outfit, looks = null) {
+  const riders = new GooseRiders(model, animations);
+  riders.measureWheel();
+  const paths = {}, bodies = {};
+  for (const seat of ['Captain', 'Stoker']) {
+    const r = resolveRider(seat, outfit, looks && looks[seat] ? looks[seat].body : undefined);
+    paths[seat] = r.path; bodies[seat] = r.body;
+  }
+  await riders.loadRiders(cachedLoader, paths);
+  for (const seat of ['Captain', 'Stoker']) {
+    const r = riders.riders[seat];
+    if (r) applyColourway(r.root, colourwayParamsForBody(outfit, 'default', bodies[seat]) || {});
+  }
+  riders.setLeans(0, 0);
+  riders.update();
+  return riders;
+}
 
 /** A promise that gives up after ms. */
 function within(p, ms) {

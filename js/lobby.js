@@ -49,15 +49,15 @@ import { seedKeptOutfits, lockedOutfits, outfitLockHint, rewardProgress, timeWar
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
-import { BikeCelebration } from './bike-celebration.js';
-import { BikeShowcase } from './bike-showcase.js';
+import { BikeCelebration, giftOutfit } from './bike-celebration.js';
+import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials } from './bike-showcase.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager } from './input-manager.js';
-import { isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { getSeatLooks, isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
@@ -9434,39 +9434,52 @@ export class Lobby {
   /**
    * #611 · a special bike's own model in the chooser, loaded the first time it is shown: sized like the
    * tandem preview, its own loop (the Time Warp's TimeWarpFX) on a mixer, materials kept so a locked
-   * silhouette can be undone.
+   * silhouette can be undone. Pete, 2026-11-10: the holiday bikes load here too (the goose tandem in their
+   * paint), and a bike that brings an outfit (the holiday bikes, Solo Flight's Robot) has its geese riding
+   * it in that outfit, pedalling once it is earned.
    */
   _loadSpecialPreview(key, onReady) {
     this._specialPreviews = this._specialPreviews || {};
     const have = this._specialPreviews[key];
     if (have) { if (have.model) onReady(have); return; }
     const def = SPECIAL_BIKES[key];
+    const name = def ? def.name : (BIKE_NAMES[key] || key);
     const sp = this._specialPreviews[key] = { model: null };
-    new GLTFLoader().load(def.model, (gltf) => {
+    showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then((gltf) => {
       const model = gltf.scene;
+      if (!def) applyPresetMaterials(model, this._presetData && this._presetData[key]);
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
-      model.scale.setScalar(3.0 / Math.max(size.x, size.y, size.z));
+      const outfit = giftOutfit(key);
+      model.scale.setScalar((outfit ? 2.7 : 3.0) / Math.max(size.x, size.y, size.z));   // (room for the geese's heads)
       model.updateMatrixWorld(true);
       const b2 = new THREE.Box3().setFromObject(model);
       const c = b2.getCenter(new THREE.Vector3());
       model.position.set(-c.x, -b2.min.y, -c.z);
       const mats = [];
-      const env = def.mirror ? mirrorEnvTexture() : null;   // mirror metal needs something to reflect, or it reads black
-      model.traverse((o) => {
-        if (!o.isMesh) return;
-        o.material = o.material.clone();
-        if (env && isMirrorMaterial(o.material)) {
+      const seen = new Set();
+      const env = def && def.mirror ? mirrorEnvTexture() : null;   // mirror metal needs something to reflect, or it reads black
+      const own = (m) => {
+        const mm = m.clone();
+        if (env && isMirrorMaterial(mm)) {
           // the chooser's brighter exposure washes mirror gold to champagne: a deeper gold, softer reflections
-          o.material.envMap = env;
-          o.material.color.multiply(PREVIEW_GOLD_WARM);
-          o.material.envMapIntensity = PREVIEW_GOLD_ENV;
+          mm.envMap = env;
+          mm.color.multiply(PREVIEW_GOLD_WARM);
+          mm.envMapIntensity = PREVIEW_GOLD_ENV;
         }
+        mats.push([mm, mm.clone()]);
+        return mm;
+      };
+      const track = (root) => root.traverse((o) => {
+        if (!o.isMesh || seen.has(o)) return;
+        seen.add(o);
+        o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
         o.castShadow = true;
-        mats.push([o.material, o.material.clone()]);
+        if (o.isSkinnedMesh) o.frustumCulled = false;
       });
+      track(model);
       const mixer = new THREE.AnimationMixer(model);
-      const clip = def.fx && gltf.animations.find(x => x.name === def.fx);
+      const clip = def && def.fx && gltf.animations.find(x => x.name === def.fx);
       let fx = null;
       if (clip) {
         const cut = clip.clone();
@@ -9476,12 +9489,22 @@ export class Lobby {
         fx.play();
         fx.paused = true;
       }
-      const sparkle = def.sparkle ? addBikeSparkle(model, { size: 0.11 }) : null;   // #697 (off while locked)
+      const sparkle = def && def.sparkle ? addBikeSparkle(model, { size: 0.11 }) : null;   // #697 (off while locked)
       model.visible = false;
       if (this._previewPivot) this._previewPivot.add(model);
-      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false });
+      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0 });
       onReady(sp);
-    }, undefined, (err) => console.warn(def.name + ' preview failed to load:', err));
+      if (!outfit) return;
+      let looks = null;
+      try { looks = getSeatLooks('solo'); } catch (e) { /* the outfit's own bodies */ }
+      seatOutfitRiders(model, gltf.animations, outfit, looks).then((riders) => {
+        sp.riders = riders;
+        track(model);                    // the geese join the silhouette
+        const dark = sp.dark;
+        sp.dark = null;
+        this._setSpecialDark(sp, dark);
+      }).catch((err) => console.warn(name + ' outfit geese failed to load:', err));
+    }).catch((err) => console.warn(name + ' preview failed to load:', err));
   }
 
   /** Dark silhouette (locked) or its own colours (unlocked). */
@@ -9502,6 +9525,7 @@ export class Lobby {
     }
     if (dark && sp.fx) { sp.fx.time = 0; sp.mixer.update(0); }   // (the orange pops tucked away)
     if (sp.sparkle) sp.sparkle.setVisible(!dark);                  // a silhouette doesn't sparkle
+    if (dark && sp.riders) { sp.riders.setCrank(0); sp.riders.update(); }   // (a silhouette sits still)
   }
 
   /** Hide every special bike's preview model (a paint preset or another special bike is showing). */
@@ -9524,15 +9548,10 @@ export class Lobby {
       sp.model.visible = true;
       this._setSpecialDark(sp, locked);
     });
-    let hintEl = document.getElementById('bike-hint');
-    if (!hintEl) {
-      hintEl = document.createElement('div');
-      hintEl.id = 'bike-hint';
-      hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
-      nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
-    }
+    const hintEl = this._bikeHintEl(nameEl);
     this.selectedPreset = null;
     hintEl.dataset.special = key;
+    hintEl.classList.toggle('bike-hint-low', !!giftOutfit(key));   // (below its geese)
     this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
@@ -9540,7 +9559,7 @@ export class Lobby {
       nameEl.classList.add('locked');
       nameEl.textContent = '\uD83D\uDD12 ' + def.icon + ' ' + def.name;   // the lock, then its own icon
       hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${prog.have} of ${prog.need}</span>`
-        + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>`;
+        + `<br><span style="color:rgba(255,255,255,0.55)">${def.unit}</span>` + this._outfitLine(key);
       hintEl.title = def.reward === 'timeWarp'
         ? `${def.name}: any ${prog.need} of the ${prog.total} achievements that don't need real days`
         : def.reward === 'goldStandard'
@@ -9680,91 +9699,91 @@ export class Lobby {
     const demoLocked = !bikeAllowed(getEditionRules(), key);
     // #736 · Jungle, Banana and Ocean are earned at 35 / 50 / 65 achievements
     const countProg = demoLocked ? null : countBikeProgress(key, this._earnedAchievementIds());
-    const locked = demoLocked || (countProg ? !countProg.unlocked : (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key)));
+    const holiday = !!HOLIDAY_BIKES[key];
+    const locked = demoLocked || (countProg ? !countProg.unlocked : (holiday && !this._isHolidayUnlocked(key)));
     nameEl.style.color = '';                         // every name in the logo's colours (index.html #bike-name)
     nameEl.classList.toggle('locked', !!locked);
-
-    // Reset all materials to originals
-    if (this._previewModel && this._previewOriginalMats) {
-      this._previewModel.traverse(child => {
-        if (!child.isMesh) return;
-        const orig = this._previewOriginalMats.get(child.name);
-        if (!orig) return;
-        child.material.copy(orig);
-        child.material.needsUpdate = true;
-      });
-    }
-
     this.selectedPresetKey = locked ? 'default' : key;
+    this.selectedPreset = locked || key === 'default' ? null : this._presetData[key];
     if (!locked && !this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });
 
-    if (locked) {
-      nameEl.textContent = '\uD83D\uDD12 ' + (BIKE_NAMES[key] || key);
-      // Show hint below name
-      let hintEl = document.getElementById('bike-hint');
-      if (!hintEl) {
-        hintEl = document.createElement('div');
-        hintEl.id = 'bike-hint';
-        hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
-        nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
-      }
-      if (demoLocked) {
-        hintEl.textContent = 'In the full game';
-        hintEl.style.display = '';
-      } else if (countProg) {
-        hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${countProg.have} of ${countProg.need}</span>`
-          + '<br><span style="color:rgba(255,255,255,0.55)">achievements</span>';
-        hintEl.title = `${BIKE_NAMES[key] || key}: earn any ${countProg.need} achievements`;
-        hintEl.style.display = '';
-      } else {
-      // Show per-bike progress: ✓ won / ✗ not yet
-      const earnedIds = this._earnedAchievementIds();
-      hintEl.title = '';
-      const lines = HOLIDAY_BIKES[key].requires.map(k => {
-        const achId = BIKE_ACHIEVEMENT_MAP[k];
-        const done = achId && earnedIds.includes(achId);
-        const name = BIKE_NAMES[k] || k;
-        return done ? `✓ ${name}` : `✗ ${name}`;
+    // Pete, 2026-11-10: a locked bike here shows its paint with a lock on its name (only the three reward
+    // bikes are silhouettes); a holiday bike has the outfit it brings riding it, fully lit, locked or not
+    if (holiday) {
+      if (this._previewModel) this._previewModel.visible = false;
+      this._hideSpecialPreviews(key);
+      this._loadSpecialPreview(key, (sp) => {
+        if (this._presetKeys[this._presetIndex] !== key) return;   // moved on while it loaded
+        sp.model.visible = true;
+        this._setSpecialDark(sp, false);   // Pete, 2026-11-10: lit even while locked (the lock is on its name)
       });
-      hintEl.innerHTML = lines.map(l =>
-        l.startsWith('✓')
-          ? `<span style="color:rgba(100,255,100,0.7)">${l}</span>`
-          : `<span style="color:rgba(255,255,255,0.4)">${l}</span>`
-      ).join('<br>');
-      hintEl.style.display = '';
-      }
-
-      // Grey out the preview model
-      this.selectedPreset = null;
-      if (this._previewModel) {
-        this._previewModel.traverse(child => {
-          if (!child.isMesh) return;
-          child.material.color.set(0x444444);
-          child.material.emissive && child.material.emissive.set(0x000000);
-          child.material.needsUpdate = true;
-        });
-      }
-      return;
-    }
-
-    const hintEl = document.getElementById('bike-hint');
-    if (HOLIDAY_BIKES[key]) {
-      nameEl.textContent = '🏆 ' + (BIKE_NAMES[key] || key);
-      if (hintEl) hintEl.style.display = 'none';
     } else {
-      if (hintEl) hintEl.style.display = 'none';
-      nameEl.textContent = BIKE_NAMES[key] || key;
+      if (this._previewModel) this._previewModel.visible = true;
+      this._hideSpecialPreviews();
+      this._paintPreview(key);
     }
 
-    if (key === 'default') {
-      this.selectedPreset = null;
+    const hintEl = this._bikeHintEl(nameEl);
+    hintEl.title = '';
+    hintEl.classList.toggle('bike-hint-low', holiday);   // (below its geese)
+    if (!locked) {
+      nameEl.textContent = (holiday ? '🏆 ' : '') + (BIKE_NAMES[key] || key);
+      if (holiday) { hintEl.innerHTML = this._outfitLine(key, true); hintEl.style.display = ''; }
+      else hintEl.style.display = 'none';
       return;
     }
-    this.selectedPreset = this._presetData[key];
+    nameEl.textContent = '🔒 ' + (BIKE_NAMES[key] || key);
+    hintEl.style.display = '';
+    if (demoLocked) {
+      hintEl.innerHTML = 'In the full game' + this._outfitLine(key);
+    } else if (countProg) {
+      hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${countProg.have} of ${countProg.need}</span>`
+        + '<br><span style="color:rgba(255,255,255,0.55)">achievements</span>';
+      hintEl.title = `${BIKE_NAMES[key] || key}: earn any ${countProg.need} achievements`;
+    } else {
+      // per-bike progress: ✓ won / ✗ not yet, then the outfit it brings
+      const earnedIds = this._earnedAchievementIds();
+      hintEl.innerHTML = HOLIDAY_BIKES[key].requires.map(k => {
+        const achId = BIKE_ACHIEVEMENT_MAP[k];
+        const name = BIKE_NAMES[k] || k;
+        return achId && earnedIds.includes(achId)
+          ? `<span style="color:rgba(100,255,100,0.7)">✓ ${name}</span>`
+          : `<span style="color:rgba(255,255,255,0.4)">✗ ${name}</span>`;
+      }).join('<br>') + this._outfitLine(key);
+    }
+  }
 
-    // Apply preset materials
-    if (!this._previewModel) return;
-    const preset = this._presetData[key];
+  /** The line under the bike's name (made the first time). */
+  _bikeHintEl(nameEl) {
+    let hintEl = document.getElementById('bike-hint');
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.id = 'bike-hint';
+      hintEl.style.cssText = 'font-size:10px;color:rgba(255,255,255,0.5);margin-top:2px;text-align:center;';
+      nameEl.parentNode.insertBefore(hintEl, nameEl.nextSibling);
+    }
+    return hintEl;
+  }
+
+  /** Pete, 2026-11-10: "+ 🚴 Cyclists outfit" for a bike that brings one ('' for none); first = no line break before it. */
+  _outfitLine(key, first = false) {
+    const id = giftOutfit(key);
+    const o = id && GOOSE_OUTFITS[id];
+    return o ? (first ? '' : '<br>') + `<span class="bike-gift" data-outfit="${id}" style="color:rgba(255,236,170,0.85)">+ ${o.icon} ${o.label} outfit</span>` : '';
+  }
+
+  /** The chooser's frame in a colour bike's paint (its own colours for Grandma's Classic). */
+  _paintPreview(key) {
+    if (!this._previewModel || !this._previewOriginalMats) return;
+    this._previewModel.traverse(child => {
+      if (!child.isMesh) return;
+      const orig = this._previewOriginalMats.get(child.name);
+      if (!orig) return;
+      child.material.copy(orig);
+      child.material.needsUpdate = true;
+    });
+    const preset = key !== 'default' && this._presetData ? this._presetData[key] : null;
+    if (!preset) return;
     this._previewModel.traverse(child => {
       if (!child.isMesh) return;
       const entry = preset[child.name];
@@ -9785,7 +9804,6 @@ export class Lobby {
         mat.needsUpdate = true;
       }
     });
-
   }
 
   _sendBikeSyncIfInRoom() {
@@ -9819,6 +9837,12 @@ export class Lobby {
       }
       // #611 · the Time Warp's clock and flames run in the chooser too (not while it's a locked silhouette)
       for (const sp of Object.values(this._specialPreviews || {})) {
+        if (sp.riders && sp.model && sp.model.visible && !sp.dark) {   // Pete, 2026-11-10: the outfit geese pedal an earned bike
+          sp.crank += 0.06 * step;
+          sp.riders.setCrank(sp.crank);
+          sp.riders.setDistance(sp.crank * 0.5);
+          sp.riders.update();
+        }
         if (!sp.model || !sp.model.visible || !sp.fx || sp.dark) continue;
         sp.fx.time = (performance.now() / 1000) % sp.fx.getClip().duration;
         sp.mixer.update(0);
