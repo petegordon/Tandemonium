@@ -1257,9 +1257,9 @@ class Game {
    * already loaded; a locked pick never reaches here (the chooser falls back to the default).
    */
   _applyBikeChoice() {
-    const key = this.lobby && this.lobby.selectedPresetKey;
+    const key = this.lobby && this.lobby.rideBikeKey();   // the chooser's pick, or (online stoker) the captain's
     if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key, undefined, this.mode), !this.versusRigs);
-    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.selectedPreset);
+    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.rideBikePreset());
     // #644 · Solo Flight on a solo ride: a player bot rides the back seat (it only rides along) and is this ride's
     // partner. The chooser only leaves solo_flight picked once player bots are earned.
     // (not on a Tourist route, in Slingshot or in the tutorial: no partner there)
@@ -5409,7 +5409,7 @@ class Game {
       collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
       totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
       finishedLevel: level.id,
-      bikeKey: this.lobby.selectedPresetKey,
+      bikeKey: this.lobby.rideBikeKey(),
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
       restarts: this.raceManager ? this.raceManager.restartCount : 0,
@@ -6997,7 +6997,7 @@ class Game {
     // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
-      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey, undefined, this.mode),   // #611: a special bike stays itself
+      bikeModelPathFor(on, this.lobby && this.lobby.rideBikeKey(), undefined, this.mode),   // #611: a special bike stays itself
       !this.versusRigs // live versus clones share the old model's geometry
     );
 
