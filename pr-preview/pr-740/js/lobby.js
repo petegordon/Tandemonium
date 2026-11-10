@@ -9448,7 +9448,12 @@ export class Lobby {
     const sp = this._specialPreviews[key] = { model: null };
     showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then(async (gltf) => {
       const model = gltf.scene;
-      if (!def) applyPresetMaterials(model, this._presetData && this._presetData[key]);
+      if (!def) {
+        // each part its own material first: the goose tandem's parts share materials, and painting a shared
+        // one painted them all (the Christmas Cruiser came out all red, its seats' colour)
+        model.traverse((o) => { if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map((m) => m.clone()) : o.material.clone(); });
+        applyPresetMaterials(model, this._presetData && this._presetData[key]);
+      }
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
       const outfit = giftOutfit(key);
