@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'c195d86',pr:735,time:'11-09-2026 19:55'}</script><base href="/pr-preview/pr-735/">
+<head><script>window.__BUILD={sha:'2aba5ba',pr:735,time:'11-09-2026 20:03'}</script><base href="/pr-preview/pr-735/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -2672,6 +2672,9 @@
   .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
   .host-bot-row[hidden] { display: none; }
   .host-bot-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .versus-bikes { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
+  .versus-bike-row[data-team="A"] .room-bike-label { color: var(--versus-team-a); }
+  .versus-bike-row[data-team="B"] .room-bike-label { color: var(--versus-team-b); }
   .room-bike-label { font: 700 11px/1 system-ui, sans-serif; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
   .room-bike-name { min-width: 10em; text-align: center; font-size: 18px; font-weight: 700; letter-spacing: 1px; color: #ffc83d;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
@@ -5615,7 +5618,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'c195d86',pr:735,time:'11-09-2026 19:55'}</script><base href="/pr-preview/pr-735/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'2aba5ba',pr:735,time:'11-09-2026 20:03'}</script><base href="/pr-preview/pr-735/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -5895,6 +5898,22 @@ ON</button>
             <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
+          </div>
+          <!-- Pete, 2026-11-09: each team rides its own bike (its captain's LB / RB, or the arrows); team colour stays on
+               the HUD and the tags over the bikes -->
+          <div class="versus-bikes">
+            <div class="room-bike-row versus-bike-row" id="versus-bike-a" data-team="A" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
+            <div class="room-bike-row versus-bike-row" id="versus-bike-b" data-team="B" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
           <!-- #548: a seated pad's △ / Y opens its own wardrobe (said in the join hint below). -->
@@ -6181,7 +6200,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.c195d86 | 11-09-2026 19:55 (PR #735)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.2aba5ba | 11-09-2026 20:03 (PR #735)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
