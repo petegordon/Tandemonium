@@ -37,9 +37,35 @@ const ROLL_DELAY = 0.3;     // s after the goose on its side stops walking (plus
 const ROLL_FALLBACK = 6;    // s: it rolls in by then anyway
 const ROLL_TIME = 2.6;      // s it takes to roll in and stop
 const ROLL_FROM = 7;        // m out of shot it starts
+const GOOSE_Z = 0.6;        // m the standing geese stand in front of the bike's line (it rolls behind them)
 const GOOSE_ANGLE = 0.45;   // rad each standing goose turns in toward the bike
 /** The greetings each goose picks from (a gander tips his hat, a lady curtsies). */
 const MOVES = { m: ['wave', 'bow', 'hat_tip', 'celebrate', 'admire', 'twirl'], f: ['wave', 'bow', 'curtsy', 'celebrate', 'admire', 'twirl'] };
+
+const PATH_STEP = 0.05, PATH_MAX = 40, PATH_CURVE = 1.7;   // m: the roll-in path's samples, length, and its curve (Pete: in straight from the side, close to you)
+
+/**
+ * The roll-in path, traced back from the stop: heading hEnd at the stop (a three-quarter view), turning
+ * over the last PATH_CURVE metres from hSide (straight across the screen). [i] = PATH_STEP * i metres
+ * before the stop: {x, z, h}. Headings as the geese use them (0 = toward the camera, x = sin h, z = cos h).
+ */
+export function rollPath(hEnd, hSide) {
+  const pts = [{ x: 0, z: 0, h: hEnd }];
+  let x = 0, z = 0;
+  for (let b = PATH_STEP; b <= PATH_MAX + 1e-9; b += PATH_STEP) {
+    const u = Math.min(1, b / PATH_CURVE), s = u * u * (3 - 2 * u);
+    const h = hEnd + (hSide - hEnd) * s;
+    x -= Math.sin(h) * PATH_STEP; z -= Math.cos(h) * PATH_STEP;
+    pts.push({ x, z, h });
+  }
+  return pts;
+}
+
+/** The path's point a distance back metres before the stop. */
+export function pathAt(pts, back) {
+  const i = Math.max(0, Math.min(pts.length - 1, Math.round(back / PATH_STEP)));
+  return pts[i];
+}
 
 /** Standing geese for one or two new bikes; riders for three or more. */
 export function showcaseMode(count) { return count <= 2 ? 'standing' : 'riding'; }
@@ -229,6 +255,9 @@ export class BikeShowcase {
     const from = random() < 0.5 ? -1 : 1;                   // -1: rolls in from the left
     const travel = -from * (Math.PI / 2 - (THREE_QUARTER + (random() - 0.5) * 0.3));   // across, angled toward you
     e.turntable.rotation.y = travel - fwd;
+    e.path = rollPath(travel, Math.sign(travel) * Math.PI / 2);   // in from the side, curving to the final view
+    e.fwd = fwd;
+    e.bikeRadius = Math.hypot(size.x, size.z) / 2;
     e.wheels = new GooseRiders(model, animations);
     e.wheels.measureWheel();
     // it rolls once the goose on its side has taken its spot (so it passes behind them); a fallback if that goose never comes
@@ -245,7 +274,7 @@ export class BikeShowcase {
         const dir = (i === 0) === fromLeft ? -1 : 1;    // -1: the left side
         const x = dir * side;
         actor.setHeading(-dir * Math.PI / 2);            // walking in toward the bike
-        actor.root.position.set(x + dir * 6, 0, 0.35);   // out of shot until it walks
+        actor.root.position.set(x + dir * 6, 0, GOOSE_Z);   // out of shot until it walks
         e.scene.add(actor.root);
         e.actors.push(actor);
         await new Promise((r) => setTimeout(r, 300 + random() * 1500));
@@ -263,6 +292,24 @@ export class BikeShowcase {
         }
       } catch (err) { console.warn('New bike goose failed to load:', seat, err); }
     });
+  }
+
+  /**
+   * How far back along its line the bike must start to be wholly out of shot (Pete: it starts off screen):
+   * the nearest distance at which its bounding sphere clears the frame's side, plus a little.
+   */
+  _offscreenStart(e) {
+    const r = (e.bikeRadius || 1.5) * 1.1;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(e.camera.quaternion);
+    const c = new THREE.Vector3(), edge = new THREE.Vector3();
+    e.camera.updateMatrixWorld(true);
+    for (let back = 2; back < PATH_MAX; back += 0.25) {
+      const p = pathAt(e.path, back);
+      c.set(p.x, 0.6, p.z);
+      edge.copy(c).addScaledVector(right, Math.sign(e.roll.dx) * r);    // the bike's leading side, nearest the frame
+      if (Math.abs(edge.clone().project(e.camera).x) > 1.02 && Math.abs(c.clone().project(e.camera).x) > 1) return back + 0.5;
+    }
+    return ROLL_FROM;
   }
 
   /** The camera on the card's box (w wide, h tall, centred cx right of the bike), for this aspect. */
@@ -289,12 +336,15 @@ export class BikeShowcase {
       if (e.roll) {
         // roll in along its own line, slowing to a stop on the spot; the wheels turn with the distance
         const ro = e.roll; ro.t += dt;
+        if (!ro.sized) { this._aim(e, w / h); ro.from = this._offscreenStart(e); ro.sized = true; }   // starts just out of shot
         const u = Math.max(0, Math.min(1, (ro.t - ro.delay) / ro.dur));
         e.turntable.visible = ro.t >= ro.delay;
         const back = ro.from * Math.pow(1 - u, 3);        // ease out: fast in, gentle stop
         const moved = Math.max(0, (ro.from - back) - ro.dist);
         ro.dist += moved;
-        e.turntable.position.set(-ro.dx * back, 0, -ro.dz * back);
+        const p = pathAt(e.path, back);
+        e.turntable.position.set(p.x, 0, p.z);
+        e.turntable.rotation.y = p.h - e.fwd;
         if (e.wheels) { e.wheels.setDistance(ro.dist); e.wheels.setCrank(ro.dist * 1.6); e.wheels.update(); }
       } else e.turntable.rotation.y += TURN_RATE * dt;
       if (e.riders) {

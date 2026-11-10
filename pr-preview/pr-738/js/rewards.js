@@ -6,8 +6,8 @@
 //   Solo Flight bike  -> "player bots"  : any 80 of the 81 SOLO achievements (all solo but one)
 //   Time Warp bike    -> time warp mode : any 90 of the 95 non-calendar achievements (timeWarpProgress)
 //   Gold Standard bike                  : all 100
-// The robot outfit (the Canada Goose bot's suit) comes with the Time Warp reward (Pete, 2026-11-07, #644;
-// it was the player-bots reward until then).
+// The robot outfit (the Canada Goose bot's suit) comes with the Solo Flight / player bots reward again
+// (Pete, 2026-11-09, #736; it was the Time Warp's from 2026-11-07, #644).
 //
 // Groups are read from the definitions, so the counts follow the achievement swap (#608) on their own:
 //   calendar    -- needs real days: a `unit: 'days'` counter (days_3, days_7, launch_week, ...) or a Daily Ride
@@ -114,5 +114,5 @@ export function outfitLockHint(outfit, earnedIds, defs = ACHIEVEMENTS) {
   if (!p) return 'Coming to the store';
   return outfit.reward === 'timeWarp'
     ? `Time Warp reward: ${p.have} of ${p.need} achievements`
-    : `Player Bots reward: ${p.have} of ${p.need} solo achievements`;
+    : `Solo Flight reward: ${p.have} of ${p.need} solo achievements`;
 }

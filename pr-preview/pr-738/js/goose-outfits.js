@@ -22,7 +22,7 @@ export const GOOSE_OUTFITS = {
   fancy: { label: 'Fancy', icon: '💎', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
   georgian: { label: 'Georgian', icon: '👑', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
   robot: { label: 'Robot', icon: '🤖', Captain: DIR + 'goose_captain_robot_m.glb', Stoker: DIR + 'goose_stoker_robot_f.glb',
-    reward: 'timeWarp' },
+    reward: 'playerBots' },   // Pete, 2026-11-09 (#736): the Robot comes with the Solo Flight (player bots), no longer the Time Warp
 };
 
 /** The everyday outfits (no reward to unlock): versus team looks cycle through these. */
