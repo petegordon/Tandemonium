@@ -111,7 +111,7 @@ import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, r
 import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
-import { TeamRig } from './versus/team-rig.js';
+import { TeamRig, TEAM_COLORS } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
@@ -1257,21 +1257,25 @@ class Game {
    * already loaded; a locked pick never reaches here (the chooser falls back to the default).
    */
   _applyBikeChoice() {
-    const key = this.lobby && this.lobby.selectedPresetKey;
+    const key = this.lobby && this.lobby.rideBikeKey();   // the chooser's pick, or (online stoker) the captain's
     if (!this.isTourist) this.bike.swapModel(bikeModelPathFor(this._showRiders, key, undefined, this.mode), !this.versusRigs);
-    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.selectedPreset);
+    this.bike.applyPreset(isSpecialBike(key) ? null : this.lobby.rideBikePreset());
     // #644 · Solo Flight on a solo ride: a player bot rides the back seat (it only rides along) and is this ride's
     // partner. The chooser only leaves solo_flight picked once player bots are earned.
     // (not on a Tourist route, in Slingshot or in the tutorial: no partner there)
     const plain = !this.isTourist && !this.isSlingshot && !(this.lobby && this.lobby._forceWizard);
-    const seat = (this.lobby && this.lobby.selectedBot) || 'bolt';
-    const flight = plain && ridesWithBot(key, this.mode);
+    // Pete, 2026-11-09 · the couch room with one controller and a bot on the back seat: that bot rides along, any bike
+    const roomBot = this.mode === 'solo' && this.lobby && this.lobby._hostBotRide && this.lobby._hostBot && this.lobby._hostBot !== NO_BOT
+      ? this.lobby._hostBot : null;
+    const seat = roomBot || (this.lobby && this.lobby.selectedBot) || 'bolt';
+    const soloFlight = plain && ridesWithBot(key, this.mode);
+    const flight = soloFlight || (plain && !!roomBot);
     this._botRide = flight && seat !== NO_BOT ? seat : null;
     this._botSync = this._botRide ? new BotSync() : null;
     this.bike.setBotStoker(this._botRide);
     this.bike.setEmptySeat(flight && seat === NO_BOT);   // #644 step 2 · "Nobody": the back seat stays empty
     // #644 step 2 · race a bot ghost team (the Solo Flight card's Race row); the level decides at the countdown
-    this._botRaceTier = flight && this.lobby && RACE_TIERS[this.lobby.selectedRace] ? this.lobby.selectedRace : null;
+    this._botRaceTier = soloFlight && !roomBot && this.lobby && RACE_TIERS[this.lobby.selectedRace] ? this.lobby.selectedRace : null;
     if (this.mode === 'solo' && this.hud) this.hud.setSeat('captain', !!this._botRide);   // the sync row: you and the bot
   }
 
@@ -2003,6 +2007,9 @@ class Game {
       t.members.map((m) => ({ look: playerLooks.get(m.n || 0), picked: !!m.n && playerLooks.isPicked(m.n) })),
       getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
+      // Pete, 2026-11-09: each team rides its own pick (default: its team paint); a reward bike brings its own model
+      const teamBike = t.bike || TEAM_COLORS[t.id].presetKey;
+      const special = isSpecialBike(teamBike);
       const rig = new TeamRig({
         id: t.id,
         members: t.members,
@@ -2012,8 +2019,9 @@ class Game {
         // boot bike's GLB is loaded — clone, don't re-fetch; a special bike (#611) has no team paint, so
         // versus loads the goose tandem fresh instead
         bikeCloneSource: isRigTwin(this.bike._modelPath) ? null : this.bike,
+        modelPath: special ? bikeModelPathFor(this._showRiders, teamBike, undefined, 'local') : null,
       });
-      rig.bike.applyPreset(presets[rig.color.presetKey] || null);
+      rig.bike.applyPreset(special ? null : (presets[teamBike] || null));
       rig.bike.setGooseLook(teamLooks(t));
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
@@ -5409,7 +5417,7 @@ class Game {
       collectibles: this.collectibleManager ? this.collectibleManager.collected : 0,
       totalCollectibles: this.collectibleManager ? this.collectibleManager.getTotalItems() : 0,
       finishedLevel: level.id,
-      bikeKey: this.lobby.selectedPresetKey,
+      bikeKey: this.lobby.rideBikeKey(),
       raceDistance: level.distance,
       crashes: this.raceManager ? this.raceManager.crashCount : 0,
       restarts: this.raceManager ? this.raceManager.restartCount : 0,
@@ -6997,7 +7005,7 @@ class Game {
     // smoke:quality check audits every drawn material after a mid-ride switch).
 
     this.bike.swapModel(
-      bikeModelPathFor(on, this.lobby && this.lobby.selectedPresetKey, undefined, this.mode),   // #611: a special bike stays itself
+      bikeModelPathFor(on, this.lobby && this.lobby.rideBikeKey(), undefined, this.mode),   // #611: a special bike stays itself
       !this.versusRigs // live versus clones share the old model's geometry
     );
 

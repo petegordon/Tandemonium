@@ -20,6 +20,29 @@ export const TEAM_COLORS = {
   B: { name: 'TEAM RED', hex: '#ff4560', presetKey: 'bike_red' },
 };
 
+/** A team-colour name tag ("TEAM RED") floating over the team's bike. */
+function makeTeamTag(color) {
+  const c = document.createElement('canvas');
+  c.width = 512; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(10, 12, 20, 0.72)';
+  const r = 48, w = c.width, h = c.height;
+  g.beginPath(); g.moveTo(r, 8); g.arcTo(w - 8, 8, w - 8, h - 8, r); g.arcTo(w - 8, h - 8, 8, h - 8, r); g.arcTo(8, h - 8, 8, 8, r); g.arcTo(8, 8, w - 8, 8, r); g.fill();
+  g.lineWidth = 8; g.strokeStyle = color.hex; g.stroke();
+  g.fillStyle = color.hex;
+  g.font = '800 64px system-ui, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(color.name, w / 2, h / 2 + 4);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+  s.scale.set(1.4, 0.35, 1);
+  s.position.set(0, 3.1, 0);
+  s.renderOrder = 4;
+  s.name = 'teamTag';
+  return s;
+}
+
 export class TeamRig {
   /**
    * @param {Object} opts
@@ -31,7 +54,7 @@ export class TeamRig {
    * @param {number} [opts.lateralOffset] sideways start offset in meters so
    *   the two bikes don't overlap on the start line
    */
-  constructor({ id, members, scene, world, lateralOffset = 0, bikeCloneSource = null }) {
+  constructor({ id, members, scene, world, lateralOffset = 0, bikeCloneSource = null, modelPath = null }) {
     this.id = id;
     this.color = TEAM_COLORS[id];
     this.members = members.map((m) => ({ ...m, prevUp: false, prevDown: false }));
@@ -39,7 +62,11 @@ export class TeamRig {
 
     // Clone the boot bike's loaded GLB when available — re-fetching the
     // ~7MB model made the second team's bike appear seconds late.
-    this.bike = new BikeModel(scene, null, bikeCloneSource);
+    // Pete, 2026-11-09: a team can ride a reward bike (its own GLB, loaded fresh); a paint bike clones the boot bike
+    this.bike = new BikeModel(scene, modelPath || null, modelPath ? null : bikeCloneSource);
+    // the team's tag over its bike (team colour), seen from both halves of the split screen
+    this.tag = makeTeamTag(this.color);
+    this.bike.group.add(this.tag);
     this.bike.roadPath = world.roadPath;
     // #581: a solo team rides with one goose — the stoker's saddle stays empty
     // unless a second player sits there. (Which goose rides which seat, and

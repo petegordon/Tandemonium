@@ -2666,6 +2666,25 @@
     letter-spacing: 2px;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
   }
+  /* the room's bike row (Pete, 2026-11-09): the tandem's bike, picked where the players are seated */
+  .room-bike-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 4px; }
+  .room-bike-row[hidden] { display: none; }
+  .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .host-bot-row[hidden] { display: none; }
+  .host-bot-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .versus-bikes { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
+  .versus-bike-row[data-team="A"] .room-bike-label { color: var(--versus-team-a); }
+  .versus-bike-row[data-team="B"] .room-bike-label { color: var(--versus-team-b); }
+  .room-bike-label { font: 700 11px/1 system-ui, sans-serif; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
+  .room-bike-name { min-width: 10em; text-align: center; font-size: 18px; font-weight: 700; letter-spacing: 1px; color: #ffc83d;
+    font-family: 'Noteworthy', 'Bradley Hand', fantasy;
+    text-shadow: -1px -1px 0 #4a1608, 1px -1px 0 #4a1608, -1px 1px 0 #4a1608, 1px 1px 0 #4a1608, 0 2px 4px rgba(0,0,0,.5); }
+  .room-bike-nav { display: inline-flex; align-items: center; gap: 4px; min-width: 40px; height: 34px; padding: 0 8px; border-radius: 10px;
+    border: 1.5px solid rgba(255,255,255,0.22); background: rgba(255,255,255,0.06); color: #fff; font-size: 20px; cursor: pointer; }
+  .room-bike-nav:hover { border-color: rgba(255,200,61,0.7); }
+  .room-bike-row.readonly .room-bike-nav { display: none; }
+  .room-bike-note { font: 600 11px/1 system-ui, sans-serif; color: rgba(255,255,255,0.55); }
+  .room-bike-note:empty { display: none; }
   #bike-name.locked { color: #d8c6a4; }   /* a reward bike not earned yet: parchment, same outline */
   /* #644 · Solo Flight's bot picker: Bolt, Rivet, Sprocket */
   #bot-picker {
@@ -5820,6 +5839,14 @@ ON</button>
             <uf-seat id="level-room-captain" seat="Captain · front seat" tone="captain" badge="P1" state="open"></uf-seat>
             <uf-seat id="level-room-stoker" seat="Stoker · back seat" tone="stoker" badge="P2" state="open"></uf-seat>
           </uf-team>
+          <!-- the online tandem's bike: the captain picks (LB / RB), the partner sees the captain's pick -->
+          <div class="room-bike-row" id="level-room-bike-row" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span><uf-controller-glyph button="lb" size="sm" class="pad-only"></uf-controller-glyph></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><uf-controller-glyph button="rb" size="sm" class="pad-only"></uf-controller-glyph><span class="bike-nav-arrow">&#8250;</span></button>
+              <span class="room-bike-note"></span>
+            </div>
           <!-- #667 · a full-game guest in a demo host's room ("Demo room") can host it instead: the
                room moves to a new code with them as captain, and everyone follows (lobby._hostInstead). -->
           <div id="level-room-rehost" class="room-rehost-row" hidden>
@@ -5871,6 +5898,22 @@ ON</button>
             <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
+          </div>
+          <!-- Pete, 2026-11-09: each team rides its own bike (its captain's LB / RB, or the arrows); team colour stays on
+               the HUD and the tags over the bikes -->
+          <div class="versus-bikes">
+            <div class="room-bike-row versus-bike-row" id="versus-bike-a" data-team="A" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
+            <div class="room-bike-row versus-bike-row" id="versus-bike-b" data-team="B" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
           <!-- #548: a seated pad's △ / Y opens its own wardrobe (said in the join hint below). -->
@@ -5927,6 +5970,19 @@ ON</button>
               <uf-seat id="host-seat-captain" seat="Captain · front seat" tone="captain" who="You" state="joined" badge="P1"></uf-seat>
               <uf-seat id="host-seat-stoker" seat="Stoker · back seat" tone="stoker" who="Waiting for partner…" state="open" hint="press &lt;uf-controller-glyph size=sm button=confirm&gt;&lt;/uf-controller-glyph&gt; on any controller, or scan the code with a phone"></uf-seat>
             </uf-team>
+            <!-- Pete, 2026-11-09: the tandem's bike, picked in the room (P1's LB / RB or the arrows) -->
+            <div class="room-bike-row" id="host-bike-row" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span><uf-controller-glyph button="lb" size="sm" class="pad-only"></uf-controller-glyph></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><uf-controller-glyph button="rb" size="sm" class="pad-only"></uf-controller-glyph><span class="bike-nav-arrow">&#8250;</span></button>
+              <span class="room-bike-note"></span>
+            </div>
+            <!-- Pete, 2026-11-09: with one controller seated and player bots earned, a bot can take the back seat -->
+            <div class="host-bot-row" id="host-bot-row" hidden>
+              <span class="room-bike-label">Back seat</span>
+              <div class="host-bot-picks" role="radiogroup" aria-label="Who rides the back seat"></div>
+            </div>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
             <!-- #548: "Press Y for wardrobe" (lobby._renderWardrobeButtons); a seated pad's △ / Y opens its own. -->
             <div class="wardrobe-row" id="host-wardrobe"></div>

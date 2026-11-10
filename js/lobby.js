@@ -45,7 +45,8 @@ import { addBikeSparkle } from './bike-sparkle.js';
 const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
 const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
-import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
+import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
+import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
@@ -242,6 +243,8 @@ export class Lobby {
     // onVersusReady({ teams }) on START RIDE.
     this._versusPlayers = [];
     this._versusMonitorRAF = null;
+    // Pete, 2026-11-09: each versus team's bike (its team paint until its captain picks another)
+    this._versusBikes = { A: 'bike_blue', B: 'bike_red' };
     this._versusPrevButtons = new Map(); // candidate key / member n -> { a, left, right }
     this._versusLastCardsKey = null;
     this._versusKeyHandler = null;
@@ -840,6 +843,13 @@ export class Lobby {
     }
     this._clearFocusHighlight();
     this._currentStep = step;
+    if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
+    if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
+      const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
+      this._presetIndex = i >= 0 ? i : 0;
+      if (this._previewModel) this._applyPresetToPreview();
+    }
+    this._syncRoomBikeRows();
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
@@ -1373,8 +1383,16 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
     document.getElementById('btn-host-local-next').addEventListener('click', () => {
-      if (!this._localSeatedOnHost || !this._localP2InputManager) return;
-      this._pendingMode = 'local';
+      if (this._localSeatedOnHost && this._localP2InputManager) {
+        this._hostBotRide = false;
+        this._pendingMode = 'local';
+        this._showStep(this.levelStep);
+        return;
+      }
+      // Pete, 2026-11-09: one controller seated and a bot on the back: a ride with the bot (any bike)
+      if (!this._hostBotPicked()) return;
+      this._hostBotRide = true;
+      this._pendingMode = 'solo';
       this._showStep(this.levelStep);
     });
 
@@ -5695,8 +5713,12 @@ export class Lobby {
     if (!step || !onBtn || !locBtn) return;
     const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
     const local = !online && !!(this._localSeatedOnHost && this._localP2InputManager);
+    // Pete, 2026-11-09 · one controller seated, player bots earned: the Back seat picker; a bot there can ride
+    const botOn = !online && !local && this._hostBotAvailable();
+    const botRide = botOn && this._hostBotPicked();
+    this._syncHostBotRow(botOn);
     onBtn.disabled = !online;
-    locBtn.disabled = !local;
+    locBtn.disabled = !(local || botRide);
     step.classList.toggle('host-online-on', online);
     step.classList.toggle('host-local-on', local);
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
@@ -5704,9 +5726,10 @@ export class Lobby {
       if (!sto._openHint) sto._openHint = sto.hint;
       if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: this._roomSeatHint('Online', this._partnerLook, !!this._partnerDressing), ...this._partnerSeatPic() });
       else if (local) Object.assign(sto, { dev: '', state: 'joined', hint: '' }, this._seatWho(2, this._localP2NameBeforeAccount || this._localP2Name || 'Player 2'));
+      else if (botRide) Object.assign(sto, { who: BOTS[this._hostBot].name, dev: 'Player bot', state: 'joined', hint: 'a robot goose; counts as your partner', pic: '', source: '' });
       else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '', pic: '', source: '' });
       // P2 in the corner once someone sits there, like the captain's P1.
-      sto.badge = online || local ? 'P2' : '';
+      sto.badge = online || local ? 'P2' : (botRide ? 'BOT' : '');
     }
     const cands = this._currentStep === step && this._detectLocalJoinCandidates ? (this._detectLocalJoinCandidates() || []) : [];
     this._renderHostSeats(cands);
@@ -5716,7 +5739,7 @@ export class Lobby {
     // code button until the online room is open.
     this._syncHostJoinQr();
     const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
-    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
+    const items = [...(botOn ? (this._hostBotButtons || []) : []), online && onBtn, (local || botRide) && locBtn, codeBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5819,7 +5842,9 @@ export class Lobby {
     } else if (profile.type === ROOM_MSG.ROOM_MOVED) {
       this._followRoomMove(profile.code);   // #667 · the partner hosts now: follow to the new code
     } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
-      // Partner changed bike — no label update needed (keep role-only labels)
+      // The captain's bike: the stoker's room row shows it and the ride rides it (Pete, 2026-11-09)
+      this._roomBikeKey = typeof profile.presetKey === 'string' && this._presetKeys.includes(profile.presetKey) ? profile.presetKey : null;
+      this._syncRoomBikeRows();
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
       const picked = LEVELS.find(l => l.id === profile.levelId);
@@ -7298,7 +7323,7 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true, lb: true, rb: true };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
         const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
@@ -7316,6 +7341,14 @@ export class Lobby {
           continue;
         }
         prev.y = y;
+        // Pete, 2026-11-09 · a team's captain (its first player) picks the team's bike with LB / RB. P1's pad goes
+        // through the lobby's own bumper handler (_bikePrev / _bikeNext), which does the same for P1's team.
+        const lb = !!(gp.buttons[4] && gp.buttons[4].pressed), rb = !!(gp.buttons[5] && gp.buttons[5].pressed);
+        if (p.input !== this.input && p.slotId !== 'P1' && this._versusPlayers.find((q) => q.team === p.team) === p) {
+          if (lb && !prev.lb) this._cycleVersusBike(p.team, -1);
+          if (rb && !prev.rb) this._cycleVersusBike(p.team, 1);
+        }
+        prev.lb = lb; prev.rb = rb;
         // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
         // P1's B is "back" through the step's FocusController. `b` primes true
         // so a B held from before the join can't fire on the first frame.
@@ -7713,8 +7746,8 @@ export class Lobby {
       isP1: p.slotId === 'P1',
     });
     return [
-      { id: 'A', members: this._versusPlayers.filter(p => p.team === 'A').map(member) },
-      { id: 'B', members: this._versusPlayers.filter(p => p.team === 'B').map(member) },
+      { id: 'A', bike: this._versusBikes.A, members: this._versusPlayers.filter(p => p.team === 'A').map(member) },
+      { id: 'B', bike: this._versusBikes.B, members: this._versusPlayers.filter(p => p.team === 'B').map(member) },
     ];
   }
 
@@ -8896,7 +8929,7 @@ export class Lobby {
    * solo with a bot and co-op with two players, so it is always the Penny-Farthing here).
    */
   _dressingRoomBike() {
-    const key = this.selectedPresetKey || 'default';
+    const key = this.rideBikeKey() || 'default';
     return { path: bikeModelPathFor(true, key, GOOSE_BIKE_MODEL_PATH, 'local'), preset: (this._presetData && this._presetData[key]) || null };
   }
 
@@ -9089,19 +9122,33 @@ export class Lobby {
     const prevBtn = document.getElementById('bike-prev');
     const nextBtn = document.getElementById('bike-next');
     this._bikePrev = () => {
+      if (this._currentStep === this.versusStep) { this._cycleVersusBike(this._versusP1Team(), -1); return; }   // P1's team's bike
+      if (this._roomBikeReadonly()) return;   // the online stoker rides the captain's pick
       this._stopChooserAttract();
-      this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
+      this._presetIndex = this._nextBikeIndex(-1);
       this._applyPresetToPreview();
       this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
     this._bikeNext = () => {
+      if (this._currentStep === this.versusStep) { this._cycleVersusBike(this._versusP1Team(), 1); return; }
+      if (this._roomBikeReadonly()) return;
       this._stopChooserAttract();
-      this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
+      this._presetIndex = this._nextBikeIndex(1);
       this._applyPresetToPreview();
       this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
+    // the rooms' bike rows: the same pick, its arrows clickable
+    for (const row of document.querySelectorAll('.room-bike-row')) {
+      for (const b of row.querySelectorAll('.room-bike-nav')) {
+        b.addEventListener('click', () => {
+          const dir = b.dataset.dir === '-1' ? -1 : 1;
+          if (row.dataset.team) this._cycleVersusBike(row.dataset.team, dir);
+          else if (dir < 0) this._bikePrev(); else this._bikeNext();
+        });
+      }
+    }
     // a click or tap on the preview itself is the player taking the chooser too
     document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
     this._startChooserAttract();
@@ -9162,6 +9209,142 @@ export class Lobby {
       this._attractTurning = true;            // (not a player's pick: no bike_color_change event)
       try { this._applyPresetToPreview(); } finally { this._attractTurning = false; }
     }, TICK);
+  }
+
+  /** Is this a room where the players are seated (couch co-op seats, or the online room's level list)? */
+  _inSeatRoom() {
+    return this._currentStep === this.hostStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer');
+  }
+
+  /** The online stoker's room: the captain picks the tandem's bike. */
+  _roomBikeReadonly() {
+    return !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole === 'stoker' && this._currentStep === this.levelStep);
+  }
+
+  /** Can this bike be ridden now: allowed by the edition, a holiday bike unlocked, a reward bike earned and rideable? */
+  _bikeRideable(key) {
+    if (!isSpecialBike(key)) return bikeAllowed(getEditionRules(), key) && !(HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
+    const def = SPECIAL_BIKES[key];
+    return !!def.rideable && rewardProgress(def.reward, this._earnedAchievementIds()).unlocked;
+  }
+
+  /** The chooser's next index that way; in a seat room it skips bikes that can't be ridden yet (no locked picks there). */
+  _nextBikeIndex(dir) {
+    const n = this._presetKeys.length;
+    let i = this._presetIndex;
+    for (let k = 0; k < n; k++) {
+      i = (i + dir + n) % n;
+      if (!this._inSeatRoom() || this._bikeRideable(this._presetKeys[i])) return i;
+    }
+    return this._presetIndex;
+  }
+
+  /** The bike the ride uses: the chooser's pick, or (the online stoker) the captain's. */
+  rideBikeKey() {
+    if (this.net && this._roomRole === 'stoker' && this._pendingMode === 'multiplayer' && this._roomBikeKey) return this._roomBikeKey;
+    return this.selectedPresetKey;
+  }
+
+  /** The ride bike's paint preset (null for the default or a special bike). */
+  rideBikePreset() {
+    const key = this.rideBikeKey();
+    if (key === this.selectedPresetKey) return this.selectedPreset;
+    return isSpecialBike(key) ? null : ((this._presetData && this._presetData[key]) || null);
+  }
+
+  /** The bike's display name with its reward icon (the rooms' rows). */
+  _bikeLabel(key) {
+    if (isSpecialBike(key)) return SPECIAL_BIKES[key].icon + ' ' + SPECIAL_BIKES[key].name;
+    return BIKE_NAMES[key] || key;
+  }
+
+  /** Redraw the rooms' bike rows (host seats, online room): the ride's bike; read-only for the online stoker. */
+  _syncRoomBikeRows() {
+    const host = document.getElementById('host-bike-row');
+    const online = document.getElementById('level-room-bike-row');
+    const inOnline = !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole && this._currentStep === this.levelStep);
+    const rows = [[host, this._currentStep === this.hostStep], [online, inOnline]];
+    for (const t of ['A', 'B']) {   // versus: a row per team
+      const vr = document.getElementById('versus-bike-' + t.toLowerCase());
+      if (!vr) continue;
+      vr.hidden = this._currentStep !== this.versusStep;
+      if (!vr.hidden) vr.querySelector('.room-bike-name').textContent = this._bikeLabel(this._versusBikes[t] || 'default');
+    }
+    for (const [row, on] of rows) {
+      if (!row) continue;
+      row.hidden = !on;
+      if (!on) continue;
+      const ro = row === online && this._roomBikeReadonly();
+      const key = ro ? (this._roomBikeKey || 'default') : this.selectedPresetKey;
+      row.classList.toggle('readonly', ro);
+      row.querySelector('.room-bike-name').textContent = this._bikeLabel(key || 'default');
+      row.querySelector('.room-bike-note').textContent = ro ? "Captain's pick" : '';
+    }
+  }
+
+  /** Player bots earned (any 80 of the 81 solo achievements): a bot can take a room's empty back seat. */
+  _hostBotAvailable() {
+    return playerBotsProgress(this._earnedAchievementIds()).unlocked;
+  }
+
+  /** Is a bot picked for the couch room's back seat? (Its default: a bot while multiplayer achievements remain.) */
+  _hostBotPicked() {
+    if (this._hostBot == null) {
+      const earned = new Set(this._earnedAchievementIds());
+      const allMp = ACHIEVEMENTS.filter(isMultiplayerAchievement).every((d) => earned.has(d.id));
+      const saved = loadBotChoice();
+      this._hostBot = allMp ? NO_BOT : (saved && saved !== NO_BOT ? saved : BOT_IDS[0]);
+    }
+    return this._hostBotAvailable() && this._hostBot !== NO_BOT && !!BOTS[this._hostBot];
+  }
+
+  /** The couch room's Back seat row: Bolt / Rivet / Sprocket / Wait for a player (built once). */
+  _syncHostBotRow(on) {
+    const row = document.getElementById('host-bot-row');
+    if (!row) return;
+    row.hidden = !on;
+    if (!on) return;
+    const picks = row.querySelector('.host-bot-picks');
+    if (!this._hostBotButtons) {
+      this._hostBotButtons = [...BOT_IDS, NO_BOT].map((id) => {
+        const b = document.createElement('button');
+        b.className = 'bot-pick';
+        b.type = 'button';
+        b.dataset.bot = id;
+        b.setAttribute('role', 'radio');
+        const bot = BOTS[id];
+        b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
+        b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Wait for a player'}`;
+        b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as your partner)` : 'No bot: wait for a second controller';
+        b.addEventListener('click', (e) => { e.stopPropagation(); this._hostBot = id; this._refreshHostNext(); });
+        picks.appendChild(b);
+        return b;
+      });
+    }
+    this._hostBotPicked();   // (fills the default)
+    for (const b of this._hostBotButtons) {
+      const on_ = b.dataset.bot === this._hostBot;
+      b.classList.toggle('active', on_);
+      b.setAttribute('aria-checked', on_ ? 'true' : 'false');
+    }
+  }
+
+  /** Player 1's versus team (the keyboard / P1 pad), 'A' until seated. */
+  _versusP1Team() {
+    const p = this._versusPlayers.find((q) => q.slotId === 'P1' || q.input === this.input);
+    return (p && p.team) || 'A';
+  }
+
+  /** The next rideable bike that way for a versus team (reward bikes once earned; never a locked one). */
+  _cycleVersusBike(team, dir) {
+    const keys = this._presetKeys, n = keys.length;
+    let i = Math.max(0, keys.indexOf(this._versusBikes[team]));
+    for (let k = 0; k < n; k++) {
+      i = (i + dir + n) % n;
+      if (this._bikeRideable(keys[i])) break;
+    }
+    this._versusBikes[team] = keys[i];
+    this._syncRoomBikeRows();
   }
 
   /** Player 1 took the chooser: no more turning; the bike showing is now theirs. */
@@ -9430,6 +9613,10 @@ export class Lobby {
   }
 
   _applyPresetToPreview() {
+    try { this._applyPresetToPreviewInner(); } finally { this._syncRoomBikeRows(); }
+  }
+
+  _applyPresetToPreviewInner() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
