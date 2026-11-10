@@ -243,6 +243,8 @@ export class Lobby {
     // onVersusReady({ teams }) on START RIDE.
     this._versusPlayers = [];
     this._versusMonitorRAF = null;
+    // Pete, 2026-11-09: each versus team's bike (its team paint until its captain picks another)
+    this._versusBikes = { A: 'bike_blue', B: 'bike_red' };
     this._versusPrevButtons = new Map(); // candidate key / member n -> { a, left, right }
     this._versusLastCardsKey = null;
     this._versusKeyHandler = null;
@@ -7321,7 +7323,7 @@ export class Lobby {
         const gp = p.input.getGamepadState();
         if (!gp || !gp.buttons) continue;
         const key = 'member:' + p.n;
-        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true };
+        const prev = this._versusPrevButtons.get(key) || { a: false, b: true, left: false, right: false, y: true, lb: true, rb: true };
         const left = !!(gp.buttons[14] && gp.buttons[14].pressed) || (gp.axes[0] || 0) < -0.6;
         const right = !!(gp.buttons[15] && gp.buttons[15].pressed) || (gp.axes[0] || 0) > 0.6;
         const y = !!(gp.buttons[3] && gp.buttons[3].pressed);
@@ -7339,6 +7341,14 @@ export class Lobby {
           continue;
         }
         prev.y = y;
+        // Pete, 2026-11-09 · a team's captain (its first player) picks the team's bike with LB / RB. P1's pad goes
+        // through the lobby's own bumper handler (_bikePrev / _bikeNext), which does the same for P1's team.
+        const lb = !!(gp.buttons[4] && gp.buttons[4].pressed), rb = !!(gp.buttons[5] && gp.buttons[5].pressed);
+        if (p.input !== this.input && p.slotId !== 'P1' && this._versusPlayers.find((q) => q.team === p.team) === p) {
+          if (lb && !prev.lb) this._cycleVersusBike(p.team, -1);
+          if (rb && !prev.rb) this._cycleVersusBike(p.team, 1);
+        }
+        prev.lb = lb; prev.rb = rb;
         // B on a joined pad = leave your seat (back to CONNECTED). Not the host:
         // P1's B is "back" through the step's FocusController. `b` primes true
         // so a B held from before the join can't fire on the first frame.
@@ -7736,8 +7746,8 @@ export class Lobby {
       isP1: p.slotId === 'P1',
     });
     return [
-      { id: 'A', members: this._versusPlayers.filter(p => p.team === 'A').map(member) },
-      { id: 'B', members: this._versusPlayers.filter(p => p.team === 'B').map(member) },
+      { id: 'A', bike: this._versusBikes.A, members: this._versusPlayers.filter(p => p.team === 'A').map(member) },
+      { id: 'B', bike: this._versusBikes.B, members: this._versusPlayers.filter(p => p.team === 'B').map(member) },
     ];
   }
 
@@ -9112,6 +9122,7 @@ export class Lobby {
     const prevBtn = document.getElementById('bike-prev');
     const nextBtn = document.getElementById('bike-next');
     this._bikePrev = () => {
+      if (this._currentStep === this.versusStep) { this._cycleVersusBike(this._versusP1Team(), -1); return; }   // P1's team's bike
       if (this._roomBikeReadonly()) return;   // the online stoker rides the captain's pick
       this._stopChooserAttract();
       this._presetIndex = this._nextBikeIndex(-1);
@@ -9120,6 +9131,7 @@ export class Lobby {
       this._sendBikeSyncIfInRoom();
     };
     this._bikeNext = () => {
+      if (this._currentStep === this.versusStep) { this._cycleVersusBike(this._versusP1Team(), 1); return; }
       if (this._roomBikeReadonly()) return;
       this._stopChooserAttract();
       this._presetIndex = this._nextBikeIndex(1);
@@ -9130,7 +9142,11 @@ export class Lobby {
     // the rooms' bike rows: the same pick, its arrows clickable
     for (const row of document.querySelectorAll('.room-bike-row')) {
       for (const b of row.querySelectorAll('.room-bike-nav')) {
-        b.addEventListener('click', () => { if (b.dataset.dir === '-1') this._bikePrev(); else this._bikeNext(); });
+        b.addEventListener('click', () => {
+          const dir = b.dataset.dir === '-1' ? -1 : 1;
+          if (row.dataset.team) this._cycleVersusBike(row.dataset.team, dir);
+          else if (dir < 0) this._bikePrev(); else this._bikeNext();
+        });
       }
     }
     // a click or tap on the preview itself is the player taking the chooser too
@@ -9248,6 +9264,12 @@ export class Lobby {
     const online = document.getElementById('level-room-bike-row');
     const inOnline = !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole && this._currentStep === this.levelStep);
     const rows = [[host, this._currentStep === this.hostStep], [online, inOnline]];
+    for (const t of ['A', 'B']) {   // versus: a row per team
+      const vr = document.getElementById('versus-bike-' + t.toLowerCase());
+      if (!vr) continue;
+      vr.hidden = this._currentStep !== this.versusStep;
+      if (!vr.hidden) vr.querySelector('.room-bike-name').textContent = this._bikeLabel(this._versusBikes[t] || 'default');
+    }
     for (const [row, on] of rows) {
       if (!row) continue;
       row.hidden = !on;
@@ -9305,6 +9327,24 @@ export class Lobby {
       b.classList.toggle('active', on_);
       b.setAttribute('aria-checked', on_ ? 'true' : 'false');
     }
+  }
+
+  /** Player 1's versus team (the keyboard / P1 pad), 'A' until seated. */
+  _versusP1Team() {
+    const p = this._versusPlayers.find((q) => q.slotId === 'P1' || q.input === this.input);
+    return (p && p.team) || 'A';
+  }
+
+  /** The next rideable bike that way for a versus team (reward bikes once earned; never a locked one). */
+  _cycleVersusBike(team, dir) {
+    const keys = this._presetKeys, n = keys.length;
+    let i = Math.max(0, keys.indexOf(this._versusBikes[team]));
+    for (let k = 0; k < n; k++) {
+      i = (i + dir + n) % n;
+      if (this._bikeRideable(keys[i])) break;
+    }
+    this._versusBikes[team] = keys[i];
+    this._syncRoomBikeRows();
   }
 
   /** Player 1 took the chooser: no more turning; the bike showing is now theirs. */

@@ -2672,6 +2672,9 @@
   .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
   .host-bot-row[hidden] { display: none; }
   .host-bot-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .versus-bikes { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
+  .versus-bike-row[data-team="A"] .room-bike-label { color: var(--versus-team-a); }
+  .versus-bike-row[data-team="B"] .room-bike-label { color: var(--versus-team-b); }
   .room-bike-label { font: 700 11px/1 system-ui, sans-serif; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
   .room-bike-name { min-width: 10em; text-align: center; font-size: 18px; font-weight: 700; letter-spacing: 1px; color: #ffc83d;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
@@ -5895,6 +5898,22 @@ ON</button>
             <uf-team id="versus-team-a" tone="team-a" heading="Team blue" layout="row"></uf-team>
             <div class="versus-vs">VS</div>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
+          </div>
+          <!-- Pete, 2026-11-09: each team rides its own bike (its captain's LB / RB, or the arrows); team colour stays on
+               the HUD and the tags over the bikes -->
+          <div class="versus-bikes">
+            <div class="room-bike-row versus-bike-row" id="versus-bike-a" data-team="A" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
+            <div class="room-bike-row versus-bike-row" id="versus-bike-b" data-team="B" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
           </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
           <!-- #548: a seated pad's △ / Y opens its own wardrobe (said in the join hint below). -->
