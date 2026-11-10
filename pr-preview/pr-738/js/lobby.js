@@ -50,6 +50,7 @@ import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration } from './bike-celebration.js';
+import { BikeShowcase } from './bike-showcase.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
@@ -470,6 +471,7 @@ export class Lobby {
     this._achievements = achievements || new AchievementManager();
     // #736 · "New bike!" — each bike that unlocks is celebrated once, at a calm moment
     this.bikeCelebration = new BikeCelebration({
+      showcase: () => new BikeShowcase(this._presetData),   // the turning bikes on the cards
       onShown: (info) => { try { analytics.trackEvent('bike_unlock_shown', { bikes: info.bikes.join(','), welcome: info.welcome ? info.welcome.kind : '' }); } catch (e) {} },
     });
     this._avatarCache = new Map(); // originalUrl → blobUrl (fetched once per session)

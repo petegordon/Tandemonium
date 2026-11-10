@@ -44,21 +44,25 @@ const STYLE = `
     border-radius: var(--uf-radius-lg); background: var(--uf-color-surface-2, rgba(255,255,255,0.05));
     border: 2px solid var(--nb-colour); box-shadow: 0 0 24px color-mix(in srgb, var(--nb-colour) 40%, transparent);
     animation: nb-roll-in 700ms cubic-bezier(.2,.9,.3,1.2) both; animation-delay: calc(var(--nb-i) * 220ms); }
-  #new-bike-sheet .nb-icon { font-size: 3.2em; line-height: 1; animation: nb-wobble 1.6s ease-in-out infinite;
-    animation-delay: calc(700ms + var(--nb-i) * 220ms); }
+  #new-bike-sheet .nb-card { width: 15em; }
+  #new-bike-sheet .nb-bike { display: block; width: 100%; aspect-ratio: 3 / 2; }
+  #new-bike-sheet .nb-cards.many { flex-wrap: nowrap; }
+  #new-bike-sheet .nb-cards.many .nb-card { flex: 1 1 0; min-width: 0; width: auto; max-width: 13em; padding: var(--uf-space-3); }
+  #new-bike-sheet .nb-cards.many .nb-name { font-size: var(--uf-size-md); }
   #new-bike-sheet .nb-name { font: 800 var(--uf-size-lg)/1.15 var(--uf-font-ui); color: var(--nb-colour); text-align: center; }
   #new-bike-sheet .nb-how { font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); text-align: center; }
   #new-bike-sheet .nb-next { margin: 0; text-align: center; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
   @keyframes nb-roll-in { from { transform: translateX(-120vw) rotate(-8deg); opacity: 0; } 70% { transform: translateX(4%) rotate(2deg); opacity: 1; } to { transform: none; } }
-  @keyframes nb-wobble { 0%, 100% { transform: rotate(-4deg); } 50% { transform: rotate(4deg); } }
-  @media (prefers-reduced-motion: reduce) { #new-bike-sheet .nb-card, #new-bike-sheet .nb-icon { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { #new-bike-sheet .nb-card { animation: none; } }
 `;
 
 export class BikeCelebration {
-  /** @param {{ storage?: Storage, onShown?: (info: object) => void }} [opts] */
+  /** @param {{ storage?: Storage, onShown?: (info: object) => void, showcase?: () => ({show: Function, stop: Function}) }} [opts] */
   constructor(opts = {}) {
     this._storage = opts.storage || (typeof localStorage !== 'undefined' ? localStorage : null);
     this._onShown = opts.onShown || null;
+    this._makeShowcase = opts.showcase || null;   // the turning bikes (js/bike-showcase.js), made on first use
+    this._showcase = null;
     this._sheet = null;
   }
 
@@ -129,7 +133,7 @@ export class BikeCelebration {
 
     if (n) {
       const cards = document.createElement('div');
-      cards.className = 'nb-cards';
+      cards.className = 'nb-cards' + (n >= 4 ? ' many' : '');   // four in a row
       r.bikes.forEach((key, i) => {
         const [colour, icon] = lookFor(key);
         const card = document.createElement('div');
@@ -137,16 +141,17 @@ export class BikeCelebration {
         card.dataset.bike = key;
         card.style.setProperty('--nb-colour', colour);
         card.style.setProperty('--nb-i', String(i));
-        const ic = document.createElement('div'); ic.className = 'nb-icon'; ic.textContent = icon;
-        const nm = document.createElement('div'); nm.className = 'nb-name'; nm.textContent = BIKE_NAMES[key] || key;
+        // Pete, 2026-11-09: the bike turning, then its name with the icon in front
+        const pic = document.createElement('canvas'); pic.className = 'nb-bike'; pic.dataset.bike = key;
+        const nm = document.createElement('div'); nm.className = 'nb-name'; nm.textContent = icon + ' ' + (BIKE_NAMES[key] || key);
         const how = document.createElement('div'); how.className = 'nb-how'; how.textContent = earnedLine(key);
-        card.append(ic, nm, how);
+        card.append(pic, nm, how);
         if (onRide) {
           const btn = /** @type {any} */ (document.createElement('uf-button'));
           btn.setAttribute('variant', i === 0 ? 'accent' : 'primary');
           btn.className = 'nb-ride';
           btn.dataset.bike = key;
-          btn.textContent = n === 1 ? 'RIDE IT NOW' : 'RIDE THIS ONE';
+          btn.textContent = n === 1 ? 'RIDE IT NOW' : n >= 4 ? 'RIDE' : 'RIDE THIS ONE';
           btn.addEventListener('click', () => done(key));
           card.appendChild(btn);
         }
@@ -173,8 +178,15 @@ export class BikeCelebration {
     actions.appendChild(later);
     sheet.appendChild(actions);
 
+    if (n && this._makeShowcase) {
+      try {
+        this._showcase = this._showcase || this._makeShowcase();
+        this._showcase.show([...body.querySelectorAll('canvas.nb-bike')].map((c) => ({ key: c.dataset.bike, canvas: c })));
+      } catch (e) { console.warn('New bike pictures unavailable:', e); }
+    }
     const closed = () => {
       sheet.removeEventListener('uf-sheet:close', closed);
+      if (this._showcase) this._showcase.stop();
       if (onClose) try { onClose(); } catch (e) {}
     };
     sheet.addEventListener('uf-sheet:close', closed);
