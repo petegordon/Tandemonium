@@ -111,7 +111,7 @@ import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, r
 import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
-import { TeamRig } from './versus/team-rig.js';
+import { TeamRig, TEAM_COLORS } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
@@ -2003,6 +2003,9 @@ class Game {
       t.members.map((m) => ({ look: playerLooks.get(m.n || 0), picked: !!m.n && playerLooks.isPicked(m.n) })),
       getGooseOutfit());
     this.versusRigs = teams.map((t, i) => {
+      // Pete, 2026-11-09: each team rides its own pick (default: its team paint); a reward bike brings its own model
+      const teamBike = t.bike || TEAM_COLORS[t.id].presetKey;
+      const special = isSpecialBike(teamBike);
       const rig = new TeamRig({
         id: t.id,
         members: t.members,
@@ -2012,8 +2015,9 @@ class Game {
         // boot bike's GLB is loaded — clone, don't re-fetch; a special bike (#611) has no team paint, so
         // versus loads the goose tandem fresh instead
         bikeCloneSource: isRigTwin(this.bike._modelPath) ? null : this.bike,
+        modelPath: special ? bikeModelPathFor(this._showRiders, teamBike, undefined, 'local') : null,
       });
-      rig.bike.applyPreset(presets[rig.color.presetKey] || null);
+      rig.bike.applyPreset(special ? null : (presets[teamBike] || null));
       rig.bike.setGooseLook(teamLooks(t));
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
