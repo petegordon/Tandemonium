@@ -41,7 +41,9 @@ export async function startHarness({ port, outDir = null, headless = 'new', auto
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
   const browser = await puppeteer.launch({
     headless,
-    args: ['--no-sandbox', '--use-gl=swiftshader', '--enable-unsafe-swiftshader', '--mute-audio', `--autoplay-policy=${autoplay}`],
+    // SMOKE_GPU=1: the machine's own GPU (frame-time probes on a dev machine); otherwise software WebGL, as CI has no GPU
+    args: ['--no-sandbox', ...(process.env.SMOKE_GPU ? [`--use-angle=${process.env.SMOKE_GPU === '1' ? 'default' : process.env.SMOKE_GPU}`, '--ignore-gpu-blocklist', '--enable-gpu']
+      : ['--use-gl=swiftshader', '--enable-unsafe-swiftshader']), '--mute-audio', `--autoplay-policy=${autoplay}`],
   });
   const out = outDir ? path.join(os.tmpdir(), outDir) : null;
   if (out) fs.mkdirSync(out, { recursive: true });
