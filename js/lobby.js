@@ -840,6 +840,12 @@ export class Lobby {
     }
     this._clearFocusHighlight();
     this._currentStep = step;
+    if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
+      const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
+      this._presetIndex = i >= 0 ? i : 0;
+      if (this._previewModel) this._applyPresetToPreview();
+    }
+    this._syncRoomBikeRows();
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
@@ -5819,7 +5825,9 @@ export class Lobby {
     } else if (profile.type === ROOM_MSG.ROOM_MOVED) {
       this._followRoomMove(profile.code);   // #667 · the partner hosts now: follow to the new code
     } else if (profile.type === ROOM_MSG.BIKE_SYNC) {
-      // Partner changed bike — no label update needed (keep role-only labels)
+      // The captain's bike: the stoker's room row shows it and the ride rides it (Pete, 2026-11-09)
+      this._roomBikeKey = typeof profile.presetKey === 'string' && this._presetKeys.includes(profile.presetKey) ? profile.presetKey : null;
+      this._syncRoomBikeRows();
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
       const picked = LEVELS.find(l => l.id === profile.levelId);
@@ -8896,7 +8904,7 @@ export class Lobby {
    * solo with a bot and co-op with two players, so it is always the Penny-Farthing here).
    */
   _dressingRoomBike() {
-    const key = this.selectedPresetKey || 'default';
+    const key = this.rideBikeKey() || 'default';
     return { path: bikeModelPathFor(true, key, GOOSE_BIKE_MODEL_PATH, 'local'), preset: (this._presetData && this._presetData[key]) || null };
   }
 
@@ -9089,19 +9097,27 @@ export class Lobby {
     const prevBtn = document.getElementById('bike-prev');
     const nextBtn = document.getElementById('bike-next');
     this._bikePrev = () => {
+      if (this._roomBikeReadonly()) return;   // the online stoker rides the captain's pick
       this._stopChooserAttract();
-      this._presetIndex = (this._presetIndex - 1 + this._presetKeys.length) % this._presetKeys.length;
+      this._presetIndex = this._nextBikeIndex(-1);
       this._applyPresetToPreview();
       this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
     this._bikeNext = () => {
+      if (this._roomBikeReadonly()) return;
       this._stopChooserAttract();
-      this._presetIndex = (this._presetIndex + 1) % this._presetKeys.length;
+      this._presetIndex = this._nextBikeIndex(1);
       this._applyPresetToPreview();
       this._saveBikePick();
       this._sendBikeSyncIfInRoom();
     };
+    // the rooms' bike rows: the same pick, its arrows clickable
+    for (const row of document.querySelectorAll('.room-bike-row')) {
+      for (const b of row.querySelectorAll('.room-bike-nav')) {
+        b.addEventListener('click', () => { if (b.dataset.dir === '-1') this._bikePrev(); else this._bikeNext(); });
+      }
+    }
     // a click or tap on the preview itself is the player taking the chooser too
     document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
     this._startChooserAttract();
@@ -9162,6 +9178,71 @@ export class Lobby {
       this._attractTurning = true;            // (not a player's pick: no bike_color_change event)
       try { this._applyPresetToPreview(); } finally { this._attractTurning = false; }
     }, TICK);
+  }
+
+  /** Is this a room where the players are seated (couch co-op seats, or the online room's level list)? */
+  _inSeatRoom() {
+    return this._currentStep === this.hostStep || (this._currentStep === this.levelStep && this._pendingMode === 'multiplayer');
+  }
+
+  /** The online stoker's room: the captain picks the tandem's bike. */
+  _roomBikeReadonly() {
+    return !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole === 'stoker' && this._currentStep === this.levelStep);
+  }
+
+  /** Can this bike be ridden now: allowed by the edition, a holiday bike unlocked, a reward bike earned and rideable? */
+  _bikeRideable(key) {
+    if (!isSpecialBike(key)) return bikeAllowed(getEditionRules(), key) && !(HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
+    const def = SPECIAL_BIKES[key];
+    return !!def.rideable && rewardProgress(def.reward, this._earnedAchievementIds()).unlocked;
+  }
+
+  /** The chooser's next index that way; in a seat room it skips bikes that can't be ridden yet (no locked picks there). */
+  _nextBikeIndex(dir) {
+    const n = this._presetKeys.length;
+    let i = this._presetIndex;
+    for (let k = 0; k < n; k++) {
+      i = (i + dir + n) % n;
+      if (!this._inSeatRoom() || this._bikeRideable(this._presetKeys[i])) return i;
+    }
+    return this._presetIndex;
+  }
+
+  /** The bike the ride uses: the chooser's pick, or (the online stoker) the captain's. */
+  rideBikeKey() {
+    if (this.net && this._roomRole === 'stoker' && this._pendingMode === 'multiplayer' && this._roomBikeKey) return this._roomBikeKey;
+    return this.selectedPresetKey;
+  }
+
+  /** The ride bike's paint preset (null for the default or a special bike). */
+  rideBikePreset() {
+    const key = this.rideBikeKey();
+    if (key === this.selectedPresetKey) return this.selectedPreset;
+    return isSpecialBike(key) ? null : ((this._presetData && this._presetData[key]) || null);
+  }
+
+  /** The bike's display name with its reward icon (the rooms' rows). */
+  _bikeLabel(key) {
+    if (isSpecialBike(key)) return SPECIAL_BIKES[key].icon + ' ' + SPECIAL_BIKES[key].name;
+    return BIKE_NAMES[key] || key;
+  }
+
+  /** Redraw the rooms' bike rows (host seats, online room): the ride's bike; read-only for the online stoker. */
+  _syncRoomBikeRows() {
+    const host = document.getElementById('host-bike-row');
+    const online = document.getElementById('level-room-bike-row');
+    const inOnline = !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole && this._currentStep === this.levelStep);
+    const rows = [[host, this._currentStep === this.hostStep], [online, inOnline]];
+    for (const [row, on] of rows) {
+      if (!row) continue;
+      row.hidden = !on;
+      if (!on) continue;
+      const ro = row === online && this._roomBikeReadonly();
+      const key = ro ? (this._roomBikeKey || 'default') : this.selectedPresetKey;
+      row.classList.toggle('readonly', ro);
+      row.querySelector('.room-bike-name').textContent = this._bikeLabel(key || 'default');
+      row.querySelector('.room-bike-note').textContent = ro ? "Captain's pick" : '';
+    }
   }
 
   /** Player 1 took the chooser: no more turning; the bike showing is now theirs. */
@@ -9430,6 +9511,10 @@ export class Lobby {
   }
 
   _applyPresetToPreview() {
+    try { this._applyPresetToPreviewInner(); } finally { this._syncRoomBikeRows(); }
+  }
+
+  _applyPresetToPreviewInner() {
     const key = this._presetKeys[this._presetIndex];
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not

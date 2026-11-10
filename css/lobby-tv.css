@@ -66,6 +66,12 @@ uf-system-bar#lobby-bar { display: none; }
     z-index: 2; pointer-events: none;
   }
   #lobby #bike-hint { top: calc(var(--uf-size-2xl) * 1.2 + var(--uf-space-3) * 2) !important; }
+  /* the rooms' bike row, at TV size */
+  #lobby .room-bike-row { gap: var(--uf-space-3); margin: var(--uf-space-3) 0; }
+  #lobby .room-bike-label { font-size: var(--uf-size-sm); }
+  #lobby .room-bike-name { font-size: var(--uf-size-xl); min-width: 11em; }
+  #lobby .room-bike-nav { height: calc(var(--uf-size-xl) * 1.9); min-width: calc(var(--uf-size-xl) * 1.9); justify-content: center; font-size: var(--uf-size-xl); }
+  #lobby .room-bike-note { font-size: var(--uf-size-sm); }
   #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
   #lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
 

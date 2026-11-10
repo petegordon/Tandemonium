@@ -14,6 +14,8 @@
 //   AT-01  the chooser turns to the next bike every 5 s on its own (Pete); AT-02 leaving the mode screen puts the
 //          player's own bike back; AT-03 RB stops it for good; locked reward bikes show the lock + their icon;
 //          AT-04 the bike is remembered between sessions (never a locked one)
+//   RB-01  the couch room shows and changes the tandem's bike; RB-02 a room skips reward bikes not earned;
+//          RB-03 the online stoker rides the captain's pick (read-only row)
 //   DR-01  the Dressing Room seats the goose on the chooser's pick (Gold Standard, a paint, Solo Flight when alone)
 //   SF-01  Solo Flight (the Penny-Farthing, player bots) sits before it: a locked silhouette with "n of N solo
 //          achievements"; once earned it shows in colour and is the pick (#644: it rides, smoke:solo-flight)
@@ -266,4 +268,42 @@ const dr = await drBike('bike_red');
 check(dr.seated && /goose_tandem\.glb$/.test(dr.bike) && dr.red, 'DR-01: a paint pick: the goose tandem in that paint (not dimmed grey)', dr);
 const ds = await drBike('solo_flight');
 check(ds.seated && /solo_flight_tandem\.glb$/.test(ds.bike), 'DR-01: Solo Flight with Player 1 alone: the Penny-Farthing (pedalling with its own clips)', ds);
+console.log('RB-01..03 the bike picked in the room where the players are seated');
+const rb = await h.gamePage({ viewport: { width: 1920, height: 1080 }, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' } });
+await until(rb, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
+await rb.evaluate(() => { document.getElementById('btn-together').click(); });
+await sleep(800);
+await rb.evaluate(() => { document.getElementById('btn-captain').click(); });
+await until(rb, () => window._game.lobby._currentStep === window._game.lobby.hostStep);
+await sleep(800);
+const row = () => rb.evaluate(() => { const r = document.getElementById('host-bike-row'), n = r.querySelector('.room-bike-name'), b = n.getBoundingClientRect();
+  return { shown: !r.hidden && b.height > 0, name: n.textContent, picked: window._game.lobby.selectedPresetKey, nav: r.querySelectorAll('.room-bike-nav').length }; });
+const h0 = await row();
+check(h0.shown && h0.name === "Grandma's Classic" && h0.nav === 2, 'RB-01: the couch room shows the tandem\'s bike under the seats, with arrows', h0);
+await h.shot(rb, 'rb01-host');
+await rb.evaluate(() => window._game.lobby._bikeNext());
+const h1 = await row();
+check(h1.name !== h0.name && h1.picked !== 'default' && h1.name.length > 0, 'RB-01: RB (or the arrow) changes the ride\'s bike right there', h1);
+const wrap = await rb.evaluate(() => { const l = window._game.lobby; const seen = []; for (let k = 0; k < l._presetKeys.length; k++) { l._bikeNext(); seen.push(l.selectedPresetKey); } return seen; });
+check(!wrap.includes('time_warp') && !wrap.includes('gold_standard') && !wrap.includes('solo_flight') && wrap.every((k, i) => i === 0 || k !== wrap[i - 1]), 'RB-02: in a room the arrows skip bikes that cannot be ridden (reward bikes not earned, holiday bikes off-season): every press is a new bike', wrap);
+await rb.evaluate(async () => { const { ACHIEVEMENTS } = await import('/js/achievement-defs.js'); const a = window._game.lobby._achievements; for (const d of ACHIEVEMENTS) a._earned.set(d.id, { id: d.id, earnedAt: 1 }); });
+const wrap2 = await rb.evaluate(() => { const l = window._game.lobby; const seen = []; for (let k = 0; k < l._presetKeys.length; k++) { l._bikeNext(); seen.push(l.selectedPresetKey); } return seen; });
+check(wrap2.includes('gold_standard') && wrap2.includes('time_warp') && wrap2.includes('solo_flight'), 'RB-02: earned, the reward bikes can be picked in the room', wrap2);
+const ro = await rb.evaluate(() => {
+  const l = window._game.lobby;
+  const saved = { net: l.net, mode: l._pendingMode, role: l._roomRole, step: l._currentStep, bike: l._roomBikeKey, pick: l.selectedPresetKey };
+  l.net = l.net || { connected: true, roomCode: 'TEST', sendProfile() {} };
+  l._pendingMode = 'multiplayer'; l._roomRole = 'stoker'; l._currentStep = l.levelStep; l._roomBikeKey = 'gold_standard';
+  l._syncRoomBikeRows();
+  const r = document.getElementById('level-room-bike-row');
+  const out = { shown: !r.hidden, name: r.querySelector('.room-bike-name').textContent, note: r.querySelector('.room-bike-note').textContent,
+    readonly: r.classList.contains('readonly'), ride: l.rideBikeKey(), pickBefore: l.selectedPresetKey };
+  l._bikeNext();
+  out.pickAfter = l.selectedPresetKey;
+  Object.assign(l, { net: saved.net, _pendingMode: saved.mode, _roomRole: saved.role, _currentStep: saved.step, _roomBikeKey: saved.bike });
+  l._syncRoomBikeRows();
+  return out;
+});
+check(ro.shown && ro.readonly && /Gold Standard/.test(ro.name) && ro.note === "Captain's pick" && ro.ride === 'gold_standard' && ro.pickAfter === ro.pickBefore,
+  "RB-03: the online stoker sees the captain's bike (read-only, \"Captain's pick\") and rides it", ro);
 await h.finish();
