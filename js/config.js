@@ -125,6 +125,18 @@ export function getRidersLight() {
   } catch (e) { return 'full'; }
 }
 
+/**
+ * Pete, 2026-11-10 · Bike Chooser Geese: a reward bike's outfit geese ride it in the chooser ('ride', the
+ * default) or stand either side of it ('stand', so the bike's frame and seats all show).
+ */
+export const CHOOSER_GEESE_KEY = 'tandemonium_chooser_geese';
+export function getChooserGeese() {
+  try { return localStorage.getItem(CHOOSER_GEESE_KEY) === 'stand' ? 'stand' : 'ride'; } catch (e) { return 'ride'; }
+}
+export function setChooserGeese(mode) {
+  try { localStorage.setItem(CHOOSER_GEESE_KEY, mode === 'stand' ? 'stand' : 'ride'); } catch (e) { /* storage off */ }
+}
+
 export function getShowRiders() {
   try {
     const pref = localStorage.getItem('tandemonium_show_riders');

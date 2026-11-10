@@ -47,7 +47,7 @@ await toSoloFlight(locked);
 await until(locked, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible); });
 let c = await chooser(locked);
 check(c.name.startsWith('🔒') && c.dark && c.picked === 'default', 'SFB-01: locked Solo Flight is a dark silhouette; the ride stays on the default', c);
-check(c.hint.replace(/\s+/g, '') === `${solo.length - 2}of${solo.length - 1}soloachievements`, 'SFB-01: "n of 80 solo achievements" over it', c.hint);
+check(c.hint.replace(/\s+/g, '') === `${solo.length - 2}of${solo.length - 1}soloachievements+🤖Robotoutfit`, 'SFB-01: "n of 80 solo achievements" over it, and the Robot outfit it brings', c.hint);
 check(!c.picker, 'SFB-01: no bot picker while locked', c);
 await locked.close();
 
