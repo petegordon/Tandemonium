@@ -28,14 +28,16 @@ test('the chooser pick picks the GLB: Time Warp only with Show Riders on the goo
     'the reward ladder: Solo Flight, Time Warp, then Gold Standard');
   assert.equal(SPECIAL_BIKES.solo_flight.reward, 'playerBots');
   assert.equal(SPECIAL_BIKES.solo_flight.rideable, true, '#644: Solo Flight rides');
-  assert.equal(SPECIAL_BIKES.solo_flight.soloOnly, true, 'a solo bike: the bot takes the back seat');
+  assert.ok(!SPECIAL_BIKES.solo_flight.soloOnly, 'Pete 2026-11-09: it rides co-op too once earned');
   assert.equal(SPECIAL_BIKES.time_warp.reward, 'timeWarp');
   for (const d of Object.values(SPECIAL_BIKES)) assert.ok(fs.existsSync(d.model), d.model);
   assert.equal(bikeModelPathFor(true, 'solo_flight', GOOSE_BIKE_MODEL_PATH), SOLO_FLIGHT_BIKE_MODEL_PATH, '#644: a solo ride on the Penny-Farthing');
-  for (const mode of ['local', 'captain', 'stoker', 'versus']) {
-    assert.equal(bikeModelPathFor(true, 'solo_flight', GOOSE_BIKE_MODEL_PATH, mode), GOOSE_BIKE_MODEL_PATH, `${mode}: the goose tandem`);
+  for (const mode of ['local', 'captain', 'stoker']) {
+    assert.equal(bikeModelPathFor(true, 'solo_flight', GOOSE_BIKE_MODEL_PATH, mode), SOLO_FLIGHT_BIKE_MODEL_PATH, `${mode}: co-op rides the Penny-Farthing, two players`);
     assert.equal(ridesWithBot('solo_flight', mode), false, `${mode}: no bot`);
   }
+  assert.equal(bikeModelPathFor(true, 'solo_flight', GOOSE_BIKE_MODEL_PATH, 'versus'), GOOSE_BIKE_MODEL_PATH, 'versus: the team-paint goose tandem');
+  assert.equal(ridesWithBot('solo_flight', 'versus'), false, 'versus: no bot');
   assert.equal(bikeModelPathFor(false, 'solo_flight', GOOSE_BIKE_MODEL_PATH), CHOOSER_MODEL_PATH, 'riders off: the plain frame');
   assert.ok(ridesWithBot('solo_flight', 'solo') && !ridesWithBot('time_warp', 'solo') && !ridesWithBot('default', 'solo'));
   assert.ok(isRigTwin(SOLO_FLIGHT_BIKE_MODEL_PATH), 'sized like the goose tandem (same geese)');
