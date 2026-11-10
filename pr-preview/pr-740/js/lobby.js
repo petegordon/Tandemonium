@@ -51,6 +51,7 @@ import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, 
 import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
 import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials } from './bike-showcase.js';
+import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
@@ -9445,13 +9446,13 @@ export class Lobby {
     const def = SPECIAL_BIKES[key];
     const name = def ? def.name : (BIKE_NAMES[key] || key);
     const sp = this._specialPreviews[key] = { model: null };
-    showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then((gltf) => {
+    showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then(async (gltf) => {
       const model = gltf.scene;
       if (!def) applyPresetMaterials(model, this._presetData && this._presetData[key]);
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
       const outfit = giftOutfit(key);
-      model.scale.setScalar((outfit ? 2.7 : 3.0) / Math.max(size.x, size.y, size.z));   // (room for the geese's heads)
+      model.scale.setScalar((outfit ? 2.4 : 3.0) / Math.max(size.x, size.y, size.z));   // (room for the geese's heads)
       model.updateMatrixWorld(true);
       const b2 = new THREE.Box3().setFromObject(model);
       const c = b2.getCenter(new THREE.Vector3());
@@ -9474,7 +9475,9 @@ export class Lobby {
         if (!o.isMesh || seen.has(o)) return;
         seen.add(o);
         o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
-        o.castShadow = true;
+        // the geese (skinned) cast no shadow here: a skinned shadow needs shaders three can't build ahead,
+        // and building them on the first frame froze the chooser ~120 ms; the bike's shadow stays
+        o.castShadow = !o.isSkinnedMesh;
         if (o.isSkinnedMesh) o.frustumCulled = false;
       });
       track(model);
@@ -9492,19 +9495,31 @@ export class Lobby {
       const sparkle = def && def.sparkle ? addBikeSparkle(model, { size: 0.11 }) : null;   // #697 (off while locked)
       model.visible = false;
       if (this._previewPivot) this._previewPivot.add(model);
+      // its textures and shaders ready before it shows (the first draw used to freeze the chooser)
+      await warmUp(this._previewRenderer, model, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
       Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0 });
       onReady(sp);
       if (!outfit) return;
       let looks = null;
       try { looks = getSeatLooks('solo'); } catch (e) { /* the outfit's own bodies */ }
-      seatOutfitRiders(model, gltf.animations, outfit, looks).then((riders) => {
-        sp.riders = riders;
+      seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
+        const roots = Object.values(riders.riders).filter(Boolean).map((r) => r.root);
+        for (const r of roots) r.visible = false;   // (seated hidden until warmed up)
         track(model);                    // the geese join the silhouette
         const dark = sp.dark;
         sp.dark = null;
         this._setSpecialDark(sp, dark);
+        for (const r of roots) await warmUp(this._previewRenderer, r, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
+        for (const r of roots) r.visible = true;
+        sp.riders = riders;
       }).catch((err) => console.warn(name + ' outfit geese failed to load:', err));
     }).catch((err) => console.warn(name + ' preview failed to load:', err));
+  }
+
+  /** The chooser's first-draw queue (js/gpu-warmup.js): the preview loop draws one new mesh a frame. */
+  _previewWarm() {
+    if (!this._warmQueue) this._warmQueue = new WarmQueue();
+    return this._warmQueue;
   }
 
   /** Dark silhouette (locked) or its own colours (unlocked). */
@@ -9515,8 +9530,9 @@ export class Lobby {
       if (dark) {
         if (m.color) m.color.set(0x050505);
         if (m.emissive) m.emissive.set(0x000000);
-        if (m.map) m.map = null;
-        m.envMap = null;
+        // black without changing the shader (no new compile, no freeze): the near-black colour darkens its
+        // texture, and reflections go to nothing
+        if ('envMapIntensity' in m) m.envMapIntensity = 0;
         m.metalness = 0; m.roughness = 1;
       } else {
         m.copy(orig);
@@ -9847,6 +9863,7 @@ export class Lobby {
         sp.fx.time = (performance.now() / 1000) % sp.fx.getClip().duration;
         sp.mixer.update(0);
       }
+      if (this._warmQueue) this._warmQueue.step();   // a new model's first draw (this render paints over it)
       this._previewRenderer.render(this._previewScene, this._previewCamera);
     };
     animate();

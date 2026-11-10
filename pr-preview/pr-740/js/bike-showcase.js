@@ -27,6 +27,7 @@ import { colourwayParamsForBody, applyColourway } from './goose-colourways.js';
 import { GooseRiders } from './goose-riders.js';
 import { GooseActor, GEESE } from './goose-studio/goose-actor.js';
 import { applyMirrorEnv } from './mirror-env.js';
+import { warmUp, WarmQueue } from './gpu-warmup.js';
 
 const GOOSE_DIR = 'tandem-3d/goose/';
 const FRAME_MS = 1000 / 30;
@@ -211,6 +212,7 @@ export class BikeShowcase {
     this._gen = 0;
     this._last = 0;
     this.mode = null;
+    this._warm = new WarmQueue();   // new models' first draws, one a frame (js/gpu-warmup.js)
   }
 
   _getRenderer() {
@@ -282,6 +284,8 @@ export class BikeShowcase {
   async _build(e, mode, looks, random, gen) {
     const { model, animations } = await this._bike(e.key);
     if (gen !== this._gen) return;
+    await warmUp(this._getRenderer(), model, e.camera, e.scene, { queue: this._warm });   // (no freeze on its first frame)
+    if (gen !== this._gen) return;
     e.turntable.add(model);
     e.bike = model;
     model.updateMatrixWorld(true);
@@ -303,6 +307,11 @@ export class BikeShowcase {
         const r = e.riders.riders[seat];
         if (r) applyColourway(r.root, colourwayParamsForBody(looks[seat].outfit, looks[seat].colourway, bodies[seat]) || {});
       }
+      const roots = Object.values(e.riders.riders).filter(Boolean).map((r) => r.root);
+      for (const r of roots) r.visible = false;   // (seated hidden until warmed up, in their colourway)
+      for (const r of roots) await warmUp(this._getRenderer(), r, e.camera, e.scene, { queue: this._warm });
+      if (gen !== this._gen) return;
+      for (const r of roots) r.visible = true;
       e.riders.setLeans(0, 0);
       e.riders.update();
       return;
@@ -348,6 +357,8 @@ export class BikeShowcase {
         const x = dir * side;
         actor.setHeading(-dir * Math.PI / 2);            // walking in toward the bike
         actor.root.position.set(x + dir * 6, 0, GOOSE_Z);   // out of shot until it walks
+        await warmUp(this._getRenderer(), actor.root, e.camera, e.scene, { queue: this._warm });
+        if (gen !== this._gen) return;
         e.scene.add(actor.root);
         e.actors.push(actor);
         await new Promise((r) => setTimeout(r, 300 + random() * 1500));
@@ -401,6 +412,7 @@ export class BikeShowcase {
     const dt = this._last ? Math.min(0.1, (now - this._last) / 1000) : 1 / 30;
     this._last = now;
     const r = this._getRenderer();
+    this._warm.step();   // a new model's first draw (the cards' renders below paint over it)
     for (const e of this._entries) {
       if (!e.fit || !e.canvas.isConnected) continue;
       const w = e.canvas.clientWidth | 0, h = e.canvas.clientHeight | 0;
@@ -440,6 +452,7 @@ export class BikeShowcase {
   /** Stop and let the pictures go (the renderer and the fetched GLBs stay for next time). */
   stop() {
     this._gen++;
+    this._warm.flush();
     cancelAnimationFrame(this._raf);
     this._raf = 0;
     for (const e of this._entries) {
