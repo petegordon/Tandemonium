@@ -59,11 +59,38 @@ export function achievementCount(earnedIds, defs = ACHIEVEMENTS) {
  * Progress toward a count bike, or null for any other bike.
  * @returns {{have: number, need: number, unlocked: boolean, kept: boolean} | null}
  */
+/**
+ * Colour bikes a player was riding before #736 made them rewards stay theirs (Pete: "they keep what they
+ * have"), like the outfits they wore: the saved bike pick, recorded once (seedKeptBikes), per browser.
+ */
+export const BIKES_KEPT_KEY = 'tandemonium_bikes_kept';
+let _kept = null;
+const _store = () => (typeof localStorage !== 'undefined' ? localStorage : null);
+
+/** The kept colour bikes (empty off a browser or with storage off). */
+export function keptBikes(storage = _store()) {
+  if (_kept && storage === _store()) return _kept;
+  let set = new Set();
+  try { const raw = storage && storage.getItem(BIKES_KEPT_KEY); set = new Set(raw ? JSON.parse(raw) : []); } catch (e) { /* storage off */ }
+  if (storage === _store()) _kept = set;
+  return set;
+}
+
+/** Record, once, the colour bike the player rides now (a count bike only; the rest need nothing). */
+export function seedKeptBikes(pick, storage = _store()) {
+  try {
+    if (!storage || storage.getItem(BIKES_KEPT_KEY) != null) return;
+    storage.setItem(BIKES_KEPT_KEY, JSON.stringify(COUNT_BIKES[pick] ? [pick] : []));
+    _kept = null;
+  } catch (e) { /* storage off */ }
+}
+
 export function countBikeProgress(key, earnedIds, defs = ACHIEVEMENTS) {
   const need = COUNT_BIKES[key];
   if (!need) return null;
   const have = achievementCount(earnedIds, defs);
-  const kept = new Set(earnedIds || []).has(BIKE_ACHIEVEMENT_MAP[key]);
+  // kept: finished Grandma's on it, or riding it before it became a reward
+  const kept = new Set(earnedIds || []).has(BIKE_ACHIEVEMENT_MAP[key]) || keptBikes().has(key);
   return { have, need, kept, unlocked: kept || have >= need };
 }
 

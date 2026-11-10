@@ -48,7 +48,7 @@ import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { seedKeptOutfits, lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
-import { HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
+import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration } from './bike-celebration.js';
 import { BikeShowcase } from './bike-showcase.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
@@ -9014,6 +9014,7 @@ export class Lobby {
     // Pete, 2026-11-09: remember the bike between sessions (a holiday bike that has gone, or none saved: the default)
     try {
       const saved = localStorage.getItem(BIKE_PICK_KEY);
+      seedKeptBikes(saved);   // #736 · the colour bike they ride now stays theirs (recorded once)
       const i = saved ? this._presetKeys.indexOf(saved) : -1;
       if (i > 0) this._presetIndex = i;
     } catch (e) { /* storage off */ }

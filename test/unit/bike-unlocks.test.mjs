@@ -114,3 +114,17 @@ test('every bike has a line saying how it was earned (but the two the game start
   for (const k of BIKE_ORDER) if (!['default', 'bike_orange'].includes(k)) assert.ok(earnedLine(k), k);
   assert.equal(achievementCount(['first_pedal', 'first_pedal', 'not_an_achievement']), 1);
 });
+
+test('a colour bike ridden before #736 stays the player\'s (the saved pick, recorded once)', async () => {
+  const { seedKeptBikes, keptBikes, BIKES_KEPT_KEY } = await import('../../js/bike-unlocks.js');
+  const mem = new Map();
+  const storage = { getItem: (k) => mem.has(k) ? mem.get(k) : null, setItem: (k, v) => mem.set(k, v) };
+  seedKeptBikes('bike_blue', storage);
+  assert.deepEqual([...keptBikes(storage)], ['bike_blue']);
+  seedKeptBikes('bike_green', storage);
+  assert.deepEqual(JSON.parse(mem.get(BIKES_KEPT_KEY)), ['bike_blue'], 'once only');
+  const mem2 = new Map();
+  const s2 = { getItem: (k) => mem2.has(k) ? mem2.get(k) : null, setItem: (k, v) => mem2.set(k, v) };
+  seedKeptBikes('bike_red', s2);
+  assert.deepEqual(JSON.parse(mem2.get(BIKES_KEPT_KEY)), [], 'Cherry needs no keeping');
+});
