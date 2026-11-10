@@ -9,7 +9,7 @@ test('four everyday outfits + the robot reward outfit; victorian is the default'
   assert.deepEqual(Object.keys(GOOSE_OUTFITS), ['victorian', 'cyclists', 'fancy', 'georgian', 'robot']);
   assert.deepEqual(Object.values(GOOSE_OUTFITS).map(o => o.label), ['Victorian', 'Cyclists', 'Fancy', 'Georgian', 'Robot']);
   assert.deepEqual(BASE_OUTFITS, ['victorian', 'cyclists', 'fancy', 'georgian']);
-  assert.equal(GOOSE_OUTFITS.robot.reward, 'timeWarp');
+  assert.equal(GOOSE_OUTFITS.robot.reward, 'playerBots');   // #736: the Solo Flight's
   assert.equal(DEFAULT_GOOSE_OUTFIT, 'victorian');
 });
 
