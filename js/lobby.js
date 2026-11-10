@@ -9061,12 +9061,15 @@ export class Lobby {
       this._previewResize.observe(canvas);
     }
 
-    // Lights
-    this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const dir = new THREE.DirectionalLight(0xffffff, 1.2);
-    dir.position.set(5, 8, 5);
+    // Lights · Pete, 2026-11-10 (option 2, "stage light"): a warm spotlight pooling on the bike, a softer
+    // fill, and a cool rim light that lifts the bike and its geese off the backdrop, so they read as one lit
+    // scene; the backdrop stays the lobby's warm tan
+    this._previewScene.add(new THREE.AmbientLight(0xffffff, 0.25));
+    this._previewScene.add(new THREE.HemisphereLight(0xfff1dc, 0x2a2018, 0.55));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.45);   // the soft key
+    dir.position.set(2, 6, 6);
     dir.castShadow = true;
-    dir.shadow.mapSize.set(512, 512);
+    dir.shadow.mapSize.set(1024, 1024);
     dir.shadow.camera.near = 0.5;
     dir.shadow.camera.far = 20;
     dir.shadow.camera.left = -3;
@@ -9075,8 +9078,15 @@ export class Lobby {
     dir.shadow.camera.bottom = -3;
     dir.shadow.bias = -0.002;
     this._previewScene.add(dir);
-    const rim = new THREE.DirectionalLight(0x8899cc, 0.5);
-    rim.position.set(-3, 4, -4);
+    const spot = new THREE.SpotLight(0xffe2b0, 40, 12, 0.5, 0.65, 1.6);   // the warm pool on the bike
+    spot.position.set(0.6, 5.5, 3.2);
+    spot.target.position.set(0, 0.2, 0.2);
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(1024, 1024);
+    spot.shadow.bias = -0.0015;
+    this._previewScene.add(spot, spot.target);
+    const rim = new THREE.DirectionalLight(0xd8e4ff, 1.6);     // edges off the backdrop
+    rim.position.set(-2, 3.5, -5);
     this._previewScene.add(rim);
 
     // Ground plane
@@ -9563,6 +9573,15 @@ export class Lobby {
         await warmUp(this._previewRenderer, actor.root, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
         if (sp.gen !== gen) return;
         stand.add(actor.root);
+        // a soft contact shadow at its feet: it stands on the floor, in the scene's light (a real skinned
+        // shadow would bring back the first-draw freeze, and barely shows from this camera)
+        const blob = new THREE.Mesh(new THREE.PlaneGeometry(0.75, 0.55), this._contactShadowMaterial());
+        blob.rotation.x = -Math.PI / 2;
+        blob.position.set(actor.root.position.x, 0.004, actor.root.position.z);
+        blob.renderOrder = -1;
+        await warmUp(this._previewRenderer, blob, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
+        if (sp.gen !== gen) return;
+        stand.add(blob);
         sp.actors.push(actor);
         await wait(900 + i * 1100 + Math.random() * 1200);
         const moves = MOVES[body === 'f' ? 'f' : 'm'];
@@ -9591,6 +9610,21 @@ export class Lobby {
     ped.scale.setScalar(1 / s);                          // (in the chooser's units, under the scaled bike)
     ped.position.set(-p.x / s, -p.y / s, -p.z / s);      // centred under the turning pivot, on the ground
     model.add(ped);
+  }
+
+  /** The chooser's contact shadow (a soft dark disc, made once and shared). */
+  _contactShadowMaterial() {
+    if (!this._contactShadowMat) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 128;
+      const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+      gr.addColorStop(0, 'rgba(0,0,0,0.7)');
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 128, 128);
+      this._contactShadowMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false });
+    }
+    return this._contactShadowMat;
   }
 
   /** The Bike Chooser Geese setting changed: the bikes with outfit geese build again, the new way. */
@@ -9656,7 +9690,7 @@ export class Lobby {
     const hintEl = this._bikeHintEl(nameEl);
     this.selectedPreset = null;
     hintEl.dataset.special = key;
-    hintEl.classList.toggle('bike-hint-low', !!giftOutfit(key));   // (below its geese)
+    hintEl.classList.add('bike-hint-low');   // (Pete, 2026-11-10: every bike's line at the bottom, below the bike and its geese)
     this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
@@ -9830,7 +9864,7 @@ export class Lobby {
 
     const hintEl = this._bikeHintEl(nameEl);
     hintEl.title = '';
-    hintEl.classList.toggle('bike-hint-low', holiday);   // (below its geese)
+    hintEl.classList.add('bike-hint-low');   // (Pete, 2026-11-10: every bike's line at the bottom, below the bike and its geese)
     if (!locked) {
       nameEl.textContent = (holiday ? '🏆 ' : '') + (BIKE_NAMES[key] || key);
       if (holiday) { hintEl.innerHTML = this._outfitLine(key, true); hintEl.style.display = ''; }
