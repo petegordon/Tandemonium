@@ -15,12 +15,13 @@
 
 const DIR = 'tandem-3d/goose/';
 
+// icon: Pete, 2026-11-09 (#736) — shown before the outfit's name (the Dressing Room, the "New bike!" cards)
 export const GOOSE_OUTFITS = {
-  victorian: { label: 'Victorian', Captain: DIR + 'goose_captain.glb', Stoker: DIR + 'goose_stoker_victorian.glb' },
-  cyclists: { label: 'Cyclists', Captain: DIR + 'goose_captain_cyclist.glb', Stoker: DIR + 'goose_stoker_cyclist.glb' },
-  fancy: { label: 'Fancy', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
-  georgian: { label: 'Georgian', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
-  robot: { label: 'Robot', Captain: DIR + 'goose_captain_robot_m.glb', Stoker: DIR + 'goose_stoker_robot_f.glb',
+  victorian: { label: 'Victorian', icon: '🎩', Captain: DIR + 'goose_captain.glb', Stoker: DIR + 'goose_stoker_victorian.glb' },
+  cyclists: { label: 'Cyclists', icon: '🚴', Captain: DIR + 'goose_captain_cyclist.glb', Stoker: DIR + 'goose_stoker_cyclist.glb' },
+  fancy: { label: 'Fancy', icon: '💎', Captain: DIR + 'goose_captain_fancy.glb', Stoker: DIR + 'goose_stoker.glb' },
+  georgian: { label: 'Georgian', icon: '👑', Captain: DIR + 'goose_captain_georgian.glb', Stoker: DIR + 'goose_stoker_georgian.glb' },
+  robot: { label: 'Robot', icon: '🤖', Captain: DIR + 'goose_captain_robot_m.glb', Stoker: DIR + 'goose_stoker_robot_f.glb',
     reward: 'timeWarp' },
 };
 

@@ -13,6 +13,8 @@
 
 import { pendingBikeCelebration, welcomeText, earnedLine, BIKE_NAMES, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { SPECIAL_BIKES } from './special-bikes.js';
+import { GOOSE_OUTFITS } from './goose-outfits.js';
+import { getP1Look } from './config.js';
 
 export const STATE_KEY = 'tandemonium_bike_ladder';
 
@@ -46,6 +48,10 @@ const STYLE = `
     animation: nb-roll-in 700ms cubic-bezier(.2,.9,.3,1.2) both; animation-delay: calc(var(--nb-i) * 220ms); }
   #new-bike-sheet .nb-card { width: 15em; }
   #new-bike-sheet .nb-bike { display: block; width: 100%; aspect-ratio: 3 / 2; }
+  #new-bike-sheet .nb-cards.few .nb-card { width: 24em; }
+  #new-bike-sheet .nb-cards.one .nb-card { width: 32em; }
+  #new-bike-sheet .nb-cards.few .nb-bike { aspect-ratio: 16 / 9; }
+  #new-bike-sheet .nb-outfit { margin: 0; text-align: center; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
   #new-bike-sheet .nb-cards.many { flex-wrap: nowrap; }
   #new-bike-sheet .nb-cards.many .nb-card { flex: 1 1 0; min-width: 0; width: auto; max-width: 13em; padding: var(--uf-space-3); }
   #new-bike-sheet .nb-cards.many .nb-name { font-size: var(--uf-size-md); }
@@ -133,7 +139,8 @@ export class BikeCelebration {
 
     if (n) {
       const cards = document.createElement('div');
-      cards.className = 'nb-cards' + (n >= 4 ? ' many' : '');   // four in a row
+      // one or two: wide pictures with the geese standing beside the bike; three or more: the geese ride
+      cards.className = 'nb-cards' + (n >= 4 ? ' many' : '') + (n <= 2 ? ' few' : '') + (n === 1 ? ' one' : '');
       r.bikes.forEach((key, i) => {
         const [colour, icon] = lookFor(key);
         const card = document.createElement('div');
@@ -158,6 +165,16 @@ export class BikeCelebration {
         cards.appendChild(card);
       });
       body.appendChild(cards);
+    }
+
+    // whose geese these are: the player's outfit, its icon first
+    let outfit = null;
+    try { outfit = GOOSE_OUTFITS[getP1Look().outfit]; } catch (e) { outfit = null; }
+    if (n && outfit) {
+      const p = document.createElement('p');
+      p.className = 'nb-outfit';
+      p.textContent = `With your ${outfit.icon} ${outfit.label} geese`;
+      body.appendChild(p);
     }
 
     if (goal) {
