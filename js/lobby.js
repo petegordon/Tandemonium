@@ -8892,14 +8892,12 @@ export class Lobby {
 
   /**
    * The bike the Dressing Room seats the geese on: the chooser's pick (Pete, 2026-11-09). A paint preset = the
-   * goose tandem in that paint; the Time Warp / Gold Standard = their own models. Solo Flight is a solo bike (a
-   * player bot on the back): with Player 1 alone it is the Penny-Farthing; with others in the room (a co-op ride)
-   * the goose tandem, as the ride does.
+   * goose tandem in that paint; the Time Warp / Gold Standard / Solo Flight = their own models (Solo Flight rides
+   * solo with a bot and co-op with two players, so it is always the Penny-Farthing here).
    */
   _dressingRoomBike() {
     const key = this.selectedPresetKey || 'default';
-    const mode = this._roomPlayers().length > 1 ? 'local' : 'solo';
-    return { path: bikeModelPathFor(true, key, GOOSE_BIKE_MODEL_PATH, mode), preset: (this._presetData && this._presetData[key]) || null };
+    return { path: bikeModelPathFor(true, key, GOOSE_BIKE_MODEL_PATH, 'local'), preset: (this._presetData && this._presetData[key]) || null };
   }
 
   /** Open the Dressing Room with player n's card in Edit (everyone else Ready). */
