@@ -234,16 +234,23 @@ check(['bot:rivet', 'bot:bolt', 'bot:sprocket'].every(k => s3.partners.includes(
   'SFB-05: Rivet, Bolt and Sprocket are three partners: Social Goose', { partners: s3.partners, social: s3.earned.includes('social_goose') });
 check(s3.pairs.bolt?.rides === 1 && s3.pairs.sprocket?.rides === 1 && s3.pairs.rivet?.rides === 1, 'SFB-05: each bot keeps its own pair stats', s3.pairs);
 
-// ── SFB-06 other modes: the goose tandem, no bot ──
-console.log('SFB-06 co-op rides the goose tandem; a paint preset rides the tandem');
+// ── SFB-06 co-op: the Penny-Farthing with two players, no bot (Pete, 2026-11-09); versus keeps the tandem ──
+console.log('SFB-06 co-op rides the Solo Flight with two players; versus and a paint preset ride the tandem');
 const other = await page.evaluate(() => {
   const g = window._game;
   g.mode = 'local'; g._applyBikeChoice();
-  const r = { path: g.bike._modelPath, bot: g.bike._botStoker, ride: g._botRideId() };
+  return { path: g.bike._modelPath, bot: g.bike._botStoker, ride: g._botRideId(), empty: !!g.bike._emptySeat };
+});
+check(/solo_flight_tandem\.glb$/.test(other.path) && other.bot === null && other.ride === null && !other.empty, 'SFB-06: local co-op with Solo Flight picked rides the Penny-Farthing, two players, no bot', other);
+const coopSeated = await until(page, () => { const b = window._game.bike; return b._modelPath.endsWith('solo_flight_tandem.glb') && b.modelLoaded && b.goose && b.goose.riders.Captain && b.goose.riders.Stoker && !b._botStoker; }, null, 120000);
+const coop = await page.evaluate(() => { const g = window._game.bike.goose; return g ? Object.fromEntries(Object.entries(g.riders).map(([k, r]) => [k, !!r.pedalPF])) : null; });
+check(coopSeated && coop && coop.Captain && coop.Stoker, 'SFB-06: both human geese seated on it, each pedalling with its Penny-Farthing clip (the stoker back-pedals)', coop);
+await h.shot(page, 'sfb06-coop');
+const preset = await page.evaluate(() => {
+  const g = window._game;
   g.mode = 'solo';
   const l = g.lobby; l._presetIndex = l._presetKeys.indexOf('bike_red'); l._applyPresetToPreview(); g._applyBikeChoice();
-  return { ...r, preset: g.bike._modelPath, presetBot: g.bike._botStoker };
+  return { preset: g.bike._modelPath, presetBot: g.bike._botStoker };
 });
-check(/goose_tandem\.glb$/.test(other.path) && other.bot === null && other.ride === null, 'SFB-06: local co-op with Solo Flight picked rides the goose tandem, no bot', other);
-check(/goose_tandem\.glb$/.test(other.preset) && other.presetBot === null, 'SFB-06: a paint preset rides the goose tandem again', other);
+check(/goose_tandem\.glb$/.test(preset.preset) && preset.presetBot === null, 'SFB-06: a paint preset rides the goose tandem again', preset);
 await h.finish();
