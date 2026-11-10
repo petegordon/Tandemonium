@@ -2501,6 +2501,10 @@
   #ach-lift .uag-name { color: rgba(255,255,255,0.92); }
   /* #576: the grid dims behind the lifting badge with a class (not a fill-forwards
      animation), so closing the card always clears it. */
+  /* #736 · the next bike on the Achievements pill ("12 to Jungle Cruiser"); phones keep the count only */
+  #bar-achievements-next { margin-left: .5em; padding-left: .5em; border-left: 1px solid currentColor; opacity: .7; font-size: .85em; white-space: nowrap; }
+  #bar-achievements-next[hidden] { display: none; }
+  @media (max-width: 720px) { #bar-achievements-next { display: none; } }
   #achievements-modal .uf-sheet__body { transition: filter 420ms ease; }
   #achievements-modal .uf-sheet__body.ach-dim { filter: blur(6px) brightness(0.5); }
   #achievements-modal .uf-sheet__body {
@@ -6200,7 +6204,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.af86bd2 | 11-09-2026 20:06</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.ab67cb9 | 11-09-2026 22:28</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

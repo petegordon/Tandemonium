@@ -116,6 +116,7 @@ import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel, dailyRideGate } from './edition.js';
+import { nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';   // #736
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
@@ -3671,6 +3672,7 @@ class Game {
     // #459 item 15: the sheet's action row in its own order; focus starts on
     // RESTART (the primary — #458 item 10), never on SAVE CLIP.
     const btns = focusResult(this._overlayFocus, document.getElementById('gameover-sheet'), { primary: document.getElementById('btn-restart') });
+    this._celebrateNewBikes('gameover');   // #736
 
     // Input cooldown: on mobile, pedal taps and button taps share the same
     // touch area. On desktop/TV, pedal inputs are separate from selection.
@@ -3687,7 +3689,48 @@ class Game {
     }
   }
 
+  /**
+   * #736 · "New bike!" over the end-of-ride screen, once the finish's own unlocks are in. Ride it now
+   * plays the road again on the new bike (solo and couch rides; an online or versus ride just shows it).
+   * @param {'victory'|'gameover'} screen
+   */
+  _celebrateNewBikes(screen) {
+    clearTimeout(this._bikeCelebTimer);
+    this._bikeCelebTimer = setTimeout(() => {
+      if (this.state !== screen || !this.lobby || !this.lobby.checkNewBikes) return;
+      this._showBikeGoal(screen);
+      const canRide = (this.mode === 'solo' || this.mode === 'local') && !this.net && !this.isTourist && !this.isSlingshot;
+      this.lobby.checkNewBikes({
+        focus: this._overlayFocus,
+        onRide: canRide ? (key) => this._rideNewBike(key, screen) : null,
+      });
+    }, 1400);
+  }
+
+  /** #736 · "Next bike: 12 more achievements to Jungle Cruiser", last in the end screen's unlocked list. */
+  _showBikeGoal(screen) {
+    const list = document.getElementById(screen + '-unlocked');
+    if (!list) return;
+    list.querySelectorAll('.end-bike-goal').forEach((el) => el.remove());
+    const goal = nextBikeGoal(this.achievements.getEarnedIds(), this._roomRules());
+    if (!goal) return;
+    const p = document.createElement('p');
+    p.className = 'end-bike-goal';
+    p.textContent = 'Next bike: ' + nextBikeGoalText(goal);
+    list.appendChild(p);
+    list.hidden = false;
+  }
+
+  /** #736 · Ride it now from an end screen: the new bike, the same road from the start. */
+  _rideNewBike(key, screen) {
+    if (this.state !== screen || !this.lobby.pickBike(key)) return;
+    if (screen === 'victory') this._hideVictory(); else this._hideGameOver();
+    this._applyBikeChoice();
+    this._resetGame(false, true);
+  }
+
   _hideGameOver() {
+    this.lobby?.bikeCelebration?.close();   // #736
     document.getElementById('gameover-overlay').style.display = 'none';
     this._clearOverlayButtons();
   }
@@ -6035,6 +6078,7 @@ class Game {
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
     focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: hasNext ? nextBtn : playAgainBtn });
+    this._celebrateNewBikes('victory');   // #736
     // #657 · Settings' Discord option: a Daily Ride finish posts its card (after this frame's unlocks).
     if (this._shareCardData && this._shareCardData.isDaily) setTimeout(() => { this._maybeAutoPostDiscord().catch(() => {}); }, 800);
 
@@ -6181,6 +6225,7 @@ class Game {
   }
 
   _hideVictory() {
+    this.lobby?.bikeCelebration?.close();   // #736
     document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
     for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby',
