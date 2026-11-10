@@ -98,7 +98,7 @@ const greeting = await page.evaluate(() => {
 });
 const outfitLine = await page.evaluate(() => (document.querySelector('#new-bike-sheet .nb-outfit') || {}).textContent);
 await h.shot(page, 'bl04-new-bike-turning');
-await sleep(2500);
+await sleep(4000);
 await h.shot(page, 'bl04-greeting');
 check(geese4 && greeting.length === 2, 'BL-04: one new bike: the two outfit geese stand beside it', greeting);
 check(outfitLine === 'With your 🎩 Victorian geese', 'BL-04: whose geese, the outfit icon first', outfitLine);

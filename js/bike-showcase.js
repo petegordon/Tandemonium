@@ -32,6 +32,9 @@ const GOOSE_DIR = 'tandem-3d/goose/';
 const FRAME_MS = 1000 / 30;
 const TURN_RATE = 0.6;      // rad/s, the bike's turntable
 const CRANK_RATE = 2.2;     // rad/s, the riders' pedalling
+const THREE_QUARTER = 0.8;  // rad the standing scene's bike settles at, off side-on
+const SPIN_IN = 3;          // s for the bike to spin in and settle
+const GOOSE_ANGLE = 0.45;   // rad each standing goose turns in toward the bike
 /** The greetings each goose picks from (a gander tips his hat, a lady curtsies). */
 const MOVES = { m: ['wave', 'bow', 'hat_tip', 'celebrate', 'admire', 'twirl'], f: ['wave', 'bow', 'curtsy', 'celebrate', 'admire', 'twirl'] };
 
@@ -205,27 +208,35 @@ export class BikeShowcase {
       e.riders.update();
       return;
     }
-    // standing: the bike turns on the left; the geese walk in on its right and greet you
-    e.fit = { w: len + 1.7, h: Math.max(height, 1.35), cx: 0.85 };
+    // Standing (Pete, 2026-11-09): the bike spins in and settles at a three-quarter view; the geese walk
+    // out from either side, each at its own random moment, and stand beside it angled toward you, then
+    // greet you. Every card draws its own timings and moves, so two new bikes never play alike.
     const half = len / 2;
+    const side = half * 0.8 + 0.55;    // where each goose stands, either side of the bike
+    e.fit = { w: side * 2 + 1.3, h: Math.max(height, 1.85), cx: 0 };   // (a goose with its hat, and a waving wing, fit)
+    e.spin = { t: 0, target: (size.x >= size.z ? 0 : Math.PI / 2) + THREE_QUARTER };
     const seats = ['Captain', 'Stoker'];
     const orders = greetingOrder(seats.map((s) => looks[s].body), random);
+    const fromLeft = random() < 0.5;   // which goose comes out on which side
     seats.forEach(async (seat, i) => {
       try {
         const actor = await GooseActor.load(cachedLoader, studioGooseFor(looks[seat]), { dir: GOOSE_DIR, random });
         if (gen !== this._gen) return;
         try { actor.setColourway(looks[seat].colourway || 'default'); } catch (err) { /* the outfit's own colours */ }
-        const x = half + 0.5 + i * 0.8;
-        actor.setHeading(-Math.PI / 2);   // walking in from the right
-        actor.root.position.set(x + 4, 0, 0.3 - i * 0.15);   // off to the side until it walks
+        const dir = (i === 0) === fromLeft ? -1 : 1;    // -1: the left side
+        const x = dir * side;
+        actor.setHeading(-dir * Math.PI / 2);            // walking in toward the bike
+        actor.root.position.set(x + dir * 6, 0, 0.35);   // out of shot until it walks
         e.scene.add(actor.root);
         e.actors.push(actor);
-        await new Promise((r) => setTimeout(r, i * 450));
+        await new Promise((r) => setTimeout(r, 300 + random() * 1500));
         if (gen !== this._gen) return;
-        const w = actor.walk(1.8);
-        actor.root.position.x = x + w.distance;
+        const w = actor.walk(1.6 + random() * 0.8);
+        actor.root.position.x = x + dir * w.distance;
         await w.done;
-        await actor.turnTo(0);   // face the camera
+        await actor.turnTo(0);                           // face the camera...
+        actor.easeHeading = -dir * GOOSE_ANGLE;          // ...then a three-quarter turn in toward the bike
+        await new Promise((r) => setTimeout(r, 200 + random() * 600));
         for (let k = 0; gen === this._gen; k++) {
           await actor.play(orders[i][k % orders[i].length]);
           await new Promise((r) => setTimeout(r, 900 + random() * 1600));
@@ -255,12 +266,20 @@ export class BikeShowcase {
       const w = e.canvas.clientWidth | 0, h = e.canvas.clientHeight | 0;
       if (!w || !h) continue;
       if (e.canvas.width !== w || e.canvas.height !== h) { e.canvas.width = w; e.canvas.height = h; }
-      e.turntable.rotation.y += TURN_RATE * dt;
+      if (e.spin) {
+        // one turn in, slowing to the three-quarter view, then a gentle sway
+        const sp = e.spin; sp.t += dt;
+        const u = Math.min(1, sp.t / SPIN_IN), ease = 1 - Math.pow(1 - u, 3);
+        e.turntable.rotation.y = sp.target - Math.PI * 2 * (1 - ease) + (u >= 1 ? 0.12 * Math.sin((sp.t - SPIN_IN) * 0.6) : 0);
+      } else e.turntable.rotation.y += TURN_RATE * dt;
       if (e.riders) {
         e.crank += CRANK_RATE * dt; e.dist += 1.2 * dt;
         e.riders.setCrank(e.crank); e.riders.setDistance(e.dist); e.riders.update();
       }
-      for (const a of e.actors) a.update(dt);
+      for (const a of e.actors) {
+        if (a.easeHeading != null && !(a.cur && a.cur.c.info.yaw_end)) a.setHeading(a.heading + (a.easeHeading - a.heading) * Math.min(1, dt * 4));
+        a.update(dt);
+      }
       this._aim(e, w / h);
       if (r.domElement.width !== w || r.domElement.height !== h) r.setSize(w, h, false);
       r.render(e.scene, e.camera);
