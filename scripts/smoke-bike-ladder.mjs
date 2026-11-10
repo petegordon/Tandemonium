@@ -91,6 +91,8 @@ const pic = await until(page, () => {
 }, null, 20000);
 const nameLine = await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-name').textContent);
 const geese4 = await until(page, () => { const sc = window._game.lobby.bikeCelebration._showcase; return sc.mode === 'standing' && sc.geese('bike_green') === 2; }, null, 30000);
+await until(page, () => { const e = window._game.lobby.bikeCelebration._showcase._entries[0]; const ro = e && e.roll; return !!ro && ro.t > ro.delay + 0.12 && ro.t < ro.delay + 0.5; }, null, 15000);
+await h.shot(page, 'bl04-rolling-in');   // (the bike on its way in, behind a goose)
 await sleep(5000);   // they walk in, turn and start greeting
 const greeting = await page.evaluate(() => {
   const e = window._game.lobby.bikeCelebration._showcase._entries[0];
@@ -101,6 +103,7 @@ await h.shot(page, 'bl04-new-bike-turning');
 await sleep(4000);
 await h.shot(page, 'bl04-greeting');
 check(geese4 && greeting.length === 2, 'BL-04: one new bike: the two outfit geese stand beside it', greeting);
+check(await page.evaluate(() => window._game.lobby.bikeCelebration._showcase.rolledIn('bike_green')), 'BL-04: the bike has rolled in and stopped');
 check(outfitLine === 'With your 🎩 Victorian geese', 'BL-04: whose geese, the outfit icon first', outfitLine);
 check(pic && nameLine === '🌿 Jungle Cruiser', 'BL-04: the bike turns in the card, its name below with the icon in front', { pic, nameLine });
 await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-ride').click());
