@@ -33,7 +33,10 @@ const FRAME_MS = 1000 / 30;
 const TURN_RATE = 0.6;      // rad/s, the bike's turntable
 const CRANK_RATE = 2.2;     // rad/s, the riders' pedalling
 const THREE_QUARTER = 0.8;  // rad the standing scene's bike settles at, off side-on
-const SPIN_IN = 3;          // s for the bike to spin in and settle
+const ROLL_DELAY = 0.3;     // s after the goose on its side stops walking (plus up to 0.8 s at random) that the bike rolls in
+const ROLL_FALLBACK = 6;    // s: it rolls in by then anyway
+const ROLL_TIME = 2.6;      // s it takes to roll in and stop
+const ROLL_FROM = 7;        // m out of shot it starts
 const GOOSE_ANGLE = 0.45;   // rad each standing goose turns in toward the bike
 /** The greetings each goose picks from (a gander tips his hat, a lady curtsies). */
 const MOVES = { m: ['wave', 'bow', 'hat_tip', 'celebrate', 'admire', 'twirl'], f: ['wave', 'bow', 'curtsy', 'celebrate', 'admire', 'twirl'] };
@@ -208,13 +211,29 @@ export class BikeShowcase {
       e.riders.update();
       return;
     }
-    // Standing (Pete, 2026-11-09): the bike spins in and settles at a three-quarter view; the geese walk
-    // out from either side, each at its own random moment, and stand beside it angled toward you, then
-    // greet you. Every card draws its own timings and moves, so two new bikes never play alike.
+    // Standing (Pete, 2026-11-09): the geese walk out from either side, each at its own random moment,
+    // and stand beside the spot angled toward you; then the bike rolls in from the left or the right
+    // (random), wheels turning, passes behind the goose on that side, and stops in a three-quarter view
+    // that is a little different every time (its angle, the camera's height and aim). Each card draws
+    // its own, so two new bikes never play alike.
     const half = len / 2;
     const side = half * 0.8 + 0.55;    // where each goose stands, either side of the bike
-    e.fit = { w: side * 2 + 1.3, h: Math.max(height, 1.85), cx: 0 };   // (a goose with its hat, and a waving wing, fit)
-    e.spin = { t: 0, target: (size.x >= size.z ? 0 : Math.PI / 2) + THREE_QUARTER };
+    e.fit = { w: side * 2 + 1.3, h: Math.max(height, 1.85), cx: (random() - 0.5) * 0.25, lift: 0.08 + random() * 0.1 };
+    // the bike's forward (its captain's seat is in front of the stoker's), as a heading
+    const cap = model.getObjectByName('Seat_Captain'), sto = model.getObjectByName('Seat_Stoker');
+    let fwd = size.x >= size.z ? Math.PI / 2 : 0;
+    if (cap && sto) {
+      const pc = cap.getWorldPosition(new THREE.Vector3()), ps = sto.getWorldPosition(new THREE.Vector3());
+      fwd = Math.atan2(pc.x - ps.x, pc.z - ps.z);
+    }
+    const from = random() < 0.5 ? -1 : 1;                   // -1: rolls in from the left
+    const travel = -from * (Math.PI / 2 - (THREE_QUARTER + (random() - 0.5) * 0.3));   // across, angled toward you
+    e.turntable.rotation.y = travel - fwd;
+    e.wheels = new GooseRiders(model, animations);
+    e.wheels.measureWheel();
+    // it rolls once the goose on its side has taken its spot (so it passes behind them); a fallback if that goose never comes
+    e.roll = { t: 0, delay: ROLL_FALLBACK, dur: ROLL_TIME, from: ROLL_FROM, dx: Math.sin(travel), dz: Math.cos(travel), dist: 0 };
+    e.turntable.visible = false;
     const seats = ['Captain', 'Stoker'];
     const orders = greetingOrder(seats.map((s) => looks[s].body), random);
     const fromLeft = random() < 0.5;   // which goose comes out on which side
@@ -234,6 +253,7 @@ export class BikeShowcase {
         const w = actor.walk(1.6 + random() * 0.8);
         actor.root.position.x = x + dir * w.distance;
         await w.done;
+        if (dir === from && e.roll) e.roll.delay = Math.min(e.roll.delay, e.roll.t + ROLL_DELAY + random() * 0.8);   // now the bike
         await actor.turnTo(0);                           // face the camera...
         actor.easeHeading = -dir * GOOSE_ANGLE;          // ...then a three-quarter turn in toward the bike
         await new Promise((r) => setTimeout(r, 200 + random() * 600));
@@ -247,11 +267,11 @@ export class BikeShowcase {
 
   /** The camera on the card's box (w wide, h tall, centred cx right of the bike), for this aspect. */
   _aim(e, aspect) {
-    const { w, h, cx } = e.fit;
+    const { w, h, cx } = e.fit;   // (lift: the camera's height, a little different each showing)
     const tan = Math.tan((e.camera.fov * Math.PI / 180) / 2);
     const dist = Math.max((h * 1.15 / 2) / tan, (w * 1.08 / 2) / (tan * aspect));
     e.camera.aspect = aspect;
-    e.camera.position.set(cx, h * 0.55 + dist * 0.12, dist);
+    e.camera.position.set(cx, h * 0.55 + dist * (e.fit.lift != null ? e.fit.lift : 0.12), dist);
     e.camera.lookAt(cx, h * 0.45, 0);
     e.camera.updateProjectionMatrix();
   }
@@ -266,11 +286,16 @@ export class BikeShowcase {
       const w = e.canvas.clientWidth | 0, h = e.canvas.clientHeight | 0;
       if (!w || !h) continue;
       if (e.canvas.width !== w || e.canvas.height !== h) { e.canvas.width = w; e.canvas.height = h; }
-      if (e.spin) {
-        // one turn in, slowing to the three-quarter view, then a gentle sway
-        const sp = e.spin; sp.t += dt;
-        const u = Math.min(1, sp.t / SPIN_IN), ease = 1 - Math.pow(1 - u, 3);
-        e.turntable.rotation.y = sp.target - Math.PI * 2 * (1 - ease) + (u >= 1 ? 0.12 * Math.sin((sp.t - SPIN_IN) * 0.6) : 0);
+      if (e.roll) {
+        // roll in along its own line, slowing to a stop on the spot; the wheels turn with the distance
+        const ro = e.roll; ro.t += dt;
+        const u = Math.max(0, Math.min(1, (ro.t - ro.delay) / ro.dur));
+        e.turntable.visible = ro.t >= ro.delay;
+        const back = ro.from * Math.pow(1 - u, 3);        // ease out: fast in, gentle stop
+        const moved = Math.max(0, (ro.from - back) - ro.dist);
+        ro.dist += moved;
+        e.turntable.position.set(-ro.dx * back, 0, -ro.dz * back);
+        if (e.wheels) { e.wheels.setDistance(ro.dist); e.wheels.setCrank(ro.dist * 1.6); e.wheels.update(); }
       } else e.turntable.rotation.y += TURN_RATE * dt;
       if (e.riders) {
         e.crank += CRANK_RATE * dt; e.dist += 1.2 * dt;
@@ -306,6 +331,12 @@ export class BikeShowcase {
   drawn(key) {
     const e = this._entries.find((x) => x.key === key);
     return !!(e && e.drawn && e.bike);
+  }
+
+  /** Has a standing card's bike rolled in and stopped (for the smoke)? */
+  rolledIn(key) {
+    const e = this._entries.find((x) => x.key === key);
+    return !!(e && e.roll && e.roll.t >= e.roll.delay + e.roll.dur);
   }
 
   /** How many geese a card shows (for the smoke): standing geese or seated riders. */
