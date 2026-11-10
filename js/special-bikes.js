@@ -55,7 +55,7 @@ export function isSpecialBike(key) { return SPECIAL_BIKE_KEYS.includes(key); }
  * @param {boolean} showRiders  the Show Riders setting
  * @param {string|null} bikeKey the chooser's selectedPresetKey
  * @param {string} [ridersPath] BIKE_MODEL_PATH (the goose tandem, or ?riders=fused)
- * @param {string} [mode] the ride's mode ('solo' | 'local' | 'captain' | 'stoker' | 'versus'); versus keeps its team paint
+ * @param {string} [mode] the ride's mode ('solo' | 'local' | 'captain' | 'stoker' | 'versus'); versus teams ride their own picks (game.js _onVersusReady)
  */
 export function bikeModelPathFor(showRiders, bikeKey, ridersPath = BIKE_MODEL_PATH, mode = 'solo') {
   if (!showRiders) return CHOOSER_MODEL_PATH;

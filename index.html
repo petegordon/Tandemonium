@@ -2669,6 +2669,12 @@
   /* the room's bike row (Pete, 2026-11-09): the tandem's bike, picked where the players are seated */
   .room-bike-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0 4px; }
   .room-bike-row[hidden] { display: none; }
+  .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
+  .host-bot-row[hidden] { display: none; }
+  .host-bot-picks { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .versus-bikes { display: flex; justify-content: space-around; gap: 12px; flex-wrap: wrap; }
+  .versus-bike-row[data-team="A"] .room-bike-label { color: var(--versus-team-a); }
+  .versus-bike-row[data-team="B"] .room-bike-label { color: var(--versus-team-b); }
   .room-bike-label { font: 700 11px/1 system-ui, sans-serif; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.55); }
   .room-bike-name { min-width: 10em; text-align: center; font-size: 18px; font-weight: 700; letter-spacing: 1px; color: #ffc83d;
     font-family: 'Noteworthy', 'Bradley Hand', fantasy;
@@ -5893,6 +5899,22 @@ ON</button>
             <div class="versus-vs">VS</div>
             <uf-team id="versus-team-b" tone="team-b" heading="Team red" layout="row"></uf-team>
           </div>
+          <!-- Pete, 2026-11-09: each team rides its own bike (its captain's LB / RB, or the arrows); team colour stays on
+               the HUD and the tags over the bikes -->
+          <div class="versus-bikes">
+            <div class="room-bike-row versus-bike-row" id="versus-bike-a" data-team="A" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
+            <div class="room-bike-row versus-bike-row" id="versus-bike-b" data-team="B" hidden>
+              <span class="room-bike-label">Bike</span>
+              <button type="button" class="room-bike-nav" data-dir="-1" aria-label="Previous bike"><span class="bike-nav-arrow">&#8249;</span></button>
+              <span class="room-bike-name"></span>
+              <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span></button>
+            </div>
+          </div>
           <uf-controller-roster id="versus-roster" variant="strip" capacity="4"></uf-controller-roster>
           <!-- #548: a seated pad's △ / Y opens its own wardrobe (said in the join hint below). -->
           <div class="wardrobe-row" id="versus-wardrobe"></div>
@@ -5955,6 +5977,11 @@ ON</button>
               <span class="room-bike-name"></span>
               <button type="button" class="room-bike-nav" data-dir="1" aria-label="Next bike"><uf-controller-glyph button="rb" size="sm" class="pad-only"></uf-controller-glyph><span class="bike-nav-arrow">&#8250;</span></button>
               <span class="room-bike-note"></span>
+            </div>
+            <!-- Pete, 2026-11-09: with one controller seated and player bots earned, a bot can take the back seat -->
+            <div class="host-bot-row" id="host-bot-row" hidden>
+              <span class="room-bike-label">Back seat</span>
+              <div class="host-bot-picks" role="radiogroup" aria-label="Who rides the back seat"></div>
             </div>
             <uf-controller-roster id="host-roster" variant="strip" capacity="2"></uf-controller-roster>
             <!-- #548: "Press Y for wardrobe" (lobby._renderWardrobeButtons); a seated pad's △ / Y opens its own. -->
@@ -6173,7 +6200,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.df47530 | 11-09-2026 19:42</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.af86bd2 | 11-09-2026 20:06</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
