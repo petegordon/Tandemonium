@@ -45,7 +45,8 @@ import { addBikeSparkle } from './bike-sparkle.js';
 const PREVIEW_GOLD_WARM = new THREE.Color(1.0, 0.8, 0.5);
 const PREVIEW_GOLD_ENV = 0.8;
 import { GOOSE_OUTFITS } from './goose-outfits.js';
-import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress } from './rewards.js';
+import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
+import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
@@ -840,6 +841,7 @@ export class Lobby {
     }
     this._clearFocusHighlight();
     this._currentStep = step;
+    if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
     if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
       const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
       this._presetIndex = i >= 0 ? i : 0;
@@ -1379,8 +1381,16 @@ export class Lobby {
       this._showRoomLevelsStep();
     });
     document.getElementById('btn-host-local-next').addEventListener('click', () => {
-      if (!this._localSeatedOnHost || !this._localP2InputManager) return;
-      this._pendingMode = 'local';
+      if (this._localSeatedOnHost && this._localP2InputManager) {
+        this._hostBotRide = false;
+        this._pendingMode = 'local';
+        this._showStep(this.levelStep);
+        return;
+      }
+      // Pete, 2026-11-09: one controller seated and a bot on the back: a ride with the bot (any bike)
+      if (!this._hostBotPicked()) return;
+      this._hostBotRide = true;
+      this._pendingMode = 'solo';
       this._showStep(this.levelStep);
     });
 
@@ -5701,8 +5711,12 @@ export class Lobby {
     if (!step || !onBtn || !locBtn) return;
     const online = !!(this.net && this.net.connected && this._roomRole === 'captain');
     const local = !online && !!(this._localSeatedOnHost && this._localP2InputManager);
+    // Pete, 2026-11-09 · one controller seated, player bots earned: the Back seat picker; a bot there can ride
+    const botOn = !online && !local && this._hostBotAvailable();
+    const botRide = botOn && this._hostBotPicked();
+    this._syncHostBotRow(botOn);
     onBtn.disabled = !online;
-    locBtn.disabled = !local;
+    locBtn.disabled = !(local || botRide);
     step.classList.toggle('host-online-on', online);
     step.classList.toggle('host-local-on', local);
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
@@ -5710,9 +5724,10 @@ export class Lobby {
       if (!sto._openHint) sto._openHint = sto.hint;
       if (online) Object.assign(sto, { who: this._roomPartnerName || 'Partner', dev: 'Online', state: 'joined', hint: this._roomSeatHint('Online', this._partnerLook, !!this._partnerDressing), ...this._partnerSeatPic() });
       else if (local) Object.assign(sto, { dev: '', state: 'joined', hint: '' }, this._seatWho(2, this._localP2NameBeforeAccount || this._localP2Name || 'Player 2'));
+      else if (botRide) Object.assign(sto, { who: BOTS[this._hostBot].name, dev: 'Player bot', state: 'joined', hint: 'a robot goose; counts as your partner', pic: '', source: '' });
       else Object.assign(sto, { who: 'Waiting for partner…', dev: '', state: 'open', hint: sto._openHint || '', pic: '', source: '' });
       // P2 in the corner once someone sits there, like the captain's P1.
-      sto.badge = online || local ? 'P2' : '';
+      sto.badge = online || local ? 'P2' : (botRide ? 'BOT' : '');
     }
     const cands = this._currentStep === step && this._detectLocalJoinCandidates ? (this._detectLocalJoinCandidates() || []) : [];
     this._renderHostSeats(cands);
@@ -5722,7 +5737,7 @@ export class Lobby {
     // code button until the online room is open.
     this._syncHostJoinQr();
     const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
-    const items = [online && onBtn, local && locBtn, codeBtn, back].filter(Boolean);
+    const items = [...(botOn ? (this._hostBotButtons || []) : []), online && onBtn, (local || botRide) && locBtn, codeBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -9242,6 +9257,53 @@ export class Lobby {
       row.classList.toggle('readonly', ro);
       row.querySelector('.room-bike-name').textContent = this._bikeLabel(key || 'default');
       row.querySelector('.room-bike-note').textContent = ro ? "Captain's pick" : '';
+    }
+  }
+
+  /** Player bots earned (any 80 of the 81 solo achievements): a bot can take a room's empty back seat. */
+  _hostBotAvailable() {
+    return playerBotsProgress(this._earnedAchievementIds()).unlocked;
+  }
+
+  /** Is a bot picked for the couch room's back seat? (Its default: a bot while multiplayer achievements remain.) */
+  _hostBotPicked() {
+    if (this._hostBot == null) {
+      const earned = new Set(this._earnedAchievementIds());
+      const allMp = ACHIEVEMENTS.filter(isMultiplayerAchievement).every((d) => earned.has(d.id));
+      const saved = loadBotChoice();
+      this._hostBot = allMp ? NO_BOT : (saved && saved !== NO_BOT ? saved : BOT_IDS[0]);
+    }
+    return this._hostBotAvailable() && this._hostBot !== NO_BOT && !!BOTS[this._hostBot];
+  }
+
+  /** The couch room's Back seat row: Bolt / Rivet / Sprocket / Wait for a player (built once). */
+  _syncHostBotRow(on) {
+    const row = document.getElementById('host-bot-row');
+    if (!row) return;
+    row.hidden = !on;
+    if (!on) return;
+    const picks = row.querySelector('.host-bot-picks');
+    if (!this._hostBotButtons) {
+      this._hostBotButtons = [...BOT_IDS, NO_BOT].map((id) => {
+        const b = document.createElement('button');
+        b.className = 'bot-pick';
+        b.type = 'button';
+        b.dataset.bot = id;
+        b.setAttribute('role', 'radio');
+        const bot = BOTS[id];
+        b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
+        b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Wait for a player'}`;
+        b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as your partner)` : 'No bot: wait for a second controller';
+        b.addEventListener('click', (e) => { e.stopPropagation(); this._hostBot = id; this._refreshHostNext(); });
+        picks.appendChild(b);
+        return b;
+      });
+    }
+    this._hostBotPicked();   // (fills the default)
+    for (const b of this._hostBotButtons) {
+      const on_ = b.dataset.bot === this._hostBot;
+      b.classList.toggle('active', on_);
+      b.setAttribute('aria-checked', on_ ? 'true' : 'false');
     }
   }
 
