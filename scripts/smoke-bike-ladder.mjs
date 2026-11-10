@@ -182,7 +182,9 @@ const view = (k) => page.evaluate((k) => {
   return { name: document.getElementById('bike-name').textContent, picked: l.selectedPresetKey,
     hint: hint && hint.style.display !== 'none' ? hint.innerText.replace(/\s+/g, ' ').trim() : '',
     frame: !!l._previewModel.visible, grey, painted,
-    special: sp ? { visible: !!(sp.model && sp.model.visible), dark: sp.dark, riders: !!sp.riders, outfit: sp.outfit } : null };
+    special: sp ? { visible: !!(sp.model && sp.model.visible), dark: sp.dark, riders: !!sp.riders, outfit: sp.outfit,
+      frameColour: (() => { const m = sp.model && sp.model.getObjectByName('Cylinder006_cycle_0'); return m ? m.material.color.getHexString() : null; })(),
+      seatColour: (() => { const m = sp.model && sp.model.getObjectByName('seat_cycle_0'); return m ? m.material.color.getHexString() : null; })() } : null };
 }, k);
 const seated = (k) => until(page, (k) => { const sp = (window._game.lobby._specialPreviews || {})[k]; return !!(sp && sp.model && sp.model.visible && sp.riders); }, k, 60000);
 
@@ -198,8 +200,9 @@ const xmas = await view('bike_christmas');
 await sleep(500);
 await h.shot(page, 'bl09-christmas-locked');
 check(xmas.name.startsWith('🔒') && xmas.picked === 'default' && !xmas.frame && xmas.special.visible && xmas.special.dark === false
-  && xmas.special.outfit === 'cyclists' && xmas.hint.endsWith('+ 🚴 Cyclists outfit'),
-  'BL-09: a locked holiday bike: fully lit, its Cyclists geese riding, the outfit named', xmas);
+  && xmas.special.outfit === 'cyclists' && xmas.hint.endsWith('+ 🚴 Cyclists outfit')
+  && xmas.special.frameColour === '2eff46' && xmas.special.seatColour === 'bd0000',
+  'BL-09: a locked holiday bike: fully lit in its own paint (green frame, red seats), its Cyclists geese riding, the outfit named', xmas);
 
 await pick('solo_flight');
 check(await seated('solo_flight'), 'BL-09: the Solo Flight\'s Robot geese are seated');
