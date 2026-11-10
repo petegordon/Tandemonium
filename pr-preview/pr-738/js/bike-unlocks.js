@@ -18,6 +18,7 @@ import { ACHIEVEMENTS } from './achievement-defs.js';
 import { bikeAllowed } from './edition.js';
 import { rewardProgress } from './rewards.js';
 import { SPECIAL_BIKES, isSpecialBike } from './special-bikes.js';
+import { BIKE_ACHIEVEMENT_MAP, HOLIDAY_BIKES, holidayUnlocked } from './holiday-bikes.js';
 
 /** Every bike, in the chooser's order. */
 export const BIKE_ORDER = Object.freeze([
@@ -28,23 +29,7 @@ export const BIKE_ORDER = Object.freeze([
 /** Colour bikes earned by how many achievements the player has (any of the 100). */
 export const COUNT_BIKES = Object.freeze({ bike_green: 35, bike_yellow: 50, bike_blue: 65 });
 
-/** Each paint bike's "finish Grandma's on it" achievement. */
-export const BIKE_ACHIEVEMENT_MAP = Object.freeze({
-  default: 'grandma_default',
-  bike_red: 'grandma_red',
-  bike_blue: 'grandma_blue',
-  bike_green: 'grandma_green',
-  bike_yellow: 'grandma_yellow',
-  bike_orange: 'grandma_orange',
-  bike_magenta: 'grandma_magenta',
-});
-
-/** Holiday bikes: finish Grandma's on each of these bikes. */
-export const HOLIDAY_BIKES = Object.freeze({
-  bike_christmas: Object.freeze({ requires: Object.freeze(['bike_green', 'bike_red']) }),
-  bike_newyears: Object.freeze({ requires: Object.freeze(['bike_yellow', 'default']) }),
-  bike_birthday: Object.freeze({ requires: Object.freeze(['bike_red', 'bike_blue', 'bike_yellow', 'bike_green', 'default']) }),
-});
+export { BIKE_ACHIEVEMENT_MAP, HOLIDAY_BIKES, holidayUnlocked };
 
 export const BIKE_NAMES = Object.freeze({
   default: "Grandma's Classic",
@@ -80,14 +65,6 @@ export function countBikeProgress(key, earnedIds, defs = ACHIEVEMENTS) {
   const have = achievementCount(earnedIds, defs);
   const kept = new Set(earnedIds || []).has(BIKE_ACHIEVEMENT_MAP[key]);
   return { have, need, kept, unlocked: kept || have >= need };
-}
-
-/** Is holiday bike `key` unlocked (every bike it needs finished at Grandma's)? true for any other bike. */
-export function holidayUnlocked(key, earnedIds) {
-  const def = HOLIDAY_BIKES[key];
-  if (!def) return true;
-  const earned = new Set(earnedIds || []);
-  return def.requires.every(k => earned.has(BIKE_ACHIEVEMENT_MAP[k]));
 }
 
 /** Can the player ride bike `key` under these edition rules? */
