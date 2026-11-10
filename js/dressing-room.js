@@ -353,7 +353,7 @@ export class DressingRoom {
     const btn = (kind, val, html, active, extra = '') => `<button class="opt-btn${active ? ' active' : ''}" data-pick="${kind}" data-val="${esc(val)}"${extra}>${html}</button>`;
     const row = (label, kind, opts) => `<div class="dr-group" data-group="${kind}"><div class="dr-label">${label}</div><div class="dr-opts" data-pick="${kind}">${opts}</div></div>`;
     const bodies = Object.entries(BODIES).map(([k, b]) => btn('body', k, `${esc(b.label)} <span class="dr-sub">(${esc(b.hint)})</span>`, look.body === k)).join('');
-    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc(o.label), look.outfit === k, locked.has(k) ? ` data-locked="1" title="${esc(this._lockHint(k))}"` : '')).join('');
+    const outfits = Object.entries(GOOSE_OUTFITS).map(([k, o]) => btn('outfit', k, esc((o.icon ? o.icon + ' ' : '') + o.label), look.outfit === k, locked.has(k) ? ` data-locked="1" title="${esc(this._lockHint(k))}"` : '')).join('');
     const leds = LED_COLOURS.map((x) => btn('led', x.key, `<span class="led-swatch" style="background: rgb(${x.rgb.r},${x.rgb.g},${x.rgb.b})"></span>${esc(x.label)}`, look.led === x.key)).join('');
     return `<div class="dr-rows">`
       + row('Gander or goose', 'body', bodies)

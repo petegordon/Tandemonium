@@ -90,7 +90,18 @@ const pic = await until(page, () => {
   return lit > 2000;
 }, null, 20000);
 const nameLine = await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-name').textContent);
+const geese4 = await until(page, () => { const sc = window._game.lobby.bikeCelebration._showcase; return sc.mode === 'standing' && sc.geese('bike_green') === 2; }, null, 30000);
+await sleep(5000);   // they walk in, turn and start greeting
+const greeting = await page.evaluate(() => {
+  const e = window._game.lobby.bikeCelebration._showcase._entries[0];
+  return e.actors.map(a => ({ goose: a.name, playing: a.cur ? a.cur.c.clip.name : null, x: +a.root.position.x.toFixed(2) }));
+});
+const outfitLine = await page.evaluate(() => (document.querySelector('#new-bike-sheet .nb-outfit') || {}).textContent);
 await h.shot(page, 'bl04-new-bike-turning');
+await sleep(2500);
+await h.shot(page, 'bl04-greeting');
+check(geese4 && greeting.length === 2, 'BL-04: one new bike: the two outfit geese stand beside it', greeting);
+check(outfitLine === 'With your 🎩 Victorian geese', 'BL-04: whose geese, the outfit icon first', outfitLine);
 check(pic && nameLine === '🌿 Jungle Cruiser', 'BL-04: the bike turns in the card, its name below with the icon in front', { pic, nameLine });
 await page.evaluate(() => document.querySelector('#new-bike-sheet .nb-ride').click());
 const rode = await until(page, () => { const l = window._game.lobby; return l._currentStep === l.levelStep && l.selectedPresetKey === 'bike_green'; }, null, 5000);
@@ -148,7 +159,8 @@ const full = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage:
 } });
 await ready(full);
 await until(full, () => { const s = document.getElementById('new-bike-sheet'); return !!(s && s.open); }, null, 15000);
-await until(full, () => { const sc = window._game.lobby.bikeCelebration._showcase; return !!sc && ['bike_magenta', 'bike_red', 'bike_green', 'bike_yellow'].every(k => sc.drawn(k)); }, null, 20000);
+const riding = await until(full, () => { const sc = window._game.lobby.bikeCelebration._showcase; return !!sc && sc.mode === 'riding' && ['bike_magenta', 'bike_red', 'bike_green', 'bike_yellow'].every(k => sc.drawn(k) && sc.geese(k) === 2); }, null, 40000);
+check(riding, 'BL-07: four new bikes: the geese ride each one');
 await sleep(800);
 const s7 = await sheet(full);
 await h.shot(full, 'bl07-demo-welcome');
