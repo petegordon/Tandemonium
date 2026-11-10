@@ -50,7 +50,7 @@ import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
-import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials } from './bike-showcase.js';
+import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
@@ -58,7 +58,7 @@ import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { InputManager } from './input-manager.js';
-import { getSeatLooks, isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
+import { getSeatLooks, getChooserGeese, isMobile, isTV, RELAY_URL, BIKE_MODEL_PATH, GOOSE_BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, TUNE, GUEST_NAME, applySteeringFeel, feelTuning, snapshotTuningBase, saveSteeringFeelPref, BALANCE_DEFAULTS } from './config.js';
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
@@ -9457,7 +9457,9 @@ export class Lobby {
       const box = new THREE.Box3().setFromObject(model);
       const size = box.getSize(new THREE.Vector3());
       const outfit = giftOutfit(key);
-      model.scale.setScalar((outfit ? 2.4 : 3.0) / Math.max(size.x, size.y, size.z));   // (room for the geese's heads)
+      const geeseMode = outfit ? getChooserGeese() : null;   // Pete, 2026-11-10: a setting, on the bike (default) or beside it
+      // (room for the geese: their heads on the bike, or the geese either side)
+      model.scale.setScalar((outfit ? (geeseMode === 'stand' ? 1.9 : 2.4) : 3.0) / Math.max(size.x, size.y, size.z));
       model.updateMatrixWorld(true);
       const b2 = new THREE.Box3().setFromObject(model);
       const c = b2.getCenter(new THREE.Vector3());
@@ -9502,11 +9504,12 @@ export class Lobby {
       if (this._previewPivot) this._previewPivot.add(model);
       // its textures and shaders ready before it shows (the first draw used to freeze the chooser)
       await warmUp(this._previewRenderer, model, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
-      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0 });
+      Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0, geeseMode, gen: 0 });
       onReady(sp);
       if (!outfit) return;
       let looks = null;
       try { looks = getSeatLooks('solo'); } catch (e) { /* the outfit's own bodies */ }
+      if (geeseMode === 'stand') { this._standOutfitGeese(sp, looks, track, Math.max(size.x, size.z) * model.scale.x / 2); return; }
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
         const roots = Object.values(riders.riders).filter(Boolean).map((r) => r.root);
         for (const r of roots) r.visible = false;   // (seated hidden until warmed up)
@@ -9519,6 +9522,71 @@ export class Lobby {
         sp.riders = riders;
       }).catch((err) => console.warn(name + ' outfit geese failed to load:', err));
     }).catch((err) => console.warn(name + ' preview failed to load:', err));
+  }
+
+  /**
+   * Pete, 2026-11-10 (setting "Bike Chooser Geese: Beside the bike"): the outfit geese stand either side of the
+   * turning bike, facing you and turned in a little, idle, now and then a wave, a bow, a hat tip or a curtsy.
+   * They stay put while the bike turns between them (so its frame and seats all show).
+   * @param {object} sp the bike's chooser preview
+   * @param {object|null} looks getSeatLooks (their bodies)
+   * @param {(root: THREE.Object3D) => void} track joins a model to the bike's materials (its silhouette)
+   * @param {number} bikeHalf half the bike's length in the chooser
+   */
+  _standOutfitGeese(sp, looks, track, bikeHalf) {
+    const stand = new THREE.Group();
+    stand.visible = false;
+    this._previewScene.add(stand);
+    sp.stand = stand;
+    sp.actors = [];
+    const gen = sp.gen;
+    const s = sp.model.scale.x;   // the geese at the bike's scale
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const MOVES = { m: ['wave', 'bow', 'hat_tip', 'admire'], f: ['wave', 'bow', 'curtsy', 'admire'] };
+    ['Captain', 'Stoker'].forEach(async (seat, i) => {
+      try {
+        const body = looks && looks[seat] && looks[seat].body ? looks[seat].body : (seat === 'Captain' ? 'm' : 'f');
+        const actor = await loadStudioGoose(studioGooseFor({ outfit: sp.outfit, body }));
+        if (sp.gen !== gen) return;
+        try { actor.setColourway('default'); } catch (e) { /* the outfit's own colours */ }
+        const dir = i === 0 ? -1 : 1;                  // the captain on the left
+        actor.root.scale.multiplyScalar(s);
+        // a little in front of the bike, clear of it as it turns, and inside the frame
+        actor.root.position.set(dir * Math.min(0.92, bikeHalf * 0.97), 0, 0.85);
+        actor.setHeading(-dir * 0.4);                  // facing you, turned in toward the bike
+        track(actor.root);
+        const dark = sp.dark;
+        sp.dark = null;
+        this._setSpecialDark(sp, dark);                // (a silhouette for a locked reward bike)
+        await warmUp(this._previewRenderer, actor.root, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
+        if (sp.gen !== gen) return;
+        stand.add(actor.root);
+        sp.actors.push(actor);
+        await wait(900 + i * 1100 + Math.random() * 1200);
+        const moves = MOVES[body === 'f' ? 'f' : 'm'];
+        let last = '';
+        while (sp.gen === gen) {
+          if (stand.visible && !sp.dark) {
+            const pick = moves.filter((m) => m !== last && actor.clips[m]);
+            last = pick[Math.floor(Math.random() * pick.length)] || '';
+            if (last) await actor.play(last);
+          }
+          await wait(2500 + Math.random() * 3500);
+        }
+      } catch (err) { console.warn('Chooser goose failed to load:', seat, err); }
+    });
+  }
+
+  /** The Bike Chooser Geese setting changed: the bikes with outfit geese build again, the new way. */
+  chooserGeeseChanged() {
+    for (const [k, sp] of Object.entries(this._specialPreviews || {})) {
+      if (!sp.outfit || !sp.model) continue;
+      sp.gen++;                                        // (its greeting loops stop)
+      if (sp.model.parent) sp.model.parent.remove(sp.model);
+      if (sp.stand && sp.stand.parent) sp.stand.parent.remove(sp.stand);
+      delete this._specialPreviews[k];
+    }
+    if (this._presetKeys && this._presetKeys.length > 1) this._applyPresetToPreview();
   }
 
   /** The chooser's first-draw queue (js/gpu-warmup.js): the preview loop draws one new mesh a frame. */
@@ -9857,7 +9925,13 @@ export class Lobby {
         this._previewPivot.rotation.y += 0.008 * step;
       }
       // #611 · the Time Warp's clock and flames run in the chooser too (not while it's a locked silhouette)
+      const now = performance.now(), dt = Math.min(0.1, (now - (this._previewLast || now)) / 1000);
+      this._previewLast = now;
       for (const sp of Object.values(this._specialPreviews || {})) {
+        if (sp.stand) {                // the geese beside the bike: shown with it, idle and greeting
+          sp.stand.visible = !!(sp.model && sp.model.visible);
+          if (sp.stand.visible) for (const a of sp.actors) a.update(dt);
+        }
         if (sp.riders && sp.model && sp.model.visible && !sp.dark) {   // Pete, 2026-11-10: the outfit geese pedal an earned bike
           sp.crank += 0.06 * step;
           sp.riders.setCrank(sp.crank);

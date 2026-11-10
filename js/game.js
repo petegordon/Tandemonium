@@ -10,7 +10,7 @@ import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './spec
 import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { BotRace, raceableLevel, RACE_TIERS } from './bot-race.js';
 import { BOT_GHOST_RUNS } from './bot-ghost-runs.js';
-import { isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
+import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -6866,6 +6866,10 @@ class Game {
     document.getElementById('opt-perfhud-off')?.addEventListener('click', () => dtest({ perf: false }));
     document.getElementById('opt-dtest-reset')?.addEventListener('click', () => dtest(null));
 
+    // Pete, 2026-11-10 · Bike Chooser Geese: on the bike (default) or beside it
+    document.getElementById('opt-chooser-geese-ride')?.addEventListener('click', () => this._setChooserGeese('ride'));
+    document.getElementById('opt-chooser-geese-stand')?.addEventListener('click', () => this._setChooserGeese('stand'));
+
     const fpsOnBtn  = document.getElementById('opt-fps-on');
     const fpsOffBtn = document.getElementById('opt-fps-off');
     if (fpsOnBtn)  fpsOnBtn.addEventListener('click',  () => this._setShowFps(true));
@@ -6914,6 +6918,7 @@ class Game {
     this._updateOptionsShowSoloUI();
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsChooserGeeseUI();
     this._updateOptionsDiscordUI();
     this._updateOptionsPhysicsUI();
   }
@@ -6942,6 +6947,7 @@ class Game {
     try { localStorage.setItem('tandemonium_show_fps', on ? 'on' : 'off'); } catch (e) {}
     this.fpsMeter.setVisible(on);
     this._updateOptionsFpsUI();
+    this._updateOptionsChooserGeeseUI();
   }
 
   /** Display Testing rows show what's in effect now (URL switches included). */
@@ -6998,6 +7004,19 @@ class Game {
     };
     paint(this._shareDiscordConfigured === true);
     fetchShareConfig({ apiBase: API_BASE }).then(({ discord }) => { this._shareDiscordConfigured = discord; paint(discord); });
+  }
+
+  _setChooserGeese(mode) {
+    if (mode === getChooserGeese()) return;
+    setChooserGeese(mode);
+    this._updateOptionsChooserGeeseUI();
+    if (this.lobby && this.lobby.chooserGeeseChanged) this.lobby.chooserGeeseChanged();
+  }
+
+  _updateOptionsChooserGeeseUI() {
+    const mode = getChooserGeese();
+    document.getElementById('opt-chooser-geese-ride')?.classList.toggle('active', mode === 'ride');
+    document.getElementById('opt-chooser-geese-stand')?.classList.toggle('active', mode === 'stand');
   }
 
   _updateOptionsFpsUI() {
@@ -7327,6 +7346,8 @@ class Game {
       document.getElementById('opt-riders-off'),
       document.getElementById('opt-solo-on'),
       document.getElementById('opt-solo-off'),
+      document.getElementById('opt-chooser-geese-ride'),
+      document.getElementById('opt-chooser-geese-stand'),
       document.getElementById('opt-body-m'),
       document.getElementById('opt-body-f'),
       document.getElementById('opt-outfit-victorian'),
@@ -7364,6 +7385,7 @@ class Game {
     this._updateOptionsShowSoloUI();
     this._updateOptionsGooseOutfitUI();
     this._updateOptionsFpsUI();
+    this._updateOptionsChooserGeeseUI();
     this._updateOptionsDiscordUI();
     this._updateOptionsPhysicsUI();
     this._updateOptionsDisplayTestUI();

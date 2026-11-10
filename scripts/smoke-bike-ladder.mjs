@@ -8,6 +8,7 @@
 //   BL-05  the Jungle ride to Grandma's that is also the 50th: "2 new bikes!" (Banana Delivery + Christmas Cruiser), one screen
 //   BL-06  the end-of-ride screen: the next-bike line in the unlocked list, and "New bike!" over it with RIDE IT NOW
 //   BL-09  the chooser: a locked colour bike keeps its paint; holiday bikes lit with their outfit geese; reward bikes silhouettes
+//   BL-10  Settings › Bike Chooser Geese: beside the bike (the geese stand either side); back to on the bike
 //   BL-07  demo → full game: one welcome screen, "Your demo riding earned you 32 achievements and 4 new bikes."
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
@@ -218,6 +219,35 @@ await sleep(600);
 await h.shot(page, 'bl09-christmas-earned');
 check(xmas2.name.startsWith('🏆') && xmas2.picked === 'bike_christmas' && xmas2.special.dark === false && xmas2.hint === '+ 🚴 Cyclists outfit',
   'BL-09: the earned Christmas Cruiser: rideable, its geese pedalling', xmas2);
+await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = 0; l._applyPresetToPreview(); });
+
+// ── BL-10 the Bike Chooser Geese setting: beside the bike (Pete, 2026-11-10; default on the bike) ──
+console.log('BL-10 Bike Chooser Geese: beside the bike');
+await grant(page, 10);
+const opt = (id) => page.evaluate((id) => !!document.getElementById(id), id);
+check(await opt('opt-chooser-geese-ride') && await opt('opt-chooser-geese-stand')
+  && await page.evaluate(() => (localStorage.getItem('tandemonium_chooser_geese') || 'ride') === 'ride'),
+  'BL-10: Settings has "Bike Chooser Geese" (On the bike / Beside the bike), on the bike by default');
+await page.evaluate(() => window._game._setChooserGeese('stand'));
+const standing = (k) => until(page, (k) => { const sp = (window._game.lobby._specialPreviews || {})[k];
+  return !!(sp && sp.model && sp.model.visible && sp.stand && sp.stand.visible && sp.actors && sp.actors.length === 2); }, k, 60000);
+await pick('bike_christmas');
+check(await standing('bike_christmas'), 'BL-10: the Christmas Cruiser\'s Cyclists geese stand beside it');
+await sleep(1500);
+const xs = await page.evaluate(() => { const sp = window._game.lobby._specialPreviews.bike_christmas;
+  return { riders: !!sp.riders, dark: sp.dark, mode: sp.geeseMode, xs: sp.actors.map(a => +a.root.position.x.toFixed(2)),
+    frame: sp.model.getObjectByName('Cylinder006_cycle_0').material.color.getHexString() }; });
+await h.shot(page, 'bl10-christmas-beside');
+check(!xs.riders && xs.dark === false && xs.mode === 'stand' && Math.min(...xs.xs) < 0 && Math.max(...xs.xs) > 0 && xs.frame === '2eff46',
+  'BL-10: one goose either side, none on the bike, the bike in its own paint', xs);
+await pick('solo_flight');
+check(await standing('solo_flight'), 'BL-10: the Solo Flight\'s Robot geese stand beside it');
+await sleep(800);
+await h.shot(page, 'bl10-solo-flight-beside');
+check(await page.evaluate(() => window._game.lobby._specialPreviews.solo_flight.dark === true), 'BL-10: locked, the Solo Flight and its geese are silhouettes');
+await page.evaluate(() => window._game._setChooserGeese('ride'));
+await pick('bike_christmas');
+check(await seated('bike_christmas'), 'BL-10: back to "On the bike": the geese ride it again');
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = 0; l._applyPresetToPreview(); });
 
 // ── BL-07 demo → full game ──
