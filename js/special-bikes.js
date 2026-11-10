@@ -8,8 +8,8 @@
 //   solo_flight  the Penny-Farthing tandem (claude-3d make_pf_tandem.py), the player-bots reward: any 80
 //                of the 81 solo achievements (rewards.js playerBotsProgress). Its own rig (one Ride clip, hub
 //                cranks; the geese pedal it with their Pedal_PF clips, js/goose-rider-clips.js). #644: on a SOLO
-//                ride the player rides captain and a player bot (js/player-bots.js) rides the back seat;
-//                co-op and versus ride the goose tandem.
+//                ride the player rides captain and a player bot (js/player-bots.js) rides the back seat. Pete,
+//                2026-11-09: once earned it rides co-op too (couch and online), two players and no bot.
 //   time_warp    Pete's steampunk time-travel tandem: four rockets, a fast clock, blue flames with
 //                orange pops (its TimeWarpFX clip). Unlocks at any 90 of the 95 non-calendar
 //                achievements (rewards.js timeWarpProgress).
@@ -32,14 +32,13 @@ export const GOLD_STANDARD_BIKE_MODEL_PATH = 'tandem-3d/goose/gold_standard_tand
  * The special bikes, in carousel order (after the paint presets): the reward ladder (#611).
  *   reward    rewards.js rewardProgress key      unit      what the "n of N" counts
  *   rideable  false = shown in the chooser, not ridden yet ("coming soon" once earned)
- *   soloOnly  rides only on a solo ride (Solo Flight: the bot takes the back seat); other modes ride the tandem
  *   fx        the bike's own looping clip, if any
  *   mirror    mirror-finish metal: the chooser preview gives it reflections (the ride has the riders' environment)
  *   sparkle   twinkling stars over its gold, like the Tandem Token's (js/bike-sparkle.js, #697)
  */
 export const SPECIAL_BIKES = Object.freeze({
   [SOLO_FLIGHT_BIKE_KEY]: Object.freeze({ name: 'Solo Flight', model: SOLO_FLIGHT_BIKE_MODEL_PATH, reward: 'playerBots',
-    unit: 'solo achievements', rideable: true, soloOnly: true, icon: '\uD83E\uDEB6', color: '#9fd8ff', fx: null }),
+    unit: 'solo achievements', rideable: true, icon: '\uD83E\uDEB6', color: '#9fd8ff', fx: null }),
   [TIME_WARP_BIKE_KEY]: Object.freeze({ name: 'Time Warp', model: TIME_WARP_BIKE_MODEL_PATH, reward: 'timeWarp',
     unit: 'non-calendar achievements', rideable: true, icon: '\u23F3', color: '#f0b860', fx: 'TimeWarpFX' }),
   [GOLD_STANDARD_BIKE_KEY]: Object.freeze({ name: 'Gold Standard', model: GOLD_STANDARD_BIKE_MODEL_PATH, reward: 'goldStandard',
@@ -56,14 +55,14 @@ export function isSpecialBike(key) { return SPECIAL_BIKE_KEYS.includes(key); }
  * @param {boolean} showRiders  the Show Riders setting
  * @param {string|null} bikeKey the chooser's selectedPresetKey
  * @param {string} [ridersPath] BIKE_MODEL_PATH (the goose tandem, or ?riders=fused)
- * @param {string} [mode] the ride's mode ('solo' | 'local' | 'captain' | 'stoker' | 'versus'); Solo Flight is solo only
+ * @param {string} [mode] the ride's mode ('solo' | 'local' | 'captain' | 'stoker' | 'versus'); versus keeps its team paint
  */
 export function bikeModelPathFor(showRiders, bikeKey, ridersPath = BIKE_MODEL_PATH, mode = 'solo') {
   if (!showRiders) return CHOOSER_MODEL_PATH;
   if (ridersPath !== GOOSE_BIKE_MODEL_PATH) return ridersPath;
   if (bikeKey === TIME_WARP_BIKE_KEY) return TIME_WARP_BIKE_MODEL_PATH;
   if (bikeKey === GOLD_STANDARD_BIKE_KEY) return GOLD_STANDARD_BIKE_MODEL_PATH;
-  if (bikeKey === SOLO_FLIGHT_BIKE_KEY && mode === 'solo') return SOLO_FLIGHT_BIKE_MODEL_PATH;
+  if (bikeKey === SOLO_FLIGHT_BIKE_KEY && mode !== 'versus') return SOLO_FLIGHT_BIKE_MODEL_PATH;   // solo with a bot; co-op, two players
   return ridersPath;
 }
 
