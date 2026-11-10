@@ -143,6 +143,9 @@ uf-sheet .uf-sheet__actions uf-button[hidden] { display: none; }
 .end-unlocked[hidden] { display: none; }
 /* What the list is (a lone badge read as "all your achievements", Steam playtest 2026-11-07). */
 /* More than 10 unlocked in one ride: icons only, a tight row (achievements.js END_LIST_NAMES_MAX). */
+/* #736 · the next bike to earn, last in the unlocked list */
+.end-unlocked:not(:has(uf-achievement))::before { content: none; }   /* only the next-bike line: no heading */
+.end-unlocked .end-bike-goal { grid-column: 1 / -1; order: 99; margin: var(--uf-space-2) 0 0; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); text-align: center; }
 #victory-body #victory-unlocked.icons-only, .end-unlocked.icons-only { grid-template-columns: repeat(auto-fill, minmax(3.4em, 1fr)); }
 .end-unlocked.icons-only uf-achievement { grid-template-columns: 1fr; justify-items: center; padding: var(--uf-space-2); }
 .end-unlocked.icons-only uf-achievement .ua-name, .end-unlocked.icons-only uf-achievement .ua-new { display: none; }

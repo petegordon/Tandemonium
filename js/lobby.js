@@ -48,6 +48,8 @@ import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
+import { HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
+import { BikeCelebration } from './bike-celebration.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
@@ -154,31 +156,8 @@ const BIKE_NAMES = {
 };
 
 
-// Map bike preset keys to their per-bike Grandma's House achievement IDs
-const BIKE_ACHIEVEMENT_MAP = {
-  default: 'grandma_default',
-  bike_red: 'grandma_red',
-  bike_blue: 'grandma_blue',
-  bike_green: 'grandma_green',
-  bike_yellow: 'grandma_yellow',
-  bike_orange: 'grandma_orange',
-  bike_magenta: 'grandma_magenta',
-};
-
-const HOLIDAY_BIKES = {
-  bike_christmas: {
-    requires: ['bike_green', 'bike_red'],
-    hint: 'Win with Jungle Cruiser & Cherry Bomb',
-  },
-  bike_newyears: {
-    requires: ['bike_yellow', 'default'],
-    hint: 'Win with Banana Delivery & Grandma\'s Classic',
-  },
-  bike_birthday: {
-    requires: ['bike_red', 'bike_blue', 'bike_yellow', 'bike_green', 'default'],
-    hint: 'Win with Cherry Bomb, Ocean Breeze, Banana Delivery, Jungle Cruiser & Grandma\'s Classic',
-  },
-};
+// #736 · which bikes unlock when (colour bikes by achievement count, holiday bikes by Grandma's finishes):
+// js/bike-unlocks.js, shared with the "New bike!" celebration.
 
 export class Lobby {
   constructor({ onSolo, onMultiplayerReady, onLocalReady, onVersusReady, onTouristReady, onSlingshotReady, onGarage, input, controllerManager, achievements }) {
@@ -489,6 +468,10 @@ export class Lobby {
     // ride unlocks all touch the same list). A second copy here re-awarded a signed-in player's
     // achievements at the next ride start and saved over the merged list.
     this._achievements = achievements || new AchievementManager();
+    // #736 · "New bike!" — each bike that unlocks is celebrated once, at a calm moment
+    this.bikeCelebration = new BikeCelebration({
+      onShown: (info) => { try { analytics.trackEvent('bike_unlock_shown', { bikes: info.bikes.join(','), welcome: info.welcome ? info.welcome.kind : '' }); } catch (e) {} },
+    });
     this._avatarCache = new Map(); // originalUrl → blobUrl (fetched once per session)
 
     // Auth (after _avatarCache — _setupAuth triggers updateUI which reads the cache)
@@ -844,6 +827,7 @@ export class Lobby {
     this._clearFocusHighlight();
     this._currentStep = step;
     if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
+    if (step === this.modeStep) this._scheduleMenuBikeCheck();   // #736 · back on the main menu: any new bike
     if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
       const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
       this._presetIndex = i >= 0 ? i : 0;
@@ -2824,10 +2808,19 @@ export class Lobby {
    */
   async _syncAccountStats() {
     let res = null;
-    try { res = await this._achievements.syncStats(); } catch (e) { return; }
+    try { res = await this._achievements.syncStats(); } catch (e) { res = null; }
+    // #736 · a sign-in that brought in saved riding: one welcome screen, with any new bikes
+    let shown = null;
+    if (this._currentStep === this.modeStep && !this._sheetShowing()) {
+      shown = this.checkNewBikes({
+        signIn: true,
+        focus: this._stepFocus,
+        onRide: (key) => { if (this.pickBike(key)) document.getElementById('btn-solo')?.click(); },
+      });
+    }
     if (!res || !res.ok) return;
     const n = res.newlyEarned.length;
-    if (n > 0) showInfoToast('🏅', n === 1 ? res.newlyEarned[0].name : n + ' achievements from your riding', 'Saved to your House Tandem account');
+    if (n > 0 && !shown) showInfoToast('🏅', n === 1 ? res.newlyEarned[0].name : n + ' achievements from your riding', 'Saved to your House Tandem account');
   }
 
   async _requestMotion() {
@@ -3620,8 +3613,19 @@ export class Lobby {
     const count = document.getElementById('bar-achievements-count');
     if (count && this._achievements) {
       if (!this._achTotal) this._achTotal = this._achievements.getAllDefinitions().length;
-      const text = `${this._achievements.getEarnedIds().length} of ${this._achTotal}`;
+      const earned = this._achievements.getEarnedIds();
+      const text = `${earned.length} of ${this._achTotal}`;
       if (count.textContent !== text) count.textContent = text;
+      if (this._achGoalFor !== text) {
+        this._achGoalFor = text;
+        // #736 · the next bike to earn, on the pill ("12 more achievements to Jungle Cruiser")
+        const goal = nextBikeGoalText(nextBikeGoal(earned, getEditionRules()));
+        const pill = document.getElementById('bar-achievements');
+        if (pill) pill.title = goal ? `Achievements · Next bike: ${goal}` : 'Achievements';
+        let next = document.getElementById('bar-achievements-next');
+        if (!next && pill && goal) { next = document.createElement('span'); next.id = 'bar-achievements-next'; pill.appendChild(next); }
+        if (next) { next.textContent = goal ? goal.replace(/ more .*? to /, ' to ') : ''; next.hidden = !goal; }
+      }
     }
     const Glyph = customElements.get('uf-controller-glyph');
     // #646: P1's controller may have its Button prompts set by hand (Players).
@@ -9002,6 +9006,7 @@ export class Lobby {
       console.warn('Failed to load holiday bike presets:', e);
     }
     this._presetKeys = ['default', ...Object.keys(this._presetData), ...SPECIAL_BIKE_KEYS];
+    if (this._currentStep === this.modeStep) this._scheduleMenuBikeCheck();   // #736 · the first menu (the demo → full game welcome)
     // Pete, 2026-11-09: remember the bike between sessions (a holiday bike that has gone, or none saved: the default)
     try {
       const saved = localStorage.getItem(BIKE_PICK_KEY);
@@ -9221,11 +9226,9 @@ export class Lobby {
     return !!(this.net && this._pendingMode === 'multiplayer' && this._roomRole === 'stoker' && this._currentStep === this.levelStep);
   }
 
-  /** Can this bike be ridden now: allowed by the edition, a holiday bike unlocked, a reward bike earned and rideable? */
+  /** Can this bike be ridden now: allowed by the edition and earned (#736 colour counts, holiday finishes, reward bikes)? */
   _bikeRideable(key) {
-    if (!isSpecialBike(key)) return bikeAllowed(getEditionRules(), key) && !(HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
-    const def = SPECIAL_BIKES[key];
-    return !!def.rideable && rewardProgress(def.reward, this._earnedAchievementIds()).unlocked;
+    return bikeUnlocked(key, this._earnedAchievementIds(), getEditionRules());
   }
 
   /** The chooser's next index that way; in a seat room it skips bikes that can't be ridden yet (no locked picks there). */
@@ -9353,6 +9356,48 @@ export class Lobby {
     this._attractStopped = true;
     if (this._attractTimer) { clearInterval(this._attractTimer); this._attractTimer = null; }
     this._saveBikePick();
+  }
+
+  /**
+   * #736 · put bike `key` in the chooser (the "Ride it now" pick): shown, saved, and sent to a room.
+   * @returns {boolean} false when it can't be ridden (or the chooser isn't up yet)
+   */
+  pickBike(key) {
+    const i = this._presetKeys ? this._presetKeys.indexOf(key) : -1;
+    if (i < 0 || !this._bikeRideable(key)) return false;
+    this._presetIndex = i;
+    this._attractPick = key;
+    this._attractShown = i;
+    this._applyPresetToPreview();
+    this._saveBikePick();
+    this._sendBikeSyncIfInRoom();
+    return this.selectedPresetKey === key;
+  }
+
+  /**
+   * #736 · celebrate any bike that unlocked since last time (the game calls this on its end screens).
+   * @param {{signIn?: boolean, focus?: object, onRide?: ((key: string) => void) | null, onClose?: () => void}} [opts]
+   */
+  checkNewBikes(opts = {}) {
+    if (!this._presetKeys) return null;   // the chooser isn't loaded yet: the next calm moment shows it
+    return this.bikeCelebration.check({ earnedIds: this._earnedAchievementIds(), rules: getEditionRules(), ...opts });
+  }
+
+  /** #736 · a sheet is up on screen (an open sheet inside a hidden overlay does not count). */
+  _sheetShowing() {
+    return [...document.querySelectorAll('uf-sheet[open]')].some((el) => el.getBoundingClientRect().width > 0);
+  }
+
+  /** #736 · on the main menu (after the screen settles, and not over another sheet): new bikes, and Ride it now = SOLO RIDE on it. */
+  _scheduleMenuBikeCheck() {
+    clearTimeout(this._menuBikeTimer);
+    this._menuBikeTimer = setTimeout(() => {
+      if (this._currentStep !== this.modeStep || this._sheetShowing()) return;
+      this.checkNewBikes({
+        focus: this._stepFocus,
+        onRide: (key) => { if (this.pickBike(key)) document.getElementById('btn-solo')?.click(); },
+      });
+    }, 700);
   }
 
   /** Remember the player's bike for next time (only one they can ride: a locked reward bike keeps the last one). */
@@ -9628,7 +9673,9 @@ export class Lobby {
     // #641: the demo rides Grandma's Classic and Marmalade Express; the other
     // colours show, shut, as the full game's.
     const demoLocked = !bikeAllowed(getEditionRules(), key);
-    const locked = demoLocked || (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key));
+    // #736 · Jungle, Banana and Ocean are earned at 35 / 50 / 65 achievements
+    const countProg = demoLocked ? null : countBikeProgress(key, this._earnedAchievementIds());
+    const locked = demoLocked || (countProg ? !countProg.unlocked : (HOLIDAY_BIKES[key] && !this._isHolidayUnlocked(key)));
     nameEl.style.color = '';                         // every name in the logo's colours (index.html #bike-name)
     nameEl.classList.toggle('locked', !!locked);
 
@@ -9659,13 +9706,15 @@ export class Lobby {
       if (demoLocked) {
         hintEl.textContent = 'In the full game';
         hintEl.style.display = '';
+      } else if (countProg) {
+        hintEl.innerHTML = `<span class="bike-count" style="font-size:1.3em;font-weight:700;color:rgba(255,255,255,0.9)">${countProg.have} of ${countProg.need}</span>`
+          + '<br><span style="color:rgba(255,255,255,0.55)">achievements</span>';
+        hintEl.title = `${BIKE_NAMES[key] || key}: earn any ${countProg.need} achievements`;
+        hintEl.style.display = '';
       } else {
       // Show per-bike progress: ✓ won / ✗ not yet
-      let earnedIds = [];
-      try {
-        const raw = localStorage.getItem('tandemonium_achievements');
-        if (raw) earnedIds = JSON.parse(raw).map(a => a.id);
-      } catch { /* empty */ }
+      const earnedIds = this._earnedAchievementIds();
+      hintEl.title = '';
       const lines = HOLIDAY_BIKES[key].requires.map(k => {
         const achId = BIKE_ACHIEVEMENT_MAP[k];
         const done = achId && earnedIds.includes(achId);
@@ -9807,17 +9856,6 @@ export class Lobby {
   }
 
   _isHolidayUnlocked(bikeKey) {
-    const def = HOLIDAY_BIKES[bikeKey];
-    if (!def) return true;
-    // Read earned achievement IDs from localStorage (same store as AchievementManager)
-    let earnedIds = [];
-    try {
-      const raw = localStorage.getItem('tandemonium_achievements');
-      if (raw) earnedIds = JSON.parse(raw).map(a => a.id);
-    } catch { /* empty */ }
-    return def.requires.every(k => {
-      const achId = BIKE_ACHIEVEMENT_MAP[k];
-      return achId && earnedIds.includes(achId);
-    });
+    return holidayUnlocked(bikeKey, this._earnedAchievementIds());
   }
 }
