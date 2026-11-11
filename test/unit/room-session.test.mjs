@@ -508,3 +508,22 @@ test('E: the automatic retry never cuts off a socket that is still opening; Retr
   assert.equal(ns.net.retried.length, 1, 'the Retry button forces a fresh dial');
   rs.leave();
 });
+
+test('#694 the relay names the partner as they connect: the line says who, and the seats hear the name', async () => {
+  const cap = setup({ token: null });
+  const named = [];
+  cap.host.partnerNamed = (n) => named.push(n);
+  await cap.rs.create();
+  cap.ns.net.open();
+  cap.ns.net.partnerName = 'Sam';
+  cap.ns.net.partnerReady();
+  assert.deepEqual(cap.last('host'), ['Sam (your Stoker) joined!', 'connected']);
+  assert.deepEqual(named, ['Sam']);
+
+  const sto = setup({ step: 'join' });
+  await sto.rs.join('TNDM-WXYZ', { viaUrl: false });
+  sto.ns.net.open();
+  sto.ns.net.partnerName = 'Pete';
+  sto.ns.net.partnerReady();
+  assert.deepEqual(sto.last('join'), ['Connected to Pete (your Captain)!', 'connected']);
+});

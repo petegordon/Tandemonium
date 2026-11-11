@@ -80,7 +80,8 @@ export class TandemRoom {
         }
 
         this.state.acceptWebSocket(server, [role]);
-        await this._touch(role, cleanName(url.searchParams.get('name')));   // after accept: safe to await
+        const myName = cleanName(url.searchParams.get('name'));
+        await this._touch(role, myName);   // after accept: safe to await
 
         // Reset room TTL on new connection
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
@@ -95,11 +96,13 @@ export class TandemRoom {
 
         if (partnerReady.length > 0) {
             // Tell the new joiner their partner is here
-            const joinMsg = JSON.stringify({ type: 'partner-ready', role: partnerRole });
+            // #694: with the name each gave the relay (null when none), so both screens can say
+            // "Sam (your Stoker) joined" at once instead of waiting for the profile message.
+            const joinMsg = JSON.stringify({ type: 'partner-ready', role: partnerRole, name: (partnerSeen && partnerSeen.name) || null });
             try { server.send(joinMsg); } catch (e) { /* just connected, shouldn't fail */ }
 
             // Tell the existing partner the new player joined
-            const readyMsg = JSON.stringify({ type: 'partner-ready', role: role });
+            const readyMsg = JSON.stringify({ type: 'partner-ready', role: role, name: myName });
             for (const sock of partnerReady) {
                 try { sock.send(readyMsg); } catch (e) { /* closed */ }
             }
