@@ -5976,6 +5976,8 @@ ON</button>
           <div id="host-online-head" class="host-tv"><h3>Scan to join</h3><p>Scan with a phone, then choose: steer from it while the game stays on this screen, or play on the phone itself.</p></div>
           <uf-qr id="host-join-qr" class="host-tv" caption="" size="400"></uf-qr>
           <uf-button variant="ghost" size="sm" id="btn-host-room-code" title="Open the online room and show its code, to type on another device">Join from another device with a code</uf-button>
+          <!-- #694 E5 · the Steam build only (js/steam-join.js): opens the online room and Steam's invite picker -->
+          <uf-button variant="ghost" size="sm" id="btn-host-steam-invite" hidden title="Open the online room and invite a Steam friend to it">Invite a Steam friend</uf-button>
           <div id="host-local" class="host-tv">
             <h3>Local multiplayer</h3><p>Two controllers on this screen, one bike.</p>
             <uf-team id="host-team" tone="coop" heading="Your tandem" layout="row">
@@ -6260,6 +6262,12 @@ ON</button>
   <!-- Quit confirm (#172, desktop app only): opened from the bar's Quit pill
        on the mode step; QUIT is first so the pad lands on it, B / Esc / scrim /
        CANCEL close it. Wired in lobby.js _initSystemBar. -->
+  <!-- #694 E5 · a Steam friend's Join Game / invite while this screen is in a room with a partner:
+       joining theirs leaves this one, so ask first. JOIN is first (the player chose it in Steam). -->
+  <uf-sheet id="steam-join-sheet" heading="Join your Steam friend?" size="sm">
+    <p id="steam-join-text" style="margin:0;color:var(--uf-color-fg-muted);"></p>
+    <div slot="actions"><uf-button variant="accent" id="steam-join-confirm">JOIN</uf-button><uf-button id="steam-join-cancel">STAY HERE</uf-button></div>
+  </uf-sheet>
   <uf-sheet id="quit-sheet" heading="Quit Tandemonium?" size="sm" tone="danger">
     <p style="margin:0;color:var(--uf-color-fg-muted);">Close the game and go back to the desktop.</p>
     <div slot="actions"><uf-button variant="danger" id="quit-confirm">QUIT</uf-button><uf-button id="quit-cancel">CANCEL</uf-button></div>
@@ -6493,6 +6501,8 @@ ON</button>
 <uf-sheet id="pause-sheet" heading="Paused" size="sm">
   <p class="shell-line" id="pause-sub"></p>
   <div class="shell-menu">
+    <!-- #694 E5 · shown when a Steam friend's Join Game / invite arrives mid-ride (game.js _onSteamJoin) -->
+    <uf-button variant="accent" id="btn-pause-steam-join" hidden>JOIN YOUR FRIEND'S RIDE</uf-button>
     <uf-button variant="accent" id="btn-pause-resume">RESUME</uf-button>
     <uf-button id="btn-pause-restart">CHECKPOINT RESTART</uf-button>
     <uf-button id="btn-pause-settings">SETTINGS</uf-button>

@@ -84,6 +84,7 @@ const LINK_PROMPT_SNOOZE_MS = 7 * 24 * 3600 * 1000;
 import { LicenseManager } from './license.js';
 import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
+import { SteamJoin } from './steam-join.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
@@ -1287,6 +1288,8 @@ export class Lobby {
     document.getElementById('btn-host-room-code')?.addEventListener('click', () => {
       if (!this.net && this._currentStep === this.hostStep) this._createRoom();
     });
+    // #694 E5 · the Steam build: open the online room (if it isn't yet) and Steam's invite picker.
+    document.getElementById('btn-host-steam-invite')?.addEventListener('click', () => this._inviteSteamFriend());
 
     // STOKER (JOIN A RIDE)
     document.getElementById('btn-stoker').addEventListener('click', () => {
@@ -5749,7 +5752,8 @@ export class Lobby {
     // code button until the online room is open.
     this._syncHostJoinQr();
     const codeBtn = !isMobile && !this._hostRoomCode && !online && !local ? document.getElementById('btn-host-room-code') : null;
-    const items = [...(botOn ? (this._hostBotButtons || []) : []), online && onBtn, (local || botRide) && locBtn, codeBtn, back].filter(Boolean);
+    const steamBtn = this._steamInviteOn() && !online && !local ? document.getElementById('btn-host-steam-invite') : null;
+    const items = [...(botOn ? (this._hostBotButtons || []) : []), online && onBtn, (local || botRide) && locBtn, codeBtn, steamBtn, back].filter(Boolean);
     this._stepItems.set(step, items);
     this._stepCenterItems.set(step, items);
     this._stepDefaultFocus.set(step, 0);
@@ -5788,6 +5792,98 @@ export class Lobby {
     step.classList.toggle('host-room-open', !!this._hostRoomCode);
     const codeBtn = document.getElementById('btn-host-room-code');
     if (codeBtn) codeBtn.style.display = on && !this._hostRoomCode ? '' : 'none';
+    const steamBtn = document.getElementById('btn-host-steam-invite');
+    if (steamBtn) steamBtn.hidden = !(on && this._steamInviteOn());
+  }
+
+  // ── Steam Join Game / invites (#694 E5; js/steam-join.js) ─────────────
+  // The Steam build only. While the captain's room has a free seat, Steam friends see Join
+  // Game; the host step's "Invite a Steam friend" opens Steam's picker. A friend's join comes
+  // back through the game (game.js _onSteamJoin: mid-ride it goes through the pause menu)
+  // to offerSteamJoin / joinFromSteam here, which join it like a ?room= link.
+
+  /** Start the Steam side (game.js, once its handler is wired). `onJoin` gets { code, friendName, via }. */
+  startSteamJoin(onJoin) {
+    if (this._steamJoin) return;
+    this._steamJoin = new SteamJoin({
+      steam: typeof window !== 'undefined' ? /** @type {any} */ (window).steam : null,
+      // Join Game only while we're the captain of an open room with the partner seat free.
+      roomState: () => ({
+        code: this.net && this._hostRoomCode ? this._hostRoomCode : null,
+        role: this._hostRoomCode ? 'captain' : this._roomRole,
+        partner: !!(this.net && this.net.connected),
+      }),
+      onJoin,
+      // Steam answered (it's running): the host step's Invite button can show.
+      onReady: () => { this._syncHostJoinQr(); if (this._currentStep === this.hostStep) this._refreshHostNext(); },
+    });
+    this._steamJoin.start();
+  }
+
+  /** The host step offers "Invite a Steam friend" (the Steam build's bridge is there). */
+  _steamInviteOn() {
+    return !isMobile && !!(this._steamJoin && this._steamJoin.available);
+  }
+
+  /** "Invite a Steam friend": the room's code (opening the room first if needed), then Steam's picker. */
+  async _inviteSteamFriend() {
+    if (!this._steamInviteOn()) return;
+    const room = this._hostRoomCode ? { code: this._hostRoomCode } : await this.openRoomForPhone();
+    if (!room || !room.code) { showInfoToast('⚠️', 'The room didn\'t open', 'Try the invite again in a moment.'); return; }
+    const ok = await this._steamJoin.invite(room.code);
+    analytics.trackEvent('steam_invite', { code: room.code, ok: !!ok });
+    if (!ok) showInfoToast('⚠️', 'Steam\'s invite window didn\'t open', `Your friend can type code ${room.code.slice(5)} instead.`);
+  }
+
+  /**
+   * A Steam friend's room, heard in the menus: join it. Already in a room with a partner,
+   * joining leaves them, so ask first (the steam-join sheet; JOIN is focused).
+   * @param {{ code: string, friendName: string|null, via: string }} req
+   */
+  offerSteamJoin(req) {
+    if (this.net && this.net.roomCode === req.code) return;   // already in that room
+    const partnerHere = !!(this.net && this.net.connected) || !!this._localSeatedOnHost;
+    const sheet = /** @type {any} */ (document.getElementById('steam-join-sheet'));
+    if (!partnerHere || !sheet) { this.joinFromSteam(req); return; }
+    if (!this._steamJoinSheetWired) {
+      this._steamJoinSheetWired = true;
+      sheet.attachFocus(this._stepFocus);
+      document.getElementById('steam-join-cancel')?.addEventListener('click', () => { this._steamJoinPending = null; sheet.close(); });
+      document.getElementById('steam-join-confirm')?.addEventListener('click', () => {
+        const r = this._steamJoinPending;
+        this._steamJoinPending = null;
+        sheet.close();
+        if (r) this.joinFromSteam(r);
+      });
+    }
+    this._steamJoinPending = req;
+    const who = req.friendName || 'your friend';
+    const partner = this.net && this.net.connected ? (this._roomPartnerName || 'your partner') : 'Player 2';
+    const text = document.getElementById('steam-join-text');
+    if (text) text.textContent = `Join ${who}'s room ${req.code.slice(5)}? You'll leave ${partner}.`;
+    sheet.show();
+  }
+
+  /**
+   * Join a Steam friend's room: whatever room this screen is in is left, then the join step
+   * joins `code` the way a ?room= link does (every #694 wait and drop message applies).
+   * @param {{ code: string, friendName: string|null, via: string }} req
+   */
+  joinFromSteam(req) {
+    const code = req && req.code;
+    if (!code) return;
+    if (this.net && this.net.roomCode === code && this.net.connected) return;
+    if (this._tapOverlay) this._dismissTapOverlay();
+    this._roomSession.leave();
+    if (this._localSeatedOnHost) this._leaveLocalP2('joining a Steam friend');
+    this._hostRoomCode = null;
+    this._showStep(this.joinStep);
+    const input = /** @type {any} */ (document.getElementById('room-code-input'));
+    if (input) input.value = code.slice(-4);
+    this._lastFailedCode = code;
+    this._joinRoom(code);
+    showInfoToast('🚲', req.friendName ? `Joining ${req.friendName}'s ride` : 'Joining your friend\'s ride', `Room ${code.slice(5)}`);
+    analytics.trackEvent('steam_join', { code, via: req.via || 'steam' });
   }
 
   /**

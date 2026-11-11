@@ -5,6 +5,8 @@
 //                             getAuthTicket / activateAchievement / storeStats /
 //                             saveScreenshot (#657, recorded; init.screenshot = 'fail' refuses), and
 //                             steam.input { isAvailable, getXInputMap, getFullDiag }
+//                             setPresence / inviteFriends / takePendingJoin / friendName /
+//                             onJoinRequest (#694 E5 Steam Join Game, recorded; joinRequest() fires one)
 //   window.electronApp        toggleDevTools / setHeldHidDevices / diag
 //   window.tandemoniumSteam   { isDemo }
 //
@@ -29,6 +31,13 @@ function browserFake(init) {
     achievements: [],
     screenshots: [],                 // #657: what saveScreenshot received
     screenshotMode: init.screenshot || 'ok',
+    // #694 E5 · Join Game / invites: what the game put in rich presence, the invite pickers it
+    // opened, a join waiting from a cold start, and the join listeners (fired by joinRequest).
+    presence: [],
+    invites: [],
+    inviteMode: init.invite || 'ok',
+    pendingJoin: init.pendingJoin || null,
+    joinListeners: [],
   };
   const ok = (v) => Promise.resolve(v);
   window.steam = {
@@ -55,6 +64,11 @@ function browserFake(init) {
       if (state.screenshotMode === 'fail') return ok({ ok: false, error: 'fake-fail' });
       return ok({ ok: true, handle: state.screenshots.length, method: 'write', captioned: true });
     },
+    setPresence: (p) => { state.presence.push(p); return ok(state.available); },
+    inviteFriends: (c) => { state.invites.push(c); return ok(state.available && state.inviteMode !== 'fail'); },
+    takePendingJoin: () => { const r = state.pendingJoin; state.pendingJoin = null; return ok(r); },
+    friendName: (id) => ok(id === '76561190000000001' ? 'Pete' : null),
+    onJoinRequest: (cb) => { state.joinListeners.push(cb); },
     input: {
       isAvailable: () => ok(state.available),
       getXInputMap: () => state.xinput,
@@ -73,6 +87,7 @@ function browserFake(init) {
     state,
     setXInput(map) { state.xinput = map; },
     setScreenshotMode(mode) { state.screenshotMode = mode; },
+    joinRequest(req) { for (const cb of state.joinListeners) cb(req); return state.joinListeners.length; },
   };
 }
 
@@ -99,5 +114,11 @@ export function fakeSteam(page) {
     setScreenshotMode: (mode) => call('setScreenshotMode', mode),
     /** How many times the page asked electronApp.quit() (#172). */
     quitCalls: () => page.evaluate(() => window.__fakeSteam.state.quitCalls || 0),
+    /** #694 E5 · every setPresence({ connect, status }) the game made. */
+    presence: () => page.evaluate(() => window.__fakeSteam.state.presence.slice()),
+    /** #694 E5 · every Steam invite picker the game opened (its connect string). */
+    invites: () => page.evaluate(() => window.__fakeSteam.state.invites.slice()),
+    /** #694 E5 · Steam hands the running game a friend's join ({ connect, friend, via }); returns the listener count. */
+    joinRequest: (req) => call('joinRequest', req),
   };
 }
