@@ -61,6 +61,7 @@ export class RoomTransport {
     this.onRoomWaiting = null; // #346: the relay says the room is open and the partner is NOT in it
     this.partnerAbsent = false; // #346: last relay word was "waiting" (cleared by partner-ready)
     this.roomInfo = null; // #694: what the relay remembers about the room (on "waiting"), or null
+    this.partnerName = null; // #694: the name the partner gave the relay (on "partner-ready"), or null
     this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
     this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
     this.cameraEnabled = true; // set false to suppress local camera in calls
@@ -214,6 +215,8 @@ export class RoomTransport {
           // Relay: partner has connected — now safe to start heartbeat
           this._relayPartnerReady = true;
           this.partnerAbsent = false;
+          // #694: a relay from this change on names the partner (an older one doesn't).
+          if (typeof parsed.name === 'string' && parsed.name) this.partnerName = parsed.name.slice(0, 32);
           if (this.transport === 'relay' && !this._heartbeatInterval) {
             this._startHeartbeat();
           }
