@@ -22,7 +22,7 @@ export const SMOKES = [
   'slingshot', 'slingshot-aim', 'tourist', 'grandma', 'props', 'host-room', 'disconnect',
   'local-coop', 'versus', 'wardrobe', 'webhid', 'flows', 'steam-input', 'input', 'solo-extras',
   'options', 'lobby-layout', 'tv-nav', 'tv-music', 'online', 'host-instead', 'phone-pad', 'phone-coop', 'phone-multi',
-  'controller-overlay', 'fit', 'clip-share', 'tv-sizes', 'ach-detail', 'tv-playtest', 'rejoin', 'seat-churn', 'time-warp', 'solo-flight', 'bot-race',
+  'controller-overlay', 'fit', 'clip-share', 'tv-sizes', 'ach-detail', 'tv-playtest', 'rejoin', 'seat-churn', 'time-warp', 'solo-flight', 'bot-race', 'steam-join',
 ];
 
 const argv = process.argv.slice(2);
