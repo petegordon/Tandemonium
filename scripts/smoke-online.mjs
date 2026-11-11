@@ -19,6 +19,9 @@
 //          unreachable offline: the media half stays a manual check.)
 //   OC-13  co-op tutorial: the stoker waits for the captain's countdown, both
 //          ride, the tutorial completes on both, and both return to the room.
+//   OC-N   (#694) the relay names each side to the other as they meet ("Connected to Pete (your
+//          Captain)!", "Sam (your Stoker) joined!", the captain's seat says Sam); once both have
+//          left, the next joiner hears "Pete (your Captain) was in room … 0 s ago".
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, execSync } from 'node:child_process';
@@ -440,6 +443,53 @@ try {
       return s && s.textContent.startsWith(`No one has opened room ${c.slice(5)} yet. Check the code`) && row && !row.hidden && s.textContent;
     }, { timeout: 30000, polling: 100 }, code).then((x) => x.jsonValue(), () => null);
     check(!!said, 'OC-W joining a code nobody opened: "No one has opened room … yet. Check the code" + Try another code at once', said);
+    await p.close();
+  }
+  // ── OC-N (#694): the relay names the partner the moment both are in, and after they've gone ──
+  console.log('OC-N — the relay names the partner');
+  {
+    const cap = await openPlayer(browsers[0], 'captain');
+    const sto = await openPlayer(browsers[1], 'stoker');
+    const nameAs = (page, n) => page.evaluate((x) => { window._game.lobby._roomSession._host.myName = () => x; }, n);
+    await nameAs(cap, 'Pete');
+    await nameAs(sto, 'Sam');
+    await clickId(cap, 'btn-together');
+    await waitFor(cap, () => document.getElementById('lobby-flow').current === 'lobby-role');
+    await clickId(cap, 'btn-captain');
+    await waitFor(cap, () => document.getElementById('lobby-flow').current === 'lobby-host');
+    await clickId(cap, 'btn-host-room-code');
+    await waitFor(cap, () => /^TNDM-\w{4}$/.test(document.getElementById('room-code-display')?.textContent || ''));
+    const code = await cap.evaluate(() => document.getElementById('room-code-display').textContent);
+    await clickId(sto, 'btn-together');
+    await waitFor(sto, () => document.getElementById('lobby-flow').current === 'lobby-role');
+    await clickId(sto, 'btn-stoker');
+    await waitFor(sto, () => document.getElementById('lobby-flow').current === 'lobby-join');
+    const seenText = (page, id, want) => page.waitForFunction((i, w) => {
+      const el = document.getElementById(i);
+      if (el && el.textContent === w) window.__ocn = w;
+      return window.__ocn === w;
+    }, { timeout: 60000, polling: 20 }, id, want).then(() => true, () => false);
+    const capSaw = seenText(cap, 'host-status', 'Sam (your Stoker) joined!');
+    const stoSaw = seenText(sto, 'join-status', 'Connected to Pete (your Captain)!');
+    await sto.evaluate((c) => { document.getElementById('room-code-input').value = c.slice(-4); document.getElementById('btn-join').click(); }, code);
+    const [a, b] = await Promise.all([capSaw, stoSaw]);
+    check(b, "OC-N the stoker's line names the captain: Connected to Pete (your Captain)!");
+    check(a, "OC-N the captain's line names the stoker: Sam (your Stoker) joined!");
+    const who = await cap.evaluate(() => window._game.lobby._roomPartnerName);
+    check(who === 'Sam', "OC-N the captain's room shows Sam (from the relay, or their profile)", who);
+    await cap.close(); await sto.close();
+    await sleep(1500);
+    const p = await openPlayer(browsers[1], 'joiner');
+    await clickId(p, 'btn-together');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-role');
+    await clickId(p, 'btn-stoker');
+    await waitFor(p, () => document.getElementById('lobby-flow').current === 'lobby-join');
+    await p.evaluate((c) => window._game.lobby._joinRoom(c), code);
+    const said = await p.waitForFunction((c) => {
+      const s = document.getElementById('join-status');
+      return s && s.textContent.startsWith(`Pete (your Captain) was in room ${c.slice(5)}`) && s.textContent;
+    }, { timeout: 30000, polling: 100 }, code).then((x) => x.jsonValue(), () => null);
+    check(!!said, 'OC-N a later joiner hears who was just here: "Pete (your Captain) was in room … ago"', said);
     await p.close();
   }
 } catch (e) {

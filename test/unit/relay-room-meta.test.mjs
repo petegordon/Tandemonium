@@ -97,3 +97,16 @@ test('#620 still holds: a re-dial never tells the partner "disconnect" (no await
   await new Promise((r) => setTimeout(r, 10));
   assert.ok(!sto.sent.some((m) => m.type === 'disconnect'), JSON.stringify(sto.sent));
 });
+
+test('#694 partner-ready names each side to the other (null when a side gave no name)', async () => {
+  const R = room();
+  const cap = await R.connect('captain', 'Pete');
+  const sto = await R.connect('stoker', 'Sam');
+  assert.deepEqual(sto.sent[0], { type: 'partner-ready', role: 'captain', name: 'Pete' });
+  assert.deepEqual(cap.sent.at(-1), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
+  const R2 = room();
+  const cap2 = await R2.connect('captain');
+  const sto2 = await R2.connect('stoker', 'Sam');
+  assert.deepEqual(sto2.sent[0], { type: 'partner-ready', role: 'captain', name: null });
+  assert.deepEqual(cap2.sent.at(-1), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
+});

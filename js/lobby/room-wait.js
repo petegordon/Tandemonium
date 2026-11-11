@@ -82,6 +82,11 @@ export const ROOM_WAIT_COPY = {
   // B, when the room server remembers (#694): an old or never-used room is most likely a wrong code
   joinUnused: (code, span, t) => `Room ${shortCode(code)} hasn't been used for ${span}. Check the code · ${t}`,
   joinNeverUsed: (code, t) => `No one has opened room ${shortCode(code)} yet. Check the code · ${t}`,
+  // B, the room server saw the partner here a moment ago (#694): name them, it's the right room
+  joinRecent: (p, code, ago, t) => `${cap(ROOM_WAIT_COPY.partner(p))} was in room ${shortCode(code)} ${ago}. Waiting for them to come back · ${t}`,
+  // connected (#694): the relay names the partner the moment both are in
+  joined: (p) => p.name ? `${cap(ROOM_WAIT_COPY.partner(p))} joined!` : 'Partner connected!',
+  connectedTo: (p) => p.name ? `Connected to ${ROOM_WAIT_COPY.partner(p)}!` : 'Connected!',
   // C
   rejoinRecent: (p, ago, t) => `${cap(ROOM_WAIT_COPY.partner(p))} was here ${ago}. Waiting for them to come back · ${t}`,
   // D
@@ -154,6 +159,11 @@ export function roomWaitView(s, now, ms = ROOM_WAIT_MS) {
       return { kind: 'B', text, actions: [act('keep'), act('other-code')], focus: 'keep', cls: '' };
     }
     const out = s.outShown || t >= ms.joinOut;
+    // #694: the partner was here a moment ago (they stepped out, or their link dropped): say who.
+    if (r && typeof r.partnerSeenAt === 'number' && now - r.partnerSeenAt < ms.recentSeen) {
+      return { kind: 'B', text: ROOM_WAIT_COPY.joinRecent(p, s.code, fmtAgo(now - r.partnerSeenAt), fmtClock(t)),
+        actions: out ? [act('keep'), act('other-code')] : [], focus: out ? 'keep' : null, cls: '' };
+    }
     return out
       ? { kind: 'B', text: ROOM_WAIT_COPY.joinEmptyOut(s.code, fmtClock(t)), actions: [act('keep'), act('other-code')], focus: 'keep', cls: '' }
       : { kind: 'B', text: ROOM_WAIT_COPY.joinEmpty(s.code, fmtClock(t)), actions: [], focus: null, cls: '' };

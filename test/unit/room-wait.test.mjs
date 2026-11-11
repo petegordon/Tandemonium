@@ -114,7 +114,22 @@ test('B with the room record: a never-opened or long-unused room says "check the
   const old = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -2 * 3600000, partnerSeenAt: null, partnerName: null } }, 0);
   assert.equal(old.text, "Room ABCD hasn't been used for 2 h. Check the code · 0:00");
   const recent = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: -60000, partnerName: 'Pete' } }, 0);
-  assert.match(recent.text, /^No one else is in room ABCD yet/, 'used a minute ago: the ordinary B');
+  assert.equal(recent.text, 'Pete (your Captain) was in room ABCD 1 min ago. Waiting for them to come back · 0:00', 'the captain was here a minute ago: say who');
+  assert.deepEqual(recent.actions, [], 'the way out still waits for joinOut');
+  const recentOut = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: -60000, partnerName: 'Pete' } }, 20000);
+  assert.deepEqual(recentOut.actions.map((a) => a.id), ['keep', 'other-code']);
+  assert.equal(recentOut.focus, 'keep');
+  const noName = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: -60000, partnerName: null } }, 0);
+  assert.match(noName.text, /^Your Captain was in room ABCD 1 min ago/, 'no name given: the role');
+  const otherSeat = roomWaitView({ ...s, relay: { fresh: false, lastUsedAt: -60000, partnerSeenAt: null, partnerName: null } }, 0);
+  assert.match(otherSeat.text, /^No one else is in room ABCD yet/, 'used, but the captain not seen: the ordinary B');
+});
+
+test('the connected line names the partner when the relay does', () => {
+  assert.equal(ROOM_WAIT_COPY.joined({ name: 'Sam', role: 'stoker' }), 'Sam (your Stoker) joined!');
+  assert.equal(ROOM_WAIT_COPY.joined({ name: null, role: 'stoker' }), 'Partner connected!');
+  assert.equal(ROOM_WAIT_COPY.connectedTo({ name: 'Pete', role: 'captain' }), 'Connected to Pete (your Captain)!');
+  assert.equal(ROOM_WAIT_COPY.connectedTo({ name: null, role: 'captain' }), 'Connected!');
 });
 
 test('C/D with no local history use the room record (name and last seen)', () => {
