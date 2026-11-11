@@ -242,3 +242,19 @@ test('"waiting" with the room record fills roomInfo; a bare "waiting" (old relay
   assert.equal(t.roomInfo, null);
   t._stopHeartbeat();
 });
+
+// #694 · partner-ready names the partner (a relay from this change on); an older relay doesn't.
+test('partner-ready with a name sets partnerName; one without leaves it null', () => {
+  const t = transport();
+  t.enterRoom('TNDM-AAAA', 'stoker');
+  sockets.at(-1).open();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'partner-ready', role: 'captain' }) });
+  assert.equal(t.partnerName, null);
+  t._stopHeartbeat();
+  const t2 = transport();
+  t2.enterRoom('TNDM-BBBB', 'stoker');
+  sockets.at(-1).open();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'partner-ready', role: 'captain', name: 'Pete' }) });
+  assert.equal(t2.partnerName, 'Pete');
+  t2._stopHeartbeat();
+});

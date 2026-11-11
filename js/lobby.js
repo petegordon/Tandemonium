@@ -5017,6 +5017,8 @@ export class Lobby {
         renderRoomQR(code);
       },
       partnerHere: (role) => { if (role === 'stoker') this._lastFailedCode = null; },
+      // #694 · the relay named the partner: the seats say it until their profile arrives (which wins).
+      partnerNamed: (name) => { if (!this._roomPartnerName && name) { this._roomPartnerName = name; this._refreshHostNext(); } },
       partnerConnected: (role) => this._showRoomStep(role),
       connectFailed: (role, code) => {
         // Sync the error into the spinner status area

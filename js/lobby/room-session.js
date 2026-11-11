@@ -32,6 +32,7 @@
 //   showCode(text)                     the host step's code display
 //   roomOpen(code, { rejoin })         captain: the relay has us in the room
 //   partnerHere(role)                  the partner connected (immediately)
+//   partnerNamed(name)                 #694 · the relay named the partner as they connected (optional)
 //   partnerConnected(role)             … and the room screen should open (after CONNECT_SETTLE_MS)
 //   connectFailed(role, code)          stoker: the join failed (spinners, retry code)
 //   onStep(name)                       is the lobby on step 'host' | 'join'?
@@ -47,7 +48,10 @@
 export const CONNECT_SETTLE_MS = 1000;
 // #694: the stale-rejoin timer (STALE_ROOM_MS / STALE_WAITING_MS) became RoomWait's views C/D/E,
 // which say who, how long, and offer the way out on their own clocks (js/lobby/room-wait.js).
-import { RoomWait, ROOM_WAIT_MS } from './room-wait.js';
+import { RoomWait, ROOM_WAIT_MS, ROOM_WAIT_COPY } from './room-wait.js';
+
+/** #694 · the partner as the connected line names them: { name (from the relay, or null), role }. */
+const partnerOf = (net, myRole) => ({ name: (net && net.partnerName) || null, role: myRole === 'captain' ? 'stoker' : 'captain' });
 
 const noop = () => {};
 const NO_ANALYTICS = { trackRoomCreate: noop, trackEvent: noop, trackRoomUpdate: noop, trackConversion: noop, getSessionId: () => '' };
@@ -158,7 +162,8 @@ export class RoomSession {
       if (!this._live(epoch)) return;
       const m = host.media();
       this.wait.end();
-      host.status('host', 'Partner connected!', 'connected');
+      this._named(net);
+      host.status('host', ROOM_WAIT_COPY.joined(partnerOf(net, 'captain')), 'connected');
       this._partnerSeen(epoch, net, code);
       a.trackEvent('room_connect', { type: net.connectionType || 'p2p' });
       a.trackRoomUpdate(code, {
@@ -242,7 +247,8 @@ export class RoomSession {
       if (!this._live(epoch)) return;
       this.wait.end();
       host.partnerHere('stoker');
-      host.status('join', 'Connected!', 'connected');
+      this._named(net);
+      host.status('join', ROOM_WAIT_COPY.connectedTo(partnerOf(net, 'stoker')), 'connected');
       this._partnerSeen(epoch, net, code);
       a.trackEvent('room_connect', { type: net.connectionType || 'p2p' });
       this._settleThenOpen(epoch, net, 'stoker');
@@ -325,7 +331,9 @@ export class RoomSession {
     net.onConnected = () => {
       if (!this._live(epoch)) return;
       this.wait.end();
-      host.status(seat, captain ? 'Partner connected!' : 'Connected!', 'connected');
+      this._named(net);
+      const p = partnerOf(net, captain ? 'captain' : 'stoker');
+      host.status(seat, captain ? ROOM_WAIT_COPY.joined(p) : ROOM_WAIT_COPY.connectedTo(p), 'connected');
       this._partnerSeen(epoch, net, saved.roomCode);
       this._settleThenOpen(epoch, net, role);
     };
@@ -374,6 +382,11 @@ export class RoomSession {
       }, ROOM_WAIT_MS.seenEvery);
     };
     again();
+  }
+
+  /** #694 · pass the relay's name for the partner on (the room's seats show it before their profile lands). */
+  _named(net) {
+    if (net && net.partnerName && typeof this._host.partnerNamed === 'function') this._host.partnerNamed(net.partnerName);
   }
 
   _markSeen(code) {
