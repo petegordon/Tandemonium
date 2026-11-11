@@ -259,6 +259,11 @@ uf-system-bar#lobby-bar { display: none; }
   .join-rejoin-cards uf-card { padding: var(--uf-space-2) var(--uf-space-4); gap: 2px; }
   #lobby-join:has(.join-rejoin:not([hidden])) .join-tv p { display: none; }
   #lobby-join:has(.join-rejoin:not([hidden])) .join-tv { gap: var(--uf-space-3); }
+  /* Pete (2026-11-11): on a short screen the join step drops the art panel, like level select;
+     the keypad, the rejoin row and the bar get the whole width (the bar stays one row). */
+  :root:has(#lobby:not([style*="none"]) #lobby-join[active]) { --uf-stage-inset: 0px; }
+  #lobby:has(#lobby-join[active]) #lobby-img-right,
+  #lobby:has(#lobby-join[active]) #lobby-wordmark { display: none !important; }
 }
 
 /* ── Waiting in an online room (#694): the wait's buttons under the status line ── */
