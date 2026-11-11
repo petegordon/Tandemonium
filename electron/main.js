@@ -55,12 +55,14 @@ if (gotTheLock) { _diagRoll(); _diagLog(`--- launch ${app.getVersion()} pid=${pr
 if (!gotTheLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_event, argv) => {
     // Focus existing window when a second instance tries to launch
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
     }
+    // #694 E5: a second launch carrying a Steam room ("+tandemonium_room TNDM-ABCD") joins it here.
+    _steamJoinFromText((argv || []).join(' '), 'second-instance');
   });
 }
 
@@ -317,6 +319,129 @@ ipcMain.handle('steam:getAuthTicket', async () => {
     return null;
   }
 });
+// ── Steam Join Game / invites (#694 E5) ──────────────────────────
+// While a captain's online room has a free seat, js/steam-join.js puts the room in our
+// rich presence ("connect" = "+tandemonium_room TNDM-ABCD"), so Steam friends see Join
+// Game, and the room's "Invite a Steam friend" button opens Steam's invite picker with
+// the same string. The string comes back to the friend's game one of three ways:
+//   - the game wasn't running: Steam starts it with the string on the command line;
+//   - the game is running: Steam posts GameRichPresenceJoinRequested_t (callback 337),
+//     which steamworks-ffi-node has no wrapper for, so it's registered here the way the
+//     library registers its own web-API ticket callback (a CCallbackBase + vtable);
+//   - a steam://run/<appid>//... link while running: the launch command line changes.
+// Main only forwards the raw text; js/steam-join.js reads the room code out of it.
+// Steam only offers Join Game between copies of the same app: the demo and the full
+// game are separate apps, so a demo player joins a full-game friend by code / QR.
+const STEAM_CONNECT_FLAG = '+tandemonium_room';
+const K_I_GAME_RICH_PRESENCE_JOIN_REQUESTED = 337;   // k_iSteamFriendsCallbacks + 37
+let _pendingSteamJoin = null;   // a join heard before the renderer asked for it (a cold start)
+let _rendererTakesJoins = false;
+let _steamJoinKeepAlive = null;   // koffi callbacks, vtable and CCallbackBase (never collected)
+let _lastLaunchCommandLine = '';
+
+function _forwardSteamJoin(req) {
+  _diagLog(`[steam-join] ${req.via}: ${String(req.connect).slice(0, 80)}`);
+  // _rendererTakesJoins first: at load mainWindow (declared further down) is not readable yet.
+  if (_rendererTakesJoins && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('steam:joinRequested', req);
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  } else {
+    _pendingSteamJoin = req;
+  }
+}
+
+function _steamJoinFromText(text, via) {
+  const s = String(text || '');
+  if (!s.includes(STEAM_CONNECT_FLAG)) return false;
+  _forwardSteamJoin({ connect: s, via, friend: null });
+  return true;
+}
+
+function _registerSteamJoinCallback() {
+  if (_steamJoinKeepAlive) return;
+  try {
+    const koffi = require('koffi');
+    const L = require('steamworks-ffi-node/dist/internal/SteamLibraryLoader');
+    // GameRichPresenceJoinRequested_t { CSteamID m_steamIDFriend; char m_rgchConnect[256]; } (264 bytes)
+    const JoinRequested = koffi.struct('TandemGameRichPresenceJoinRequested_t', {
+      m_steamIDFriend: 'uint64',
+      m_rgchConnect: koffi.array('char', 256, 'String'),
+    });
+    const onJoin = (pvParam) => {
+      try {
+        const r = koffi.decode(pvParam, JoinRequested);
+        _forwardSteamJoin({ connect: String(r.m_rgchConnect || ''), friend: String(r.m_steamIDFriend || ''), via: 'join-request' });
+      } catch (e) { _diagLog('[steam-join] decode failed: ' + e.message); }
+    };
+    // Same vtable order as the library's own callback (Run, Run-with-result, size):
+    // Windows dispatches through the second slot, macOS / Linux the first.
+    const fns = [
+      koffi.register((_self, pvParam) => onJoin(pvParam), L.FnCallbackRunPtr),
+      koffi.register((_self, pvParam) => onJoin(pvParam), L.FnCallbackRunResultPtr),
+      koffi.register(() => 264, L.FnGetCallbackSizeBytesPtr),
+    ];
+    const vtable = koffi.alloc('void*', 3);
+    koffi.encode(vtable, koffi.array('void*', 3), fns);
+    const obj = koffi.alloc(L.CCallbackBase, 1);
+    koffi.encode(obj, L.CCallbackBase, { vfptr: vtable, m_nCallbackFlags: 0, _pad: [0, 0, 0], m_iCallback: K_I_GAME_RICH_PRESENCE_JOIN_REQUESTED });
+    steam.libraryLoader.SteamAPI_RegisterCallback(obj, K_I_GAME_RICH_PRESENCE_JOIN_REQUESTED);
+    _steamJoinKeepAlive = { fns, vtable, obj };
+    _diagLog('[steam-join] join-request callback registered');
+  } catch (e) {
+    _diagLog('[steam-join] callback registration failed: ' + e.message);
+  }
+}
+
+if (steam) {
+  _registerSteamJoinCallback();
+  try { _lastLaunchCommandLine = steam.apps.getLaunchCommandLine() || ''; } catch (e) {}
+  // A cold start from Join Game / an invite: the string is on our command line.
+  if (!_steamJoinFromText(process.argv.join(' '), 'launch')) _steamJoinFromText(_lastLaunchCommandLine, 'launch-url');
+  // Steam's callbacks (the join request above) are delivered from RunCallbacks.
+  let _pumpTicks = 0;
+  setInterval(() => {
+    try { steam.runCallbacks(); } catch (e) { /* transient */ }
+    if (++_pumpTicks % 10) return;   // every 2 s: a steam://run link while running
+    let line = '';
+    try { line = steam.apps.getLaunchCommandLine() || ''; } catch (e) { return; }
+    if (line !== _lastLaunchCommandLine) { _lastLaunchCommandLine = line; _steamJoinFromText(line, 'launch-url'); }
+  }, 200);
+} else {
+  // No Steam: a dev run can still pass the flag on the command line.
+  _steamJoinFromText(process.argv.join(' '), 'launch');
+}
+
+// The renderer is listening: hand over a join heard before it was (null when none).
+ipcMain.handle('steam:takePendingJoin', () => {
+  _rendererTakesJoins = true;
+  const req = _pendingSteamJoin;
+  _pendingSteamJoin = null;
+  return req;
+});
+// Our room in Steam's rich presence: { connect, status } (null / '' clears a key).
+ipcMain.handle('steam:setPresence', (_e, p) => {
+  if (!steam) return false;
+  const connect = p && typeof p.connect === 'string' && p.connect.startsWith(STEAM_CONNECT_FLAG + ' ') ? p.connect.slice(0, 255) : null;
+  const status = p && typeof p.status === 'string' && p.status ? p.status.slice(0, 255) : null;
+  try {
+    steam.richPresence.setRichPresence('connect', connect);
+    steam.richPresence.setRichPresence('status', status);
+    return true;
+  } catch (e) { _diagLog('[steam-join] setRichPresence failed: ' + e.message); return false; }
+});
+// The room's "Invite a Steam friend": Steam's own invite picker (the Steam overlay).
+ipcMain.handle('steam:inviteFriends', (_e, connect) => {
+  if (!steam || typeof connect !== 'string' || !connect.startsWith(STEAM_CONNECT_FLAG + ' ')) return false;
+  try { steam.overlay.activateGameOverlayInviteDialogConnectString(connect.slice(0, 255)); return true; }
+  catch (e) { _diagLog('[steam-join] invite dialog failed: ' + e.message); return false; }
+});
+// A friend's Steam name (the one who sent the invite), or null.
+ipcMain.handle('steam:friendName', (_e, id) => {
+  if (!steam || typeof id !== 'string' || !/^\d{5,20}$/.test(id)) return null;
+  try { return steam.friends.getFriendPersonaName(id) || null; } catch (e) { return null; }
+});
+
 ipcMain.handle('steam:storeStats', () => {
   // No-op: every stats-affecting call in the new SDK (unlockAchievement,
   // setStatInt, etc.) auto-flushes via StoreStats internally. Kept as an

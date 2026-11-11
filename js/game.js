@@ -610,6 +610,7 @@ class Game {
     // #459 item 12 · the pause menu (Start / Esc mid-ride; js/ui-shell.js modal).
     this._pause = null;   // the open modal, or null
     this._onTap('btn-pause-resume', () => this._closePause('resume'));
+    this._onTap('btn-pause-steam-join', () => this._acceptSteamJoin());   // #694 E5
     this._onTap('btn-pause-restart', () => { this._closePause('restart'); document.getElementById('reset-btn').click(); });
     this._onTap('btn-pause-settings', () => this._openOptions());   // over the pause; closing it re-focuses the menu
     this._onTap('btn-pause-help', () => this._openHelpModal());
@@ -888,6 +889,10 @@ class Game {
       achievements: this.achievements,   // one shared list (sign-in merge, sign-out clear, ride unlocks)
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
+    // #694 E5 · a Steam friend's Join Game / invite (the Steam build; js/steam-join.js)
+    this._steamJoinReq = null;
+    this._steamJoinRetry = null;
+    this.lobby.startSteamJoin((req) => this._onSteamJoin(req));
     // #672 · the partner's look arrived in the room: the bike's partner seat follows on the next frame.
     this.lobby.onPartnerLook = (look) => { this._partnerLook = look; this._partnerLookKey = JSON.stringify(look); };
     // #346: the lobby retired a room transport (left the room, opened another, HOST INSTEAD). Back
@@ -7488,6 +7493,8 @@ class Game {
       onClose: (reason) => {
         this._pause = null;
         if (this._helpSheet) this._helpSheet.close();
+        // #694 E5: closed without joining the Steam friend's ride: that offer is over.
+        if (this._steamJoinReq && reason !== 'steamjoin') { this._steamJoinReq = null; this._syncSteamJoinButton(); }
         // Dismissed (B, Esc, the scrim, Close, RESUME): back to the ride.
         this._freezeClock(false);
         this.input.consumeTaps();
@@ -7587,6 +7594,62 @@ class Game {
   _closePause(reason = 'api') {
     if (!this._pause) return;
     this._pause.close(reason);
+  }
+
+  // ── Steam Join Game / invites (#694 E5) ─────────────────────────
+  // The player clicked Join Game on a Steam friend (or accepted their invite). In the menus the
+  // lobby joins it (asking first if that leaves a partner); mid-ride the pause menu opens with
+  // JOIN <FRIEND>'S RIDE on top; on an end screen it goes straight back to the lobby and joins.
+  // Anything else (a countdown, a cinematic, a dropped partner) waits until one of those applies.
+
+  /** @param {{ code: string, friendName: string|null, via: string }} req */
+  _onSteamJoin(req, tries = 0) {
+    clearTimeout(this._steamJoinRetry);
+    this._steamJoinRetry = null;
+    this._steamJoinReq = req;
+    const st = this.state;
+    if (st === 'lobby') {
+      this._steamJoinReq = null;
+      this.lobby.offerSteamJoin(req);
+      return;
+    }
+    if (this._pause) { this._syncSteamJoinButton(); this._pause.refocus && this._pause.refocus(); return; }
+    if (this._canPause()) {
+      this._syncSteamJoinButton();   // before it opens: the menu's focus list includes it
+      this._openPause();
+      return;
+    }
+    if (['gameover', 'victory', 'versusResults', 'slingResults', 'slingGarage'].includes(st)) {
+      this._acceptSteamJoin();
+      return;
+    }
+    if (tries < 240) this._steamJoinRetry = setTimeout(() => this._onSteamJoin(req, tries + 1), 500);
+    else this._steamJoinReq = null;
+  }
+
+  /** The pause menu's JOIN <FRIEND>'S RIDE, shown while a Steam friend's join is on offer. */
+  _syncSteamJoinButton() {
+    const b = document.getElementById('btn-pause-steam-join');
+    if (!b) return;
+    const req = this._steamJoinReq;
+    b.hidden = !req;
+    if (req) b.textContent = req.friendName ? `JOIN ${req.friendName.toUpperCase()}'S RIDE` : "JOIN YOUR FRIEND'S RIDE";
+  }
+
+  /** Leave this ride for the Steam friend's room. */
+  _acceptSteamJoin() {
+    const req = this._steamJoinReq;
+    this._steamJoinReq = null;
+    clearTimeout(this._steamJoinRetry);
+    this._steamJoinRetry = null;
+    this._syncSteamJoinButton();
+    if (!req) return;
+    if (analytics.getCurrentRideId()) {
+      analytics.endRide({ completed: false, abandon_reason: 'steam_join', distance: this.bike ? this.bike.distanceTraveled : 0 });
+    }
+    if (this._pause) this._closePause('steamjoin');
+    if (this.state !== 'lobby') this._returnToLobby();
+    this.lobby.joinFromSteam(req);
   }
 
   /** The race clock(s) hold while the ride is frozen (pause menu or disconnect pause). */

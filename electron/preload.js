@@ -59,6 +59,14 @@ contextBridge.exposeInMainWorld('steam', {
   storeStats: () => ipcRenderer.invoke('steam:storeStats'),
   // #657 · the result card into the Steam screenshot library: { png, rgb, width, height, caption } → { ok, error }.
   saveScreenshot: (req) => ipcRenderer.invoke('steam:saveScreenshot', req),
+  // #694 E5 · Steam Join Game / invites (js/steam-join.js). setPresence({ connect, status }) puts our
+  // room in rich presence; inviteFriends(connect) opens Steam's invite picker; takePendingJoin() gives
+  // a join that started the game; onJoinRequest(cb) hears one while it runs: { connect, friend, via }.
+  setPresence: (p) => ipcRenderer.invoke('steam:setPresence', p),
+  inviteFriends: (connect) => ipcRenderer.invoke('steam:inviteFriends', connect),
+  takePendingJoin: () => ipcRenderer.invoke('steam:takePendingJoin'),
+  friendName: (id) => ipcRenderer.invoke('steam:friendName', String(id || '')),
+  onJoinRequest: (cb) => { ipcRenderer.on('steam:joinRequested', (_e, req) => { try { cb(req); } catch (err) {} }); },
   input: {
     isAvailable: () => ipcRenderer.invoke('steam:input:isAvailable'),
     getXInputMap: () => _steamXInputMap,
