@@ -7,7 +7,7 @@
 //          newest first, with code, partner, seat and age; the pad's focus
 //          starts on the newest card.
 //   RJ-03  The row fits the TV step: cards on screen, clear of the keypad, at
-//          1920×1080 and 1280×720.
+//          1920×1080 and 1280×720 (short screens drop the art panel, the bar one row).
 //   RJ-04  A on a back-seat card rejoins that room as the stoker (straight to
 //          connect; #694: the status names the partner and how long ago they
 //          were here, "Pat (your Captain) was here 2 min ago …"; the row goes away).
@@ -108,7 +108,9 @@ const fits = async (label) => {
     const keys = pad ? Array.from(pad.querySelectorAll('.ukp-key, .ukp-actions uf-button')).map(r) : [];
     const bar = document.getElementById('lobby-bar');
     const floor = bar && r(bar).height > 0 ? r(bar).top : innerHeight;
+    const art = document.getElementById('lobby-img-right');
     return {
+      art: !!art && r(art).width > 0, barRows: bar ? new Set(Array.from(bar.querySelectorAll('uf-button')).filter((b) => r(b).width > 0).map((b) => Math.round(r(b).top / 10))).size : 0,
       onScreen: cards.every(on) && keys.every(on) && [...cards, ...keys].every((b) => b.bottom <= floor),
       floor: Math.round(floor), lowest: Math.round(Math.max(...keys.map((b) => b.bottom))),
       clear: !k || cards.every((c) => !hit(c, k)),
@@ -116,7 +118,7 @@ const fits = async (label) => {
       vw: innerWidth, vh: innerHeight, cards: cards.map((b) => [Math.round(b.top), Math.round(b.bottom)]), keypad: k && [Math.round(k.top), Math.round(k.bottom)],
     };
   });
-  check(m.onScreen && m.clear && m.minFont >= 18, `RJ-03 ${label}: Rejoin cards and keypad all on screen, not overlapping, titles readable, all above the bar`, m);
+  check(m.onScreen && m.clear && m.minFont >= 18 && m.barRows === 1 && m.art === (m.vh > 860), `RJ-03 ${label}: Rejoin cards and keypad all on screen, not overlapping, titles readable, all above the bar`, m);
   await h.shot(page, `rj03-${label}`);
 };
 await fits('1920x1080');

@@ -2505,6 +2505,8 @@
   #bar-achievements-next { margin-left: .5em; padding-left: .5em; border-left: 1px solid currentColor; opacity: .7; font-size: .85em; white-space: nowrap; }
   #bar-achievements-next[hidden] { display: none; }
   @media (max-width: 720px) { #bar-achievements-next { display: none; } }
+  /* the bar stays one row: lobby.js _fitBarNext drops the line when it wouldn't fit */
+  #lobby-bar.bar-next-off #bar-achievements-next { display: none; }
   #achievements-modal .uf-sheet__body { transition: filter 420ms ease; }
   #achievements-modal .uf-sheet__body.ach-dim { filter: blur(6px) brightness(0.5); }
   #achievements-modal .uf-sheet__body {
