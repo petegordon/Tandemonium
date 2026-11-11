@@ -3403,6 +3403,13 @@ export class Lobby {
     this._playersSheet = $('players-sheet');   // #646: Players replaces Controls
     if (!this._bar || !this._playersSheet) return;
     this._tvQuery = window.matchMedia('(min-width: 1024px)');
+    // The next-bike line on the Achievements pill shows only while the bar fits one row (see
+    // _fitBarNext). Any size change re-checks: the window, a pill's text, Back or Quit coming and going.
+    if (typeof ResizeObserver === 'function') {
+      this._barFit = new ResizeObserver(() => this._fitBarNext());
+      this._barFit.observe(this._bar);
+      this._bar.querySelectorAll('uf-button').forEach((b) => this._barFit.observe(b));
+    }
     const pill = (id, fn) => {
       const el = $(id);
       // stopPropagation: the popups' "click outside closes" listeners must not
@@ -3601,6 +3608,35 @@ export class Lobby {
    * line with P1's controller and the steering toggles. Cheap; called from
    * _setToggleActive, step changes, the sheet, and ~1 Hz from the nav loop.
    */
+  /**
+   * #738 put the next bike on the Achievements pill ("35 to Jungle Cruiser"). The bar is meant to
+   * stay one row (Pete, 2026-11-02); on a narrow one (720p, Back on the step, Quit, a long name) the
+   * line wrapped the bar to three rows and it covered the join keypad's Delete / JOIN. So the line
+   * drops when the whole bar wouldn't fit one row with it; the pill's tooltip still names the bike.
+   * Measured from each part's natural width, so the answer doesn't depend on the current wrapping
+   * (no flip-flop when hiding it changes the bar's height).
+   */
+  _fitBarNext() {
+    const bar = this._bar, next = document.getElementById('bar-achievements-next');
+    if (!bar) return;
+    const back = bar.querySelector('.uf-bar__back');
+    if (back && !this._barFitBack && this._barFit) { this._barFitBack = true; this._barFit.observe(back); }
+    bar.classList.remove('bar-next-off');
+    if (!next || next.hidden) return;
+    const w = (e) => e.getBoundingClientRect().width;
+    const cs = getComputedStyle(bar);
+    const room = w(bar) - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+    const parts = Array.from(bar.querySelectorAll('.uf-bar__back, .uf-bar__group')).filter((e) => w(e) > 0);
+    if (!parts.length || room <= 0) return;   // the bar isn't showing (phone layout)
+    const natural = (e) => {
+      if (!e.classList.contains('uf-bar__group')) return w(e);
+      const kids = Array.from(e.children).filter((c) => w(c) > 0);
+      return kids.reduce((s, c) => s + w(c), 0) + (parseFloat(getComputedStyle(e).columnGap) || 0) * Math.max(0, kids.length - 1);
+    };
+    const need = parts.reduce((s, e) => s + natural(e), 0) + (parseFloat(cs.columnGap) || 0) * (parts.length - 1);
+    if (need > room + 0.5) bar.classList.add('bar-next-off');
+  }
+
   _syncSystemBar() {
     if (!this._bar) return;
     const id = this._p1Identity();
