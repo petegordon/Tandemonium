@@ -3,6 +3,8 @@
 //
 //   BL-01  full game, no achievements: Berry and Cherry ride; Jungle is locked with "0 of 35 achievements"
 //   BL-02  the pill says the next bike ("35 to Jungle Cruiser")
+//   BL-02b the line keeps the bar one row: on the 1280x720 menu it drops (the tooltip still names the
+//          bike); the 1280x720 join step (no art panel) and the 1600x900 menu have room, so it shows
 //   BL-03  the first menu visit takes what the player has as seen (no screen)
 //   BL-04  35 achievements, back on the menu: "New bike!" with Jungle Cruiser; RIDE IT NOW picks it and opens SOLO RIDE
 //   BL-05  the Jungle ride to Grandma's that is also the 50th: "2 new bikes!" (Banana Delivery + Christmas Cruiser), one screen
@@ -63,6 +65,26 @@ console.log('BL-02 the pill');
 const pillOk = await until(page, () => (document.getElementById('bar-achievements-next') || {}).textContent === '35 to Jungle Cruiser', null, 5000);
 check(pillOk, 'BL-02: the Achievements pill says the next bike', await page.evaluate(() => ({
   next: (document.getElementById('bar-achievements-next') || {}).textContent, title: document.getElementById('bar-achievements').title })));
+
+// ── BL-02b the line keeps the bar one row ──
+console.log('BL-02b the bar stays one row');
+const barAt = async (w, hh) => {
+  await page.setViewport({ width: w, height: hh });
+  await sleep(500);
+  return page.evaluate(() => {
+    const bar = document.getElementById('lobby-bar'); const next = document.getElementById('bar-achievements-next');
+    const rows = new Set(Array.from(bar.querySelectorAll('uf-button')).filter((b) => b.getBoundingClientRect().width > 0)
+      .map((b) => Math.round(b.getBoundingClientRect().top / 10))).size;
+    return { shown: !!next && next.getBoundingClientRect().width > 0, rows, title: document.getElementById('bar-achievements').title };
+  });
+};
+const narrowMenu = await barAt(1280, 720);
+await page.evaluate(() => { const l = window._game.lobby; l._showStep(l.joinStep); });
+const narrowJoin = await barAt(1280, 720);
+await page.evaluate(() => { const l = window._game.lobby; l._showStep(l.modeStep); });
+const wide = await barAt(1600, 900);
+check(!narrowMenu.shown && narrowMenu.rows === 1 && /Jungle Cruiser/.test(narrowMenu.title) && narrowJoin.shown && narrowJoin.rows === 1 && wide.shown && wide.rows === 1,
+  'BL-02b: the next-bike line drops on a narrow bar (tooltip keeps it), and is back when the bar fits one row', { narrowMenu, narrowJoin, wide });
 
 // ── BL-03 first visit: seeded, no screen ──
 console.log('BL-03 first menu visit');
