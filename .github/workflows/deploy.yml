@@ -118,7 +118,11 @@ jobs:
           publish_branch: gh-pages
           # No exclude_assets for pr-preview: we now restore it INTO _site (see
           # the preserve step), so it must be published rather than excluded.
-          keep_files: true
+          # keep_files: false · _site is the whole truth (the game + open PRs'
+          # previews), so gh-pages becomes exactly _site. With true, anything
+          # already on gh-pages stayed: a merged PR's preview whose removal run
+          # was cancelled (back-to-back merges) was never removed (Nov 12 2026).
+          keep_files: false
           cname: tandemonium.housetandem.com
 
       # Re-read the previews after the racing preview push so the retry
@@ -143,5 +147,5 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_site
           publish_branch: gh-pages
-          keep_files: true
+          keep_files: false
           cname: tandemonium.housetandem.com
