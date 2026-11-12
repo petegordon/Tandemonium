@@ -74,6 +74,17 @@ export function webhookName(name) {
   return n.length >= 1 ? n : 'A rider';
 }
 
+/**
+ * The DISCORD_SHARE_WEBHOOK secret as a usable webhook URL, or null. Trimmed
+ * (a pasted secret can carry a newline), and the versioned /api/v10/webhooks/
+ * form Discord also hands out is accepted. /share/config uses the same test,
+ * so it never offers a post the Worker would refuse.
+ */
+export function shareWebhook(env) {
+  const hook = typeof env.DISCORD_SHARE_WEBHOOK === 'string' ? env.DISCORD_SHARE_WEBHOOK.trim() : '';
+  return /^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/(v\d+\/)?webhooks\/\d+\/[\w-]+/.test(hook) ? hook : null;
+}
+
 /** Is it a GIF (GIF87a / GIF89a)? */
 export function sniffGif(bytes) {
   return !!bytes && bytes.length > 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38
@@ -107,7 +118,7 @@ async function hashIp(ip, salt) {
 export async function handleShareRoute(request, env, { path, url, clientIP, corsOrigin }, deps) {
   const { jsonResponse } = deps;
   if (path === '/share/config' && request.method === 'GET') {
-    return jsonResponse({ discord: !!env.DISCORD_SHARE_WEBHOOK }, 200, corsOrigin);
+    return jsonResponse({ discord: !!shareWebhook(env) }, 200, corsOrigin);
   }
   if (path === '/share' && request.method === 'POST') {
     const limited = await deps.checkRateLimit(env.SHARE_LIMITER, 'ip:' + clientIP, corsOrigin, env);
@@ -208,8 +219,8 @@ async function getShareImage(env, id, corsOrigin, { jsonResponse, corsHeaders })
 
 async function postToDiscord(request, env, clientIP, corsOrigin, deps) {
   const { jsonResponse } = deps;
-  const hook = env.DISCORD_SHARE_WEBHOOK;
-  if (!hook || !/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\//.test(hook)) {
+  const hook = shareWebhook(env);
+  if (!hook) {
     return jsonResponse({ error: 'Discord posting is not set up', code: 'discord_off' }, 503, corsOrigin);
   }
   const userId = await deps.getUserFromRequest(request, env);
@@ -276,8 +287,8 @@ async function postToDiscord(request, env, clientIP, corsOrigin, deps) {
  */
 async function postClipToDiscord(request, env, url, corsOrigin, deps) {
   const { jsonResponse } = deps;
-  const hook = env.DISCORD_SHARE_WEBHOOK;
-  if (!hook || !/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\//.test(hook)) {
+  const hook = shareWebhook(env);
+  if (!hook) {
     return jsonResponse({ error: 'Discord posting is not set up', code: 'discord_off' }, 503, corsOrigin);
   }
   const userId = await deps.getUserFromRequest(request, env);
