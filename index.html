@@ -5610,6 +5610,9 @@ ON</button>
     clearInterval(poll);
     clearInterval(creep);
     setProgress(100);
+    // A false alarm (an early error the game shrugged off) must not cover the game once it is up.
+    var panel = document.getElementById('boot-fail');
+    if (panel) panel.classList.remove('show');
   }, 100);
 
   setTimeout(function () {
@@ -5620,9 +5623,14 @@ ON</button>
   }, BOOT_TIMEOUT_MS);
 
   // ── 4. Error trap ──────────────────────────────────────────────────────
+  // Harmless browser warnings that arrive as window 'error' events but stop nothing. "ResizeObserver
+  // loop completed with undelivered notifications" fired at ~1 s on Pete's Mac Steam build (#713,
+  // 2026-11-11) when Steam's Game Mode went full screen, and showed "failed to start" over a game that ran.
+  var BENIGN = /ResizeObserver loop/i;
   window.addEventListener('error', function (e) {
     if (booted) return;
     var msg = e && (e.message || (e.error && e.error.message)) || 'unknown error';
+    if (BENIGN.test(msg)) return;
     showFailure('error', msg);
   });
   window.addEventListener('unhandledrejection', function (e) {
