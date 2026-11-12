@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read   # prune previews of closed PRs (see below)
 
 # Own queue, NOT the gh-pages-write group the PR previews use. A concurrency
 # group holds only one pending run, so sharing it let a burst of preview runs
@@ -95,6 +96,16 @@ jobs:
             echo "No existing PR previews to preserve"
           fi
 
+      # Keep only previews of PRs that are still open. Merging a PR starts this
+      # deploy and the preview removal together; when this job copied gh-pages
+      # before the removal landed, it re-published the merged PR's ~340 MB
+      # preview at full size. 44 came back that way and gh-pages reached
+      # 14 GB, past the Pages 1 GB limit, so publishes failed Nov 8-12 2026.
+      - name: Drop previews of closed PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/prune-previews.sh _site/pr-preview
+
       - name: Deploy to gh-pages branch
         id: deploy
         # A preview push landing mid-deploy rejects this one (non-fast-forward).
@@ -114,6 +125,8 @@ jobs:
       # republishes its new pr-preview/ content instead of reverting it.
       - name: Refresh PR previews for retry
         if: steps.deploy.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           sleep 20
           rm -rf _site/pr-preview
@@ -121,6 +134,7 @@ jobs:
           if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
             git archive origin/gh-pages pr-preview | tar -x -C _site || echo "WARNING: failed to preserve pr-preview"
           fi
+          bash .github/scripts/prune-previews.sh _site/pr-preview
 
       - name: Deploy to gh-pages branch (retry)
         if: steps.deploy.outcome == 'failure'

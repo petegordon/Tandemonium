@@ -2802,6 +2802,12 @@
   #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { top: auto !important; bottom: 3%; transform: translateX(-50%) !important;
     width: max-content !important; max-width: 92%; padding-top: 5px; padding-bottom: 5px; background: rgba(0,0,0,0.62); }
   /* a holiday bike's rides as short chips that wrap (✓ won / ✗ not yet) */
+  /* Phone layout: the name sits under the picture inside #bike-preview-wrap, so "bottom: 3%" of the wrap put the
+     line over the name (Pete, 2026-11-12). Lift it to the picture's own bottom edge: the name's one line + the gap. */
+  @media (max-width: 1023px) {
+    #bike-name { white-space: nowrap; line-height: 22px; }
+    #bike-hint.bike-hint-low, #lobby #bike-hint.bike-hint-low { bottom: calc(22px + 2px + 6px); }
+  }
   #bike-hint .bike-reqs { display: flex; flex-wrap: wrap; justify-content: center; gap: 1px 8px; font-size: 0.85em; margin-bottom: 2px; }
   #bike-hint .bike-req { color: rgba(255,255,255,0.45); white-space: nowrap; }
   #bike-hint .bike-gift { white-space: nowrap; }

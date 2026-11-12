@@ -197,6 +197,7 @@ await page.evaluate(() => document.getElementById('new-bike-later').click());
 //   Robot geese with it)
 console.log('BL-09 the chooser: paint, outfit geese, silhouettes');
 await grant(page, 10);
+await page.evaluate(() => window._game._setChooserGeese('ride'));   // BL-09 checks "On the bike"; BL-10 the default
 const pick = (k) => page.evaluate((k) => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf(k); l._applyPresetToPreview(); }, k);
 const view = (k) => page.evaluate((k) => {
   const l = window._game.lobby, sp = (l._specialPreviews || {})[k], hint = document.getElementById('bike-hint');
@@ -243,13 +244,19 @@ check(xmas2.name.startsWith('🏆') && xmas2.picked === 'bike_christmas' && xmas
   'BL-09: the earned Christmas Cruiser: rideable, its geese pedalling', xmas2);
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = 0; l._applyPresetToPreview(); });
 
-// ── BL-10 the Bike Chooser Geese setting: beside the bike (Pete, 2026-11-10; default on the bike) ──
+// ── BL-10 the Bike Chooser Geese setting: beside the bike (Pete, 2026-11-10; the default since 2026-11-11) ──
 console.log('BL-10 Bike Chooser Geese: beside the bike');
 await grant(page, 10);
 const opt = (id) => page.evaluate((id) => !!document.getElementById(id), id);
 check(await opt('opt-chooser-geese-ride') && await opt('opt-chooser-geese-stand')
-  && await page.evaluate(() => (localStorage.getItem('tandemonium_chooser_geese') || 'ride') === 'ride'),
-  'BL-10: Settings has "Bike Chooser Geese" (On the bike / Beside the bike), on the bike by default');
+  && await page.evaluate(async () => {   // (unset, then put back: the setting is 'ride' from BL-09)
+    const k = 'tandemonium_chooser_geese', was = localStorage.getItem(k);
+    localStorage.removeItem(k);
+    const mode = (await import('./js/config.js')).getChooserGeese();
+    if (was !== null) localStorage.setItem(k, was);
+    return mode === 'stand';
+  }),
+  'BL-10: Settings has "Bike Chooser Geese" (On the bike / Beside the bike), beside the bike by default');
 await page.evaluate(() => window._game._setChooserGeese('stand'));
 const standing = (k) => until(page, (k) => { const sp = (window._game.lobby._specialPreviews || {})[k];
   return !!(sp && sp.model && sp.model.visible && sp.stand && sp.stand.visible && sp.actors && sp.actors.length === 2); }, k, 60000);
@@ -270,6 +277,13 @@ check(await page.evaluate(() => window._game.lobby._specialPreviews.solo_flight.
 await page.evaluate(() => window._game._setChooserGeese('ride'));
 await pick('bike_christmas');
 check(await seated('bike_christmas'), 'BL-10: back to "On the bike": the geese ride it again');
+// a player who rides as a goose still sees a gander and a goose (Pete, 2026-11-11: both were geese)
+await page.evaluate(() => { const L = window.__playerLooks; L.set(1, undefined, { ...L.get(1), body: 'f' }); window._game.lobby.chooserGeeseChanged(); });
+await pick('bike_christmas');
+await until(page, () => { const sp = window._game.lobby._specialPreviews.bike_christmas; return !!(sp && sp.riders && sp.geeseBodies); }, null, 60000);
+const pair = await page.evaluate(() => window._game.lobby._specialPreviews.bike_christmas.geeseBodies);
+check(pair && pair.Captain === 'f' && pair.Stoker === 'm', 'BL-10: a goose player: the captain rides as a goose, the stoker as a gander', pair);
+await page.evaluate(() => { const L = window.__playerLooks; L.set(1, undefined, { ...L.get(1), body: 'm' }); });
 await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = 0; l._applyPresetToPreview(); });
 
 // ── BL-07 demo → full game ──

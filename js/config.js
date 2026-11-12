@@ -126,12 +126,13 @@ export function getRidersLight() {
 }
 
 /**
- * Pete, 2026-11-10 · Bike Chooser Geese: a reward bike's outfit geese ride it in the chooser ('ride', the
- * default) or stand either side of it ('stand', so the bike's frame and seats all show).
+ * Pete, 2026-11-10 · Bike Chooser Geese: a reward bike's outfit geese ride it in the chooser ('ride') or stand
+ * either side of it on its pedestal ('stand', so the bike's frame and seats all show). Pete, 2026-11-11: 'stand' is
+ * the default.
  */
 export const CHOOSER_GEESE_KEY = 'tandemonium_chooser_geese';
 export function getChooserGeese() {
-  try { return localStorage.getItem(CHOOSER_GEESE_KEY) === 'stand' ? 'stand' : 'ride'; } catch (e) { return 'ride'; }
+  try { return localStorage.getItem(CHOOSER_GEESE_KEY) === 'ride' ? 'ride' : 'stand'; } catch (e) { return 'stand'; }
 }
 export function setChooserGeese(mode) {
   try { localStorage.setItem(CHOOSER_GEESE_KEY, mode === 'stand' ? 'stand' : 'ride'); } catch (e) { /* storage off */ }
