@@ -359,3 +359,21 @@ test('POST /share/discord/clip: guests, no Discord, not a member, not a GIF, too
     assert.equal(db2.prepare("SELECT COUNT(*) AS n FROM discord_posts WHERE day_key LIKE 'clip-%'").get().n, 0);
   } finally { down.restore(); }
 });
+
+test('shareWebhook: a pasted secret with a newline, and the /api/v10/ form, both work', async () => {
+  const { shareWebhook } = await import('../../worker/share.js');
+  assert.equal(shareWebhook({ DISCORD_SHARE_WEBHOOK: HOOK + '\n' }), HOOK);
+  assert.equal(shareWebhook({ DISCORD_SHARE_WEBHOOK: '  https://discord.com/api/v10/webhooks/123/ab-C_d ' }), 'https://discord.com/api/v10/webhooks/123/ab-C_d');
+  assert.equal(shareWebhook({ DISCORD_SHARE_WEBHOOK: 'https://evil.example/api/webhooks/1/x' }), null);
+  assert.equal(shareWebhook({ DISCORD_SHARE_WEBHOOK: 'https://discord.com/channels/1/2' }), null);
+  assert.equal(shareWebhook({}), null);
+  // The Worker posts with the trimmed URL.
+  const db = freshDb();
+  const env = envFor(db, { ...CLIP_ENV, DISCORD_SHARE_WEBHOOK: HOOK + '\r\n' });
+  const uid = addUser(db);
+  const dc = fakeDiscord(new Set(['8035' + uid]));
+  try {
+    assert.equal((await postClip(env, { token: jwt(uid) })).status, 200);
+    assert.ok(dc.posts[0].url.startsWith(HOOK + '?wait=true'));
+  } finally { dc.restore(); }
+});
