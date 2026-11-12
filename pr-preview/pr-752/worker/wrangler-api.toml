@@ -1,0 +1,59 @@
+name = "tandemonium-api"
+main = "index.js"
+compatibility_date = "2024-01-01"
+# index.js exports the HouseTandemGames RPC entrypoint for other game Workers (dice).
+compatibility_flags = ["rpc"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tandemonium-leaderboard"
+database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
+
+[vars]
+CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
+# #612: House Tandem Discord application (sign-in). DISCORD_CLIENT_SECRET is a secret.
+DISCORD_CLIENT_ID = "1568461616578699348"
+# #612 · the House Tandem players' Discord: membership shows on the account page (needs the
+# DISCORD_BOT_TOKEN secret and the House Tandem bot in the server).
+DISCORD_GUILD_ID = "1560085412838379560"
+DISCORD_INVITE_URL = "https://housetandem.com/discord"
+# Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
+
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "tandemonium_api"
+
+# Rate limiting (Pete 2026-11-09): the same two rules for every route,
+# applied in one place (limitRequest in leaderboard.js).
+# 1. Per player: 30 a minute for each kind of write, keyed by the account when
+#    signed in, else the session / device / ride id.
+[[unsafe.bindings]]
+name = "PLAYER_LIMITER"
+type = "ratelimit"
+namespace_id = "1009"
+simple = { limit = 30, period = 60 }
+
+# 2. Per IP: 300 a minute across every route. A venue puts every machine on one
+#    IP (~15-20 a minute each while riding); this ceiling is what stops a script.
+[[unsafe.bindings]]
+name = "IP_LIMITER"
+type = "ratelimit"
+namespace_id = "1010"
+simple = { limit = 300, period = 60 }
+
+# Starting a sign-in (no player yet): 30 a minute per IP.
+[[unsafe.bindings]]
+name = "SIGNIN_LIMITER"
+type = "ratelimit"
+namespace_id = "1011"
+simple = { limit = 30, period = 60 }
+
+# #657 · share a result: card uploads for the TV's QR + the #daily-ride post.
+# (A D1 cap also holds each IP / device to a few dozen a day.)
+[[unsafe.bindings]]
+name = "SHARE_LIMITER"
+type = "ratelimit"
+namespace_id = "1008"
+simple = { limit = 6, period = 60 }
+# DISCORD_SHARE_WEBHOOK (the House Tandem server's #daily-ride webhook URL) is a
+# secret: wrangler secret put DISCORD_SHARE_WEBHOOK --config wrangler-api.toml
