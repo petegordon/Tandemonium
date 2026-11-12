@@ -9654,7 +9654,14 @@ export class Lobby {
       onReady(sp);
       if (!outfit) return;
       let looks = null;
-      try { looks = getSeatLooks('solo'); } catch (e) { /* the outfit's own bodies */ }
+      try {
+        // the outfit's pair: a gander and a goose, the captain in the player's body and the stoker in the other
+        // (solo's mirrored stoker is always the goose, so a player who rides as a goose got two; Pete, 2026-11-11)
+        const solo = getSeatLooks('solo');
+        const cap = solo.Captain.body === 'f' ? 'f' : 'm';
+        looks = { Captain: { ...solo.Captain, body: cap }, Stoker: { ...solo.Stoker, body: cap === 'f' ? 'm' : 'f' } };
+      } catch (e) { /* the outfit's own bodies */ }
+      sp.geeseBodies = looks ? { Captain: looks.Captain.body, Stoker: looks.Stoker.body } : null;   // (smokes)
       if (geeseMode === 'stand') { this._standOutfitGeese(sp, looks, track, Math.max(size.x, size.z) * model.scale.x / 2); return; }
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
         const roots = Object.values(riders.riders).filter(Boolean).map((r) => r.root);
