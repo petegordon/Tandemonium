@@ -59,6 +59,19 @@ export function cutShortWindow(chunks, seconds = SHORT_CLIP_SECONDS, fps = 20) {
   return start < 0 ? [] : chunks.slice(start);
 }
 
+/**
+ * The full clip from a rolling WebCodecs buffer, opened on its first keyframe.
+ * The buffer is pruned one chunk at a time by age, so after a full
+ * CLIP_SECONDS of riding it almost always opens on a delta frame; an MP4 that
+ * starts on one is undecodable, and iOS Photos refuses to save it.
+ * Returns a sub-array (the same records), or [] when there is no keyframe.
+ */
+export function fromFirstKeyframe(chunks) {
+  if (!chunks || !chunks.length) return [];
+  const start = chunks.findIndex(c => c.type === 'key');
+  return start < 0 ? [] : chunks.slice(start);
+}
+
 // #408 · the "Save Video, then send from Photos" hint: once per session.
 let _shareHintShown = false;
 
@@ -533,7 +546,9 @@ export class GameRecorder {
 
     // Snapshot: the encoder keeps running while the preview is open, and the
     // short cut (#408) must come from the very same chunks as the full clip.
-    const chunks = this._wcEncodedChunks.slice();
+    // The full clip opens on a keyframe, like the short one.
+    const chunks = fromFirstKeyframe(this._wcEncodedChunks);
+    if (!chunks.length) { _dbg('assemble BAIL: no keyframe in the buffer'); return; }
     const decoderConfig = this._wcLastDecoderConfig;
     const dims = { w: this.compCanvas.width, h: this.compCanvas.height };
 
