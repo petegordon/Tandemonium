@@ -270,3 +270,92 @@ test('POST /share/discord: when Discord refuses, the day is not used up', async 
     assert.equal(hook.posts.length, 1);
   } finally { hook.restore(); }
 });
+
+// ── #daily-ride-clips: a clip GIF from any ride, members of the House Tandem server only ──
+
+const GIF = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(64, 1)]);
+const CLIP_ENV = { DISCORD_BOT_TOKEN: 'bot', DISCORD_GUILD_ID: '42', DISCORD_INVITE_URL: 'https://housetandem.com/discord' };
+
+/** The webhook plus the bot's member lookup: Discord ids in `members` are in the server. */
+function fakeDiscord(members, status = 200) {
+  const real = globalThis.fetch;
+  const posts = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const u = String(input && input.url ? input.url : input);
+    const m = u.match(/\/guilds\/42\/members\/(\d+)$/);
+    if (m) return new Response('{}', { status: members.has(m[1]) ? 200 : 404 });
+    if (!u.startsWith(HOOK)) throw new Error('unexpected fetch ' + u);
+    const form = init.body;
+    posts.push({ url: u, payload: JSON.parse(form.get('payload_json')), file: form.get('files[0]') });
+    return new Response('{}', { status });
+  };
+  return { posts, restore: () => { globalThis.fetch = real; } };
+}
+
+const postClip = (env, { token, bytes = GIF, caption } = {}) => {
+  const headers = { 'CF-Connecting-IP': '1.2.3.4', Origin: 'https://tandemonium.housetandem.com', 'Content-Type': 'image/gif' };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  const q = caption ? '?caption=' + encodeURIComponent(caption) : '';
+  return worker.fetch(new Request('https://api.test/share/discord/clip' + q, { method: 'POST', headers, body: bytes }), env, { waitUntil() {} });
+};
+
+test('POST /share/discord/clip posts a member\'s GIF under their Discord name, any ride, more than once a day', async () => {
+  const db = freshDb();
+  const env = envFor(db, CLIP_ENV);
+  const uid = addUser(db, { name: 'Pete' });
+  const dc = fakeDiscord(new Set(['8035' + uid]));
+  try {
+    let r = await postClip(env, { token: jwt(uid), caption: 'Tandemonium · Victoria Park' });
+    assert.equal(r.status, 200, await r.clone().text());
+    assert.equal(dc.posts.length, 1);
+    const p = dc.posts[0];
+    assert.equal(p.payload.username, 'Pete on D-cord');
+    assert.equal(p.payload.content, 'Tandemonium · Victoria Park');
+    assert.deepEqual(p.payload.allowed_mentions, { parse: [] });
+    assert.equal(p.file.type, 'image/gif');
+    assert.equal(p.file.size, GIF.length);
+    r = await postClip(env, { token: jwt(uid) });
+    assert.equal(r.status, 200);
+    assert.equal(dc.posts[1].payload.content, 'Tandemonium');
+  } finally { dc.restore(); }
+});
+
+test('POST /share/discord/clip: guests, no Discord, not a member, not a GIF, too many, and Discord down', async () => {
+  const db = freshDb();
+  const env = envFor(db, CLIP_ENV);
+  const member = addUser(db);
+  const outsider = addUser(db);
+  const dc = fakeDiscord(new Set(['8035' + member]));
+  try {
+    assert.equal((await postClip(env)).status, 401);
+    const steamOnly = addUser(db, { discord: false });
+    let r = await postClip(env, { token: jwt(steamOnly) });
+    assert.equal((await r.json()).code, 'no_discord');
+    r = await postClip(env, { token: jwt(outsider) });
+    assert.equal(r.status, 403);
+    assert.deepEqual(await r.json(), { error: 'Join the House Tandem Discord to post', code: 'not_member', invite: 'https://housetandem.com/discord' });
+    r = await postClip(env, { token: jwt(member), bytes: PNG });
+    assert.equal((await r.json()).code, 'not_gif');
+    r = await postClip(envFor(db, { DISCORD_SHARE_WEBHOOK: undefined }), { token: jwt(member) });
+    assert.equal((await r.json()).code, 'discord_off');
+    assert.equal(dc.posts.length, 0);
+  } finally { dc.restore(); }
+
+  const capped = fakeDiscord(new Set(['8035' + member]));
+  try {
+    for (let i = 0; i < 10; i++) assert.equal((await postClip(env, { token: jwt(member) })).status, 200);
+    const r = await postClip(env, { token: jwt(member) });
+    assert.equal(r.status, 429);
+    assert.equal((await r.json()).code, 'clip_cap');
+  } finally { capped.restore(); }
+
+  // Discord refuses: the post is not counted.
+  const db2 = freshDb();
+  const env2 = envFor(db2, CLIP_ENV);
+  const u2 = addUser(db2);
+  const down = fakeDiscord(new Set(['8035' + u2]), 500);
+  try {
+    assert.equal((await postClip(env2, { token: jwt(u2) })).status, 502);
+    assert.equal(db2.prepare("SELECT COUNT(*) AS n FROM discord_posts WHERE day_key LIKE 'clip-%'").get().n, 0);
+  } finally { down.restore(); }
+});

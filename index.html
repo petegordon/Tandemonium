@@ -4406,7 +4406,8 @@
   .clip-actions {
     display: flex;
     gap: 10px;
-    flex-wrap: nowrap;
+    flex-wrap: wrap;   /* POST GIF TO DISCORD makes four: wrap on a phone */
+    max-width: 92vw;
     justify-content: center;
   }
   .clip-btn {
@@ -4428,6 +4429,11 @@
   .clip-btn-share {
     background: rgba(60,200,80,0.25);
     border-color: rgba(60,200,80,0.6);
+  }
+  /* #daily-ride-clips: Discord blurple */
+  .clip-btn-discord {
+    background: rgba(88,101,242,0.3);
+    border-color: rgba(88,101,242,0.75);
   }
   .clip-btn-discard {
     background: rgba(255,60,60,0.15);
@@ -6466,6 +6472,7 @@ ON</button>
   <div class="clip-actions" id="clip-actions">
     <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
     <button class="clip-btn" id="clip-save-btn">SAVE</button>
+    <button class="clip-btn clip-btn-discord" id="clip-discord-btn" style="display:none;">POST GIF TO DISCORD</button>
     <button class="clip-btn clip-btn-discard" id="clip-discard-btn">DISCARD</button>
   </div>
   <!-- #408 · share choice (iOS): the labels' seconds are filled by the recorder. -->
@@ -6869,6 +6876,7 @@ ON</button>
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
     "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/",
     "mp4-muxer": "https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs",
+    "gifenc": "https://cdn.jsdelivr.net/npm/gifenc@1.0.3/dist/gifenc.esm.js",
     "3d-tiles-renderer": "https://esm.sh/3d-tiles-renderer@0.3.46?external=three",
     "3d-tiles-renderer/plugins": "https://esm.sh/3d-tiles-renderer@0.3.46/plugins?external=three"
   }

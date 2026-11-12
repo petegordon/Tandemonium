@@ -532,12 +532,22 @@ export async function handleSteamWebCallback(request, env, url, deps) {
  */
 export async function handleDiscordMembership(request, env, corsOrigin, userId, deps) {
   const invite = env.DISCORD_INVITE_URL || null;
+  const { linked, member } = await discordMemberStatus(env, userId, deps.fetchImpl);
+  return deps.jsonResponse({ linked, member, invite }, 200, corsOrigin);
+}
+
+/**
+ * Is this account's Discord in the House Tandem server? → { linked, member }
+ * member: true | false, or null when it can't be checked. Also used by the
+ * #daily-ride-clips post (worker/share.js), which needs a member.
+ */
+export async function discordMemberStatus(env, userId, fetchImpl = fetch) {
   const row = await env.DB.prepare(
     "SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC LIMIT 1"
   ).bind(userId).first();
-  if (!row) return deps.jsonResponse({ linked: false, member: null, invite }, 200, corsOrigin);
-  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) return deps.jsonResponse({ linked: true, member: null, invite }, 200, corsOrigin);
-  const fetchImpl = deps.fetchImpl || fetch;
+  if (!row) return { linked: false, member: null };
+  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) return { linked: true, member: null };
+  fetchImpl = fetchImpl || fetch;
   let member = null;
   try {
     const res = await fetchImpl(`${DISCORD_API}/v10/guilds/${env.DISCORD_GUILD_ID}/members/${row.provider_id}`, {
@@ -547,7 +557,7 @@ export async function handleDiscordMembership(request, env, corsOrigin, userId, 
     if (res.ok) member = true;
     else if (res.status === 404) member = false;
   } catch {}
-  return deps.jsonResponse({ linked: true, member, invite }, 200, corsOrigin);
+  return { linked: true, member };
 }
 
 // ------------------------------------------------------------
