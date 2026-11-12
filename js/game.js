@@ -434,6 +434,20 @@ class Game {
     this.archIndicator = new ArchIndicator(this.scene);
     this._partnerBikeColor = null;
     this.recorder = new GameRecorder(this.renderer.domElement, this.input);
+    // #daily-ride-clips · the clip preview's POST GIF TO DISCORD, any ride.
+    this.recorder.discordClip = {
+      apiBase: API_BASE,
+      configured: () => fetchShareConfig({ apiBase: API_BASE }).then((c) => c.discord),
+      token: () => {
+        const auth = this.lobby && this.lobby.auth;
+        if (!auth || !auth.getToken || !auth.hasIdentity || !auth.hasIdentity('discord')) return null;
+        return auth.getToken() || null;
+      },
+      caption: () => {
+        const level = this.lobby && this.lobby.selectedLevel;
+        return level && level.name ? 'Tandemonium · ' + level.name : 'Tandemonium';
+      },
+    };
     // NOTE: clip recording is NOT gated on the general _lowQuality render flag.
     // The recorder runs its own GPU-readback probe (_detectLowEndDevice) to
     // decide if recording is viable. A coarse/stale hardware-tier

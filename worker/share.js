@@ -1,3 +1,4 @@
+import { discordMemberStatus } from './identity.js';
 // ============================================================
 // SHARE A RESULT (#657 parts 2 + 3)
 // ============================================================
@@ -12,6 +13,13 @@
 //                             secret, under the player's Discord name and picture. Daily Ride only,
 //                             one post per player per day. 503 when the secret is not set.
 //
+//   POST /share/discord/clip  raw GIF bytes (Content-Type: image/gif), ?caption= optional
+//                             (signed in, Discord linked, a member of the House Tandem server)
+//                             → posts the clip GIF to the same channel (now #daily-ride-clips)
+//                             under the player's Discord name and picture. Any ride; up to
+//                             CLIP_POSTS_PER_DAY a player a day. 403 not_member → the game says
+//                             join the House Tandem Discord.
+//
 // The TV shows a QR for SITE_URL/share/?id=…; that page (share/index.html)
 // reads the metadata and offers the phone's share sheet.
 
@@ -20,6 +28,9 @@ export const SHARE_MAX_BYTES = 1_000_000;
 export const SHARES_PER_IP_DAY = 30;
 export const SHARES_PER_DEVICE_DAY = 20;
 export const SITE_URL = 'https://tandemonium.housetandem.com';
+/** A clip GIF: under Discord's 10 MB attachment limit for a server with no boosts. */
+export const CLIP_GIF_MAX_BYTES = 9_500_000;
+export const CLIP_POSTS_PER_DAY = 10;
 const LINK_ORIGINS = ['https://tandemonium.housetandem.com', 'https://tandemonium.jimandi.love'];
 const ID_RE = /^[A-Za-z0-9]{12}$/;
 const DAY_RE = /^\d{4}-\d\d-\d\d$/;
@@ -63,6 +74,12 @@ export function webhookName(name) {
   return n.length >= 1 ? n : 'A rider';
 }
 
+/** Is it a GIF (GIF87a / GIF89a)? */
+export function sniffGif(bytes) {
+  return !!bytes && bytes.length > 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38
+    && (bytes[4] === 0x37 || bytes[4] === 0x39) && bytes[5] === 0x61;
+}
+
 /** A day key within a day of the server's UTC date (the Daily Ride rolls over by time zone). */
 export function dayKeyIsCurrent(key, now = Date.now()) {
   if (!DAY_RE.test(key || '')) return false;
@@ -96,6 +113,9 @@ export async function handleShareRoute(request, env, { path, url, clientIP, cors
     const limited = await deps.checkRateLimit(env.SHARE_LIMITER, 'ip:' + clientIP, corsOrigin, env);
     if (limited) return limited;
     return createShare(request, env, clientIP, corsOrigin, deps);
+  }
+  if (path === '/share/discord/clip' && request.method === 'POST') {
+    return postClipToDiscord(request, env, url, corsOrigin, deps);
   }
   if (path === '/share/discord' && request.method === 'POST') {
     return postToDiscord(request, env, clientIP, corsOrigin, deps);
@@ -246,4 +266,68 @@ async function postToDiscord(request, env, clientIP, corsOrigin, deps) {
   await env.DB.prepare('DELETE FROM discord_posts WHERE posted_at < ?').bind(Date.now() - 3 * 24 * 3600 * 1000).run();
   if (deps.writeMetric) deps.writeMetric(env, 'share_discord');
   return jsonResponse({ ok: true, dayKey: share.day_key }, 200, corsOrigin);
+}
+
+/**
+ * POST /share/discord/clip · a clip GIF to #daily-ride-clips. Members only:
+ * the House Tandem server's own players post there.
+ * Clip posts share the discord_posts table with day_key 'clip-<ms>-<rand>'
+ * (unique, so no one-a-day clash), counted over the last 24 h.
+ */
+async function postClipToDiscord(request, env, url, corsOrigin, deps) {
+  const { jsonResponse } = deps;
+  const hook = env.DISCORD_SHARE_WEBHOOK;
+  if (!hook || !/^https:\/\/(discord\.com|discordapp\.com|ptb\.discord\.com|canary\.discord\.com)\/api\/webhooks\//.test(hook)) {
+    return jsonResponse({ error: 'Discord posting is not set up', code: 'discord_off' }, 503, corsOrigin);
+  }
+  const userId = await deps.getUserFromRequest(request, env);
+  if (!userId) return jsonResponse({ error: 'Sign in with Discord to post', code: 'signin' }, 401, corsOrigin);
+  const limited = await deps.checkRateLimit(env.SHARE_LIMITER, 'user:' + userId, corsOrigin, env);
+  if (limited) return limited;
+  const user = await env.DB.prepare('SELECT id, display_name FROM users WHERE id = ?').bind(userId).first();
+  if (!user) return jsonResponse({ error: 'Account not found', code: 'account_gone' }, 401, corsOrigin);
+  const ids = await deps.listIdentities(env, user.id);
+  const discord = ids.discord;
+  if (!discord) return jsonResponse({ error: 'Link Discord to post', code: 'no_discord' }, 403, corsOrigin);
+  const status = await (deps.discordMemberStatus || discordMemberStatus)(env, user.id, deps.fetchImpl);
+  if (status.member === false) return jsonResponse({ error: 'Join the House Tandem Discord to post', code: 'not_member', invite: env.DISCORD_INVITE_URL || null }, 403, corsOrigin);
+  if (status.member !== true) return jsonResponse({ error: 'Could not check the House Tandem Discord', code: 'member_unknown' }, 503, corsOrigin);
+
+  const len = Number(request.headers.get('Content-Length') || 0);
+  if (len > CLIP_GIF_MAX_BYTES) return jsonResponse({ error: 'Clip too big', code: 'too_big' }, 413, corsOrigin);
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.length > CLIP_GIF_MAX_BYTES) return jsonResponse({ error: 'Clip too big', code: 'too_big' }, 413, corsOrigin);
+  if (!sniffGif(bytes)) return jsonResponse({ error: 'Not a GIF', code: 'not_gif' }, 400, corsOrigin);
+
+  const now = Date.now();
+  const today = await env.DB.prepare("SELECT COUNT(*) AS n FROM discord_posts WHERE user_id = ? AND day_key LIKE 'clip-%' AND posted_at > ?")
+    .bind(user.id, now - 24 * 3600 * 1000).first();
+  if (today && today.n >= CLIP_POSTS_PER_DAY) return jsonResponse({ error: 'That is ten clips today', code: 'clip_cap' }, 429, corsOrigin);
+  const key = 'clip-' + now + '-' + newShareId().slice(0, 6);
+  await env.DB.prepare('INSERT INTO discord_posts (user_id, day_key, share_id, posted_at) VALUES (?, ?, NULL, ?)').bind(user.id, key, now).run();
+
+  const caption = cleanText(url.searchParams.get('caption') || '', 120) || 'Tandemonium';
+  const filename = 'tandemonium-clip.gif';
+  const payload = {
+    username: webhookName(discord.name || user.display_name),
+    content: caption,
+    allowed_mentions: { parse: [] },
+    attachments: [{ id: 0, filename }],
+  };
+  if (typeof discord.avatar === 'string' && /^https:\/\//.test(discord.avatar)) payload.avatar_url = discord.avatar;
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify(payload));
+  form.append('files[0]', new Blob([bytes], { type: 'image/gif' }), filename);
+  let ok = false;
+  try {
+    const res = await (deps.fetchImpl || fetch)(hook + (hook.includes('?') ? '&' : '?') + 'wait=true', { method: 'POST', body: form });
+    ok = res.ok;
+  } catch { ok = false; }
+  if (!ok) {
+    await env.DB.prepare('DELETE FROM discord_posts WHERE user_id = ? AND day_key = ?').bind(user.id, key).run();
+    return jsonResponse({ error: 'Discord did not take the post', code: 'discord_failed' }, 502, corsOrigin);
+  }
+  await env.DB.prepare('DELETE FROM discord_posts WHERE posted_at < ?').bind(now - 3 * 24 * 3600 * 1000).run();
+  if (deps.writeMetric) deps.writeMetric(env, 'share_discord_clip');
+  return jsonResponse({ ok: true }, 200, corsOrigin);
 }
