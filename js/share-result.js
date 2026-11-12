@@ -168,3 +168,62 @@ export async function postCardToDiscord({ id, token }, { apiBase = SHARE_API_BAS
   if (res.status === 401 || res.status === 403) return { ok: false, state: 'signin', status: res.status, code: out.code };
   return { ok: false, state: 'error', status: res.status, code: out.code };
 }
+
+// ── #daily-ride-clips: a clip GIF from any ride (members of the House Tandem server) ──
+
+/** Where JOIN THE HOUSE TANDEM DISCORD goes. */
+export const HOUSE_TANDEM_DISCORD_URL = 'https://housetandem.com/discord';
+
+/** The clip preview's POST GIF TO DISCORD button: its words for a state. */
+export function clipDiscordLabel(state, progress = 0) {
+  switch (state) {
+    case 'making': return progress > 0 ? `MAKING GIF… ${Math.round(progress * 100)}%` : 'MAKING GIF…';
+    case 'posting': return 'POSTING…';
+    case 'posted': return 'POSTED TO DISCORD ✓';
+    case 'signin': return 'SIGN IN WITH DISCORD TO POST';
+    case 'join': return 'JOIN THE HOUSE TANDEM DISCORD';
+    case 'cap': return 'TEN CLIPS TODAY · TRY TOMORROW';
+    case 'error': return 'DIDN\'T POST · TRY AGAIN';
+    default: return 'POST GIF TO DISCORD';
+  }
+}
+
+/**
+ * GET /me/discord → 'member' | 'join' | 'signin' | 'unknown'.
+ * 'unknown' (Discord down, no bot): the server decides on the post.
+ */
+export async function discordMemberState(token, { apiBase = SHARE_API_BASE, fetchFn = globalThis.fetch } = {}) {
+  if (!token) return 'signin';
+  try {
+    const res = await fetchFn(apiBase + '/me/discord', { headers: { Authorization: 'Bearer ' + token } });
+    if (res.status === 401) return 'signin';
+    const j = await res.json();
+    if (!j.linked) return 'signin';
+    if (j.member === true) return 'member';
+    if (j.member === false) return 'join';
+    return 'unknown';
+  } catch { return 'unknown'; }
+}
+
+/**
+ * POST /share/discord/clip with the GIF. Resolves { ok, state } where state
+ * is a clipDiscordLabel() state.
+ * @param {{ blob: Blob, token: string, caption?: string }} p
+ */
+export async function postClipGifToDiscord({ blob, token, caption = '' }, { apiBase = SHARE_API_BASE, fetchFn = globalThis.fetch } = {}) {
+  let res;
+  const q = caption ? '?caption=' + encodeURIComponent(caption.slice(0, 120)) : '';
+  try {
+    res = await fetchFn(apiBase + '/share/discord/clip' + q, {
+      method: 'POST',
+      headers: { 'Content-Type': 'image/gif', Authorization: 'Bearer ' + token },
+      body: blob,
+    });
+  } catch { return { ok: false, state: 'error', status: 0 }; }
+  const out = await res.json().catch(() => ({}));
+  if (res.ok) return { ok: true, state: 'posted', status: res.status };
+  if (out.code === 'not_member') return { ok: false, state: 'join', status: res.status, code: out.code };
+  if (out.code === 'clip_cap') return { ok: false, state: 'cap', status: res.status, code: out.code };
+  if (res.status === 401 || out.code === 'no_discord') return { ok: false, state: 'signin', status: res.status, code: out.code };
+  return { ok: false, state: 'error', status: res.status, code: out.code };
+}

@@ -6,6 +6,8 @@
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
+import { clipToGif } from './clip-gif.js';
+import { clipDiscordLabel, discordMemberState, postClipGifToDiscord, HOUSE_TANDEM_DISCORD_URL } from './share-result.js';
 import { isMediaEnabled } from './edition.js';
 import { CLIP_SLOW_KEY } from './quality.js';
 
@@ -318,6 +320,12 @@ export class GameRecorder {
     this.previewVideo = document.getElementById('clip-preview');
     this.previewShareBtn = document.getElementById('clip-share-btn');
     this.previewSaveBtn = document.getElementById('clip-save-btn');
+    // #daily-ride-clips · POST GIF TO DISCORD. game.js sets discordClip:
+    // { configured(): Promise<boolean>, token(): string|null, caption(): string, onPosted(): void }
+    this.previewDiscordBtn = document.getElementById('clip-discord-btn');
+    this.discordClip = null;
+    this._discordClipState = 'idle';
+    this._discordClipBusy = false;
     this.previewDiscardBtn = document.getElementById('clip-discard-btn');
     // #408 · the share choice: full clip or a short cut for messaging apps.
     this.previewActions = document.getElementById('clip-actions');
@@ -353,6 +361,7 @@ export class GameRecorder {
     if (this.previewShareShortBtn) onTap(this.previewShareShortBtn, () => this._shareClip('short'));
     if (this.previewShareBackBtn) onTap(this.previewShareBackBtn, () => this._showShareOptions(false));
     if (this.previewSaveBtn) onTap(this.previewSaveBtn, () => this._downloadClip());
+    if (this.previewDiscordBtn) onTap(this.previewDiscordBtn, () => this._postClipToDiscord());
     if (this.previewDiscardBtn) onTap(this.previewDiscardBtn, () => this._discardClip());
 
     // Hide share button if not supported
@@ -1427,7 +1436,7 @@ export class GameRecorder {
     // With the share choice open (#408) the pad walks that row instead.
     const row = this._shareOptionsOpen
       ? [this.previewShareFullBtn, this.previewShareShortBtn, this.previewShareBackBtn]
-      : [this.previewShareBtn, this.previewSaveBtn, this.previewDiscardBtn];
+      : [this.previewShareBtn, this.previewSaveBtn, this.previewDiscordBtn, this.previewDiscardBtn];
     this._previewFocus.setItems(row.filter(el => el && el.style.display !== 'none'));
     // Singleton RAF loop: cancel any prior poll before starting a new one so
     // re-showing the preview can't stack loops that double-process input. (#318)
@@ -1637,6 +1646,63 @@ export class GameRecorder {
     // A fresh preview opens on the main row, hint hidden (#408).
     this._showShareOptions(false);
     this._hideShareHint();
+    this._showDiscordButton();
+  }
+
+  /** #daily-ride-clips · POST GIF TO DISCORD shows when the post is set up. */
+  _showDiscordButton() {
+    const b = this.previewDiscordBtn;
+    if (!b) return;
+    this._setDiscordClipState('idle');
+    b.style.display = 'none';
+    if (!this.discordClip) return;
+    const url = this._clipUrl;
+    Promise.resolve(this.discordClip.configured()).then((on) => {
+      if (!on || this._clipUrl !== url) return;
+      b.style.display = '';
+      if (this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
+    }).catch(() => {});
+  }
+
+  _setDiscordClipState(state, progress = 0) {
+    this._discordClipState = state;
+    const b = this.previewDiscordBtn;
+    if (!b) return;
+    b.textContent = clipDiscordLabel(state, progress);
+    const locked = state === 'making' || state === 'posting' || state === 'posted' || state === 'cap';
+    if (locked) b.setAttribute('disabled', ''); else b.removeAttribute('disabled');
+  }
+
+  /**
+   * #daily-ride-clips · the last 8 s as a GIF, posted under the player's
+   * Discord name. Signed in with Discord and in the House Tandem server, or
+   * the button says what to do instead (a second tap on JOIN opens the invite).
+   */
+  async _postClipToDiscord() {
+    if (this._discordClipBusy || !this._clipUrl || !this.discordClip) return;
+    if (this._discordClipState === 'join') { window.open(HOUSE_TANDEM_DISCORD_URL, '_blank', 'noopener'); return; }
+    const token = this.discordClip.token();
+    if (!token) { this._setDiscordClipState('signin'); return; }
+    this._discordClipBusy = true;
+    const url = this._clipUrl;
+    try {
+      const member = await discordMemberState(token, { apiBase: this.discordClip.apiBase });
+      if (member === 'signin' || member === 'join') { this._setDiscordClipState(member); return; }
+      this._setDiscordClipState('making');
+      const gif = await clipToGif(url, { onProgress: (p) => { if (this._clipUrl === url) this._setDiscordClipState('making', p); } });
+      if (this._clipUrl !== url) return;   // discarded meanwhile
+      this._setDiscordClipState('posting');
+      const res = await postClipGifToDiscord({ blob: gif, token, caption: this.discordClip.caption() }, { apiBase: this.discordClip.apiBase });
+      if (this._clipUrl !== url) return;
+      this._setDiscordClipState(res.state);
+      analytics.trackEvent('clip_save', { method: 'discord_gif', ok: res.ok, state: res.state, bytes: gif.size });
+      if (res.ok && this.discordClip.onPosted) this.discordClip.onPosted();
+    } catch (e) {
+      _dbg('discord gif FAIL: ' + (e && e.message));
+      if (this._clipUrl === url) this._setDiscordClipState('error');
+    } finally {
+      this._discordClipBusy = false;
+    }
   }
 
   /**
