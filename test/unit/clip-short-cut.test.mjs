@@ -13,7 +13,7 @@ globalThis.window ??= { location: { search: '' }, addEventListener() {} };
 globalThis.document ??= { getElementById: () => null, createElement: () => ({ getContext: () => null, style: {} }) };
 globalThis.Image ??= class { };
 
-const { cutShortWindow, CLIP_SECONDS, SHORT_CLIP_SECONDS } = await import('../../js/game-recorder.js');
+const { cutShortWindow, fromFirstKeyframe, CLIP_SECONDS, SHORT_CLIP_SECONDS } = await import('../../js/game-recorder.js');
 
 const FPS = 20;
 const FRAME_US = 1_000_000 / FPS;
@@ -105,4 +105,16 @@ test('chunks without a duration use the frame interval for the end time', () => 
   const cut = cutShortWindow(full, SHORT_CLIP_SECONDS, FPS);
   assert.equal(cut[0].type, 'key');
   assert.equal(cut.length, SHORT_CLIP_SECONDS * FPS);
+});
+
+test('the full clip opens on a keyframe after the rolling buffer prunes into a GOP', () => {
+  // Pruned by age one chunk at a time: the buffer now opens 0.7 s into a GOP.
+  const pruned = buffer(CLIP_SECONDS + 2).slice(Math.round(0.7 * FPS));
+  assert.equal(pruned[0].type, 'delta');
+  const full = fromFirstKeyframe(pruned);
+  assert.equal(full[0].type, 'key');
+  assert.equal(full[full.length - 1], pruned[pruned.length - 1]);
+  assert.ok(pruned.length - full.length < 2 * FPS, 'drops less than one GOP');
+  assert.deepEqual(fromFirstKeyframe(pruned.filter(c => c.type === 'delta')), []);
+  assert.deepEqual(fromFirstKeyframe([]), []);
 });
