@@ -4,6 +4,12 @@ compatibility_date = "2024-01-01"
 # index.js exports the HouseTandemGames RPC entrypoint for other game Workers (dice).
 compatibility_flags = ["rpc"]
 
+# House Tandem's own address for the API (the Discord consent screen shows where it
+# sends you back to; a workers.dev address looks like phishing). workers.dev stays on
+# for the game builds that already use it.
+routes = [{ pattern = "api.housetandem.com", custom_domain = true }]
+workers_dev = true
+
 [[d1_databases]]
 binding = "DB"
 database_name = "tandemonium-leaderboard"
