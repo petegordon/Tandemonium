@@ -884,7 +884,13 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
     const d = await deviceSignIn(env, steam.token);
     assert.equal(await hello(d.token), false, 'no post yet');
+    pages = [[{ ...msg(10, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 7 }]];
+    assert.equal(await hello(d.token), false, "Discord's join notice in #welcome isn't a hello");
+    pages = [[{ ...msg(11, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 19 }]];
+    assert.equal(await hello(d.token), true, 'a reply is');
+    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
     assert.ok(asked[0].endsWith('/v10/channels/111/messages?limit=100'));
+    asked.length = 0;
 
     // Two full pages: the hello is on the second, still after joining.
     pages = [others(100, 300, '2026-11-12T00:00:00Z'), [...others(99, 200, '2026-11-11T00:00:00Z'), msg(101, DISCORD_PETE.id, '2026-11-11T00:00:00Z')]];

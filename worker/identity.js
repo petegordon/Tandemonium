@@ -672,6 +672,9 @@ export async function handleDiscordMembership(request, env, corsOrigin, userId, 
  * Pages back through each channel only as far as the member's join time (at most HELLO_PAGES x 100).
  */
 const HELLO_PAGES = 5;
+// Only messages the member typed: DEFAULT (0) and REPLY (19). Discord's own "X joined the
+// server" notice (USER_JOIN, 7) in the system channel lists the new member as its author.
+const TYPED = new Set([0, 19]);
 export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
   const channels = String(env.DISCORD_HELLO_CHANNEL_IDS || '').split(',').map((c) => c.trim()).filter((c) => /^\d+$/.test(c));
   if (!discordId || !channels.length || !env.DISCORD_BOT_TOKEN) return null;
@@ -696,7 +699,7 @@ export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
         msgs = await res.json();
       } catch { unknown = true; break; }
       if (!Array.isArray(msgs) || !msgs.length) break;
-      if (msgs.some((m) => m && m.author && String(m.author.id) === String(discordId))) {
+      if (msgs.some((m) => m && m.author && String(m.author.id) === String(discordId) && TYPED.has(Number(m.type || 0)))) {
         try {
           await env.DB.prepare("UPDATE user_identities SET said_hello_at = ? WHERE provider = 'discord' AND provider_id = ?")
             .bind(nowS(), String(discordId)).run();
