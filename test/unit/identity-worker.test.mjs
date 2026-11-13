@@ -497,7 +497,7 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
   try {
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
     let r = await (await call(env, '/me/discord', { token: steam.token })).json();
-    assert.deepEqual(r, { linked: false, member: null, invite: 'https://discord.gg/abc' }, 'no Discord linked');
+    assert.deepEqual(r, { linked: false, member: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
 
     const d = await deviceSignIn(env, steam.token);
     r = await (await call(env, '/me/discord', { token: d.token })).json();
@@ -517,6 +517,53 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
     r = await (await call(env, '/me/discord', { token: d.token })).json();
     assert.equal(r.member, null, 'Discord down: unknown, not "not a member"');
     assert.equal((await call(env, '/me/discord')).status, 401);
+  } finally { globalThis.fetch = inner; restore(); }
+});
+
+test('website sign-in with join_server: Discord link on the button, guilds.join, the player is added and the page is told', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), CORS_ORIGIN: 'https://housetandem.com', DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  let answer = 201;
+  const joins = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) { joins.push({ u, method: init.method, auth: init.headers.Authorization, body: JSON.parse(init.body) }); return new Response(null, { status: answer }); }
+    return inner(input, init);
+  };
+  const signIn = async (body) => {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', ...body } })).json();
+    const auth = new URL(begin.authorize_url);
+    const go = new URL((await call(env, '/auth/discord/go?r=' + begin.id)).headers.get('Location'));
+    assert.equal(go.toString(), auth.toString(), 'the button link and the redirect are the same consent screen');
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
+    return { scope: auth.searchParams.get('scope'), loc: cb.headers.get('Location') };
+  };
+  try {
+    let r = await signIn({ join_server: true });
+    assert.equal(r.scope, 'identify guilds.join');
+    assert.match(r.loc, /^https:\/\/housetandem\.com\/account\.html#ht_auth=[^&]+&ht_server=added$/);
+    assert.deepEqual(joins[0], { u: `https://discord.com/api/v10/guilds/G1/members/${DISCORD_PETE.id}`, method: 'PUT', auth: 'Bot bot-token', body: { access_token: 'at' } });
+
+    answer = 204;
+    r = await signIn({ join_server: true });
+    assert.match(r.loc, /&ht_server=already$/);
+
+    answer = 403;   // the bot is missing Create Invite: still signed in
+    r = await signIn({ join_server: true });
+    assert.match(r.loc, /#ht_auth=[^&]+&ht_server=failed$/);
+
+    const before = joins.length;
+    r = await signIn({});
+    assert.equal(r.scope, 'identify', 'the game asks for nothing more');
+    assert.doesNotMatch(r.loc, /ht_server/);
+    assert.equal(joins.length, before);
+
+    delete env.DISCORD_BOT_TOKEN;
+    r = await signIn({ join_server: true });
+    assert.equal(r.scope, 'identify', 'no bot: no guilds.join on the consent screen');
+    assert.doesNotMatch(r.loc, /ht_server/);
   } finally { globalThis.fetch = inner; restore(); }
 });
 

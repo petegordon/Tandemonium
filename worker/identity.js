@@ -52,9 +52,17 @@ export function cleanDeviceId(v) {
   return typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v) ? v : null;
 }
 
-/** The device id a begin call stored on the request (profile_json is empty until the callback). */
+/** What a begin call stored on the request (profile_json holds only this until the callback). */
+function beginInfo(row) {
+  try { return JSON.parse(row.profile_json || '{}') || {}; } catch { return {}; }
+}
+/** The device id a begin call stored on the request. */
 function requestDeviceId(row) {
-  try { return cleanDeviceId(JSON.parse(row.profile_json || '{}').deviceId); } catch { return null; }
+  return cleanDeviceId(beginInfo(row).deviceId);
+}
+/** Did the sign-in ask to join the House Tandem server too (the website's checklist)? */
+function wantsServerJoin(env, row) {
+  return !!(beginInfo(row).joinServer && env.DISCORD_BOT_TOKEN && env.DISCORD_GUILD_ID);
 }
 
 /** The picture for a Discord user: their avatar, or Discord's default for their id. */
@@ -196,9 +204,27 @@ function redirectUri(env, url) {
 }
 
 /**
- * POST /auth/discord/begin  { mode: 'redirect'|'device', return_to?, device_id? }
+ * Discord's consent screen for this request. With join_server it also asks for
+ * guilds.join, so the callback can add the player to the House Tandem server.
+ */
+function discordAuthorizeUrl(env, url, row) {
+  const auth = new URL('https://discord.com/oauth2/authorize');
+  auth.searchParams.set('client_id', env.DISCORD_CLIENT_ID);
+  auth.searchParams.set('response_type', 'code');
+  auth.searchParams.set('redirect_uri', redirectUri(env, url));
+  auth.searchParams.set('scope', wantsServerJoin(env, row) ? 'identify guilds.join' : 'identify');
+  auth.searchParams.set('state', row.id);
+  return auth.toString();
+}
+
+/**
+ * POST /auth/discord/begin  { mode: 'redirect'|'device', return_to?, device_id?, join_server? }
  * With a Bearer token the sign-in is linked to that account.
- * → { id, secret, url, code, expires_in }
+ * → { id, secret, url, authorize_url, code, expires_in }
+ *
+ * authorize_url is Discord's own address. The website puts it straight on the
+ * button: a tap on a discord.com link can open the Discord app on a phone
+ * (already signed in there), where a redirect through this worker cannot.
  */
 export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   if (!discordConfigured(env)) return deps.jsonResponse({ error: 'Discord sign-in is not set up yet' }, 503, corsOrigin);
@@ -213,6 +239,9 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   const linkUserId = await deps.getUserFromRequest(request, env);
 
   const deviceId = cleanDeviceId(body.device_id);
+  const info = {};
+  if (deviceId) info.deviceId = deviceId;
+  if (body.join_server === true) info.joinServer = true;
 
   const id = randomId(12);
   const secret = randomId(24);
@@ -222,11 +251,12 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
     `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
      VALUES (?, ?, 'discord', ?, ?, ?, ?, 'pending', ?, ?)`
   ).bind(id, await sha256(secret), mode, code, linkUserId || null, returnTo,
-         deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
+         Object.keys(info).length ? JSON.stringify(info) : null, nowS()).run();
 
   return deps.jsonResponse({
     id, secret, code, expires_in: REQUEST_TTL_S,
     url: `${url.origin}/auth/discord/go?r=${encodeURIComponent(id)}`,
+    authorize_url: discordAuthorizeUrl(env, url, { id, profile_json: JSON.stringify(info) }),
   }, 200, corsOrigin);
 }
 
@@ -241,13 +271,7 @@ async function liveRequest(env, id) {
 export async function handleDiscordGo(request, env, url) {
   const row = await liveRequest(env, url.searchParams.get('r'));
   if (!row || row.status !== 'pending') return page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
-  const auth = new URL('https://discord.com/oauth2/authorize');
-  auth.searchParams.set('client_id', env.DISCORD_CLIENT_ID);
-  auth.searchParams.set('response_type', 'code');
-  auth.searchParams.set('redirect_uri', redirectUri(env, url));
-  auth.searchParams.set('scope', 'identify');
-  auth.searchParams.set('state', row.id);
-  return Response.redirect(auth.toString(), 302);
+  return Response.redirect(discordAuthorizeUrl(env, url, row), 302);
 }
 
 async function fetchDiscordUser(env, url, code) {
@@ -273,11 +297,39 @@ async function fetchDiscordUser(env, url, code) {
   const me = await meRes.json();
   if (!me || !me.id) throw new Error('Discord returned no user');
   return {
-    provider: 'discord',
-    providerId: me.id,
-    name: me.global_name || me.username || 'Discord player',
-    avatar: discordAvatarUrl(me),
+    accessToken: tok.access_token,
+    profile: {
+      provider: 'discord',
+      providerId: me.id,
+      name: me.global_name || me.username || 'Discord player',
+      avatar: discordAvatarUrl(me),
+    },
   };
+}
+
+/**
+ * Add the player to the House Tandem server with the guilds.join grant they
+ * just gave. → 'added' | 'already' | 'failed'. Never fails the sign-in.
+ * The bot needs the Create Invite permission in the server for this.
+ */
+export async function addToServer(env, discordUserId, accessToken, deps = {}) {
+  const fetchImpl = deps.fetchImpl || fetch;
+  let outcome = 'failed';
+  try {
+    const res = await fetchImpl(`${DISCORD_API}/v10/guilds/${env.DISCORD_GUILD_ID}/members/${discordUserId}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_token: accessToken }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.status === 201) outcome = 'added';
+    else if (res.status === 204) outcome = 'already';
+    else console.error('House Tandem server join failed', res.status, await res.text().catch(() => ''));
+  } catch (e) {
+    console.error('House Tandem server join failed', e);
+  }
+  deps.writeMetric && deps.writeMetric(env, 'discord_join_' + outcome);
+  return outcome;
 }
 
 /**
@@ -319,17 +371,20 @@ export async function handleDiscordCallback(request, env, url, deps) {
     if (row.mode === 'redirect' && row.return_to) return Response.redirect(row.return_to, 302);
     return page('Sign-in cancelled', '<p>Nothing was changed. You can close this tab.</p>');
   }
-  let profile;
+  let profile, accessToken;
   try {
-    profile = await fetchDiscordUser(env, url, url.searchParams.get('code'));
+    ({ profile, accessToken } = await fetchDiscordUser(env, url, url.searchParams.get('code')));
   } catch (e) {
     return page('Discord sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back to the game and try again.</p>`, 502);
   }
+  // The website's checklist: signing in also joins the House Tandem server.
+  const joined = wantsServerJoin(env, row) ? await addToServer(env, profile.providerId, accessToken, deps) : null;
 
   if (row.mode === 'redirect') {
     const result = await finish(env, row, profile, deps, requestDeviceId(row));
     await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
-    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
+    const server = joined ? `&ht_server=${joined}` : '';
+    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}${server}`, 302);
   }
 
   // Device mode: hold the profile until the player confirms the code on their screen.
@@ -522,18 +577,20 @@ export async function handleSteamWebCallback(request, env, url, deps) {
 // House Tandem Discord membership (#612)
 // ------------------------------------------------------------
 //
-// The House Tandem bot sits in the players' server with no permissions; it
-// only looks up one member by id. That needs no privileged intent and no
-// extra consent from the player.
+// The House Tandem bot sits in the players' server. It looks up one member by
+// id (no privileged intent). With the Create Invite permission it also adds a
+// player who signed in from the website with the guilds.join grant (addToServer).
 
 /**
- * GET /me/discord → { linked, member: true | false | null, invite }
+ * GET /me/discord → { linked, member: true | false | null, invite, server_url }
  * member is null when it can't be checked (no bot set up, or Discord is down).
+ * server_url opens the server in Discord (the app on a phone).
  */
 export async function handleDiscordMembership(request, env, corsOrigin, userId, deps) {
   const invite = env.DISCORD_INVITE_URL || null;
+  const server = env.DISCORD_GUILD_ID ? { server_url: `https://discord.com/channels/${env.DISCORD_GUILD_ID}` } : {};
   const { linked, member } = await discordMemberStatus(env, userId, deps.fetchImpl);
-  return deps.jsonResponse({ linked, member, invite }, 200, corsOrigin);
+  return deps.jsonResponse({ linked, member, invite, ...server }, 200, corsOrigin);
 }
 
 /**
