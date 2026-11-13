@@ -497,7 +497,7 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
   try {
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
     let r = await (await call(env, '/me/discord', { token: steam.token })).json();
-    assert.deepEqual(r, { linked: false, member: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
+    assert.deepEqual(r, { linked: false, member: null, said_hello: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
 
     const d = await deviceSignIn(env, steam.token);
     r = await (await call(env, '/me/discord', { token: d.token })).json();
@@ -854,4 +854,59 @@ test('the Steam sign-in attaches its analytics session to the account, before or
     const bad = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: 'nope' } });
     assert.equal(bad.status, 200);
   } finally { restore(); }
+});
+
+test('Join checklist "say hello": a post in the hello channel since joining counts, is remembered, and Discord trouble is unknown', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token', DISCORD_HELLO_CHANNEL_IDS: ' 111, nope ' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  const joined = '2026-11-10T00:00:00.000Z';
+  const msg = (id, author, ts) => ({ id: String(id), author: { id: author }, timestamp: ts });
+  const others = (n, from, ts) => Array.from({ length: n }, (_, i) => msg(from - i, 'someone', ts));
+  let pages = [[msg(9, 'someone', '2026-11-12T00:00:00Z')]];
+  let channelStatus = 200;
+  const asked = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) return Response.json({ joined_at: joined });
+    if (u.includes('/channels/')) {
+      asked.push(u);
+      if (channelStatus !== 200) return new Response('{}', { status: channelStatus });
+      const before = new URL(u).searchParams.get('before');
+      const i = before ? pages.findIndex((p) => p.length && p[0].id === String(Number(before) - 1)) : 0;
+      return Response.json(i >= 0 ? pages[i] || [] : []);
+    }
+    return inner(input, init);
+  };
+  const hello = async (token) => (await (await call(env, '/me/discord', { token })).json()).said_hello;
+  try {
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
+    const d = await deviceSignIn(env, steam.token);
+    assert.equal(await hello(d.token), false, 'no post yet');
+    assert.ok(asked[0].endsWith('/v10/channels/111/messages?limit=100'));
+
+    // Two full pages: the hello is on the second, still after joining.
+    pages = [others(100, 300, '2026-11-12T00:00:00Z'), [...others(99, 200, '2026-11-11T00:00:00Z'), msg(101, DISCORD_PETE.id, '2026-11-11T00:00:00Z')]];
+    asked.length = 0;
+    assert.equal(await hello(d.token), true);
+    assert.equal(asked.length, 2);
+    assert.ok(asked[1].includes('before=201'));
+    assert.ok(db.prepare("SELECT said_hello_at FROM user_identities WHERE provider = 'discord'").get().said_hello_at > 0);
+
+    // Remembered: Discord isn't asked again.
+    asked.length = 0;
+    pages = [[]];
+    assert.equal(await hello(d.token), true);
+    assert.equal(asked.length, 0);
+
+    // Paging stops at the join time; a channel the bot can't read is unknown.
+    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
+    pages = [others(100, 300, '2026-11-01T00:00:00Z'), [msg(101, DISCORD_PETE.id, '2026-10-01T00:00:00Z')]];
+    asked.length = 0;
+    assert.equal(await hello(d.token), false, 'older than joining: not looked at');
+    assert.equal(asked.length, 1);
+    channelStatus = 403;
+    assert.equal(await hello(d.token), null);
+  } finally { globalThis.fetch = inner; restore(); }
 });
