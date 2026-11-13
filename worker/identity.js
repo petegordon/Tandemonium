@@ -658,12 +658,62 @@ export async function handleSteamWebCallback(request, env, url, deps) {
 export async function handleDiscordMembership(request, env, corsOrigin, userId, deps) {
   const invite = env.DISCORD_INVITE_URL || null;
   const server = env.DISCORD_GUILD_ID ? { server_url: `https://discord.com/channels/${env.DISCORD_GUILD_ID}` } : {};
-  const { linked, member } = await discordMemberStatus(env, userId, deps.fetchImpl);
-  return deps.jsonResponse({ linked, member, invite, ...server }, 200, corsOrigin);
+  const { linked, member, discordId, joinedAt } = await discordMemberStatus(env, userId, deps.fetchImpl);
+  const said_hello = member === true ? await discordSaidHello(env, discordId, joinedAt, deps) : null;
+  return deps.jsonResponse({ linked, member, said_hello, invite, ...server }, 200, corsOrigin);
 }
 
 /**
- * Is this account's Discord in the House Tandem server? → { linked, member }
+ * Has this member posted in the House Tandem server's hello channel(s)? (the Join checklist's
+ * "say hello" step) → true | false, or null when it can't be checked.
+ * DISCORD_HELLO_CHANNEL_IDS: comma-separated channel ids (#welcome). The bot needs View Channel +
+ * Read Message History there; only author ids are read, never message text. Once seen, it's kept
+ * on the Discord sign-in row (said_hello_at), so Discord is only asked until the first hello.
+ * Pages back through each channel only as far as the member's join time (at most HELLO_PAGES x 100).
+ */
+const HELLO_PAGES = 5;
+export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
+  const channels = String(env.DISCORD_HELLO_CHANNEL_IDS || '').split(',').map((c) => c.trim()).filter((c) => /^\d+$/.test(c));
+  if (!discordId || !channels.length || !env.DISCORD_BOT_TOKEN) return null;
+  try {
+    const row = await env.DB.prepare("SELECT said_hello_at FROM user_identities WHERE provider = 'discord' AND provider_id = ?")
+      .bind(String(discordId)).first();
+    if (row && row.said_hello_at) return true;
+  } catch { return null; }   // migration 0018 not applied yet
+  const fetchImpl = deps.fetchImpl || fetch;
+  const since = joinedAt ? Date.parse(joinedAt) || 0 : 0;
+  let unknown = false;
+  for (const ch of channels) {
+    let before = '';
+    for (let page = 0; page < HELLO_PAGES; page++) {
+      let msgs;
+      try {
+        const res = await fetchImpl(`${DISCORD_API}/v10/channels/${ch}/messages?limit=100${before ? `&before=${before}` : ''}`, {
+          headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (!res.ok) { unknown = true; break; }
+        msgs = await res.json();
+      } catch { unknown = true; break; }
+      if (!Array.isArray(msgs) || !msgs.length) break;
+      if (msgs.some((m) => m && m.author && String(m.author.id) === String(discordId))) {
+        try {
+          await env.DB.prepare("UPDATE user_identities SET said_hello_at = ? WHERE provider = 'discord' AND provider_id = ?")
+            .bind(nowS(), String(discordId)).run();
+        } catch {}
+        deps.writeMetric && deps.writeMetric(env, 'discord_said_hello');
+        return true;
+      }
+      const last = msgs[msgs.length - 1];
+      if (msgs.length < 100 || (since && Date.parse(last.timestamp) < since)) break;
+      before = last.id;
+    }
+  }
+  return unknown ? null : false;
+}
+
+/**
+ * Is this account's Discord in the House Tandem server? → { linked, member, discordId, joinedAt }
  * member: true | false, or null when it can't be checked. Also used by the
  * #daily-ride-clips post (worker/share.js), which needs a member.
  */
@@ -672,18 +722,21 @@ export async function discordMemberStatus(env, userId, fetchImpl = fetch) {
     "SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC LIMIT 1"
   ).bind(userId).first();
   if (!row) return { linked: false, member: null };
-  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) return { linked: true, member: null };
+  const discordId = row.provider_id;
+  if (!env.DISCORD_BOT_TOKEN || !env.DISCORD_GUILD_ID) return { linked: true, member: null, discordId };
   fetchImpl = fetchImpl || fetch;
-  let member = null;
+  let member = null, joinedAt = null;
   try {
     const res = await fetchImpl(`${DISCORD_API}/v10/guilds/${env.DISCORD_GUILD_ID}/members/${row.provider_id}`, {
       headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` },
       signal: AbortSignal.timeout(5000),
     });
-    if (res.ok) member = true;
-    else if (res.status === 404) member = false;
+    if (res.ok) {
+      member = true;
+      try { joinedAt = (await res.json()).joined_at || null; } catch {}
+    } else if (res.status === 404) member = false;
   } catch {}
-  return { linked: true, member };
+  return { linked: true, member, discordId, joinedAt };
 }
 
 // ------------------------------------------------------------
