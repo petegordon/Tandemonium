@@ -567,6 +567,63 @@ test('website sign-in with join_server: Discord link on the button, guilds.join,
   } finally { globalThis.fetch = inner; restore(); }
 });
 
+test('Join checklist permissions: email kept while granted, verified Steam connection links (and merges) the Steam account, unticked = asked for less', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), CORS_ORIGIN: 'https://housetandem.com', DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token' };
+  const STEAM_ID = '76561190000000001';
+  const restore = mockFetch({ ...DISCORD_PETE, email: 'pete@example.com', verified: true });
+  const inner = globalThis.fetch;
+  let conns = [{ type: 'steam', id: STEAM_ID, name: 'petesteam', verified: true }, { type: 'twitch', id: 'x', verified: true }];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) return new Response(null, { status: 201 });
+    if (u.includes('/users/@me/connections')) return Response.json(conns);
+    return inner(input, init);
+  };
+  const signIn = async (scopes) => {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes } })).json();
+    const auth = new URL(begin.authorize_url);
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
+    const token = decodeURIComponent(cb.headers.get('Location').match(/ht_auth=([^&]+)/)[1]);
+    return { scope: auth.searchParams.get('scope'), token };
+  };
+  const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_identities WHERE provider = 'discord'").get();
+  try {
+    // The Steam game made its own account first, with a ride on it.
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: STEAM_ID, personaName: 'p', ticket: 't' } })).json();
+    const steamUser = db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id;
+
+    let r = await signIn(['guilds.join', 'email', 'connections', 'bogus']);
+    assert.equal(r.scope, 'identify guilds.join email connections', 'junk scopes are dropped');
+    let row = discordRow();
+    assert.equal(row.email, 'pete@example.com');
+    assert.equal(row.scopes, 'identify guilds.join email connections');
+    const me = await (await call(env, '/me', { token: r.token })).json();
+    assert.ok(me.user.identities.steam, 'the Steam account Discord verified is linked');
+    assert.ok(me.user.identities.discord);
+    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, row.user_id, 'one account');
+    assert.notEqual(steamUser, row.user_id);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 0, 'the Steam-only account merged in');
+    assert.ok(steam.token);
+
+    // Email unticked next time: forgotten. Connections unticked: not fetched.
+    conns = [];
+    r = await signIn(['guilds.join']);
+    assert.equal(r.scope, 'identify guilds.join');
+    row = discordRow();
+    assert.equal(row.email, null, 'email dropped when news is turned off');
+    assert.equal(row.scopes, 'identify guilds.join');
+
+    // An unverified Steam connection is never linked.
+    const db2 = freshDb();
+    const env2 = { ...env, DB: d1(db2) };
+    conns = [{ type: 'steam', id: STEAM_ID, verified: false }];
+    const begin = await (await call(env2, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
+    await call(env2, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_identities WHERE provider = 'steam'").get().n, 0);
+  } finally { globalThis.fetch = inner; restore(); }
+});
+
 // ── House Tandem games: achievements + stats for dice and later games ──
 import { houseTandemGames } from '../../worker/leaderboard.js';
 import { mergeStats } from '../../worker/games.js';
