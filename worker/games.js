@@ -263,10 +263,25 @@ export async function handleMeGames(request, env, corsOrigin, userId, deps) {
     try { of(r.game).stats = JSON.parse(r.stats_json || '{}'); } catch {}
   }
   for (const r of play.results || []) of(r.game).playtime = playtimeOut(r);
+  of(TANDEMONIUM).steamPlayed = await steamPlayed(env, userId);
   return deps.jsonResponse({ games }, 200, corsOrigin);
 }
 
 const TANDEMONIUM = 'tandemonium';
+
+/**
+ * Has this account played the Steam build? (the account page's "Playing the playtest").
+ * The game's analytics session records platform 'steam' and, once signed in, the account
+ * number in sessions.google_uid (text: "38" or "38.0"). Index: migration 0019.
+ */
+async function steamPlayed(env, userId) {
+  try {
+    const row = await env.DB.prepare(
+      "SELECT 1 AS yes FROM sessions WHERE google_uid IN (?, ?) AND platform = 'steam' LIMIT 1"
+    ).bind(String(userId), `${userId}.0`).first();
+    return !!row;
+  } catch { return false; }
+}
 
 /**
  * POST /games/:game/sync  { seconds?, delta?, token? }  → { game, playtime, stats? }
