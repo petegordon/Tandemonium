@@ -1,0 +1,79 @@
+/* Round 2 on layout A (#428): wordmark on the painting, two-line mode buttons
+   with a bigger bike chooser, and the two QR screens. Toggle placement is left
+   to the a2-*.css files. */
+
+/* ── Wordmark on the painting (poster style); the top-left of the menus stays empty ── */
+#lobby-card-header {
+  left: auto !important; right: 0; top: 10px !important;
+  width: var(--art-w) !important; height: 200px !important;
+  /* tandemonium_title.png at 0.435× (wordmark ≈ 470px wide), centred on the wordmark;
+     the dirt splash and the pedals below it fade out into the sky through the mask */
+  background: url(images/tandemonium_title.png) no-repeat !important;
+  background-size: 668px auto !important;
+  background-position: calc(var(--art-w) / 2 - 334px) -70px !important;
+  -webkit-mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+          mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
+  filter: drop-shadow(0 6px 14px rgba(0,0,0,.45));
+}
+
+/* ── Mode screen: bigger bike chooser, narrower two-line buttons ── */
+#lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--art-w) !important; }
+#lobby:has(#lobby-mode[active]) #bike-preview-canvas { height: 470px !important; }
+#lobby:has(#lobby-mode[active]) #bike-name { font-size: 36px !important; top: -60px !important; }
+#lobby-mode .lobby-mode-buttons { width: 100% !important; max-width: 440px; gap: 16px !important; }
+#lobby-mode uf-button:not([size]) {
+  flex-flow: row wrap !important; justify-content: flex-start !important; align-content: center;
+  text-align: left; min-height: 112px; padding: 0 28px !important; column-gap: 12px; row-gap: 4px;
+  font-size: 28px;
+}
+#lobby-mode uf-button:not([size])::after {
+  flex-basis: 100%; font-size: 18px; font-weight: 400; letter-spacing: 0; text-transform: none; opacity: .78;
+}
+#btn-together::after { content: 'Couch co-op, online or versus'; }
+#btn-solo::after { content: 'Levels, Today’s Road and Slingshot'; }
+#btn-garage::after { content: 'Bikes and upgrades'; }
+#lobby-mode #btn-mode-phone { align-self: flex-start; font-size: 20px; }
+
+/* ── Phone as controller: a large card over the menus only, QR sized for the couch ── */
+#phone-pad-panel { right: var(--art-w, 535px) !important; }
+#phone-pad-panel .ppp-card {
+  width: min(1040px, calc(100% - 96px)) !important; max-width: none !important;
+  display: grid !important; grid-template-columns: 440px 1fr; column-gap: 48px; row-gap: 18px;
+  grid-template-areas: "qr title" "qr steps" "qr status" "qr link" "qr row";
+  align-items: start; text-align: left !important; padding: 44px !important; border-radius: 22px !important;
+}
+#phone-pad-panel #ppp-title { grid-area: title; font-size: 36px !important; margin: 0 !important; }
+#phone-pad-panel .ppp-qr { grid-area: qr; background: #fff; padding: 20px; border-radius: 16px; width: 440px; height: 440px; }
+#phone-pad-panel .ppp-qr svg { width: 100% !important; height: 100% !important; display: block; }
+#phone-pad-panel .ppp-card::after {
+  grid-area: steps; white-space: pre-line; font-size: 24px; line-height: 1.6; color: rgba(255,255,255,.9);
+  content: '1  Open your phone’s camera\A 2  Point it at the code\A 3  Steer and pedal on your phone';
+}
+#phone-pad-panel .ppp-status { grid-area: status; font-size: 22px !important; }
+#phone-pad-panel .ppp-link { grid-area: link; font-size: 18px !important; word-break: break-all; opacity: .7; }
+#phone-pad-panel .ppp-row { grid-area: row; justify-content: flex-start !important; gap: 20px !important; align-self: end; }
+#phone-pad-panel #btn-ppp-done { min-width: 220px; min-height: 72px; font-size: 26px; }
+#phone-pad-panel #btn-ppp-stop { font-size: 20px; }
+
+/* ── Captain's room: online invite on the left, "ride on this screen" on the right ── */
+#lobby-host[active] {
+  display: grid !important; grid-template-columns: 420px minmax(0, 520px); column-gap: 72px; row-gap: 14px;
+  justify-content: center; align-items: start;
+}
+#lobby-host[active] > * { grid-column: 1; margin: 0 !important; }
+#lobby-host .lobby-prompt { display: block !important; font-size: 24px !important; opacity: .8; }
+#lobby-host #room-code-display { font: 800 60px/1 var(--uf-font-mono) !important; letter-spacing: 6px !important; }
+#lobby-host #room-qr { background: #fff; padding: 18px; border-radius: 16px; width: 420px; height: 420px; }
+#lobby-host #room-qr > * { width: 100% !important; height: 100% !important; display: block; }
+#lobby-host #room-url { display: block !important; font-size: 18px !important; opacity: .7; word-break: break-all; }
+#lobby-host .lobby-hint { display: none !important; }
+#lobby-host #host-status { grid-column: 2; grid-row: 1; font-size: 24px !important; text-align: left; }
+#lobby-host #local-join-section { grid-column: 2; grid-row: 2 / span 4; display: flex !important; flex-direction: column; gap: 14px; text-align: left; }
+#lobby-host #local-join-section::before { content: 'Or ride on this screen'; font: 800 30px/1.2 var(--uf-font-ui); }
+#lobby-host #local-join-section p { font-size: 20px !important; margin: 0 !important; }
+#lobby-host #local-join-section uf-button { min-height: 104px; font-size: 26px; width: 100%; }
+#lobby-host #local-join-section uf-button span { font-size: 18px !important; }
+#lobby-host #local-join-section uf-button .btn-local-join-main { font-size: 26px !important; }
+#lobby-card-header { font-size: 0 !important; color: transparent !important; }
+#lobby-host #local-join-section::before { color: #fff; }
+#phone-pad-panel #ppp-title { font-size: 30px !important; white-space: nowrap; }

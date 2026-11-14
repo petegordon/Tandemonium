@@ -1,0 +1,12 @@
+/* Text labels for the round lobby toggles (TV: icons alone don't explain "ALL" or the joystick). */
+#lobby .lobby-toggle { position: relative; overflow: visible !important; }
+#lobby .lobby-toggle::after { font: 600 15px/1 var(--uf-font-ui); color: rgba(255,255,255,.82); white-space: nowrap; letter-spacing: 0; }
+#toggle-help::after { content: 'Help'; }
+#toggle-leaderboard::after { content: 'Leaderboard'; }
+#toggle-profile::after { content: 'Profile'; }
+#toggle-all::after { content: 'All on/off'; }
+#toggle-joystick::after { content: 'Stick steer'; }
+#toggle-motion::after { content: 'Gyro steer'; }
+#toggle-music::after { content: 'Music'; }
+/* Keep the toggles the game hides (camera, mic, motion without gyro) hidden. */
+#lobby .lobby-toggle[style*="none"] { display: none !important; }

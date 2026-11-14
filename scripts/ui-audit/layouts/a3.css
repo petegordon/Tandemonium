@@ -1,0 +1,65 @@
+/* extends: a2-bottom */
+/* script: _controls, _join */
+/* A3 · bottom bar with one Controls pill (names the controller), the Controls
+   sheet it opens, and the stoker's join screen with an on-screen keyboard. */
+
+/* ── Controls pill replaces Stick steer + Gyro steer ── */
+#lobby #toggle-joystick, #lobby #toggle-motion { display: none !important; }
+#lobby .lobby-toggle.mock-ctl { padding: 0 22px 0 16px !important; gap: 10px; color: #fff; font: 400 18px/1 var(--uf-font-ui); }
+#lobby .lobby-toggle.mock-ctl::after { content: none; }
+#lobby .lobby-toggle.mock-ctl b { font-weight: 700; }
+
+/* ── Controls sheet ── */
+#mock-controls-sheet {
+  position: fixed; inset: 0 535px 0 0; z-index: 200; display: grid; place-items: center;
+  background: rgba(5,7,11,.72); font-family: var(--uf-font-ui); color: #fff;
+}
+.mcs-card { width: 820px; background: #161b24; border: 1px solid rgba(255,255,255,.12); border-radius: 22px; padding: 36px 40px 28px; display: grid; gap: 14px; box-shadow: 0 30px 80px rgba(0,0,0,.6); }
+.mcs-card header { display: flex; justify-content: space-between; align-items: center; }
+.mcs-card h2 { margin: 0; font-size: 36px; }
+.mcs-card h3 { margin: 12px 0 0; font-size: 16px; letter-spacing: .14em; text-transform: uppercase; color: #8a93a6; }
+.mcs-card i { font-style: normal; display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; border: 2px solid currentColor; font-size: 16px; margin-right: 8px; }
+.mcs-close, .mcs-card footer span { font-size: 20px; color: rgba(255,255,255,.75); display: inline-flex; align-items: center; }
+.mcs-seat { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border-radius: 16px; background: rgba(76,125,255,.12); border: 1px solid rgba(76,125,255,.5); }
+.mcs-seat svg { width: 40px; height: 40px; }
+.mcs-seat b { font-size: 26px; display: block; }
+.mcs-seat small, .mcs-row small { display: block; font-size: 17px; color: #9aa5b8; margin-top: 4px; }
+.mcs-p { font: 800 18px var(--uf-font-mono); background: #4c7dff; color: #fff; padding: 6px 10px; border-radius: 8px; }
+.mcs-change { margin-left: auto; font-size: 18px; color: #bfe6ff; }
+.mcs-row { display: flex; align-items: center; gap: 18px; padding: 16px 20px; border-radius: 14px; background: rgba(255,255,255,.04); border: 2px solid transparent; }
+.mcs-row > div:first-child { flex: 1; }
+.mcs-row b { font-size: 22px; }
+.mcs-row.focus { border-color: #44ff66; box-shadow: 0 0 18px -4px #44ff66; }
+.mcs-row.sub { margin-left: 36px; background: transparent; padding-top: 4px; }
+.mcs-switch { min-width: 92px; text-align: center; padding: 10px 0; border-radius: 999px; font-weight: 700; font-size: 18px; background: rgba(255,255,255,.1); color: #9aa5b8; }
+.mcs-switch.on { background: rgba(60,200,80,.28); color: #44ff66; }
+.mcs-slider { display: flex; align-items: center; gap: 12px; font-size: 16px; color: #9aa5b8; }
+.mcs-slider em { font-style: normal; }
+.mcs-slider .track { width: 200px; height: 6px; border-radius: 3px; background: rgba(255,255,255,.2); position: relative; }
+.mcs-slider .knob { position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; border-radius: 50%; background: #fff; transform: translate(-50%, -50%); }
+.mcs-btn, .mj-btn { padding: 10px 18px; border-radius: 12px; border: 1px solid rgba(255,255,255,.3); font-size: 18px; }
+.mcs-value { font-size: 20px; color: #cfd6e2; }
+.mcs-card footer { display: flex; gap: 28px; justify-content: flex-end; margin-top: 6px; }
+
+/* ── Join with a code: on-screen keyboard ── */
+#lobby-join[active] > :not(#mock-join) { display: none !important; }
+#mock-join { display: grid; justify-items: center; gap: 22px; font-family: var(--uf-font-ui); color: #fff; }
+#mock-join h2 { margin: 0; font-size: 40px; }
+.mj-sub { margin: -10px 0 4px; font-size: 22px; color: #9aa5b8; }
+.mj-code { display: flex; align-items: center; gap: 14px; }
+.mj-prefix { font: 800 60px/1 var(--uf-font-mono); color: rgba(68,255,102,.55); letter-spacing: 4px; margin-right: 6px; }
+.mj-slot { width: 96px; height: 116px; display: grid; place-items: center; border-radius: 14px; background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.18); font: 800 64px/1 var(--uf-font-mono); color: #44ff66; }
+.mj-slot.cur { border-color: #44ff66; box-shadow: inset 0 -6px 0 #44ff66; }
+.mj-grid { display: grid; grid-template-columns: repeat(8, 84px); gap: 10px; margin-top: 8px; }
+.mj-key { height: 72px; display: grid; place-items: center; border-radius: 12px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); font: 700 32px/1 var(--uf-font-mono); }
+.mj-key.focus { background: rgba(60,200,80,.28); border: 3px solid #44ff66; box-shadow: 0 0 18px -4px #44ff66; }
+.mj-actions { display: flex; gap: 16px; }
+.mj-btn { min-width: 200px; text-align: center; font-size: 22px; padding: 16px 24px; }
+.mj-btn.accent { background: rgba(60,200,80,.25); border-color: rgba(60,200,80,.6); font-weight: 800; }
+.mj-btn.disabled { opacity: .45; }
+.mj-hints { display: flex; gap: 28px; font-size: 20px; color: rgba(255,255,255,.75); margin: 0; }
+.mj-hints span { display: inline-flex; align-items: center; }
+.mj-hints i { font-style: normal; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 2px solid currentColor; font-size: 15px; margin-right: 8px; }
+#lobby .lobby-toggle.mock-ctl span, #lobby .lobby-toggle.mock-ctl b { font-size: 18px !important; line-height: 1; }
+/* The join step hides the toggles, so it doesn't need the empty bar either. */
+#lobby:has(#lobby-join[active])::after { display: none; }

@@ -1,0 +1,32 @@
+/* extends: a3, _coop */
+/* script: _seats2 */
+/* A5 · "Online multiplayer" / "Local multiplayer" columns, each waiting for a
+   partner, and an always-visible controller strip under the seats (captain's
+   room and versus) in place of the expandable list. */
+
+/* Captain's room: two titled columns */
+#lobby-host[active] .lobby-prompt { display: none !important; }
+#lobby-host[active] .mock-online-head { grid-column: 1; grid-row: auto; }
+.mock-online-head h3, #mock-coop h3 { margin: 0; font: 800 32px/1.2 var(--uf-font-ui); color: #fff; text-align: left; }
+.mock-online-head p, #mock-coop .mock-sub { margin: 6px 0 0; font: 400 19px/1.4 var(--uf-font-ui); color: #9aa5b8; text-align: left; }
+#lobby-host[active] #host-status { grid-column: 1 !important; grid-row: auto !important; font-size: 22px !important; color: #fff; }
+#lobby-host[active] #host-status::before { content: '● '; color: #ffd23f; }
+#lobby-host[active] #mock-coop { grid-row: 1 / span 7 !important; }
+.versus-team-coop .vp-empty .vp-name { font-size: 22px !important; letter-spacing: 0 !important; text-transform: none; }
+.versus-team-coop .vp-empty { opacity: 1 !important; border: 2px dashed rgba(255,158,107,.6) !important; background: rgba(255,158,107,.05) !important; }
+.versus-team-coop .vp-empty .vp-device { color: rgba(255,255,255,.75); }
+
+/* Controller strip */
+.tray { width: 100%; display: grid; gap: 10px; margin-top: 6px; text-align: left; font-family: var(--uf-font-ui); }
+#lobby-versus .tray { max-width: 1288px; margin: 18px auto 0; }
+.tray-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 18px; color: rgba(255,255,255,.85); }
+.tray-head span { color: #9aa5b8; font-size: 17px; }
+.tray-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.tray-chip { display: inline-flex; align-items: center; gap: 10px; padding: 8px 14px; border-radius: 999px; font-size: 18px; color: #fff; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.16); }
+.tray-chip i { width: 9px; height: 9px; border-radius: 50%; background: #67c1f5; }
+.tray-chip em { font-style: normal; font-size: 15px; color: #9aa5b8; }
+.tray-chip b { font: 800 14px/1 var(--uf-font-mono); padding: 5px 8px; border-radius: 6px; background: rgba(255,255,255,.18); }
+.tray-chip.seated.captain { border-color: rgba(122,224,154,.6); } .tray-chip.seated.captain b { background: #2f7a49; }
+.tray-chip.seated.team-a { border-color: rgba(76,125,255,.6); }   .tray-chip.seated.team-a b { background: #4c7dff; }
+.tray-chip.seated.team-b { border-color: rgba(255,69,96,.6); }    .tray-chip.seated.team-b b { background: #ff4560; }
+#lobby-versus .versus-join-hint { margin: 14px 0 !important; }

@@ -1,0 +1,6 @@
+/* C · Art on the front door only: the mode screen keeps the painting as a big
+   hero; every step after it drops the art and uses the full 1920px. */
+#lobby { --art-w: 0px; background: #0b0d12 !important; }
+#lobby:has(#lobby-mode[active]) { --art-w: 620px; }
+#lobby-img-right { object-position: 20% center !important; }
+#lobby:not(:has(#lobby-mode[active])) #lobby-img-right { display: none !important; }
