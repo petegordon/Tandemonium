@@ -9623,13 +9623,15 @@ export class Lobby {
         mats.push([mm, mm.clone()]);
         return mm;
       };
-      const track = (root) => root.traverse((o) => {
+      // geese: the root is a goose (a seated rider or a standing actor), so nothing in it casts a shadow
+      const track = (root, geese = false) => root.traverse((o) => {
         if (!o.isMesh || seen.has(o)) return;
         seen.add(o);
         o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
-        // the geese (skinned) cast no shadow here: a skinned shadow needs shaders three can't build ahead,
-        // and building them on the first frame froze the chooser ~120 ms; the bike's shadow stays
-        o.castShadow = !o.isSkinnedMesh;
+        // the geese cast no shadow here: a skinned shadow needs shaders three can't build ahead, and building
+        // them on the first frame froze the chooser ~120 ms; the bike's shadow stays. Every goose mesh, not just
+        // the skinned ones: the eyes ride the head bone unskinned, and alone they cast two floating shadows (#768)
+        o.castShadow = !geese && !o.isSkinnedMesh;
         if (o.isSkinnedMesh) o.frustumCulled = false;
       });
       track(model);
@@ -9666,7 +9668,8 @@ export class Lobby {
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
         const roots = Object.values(riders.riders).filter(Boolean).map((r) => r.root);
         for (const r of roots) r.visible = false;   // (seated hidden until warmed up)
-        track(model);                    // the geese join the silhouette
+        for (const r of roots) track(r, true);   // the geese join the silhouette (no shadows, #768)
+        track(model);
         const dark = sp.dark;
         sp.dark = null;
         this._setSpecialDark(sp, dark);
@@ -9683,7 +9686,7 @@ export class Lobby {
    * They stay put while the bike turns between them (so its frame and seats all show).
    * @param {object} sp the bike's chooser preview
    * @param {object|null} looks getSeatLooks (their bodies)
-   * @param {(root: THREE.Object3D) => void} track joins a model to the bike's materials (its silhouette)
+   * @param {(root: THREE.Object3D, geese?: boolean) => void} track joins a model to the bike's materials (its silhouette)
    * @param {number} bikeHalf half the bike's length in the chooser
    */
   _standOutfitGeese(sp, looks, track, bikeHalf) {
@@ -9707,7 +9710,7 @@ export class Lobby {
         // a little in front of the bike, clear of it as it turns, and inside the frame
         actor.root.position.set(dir * Math.min(0.92, bikeHalf * 0.97), 0, 0.85);
         actor.setHeading(-dir * 0.4);                  // facing you, turned in toward the bike
-        track(actor.root);
+        track(actor.root, true);
         const dark = sp.dark;
         sp.dark = null;
         this._setSpecialDark(sp, dark);                // (a silhouette for a locked reward bike)
