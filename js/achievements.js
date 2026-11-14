@@ -539,8 +539,14 @@ export class AchievementManager {
         } else if (!earned && !secret && a.best) {
           progress = bestProgress(a, this._stats);
         }
+        let checklist = null;   // #769: which items of an "all of these" badge are done
+        if (!secret && a.checklist) {
+          try { checklist = a.checklist(this._stats); } catch (e) { checklist = null; }
+        }
         const bestAt = a.best && this._stats.bestsAt ? this._stats.bestsAt[a.id] || null : null;
         return {
+          checklist,
+          checklistKind: a.checklistKind || '',
           id: a.id,
           n: i + 1,                                   // #540: "No. 12 of 100" on the detail card
           section: a.section,
