@@ -66,6 +66,15 @@ async function parseAchievementsFromCode() {
     process.exit(1);
   }
 
+  // scripts/steam-sync-self-test.js: mark one description so a sync has something real to save.
+  const mark = process.env.STEAM_SYNC_TEST_MARK;
+  if (mark) {
+    const a = entries.find(e => e.apiName === mark);
+    if (!a) { console.error(`STEAM_SYNC_TEST_MARK: no achievement ${mark} in code`); process.exit(1); }
+    a.description = `${a.description} [sync test]`;
+    console.log(`Self-test: ${mark} description marked "[sync test]".`);
+  }
+
   return entries;
 }
 
