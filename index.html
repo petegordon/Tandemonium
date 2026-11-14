@@ -2531,6 +2531,17 @@
     line-height: 1.5;
   }
   .ach-detail-time { white-space: nowrap; }
+  /* #769: Rainbow Gold's bikes / Full House's modes, each done, to do, or locked */
+  .ach-checklist {
+    list-style: none; margin: 0.7em auto 0; padding: 0; max-width: 34em;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(15em, 1fr)); gap: 0.25em 1.5em;
+    font-size: var(--uf-size-md); text-align: left;
+  }
+  .ach-check { color: rgba(255,255,255,0.85); }
+  .ach-check-mark { display: inline-block; width: 1.75em; text-align: center; }
+  .ach-check--done { color: rgba(140,255,160,0.95); }
+  .ach-check--locked { color: rgba(255,255,255,0.5); }
+  .ach-check-note { display: block; padding-left: 1.75em; font-size: 0.8em; white-space: nowrap; }   /* what unlocks it, under the name */
   .ach-detail-time b { color: #fff; font-weight: 700; }
   .lb-section-title {
     font-size: 13px;

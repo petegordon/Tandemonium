@@ -385,3 +385,20 @@ test('a page-hide beacon while a sync is out never sends the same counts twice',
     if (realNav) Object.defineProperty(globalThis, 'navigator', realNav); else delete globalThis.navigator;
   }
 });
+
+test('/me/games tandemonium.steamPlayed: only a Steam session on this account counts (account number as "38" or "38.0")', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const u = addUser(db, 'Pat');
+  const other = addUser(db, 'Sam');
+  const token = jwt(u);
+  const session = (id, uid, platform) => db.prepare("INSERT INTO sessions (id, started_at, google_uid, platform) VALUES (?, '2026-11-13T00:00:00Z', ?, ?)").run(id, uid, platform);
+  const played = async () => (await (await call(env, '/me/games', { token })).json()).games.tandemonium.steamPlayed;
+  assert.equal(await played(), false, 'nothing yet');
+  session('a', String(u), 'browser');
+  session('b', String(other), 'steam');
+  session('c', null, 'steam');
+  assert.equal(await played(), false, 'web play and other accounts do not count');
+  session('d', `${u}.0`, 'steam');
+  assert.equal(await played(), true);
+});

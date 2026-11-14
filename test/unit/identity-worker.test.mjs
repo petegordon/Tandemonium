@@ -497,7 +497,7 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
   try {
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
     let r = await (await call(env, '/me/discord', { token: steam.token })).json();
-    assert.deepEqual(r, { linked: false, member: null, invite: 'https://discord.gg/abc' }, 'no Discord linked');
+    assert.deepEqual(r, { linked: false, member: null, said_hello: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
 
     const d = await deviceSignIn(env, steam.token);
     r = await (await call(env, '/me/discord', { token: d.token })).json();
@@ -517,6 +517,110 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
     r = await (await call(env, '/me/discord', { token: d.token })).json();
     assert.equal(r.member, null, 'Discord down: unknown, not "not a member"');
     assert.equal((await call(env, '/me/discord')).status, 401);
+  } finally { globalThis.fetch = inner; restore(); }
+});
+
+test('website sign-in with join_server: Discord link on the button, guilds.join, the player is added and the page is told', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), CORS_ORIGIN: 'https://housetandem.com', DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  let answer = 201;
+  const joins = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) { joins.push({ u, method: init.method, auth: init.headers.Authorization, body: JSON.parse(init.body) }); return new Response(null, { status: answer }); }
+    return inner(input, init);
+  };
+  const signIn = async (body) => {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', ...body } })).json();
+    const auth = new URL(begin.authorize_url);
+    const go = new URL((await call(env, '/auth/discord/go?r=' + begin.id)).headers.get('Location'));
+    assert.equal(go.toString(), auth.toString(), 'the button link and the redirect are the same consent screen');
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
+    return { scope: auth.searchParams.get('scope'), loc: cb.headers.get('Location') };
+  };
+  try {
+    let r = await signIn({ join_server: true });
+    assert.equal(r.scope, 'identify guilds.join');
+    assert.match(r.loc, /^https:\/\/housetandem\.com\/account\.html#ht_auth=[^&]+&ht_server=added$/);
+    assert.deepEqual(joins[0], { u: `https://discord.com/api/v10/guilds/G1/members/${DISCORD_PETE.id}`, method: 'PUT', auth: 'Bot bot-token', body: { access_token: 'at' } });
+
+    answer = 204;
+    r = await signIn({ join_server: true });
+    assert.match(r.loc, /&ht_server=already$/);
+
+    answer = 403;   // the bot is missing Create Invite: still signed in
+    r = await signIn({ join_server: true });
+    assert.match(r.loc, /#ht_auth=[^&]+&ht_server=failed$/);
+
+    const before = joins.length;
+    r = await signIn({});
+    assert.equal(r.scope, 'identify', 'the game asks for nothing more');
+    assert.doesNotMatch(r.loc, /ht_server/);
+    assert.equal(joins.length, before);
+
+    delete env.DISCORD_BOT_TOKEN;
+    r = await signIn({ join_server: true });
+    assert.equal(r.scope, 'identify', 'no bot: no guilds.join on the consent screen');
+    assert.doesNotMatch(r.loc, /ht_server/);
+  } finally { globalThis.fetch = inner; restore(); }
+});
+
+test('Join checklist permissions: email kept while granted, verified Steam connection links (and merges) the Steam account, unticked = asked for less', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), CORS_ORIGIN: 'https://housetandem.com', DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token' };
+  const STEAM_ID = '76561190000000001';
+  const restore = mockFetch({ ...DISCORD_PETE, email: 'pete@example.com', verified: true });
+  const inner = globalThis.fetch;
+  let conns = [{ type: 'steam', id: STEAM_ID, name: 'petesteam', verified: true }, { type: 'twitch', id: 'x', verified: true }];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) return new Response(null, { status: 201 });
+    if (u.includes('/users/@me/connections')) return Response.json(conns);
+    return inner(input, init);
+  };
+  const signIn = async (scopes) => {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes } })).json();
+    const auth = new URL(begin.authorize_url);
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
+    const token = decodeURIComponent(cb.headers.get('Location').match(/ht_auth=([^&]+)/)[1]);
+    return { scope: auth.searchParams.get('scope'), token };
+  };
+  const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_identities WHERE provider = 'discord'").get();
+  try {
+    // The Steam game made its own account first, with a ride on it.
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: STEAM_ID, personaName: 'p', ticket: 't' } })).json();
+    const steamUser = db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id;
+
+    let r = await signIn(['guilds.join', 'email', 'connections', 'bogus']);
+    assert.equal(r.scope, 'identify guilds.join email connections', 'junk scopes are dropped');
+    let row = discordRow();
+    assert.equal(row.email, 'pete@example.com');
+    assert.equal(row.scopes, 'identify guilds.join email connections');
+    const me = await (await call(env, '/me', { token: r.token })).json();
+    assert.ok(me.user.identities.steam, 'the Steam account Discord verified is linked');
+    assert.ok(me.user.identities.discord);
+    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, row.user_id, 'one account');
+    assert.notEqual(steamUser, row.user_id);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 0, 'the Steam-only account merged in');
+    assert.ok(steam.token);
+
+    // Email unticked next time: forgotten. Connections unticked: not fetched.
+    conns = [];
+    r = await signIn(['guilds.join']);
+    assert.equal(r.scope, 'identify guilds.join');
+    row = discordRow();
+    assert.equal(row.email, null, 'email dropped when news is turned off');
+    assert.equal(row.scopes, 'identify guilds.join');
+
+    // An unverified Steam connection is never linked.
+    const db2 = freshDb();
+    const env2 = { ...env, DB: d1(db2) };
+    conns = [{ type: 'steam', id: STEAM_ID, verified: false }];
+    const begin = await (await call(env2, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
+    await call(env2, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_identities WHERE provider = 'steam'").get().n, 0);
   } finally { globalThis.fetch = inner; restore(); }
 });
 
@@ -750,4 +854,65 @@ test('the Steam sign-in attaches its analytics session to the account, before or
     const bad = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: 'nope' } });
     assert.equal(bad.status, 200);
   } finally { restore(); }
+});
+
+test('Join checklist "say hello": a post in the hello channel since joining counts, is remembered, and Discord trouble is unknown', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token', DISCORD_HELLO_CHANNEL_IDS: ' 111, nope ' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  const joined = '2026-11-10T00:00:00.000Z';
+  const msg = (id, author, ts) => ({ id: String(id), author: { id: author }, timestamp: ts });
+  const others = (n, from, ts) => Array.from({ length: n }, (_, i) => msg(from - i, 'someone', ts));
+  let pages = [[msg(9, 'someone', '2026-11-12T00:00:00Z')]];
+  let channelStatus = 200;
+  const asked = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.includes('/guilds/')) return Response.json({ joined_at: joined });
+    if (u.includes('/channels/')) {
+      asked.push(u);
+      if (channelStatus !== 200) return new Response('{}', { status: channelStatus });
+      const before = new URL(u).searchParams.get('before');
+      const i = before ? pages.findIndex((p) => p.length && p[0].id === String(Number(before) - 1)) : 0;
+      return Response.json(i >= 0 ? pages[i] || [] : []);
+    }
+    return inner(input, init);
+  };
+  const hello = async (token) => (await (await call(env, '/me/discord', { token })).json()).said_hello;
+  try {
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
+    const d = await deviceSignIn(env, steam.token);
+    assert.equal(await hello(d.token), false, 'no post yet');
+    pages = [[{ ...msg(10, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 7 }]];
+    assert.equal(await hello(d.token), false, "Discord's join notice in #welcome isn't a hello");
+    pages = [[{ ...msg(11, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 19 }]];
+    assert.equal(await hello(d.token), true, 'a reply is');
+    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
+    assert.ok(asked[0].endsWith('/v10/channels/111/messages?limit=100'));
+    asked.length = 0;
+
+    // Two full pages: the hello is on the second, still after joining.
+    pages = [others(100, 300, '2026-11-12T00:00:00Z'), [...others(99, 200, '2026-11-11T00:00:00Z'), msg(101, DISCORD_PETE.id, '2026-11-11T00:00:00Z')]];
+    asked.length = 0;
+    assert.equal(await hello(d.token), true);
+    assert.equal(asked.length, 2);
+    assert.ok(asked[1].includes('before=201'));
+    assert.ok(db.prepare("SELECT said_hello_at FROM user_identities WHERE provider = 'discord'").get().said_hello_at > 0);
+
+    // Remembered: Discord isn't asked again.
+    asked.length = 0;
+    pages = [[]];
+    assert.equal(await hello(d.token), true);
+    assert.equal(asked.length, 0);
+
+    // Paging stops at the join time; a channel the bot can't read is unknown.
+    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
+    pages = [others(100, 300, '2026-11-01T00:00:00Z'), [msg(101, DISCORD_PETE.id, '2026-10-01T00:00:00Z')]];
+    asked.length = 0;
+    assert.equal(await hello(d.token), false, 'older than joining: not looked at');
+    assert.equal(asked.length, 1);
+    channelStatus = 403;
+    assert.equal(await hello(d.token), null);
+  } finally { globalThis.fetch = inner; restore(); }
 });

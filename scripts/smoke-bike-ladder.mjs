@@ -10,6 +10,7 @@
 //   BL-05  the Jungle ride to Grandma's that is also the 50th: "2 new bikes!" (Banana Delivery + Christmas Cruiser), one screen
 //   BL-06  the end-of-ride screen: the next-bike line in the unlocked list, and "New bike!" over it with RIDE IT NOW
 //   BL-09  the chooser: a locked colour bike keeps its paint; holiday bikes lit with their outfit geese; reward bikes silhouettes
+//   BL-09b #768 no goose mesh casts a shadow (the eyes, unskinned, cast two floating ones); the bike still does
 //   BL-10  Settings › Bike Chooser Geese: beside the bike (the geese stand either side); back to on the bike
 //   BL-07  demo → full game: one welcome screen, "Your demo riding earned you 32 achievements and 4 new bikes."
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
@@ -228,6 +229,21 @@ check(xmas.name.startsWith('🔒') && xmas.picked === 'default' && !xmas.frame &
   && xmas.special.frameColour === '2eff46' && xmas.special.seatColour === 'bd0000',
   'BL-09: a locked holiday bike: fully lit in its own paint (green frame, red seats), its Cyclists geese riding, the outfit named', xmas);
 
+// #768 the geese cast no shadow in the chooser, not even their unskinned eyes; the bike's own shadow stays
+const shadows = (k) => page.evaluate((k) => {
+  const sp = window._game.lobby._specialPreviews[k];
+  const roots = sp.riders ? Object.values(sp.riders.riders).filter(Boolean).map(r => r.root) : (sp.actors || []).map(a => a.root);
+  const inGeese = new Set();
+  const geese = [];
+  for (const r of roots) r.traverse(o => { if (o.isMesh) { inGeese.add(o); if (o.castShadow) geese.push(o.name); } });
+  let bike = 0;
+  sp.model.traverse(o => { if (o.isMesh && !inGeese.has(o) && o.castShadow) bike++; });
+  return { geeseMeshes: inGeese.size, geese, bike };
+}, k);
+const xmasShadow = await shadows('bike_christmas');
+check(xmasShadow.geeseMeshes > 0 && xmasShadow.geese.length === 0 && xmasShadow.bike > 0,
+  'BL-09b: the seated geese cast no shadow (eyes included); the bike still does', xmasShadow);
+
 await pick('solo_flight');
 check(await seated('solo_flight'), 'BL-09: the Solo Flight\'s Robot geese are seated');
 const solo = await view('solo_flight');
@@ -269,6 +285,9 @@ const xs = await page.evaluate(() => { const sp = window._game.lobby._specialPre
 await h.shot(page, 'bl10-christmas-beside');
 check(!xs.riders && xs.dark === false && xs.mode === 'stand' && Math.min(...xs.xs) < 0 && Math.max(...xs.xs) > 0 && xs.frame === '2eff46',
   'BL-10: one goose either side, none on the bike, the bike in its own paint', xs);
+const standShadow = await shadows('bike_christmas');
+check(standShadow.geeseMeshes > 0 && standShadow.geese.length === 0 && standShadow.bike > 0,
+  'BL-09b: the standing geese cast no shadow (eyes included); the bike still does', standShadow);
 await pick('solo_flight');
 check(await standing('solo_flight'), 'BL-10: the Solo Flight\'s Robot geese stand beside it');
 await sleep(800);

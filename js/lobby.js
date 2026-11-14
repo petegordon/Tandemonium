@@ -48,7 +48,7 @@ import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { seedKeptOutfits, lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
-import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
+import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, earnedLine, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
 import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
@@ -4677,8 +4677,30 @@ export class Lobby {
     card.achievement = this._achItem(d);
     card.number = d.n;
     card.total = this._achievements.getAllDefinitions().length;
-    card.extraHtml = this._medalTimesHtml(d);
+    card.extraHtml = this._medalTimesHtml(d) + this._achChecklistHtml(d);
     card.footHtml = bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '';
+  }
+
+  /**
+   * #769: an "all of these" badge (Rainbow Gold, Full House) lists every item by name: ✓ done, ○ still
+   * to do, 🔒 a bike that can't be ridden yet, with what unlocks it ("65 achievements"). '' for the rest.
+   */
+  _achChecklistHtml(d) {
+    if (!d.checklist || !d.checklist.length || d.secret || d.demoLocked) return '';
+    const bikes = d.checklistKind === 'bikes';
+    const rows = d.checklist.map(item => {
+      const label = bikes ? (BIKE_NAMES[item.key] || item.key) : (item.label || item.key);
+      let mark = '○', state = 'todo', note = '';
+      if (item.done) { mark = '✓'; state = 'done'; }
+      else if (bikes && !this._bikeRideable(item.key)) {
+        mark = '🔒'; state = 'locked';
+        note = earnedLine(item.key) || 'Full game';
+      }
+      return '<li class="ach-check ach-check--' + state + '" data-key="' + this._escapeHtml(item.key) + '">'
+        + '<span class="ach-check-mark">' + mark + '</span>' + this._escapeHtml(label)
+        + (note ? ' <span class="ach-check-note">' + this._escapeHtml(note) + '</span>' : '') + '</li>';
+    });
+    return '<ul class="ach-checklist">' + rows.join('') + '</ul>';
   }
 
   /**
@@ -9623,13 +9645,15 @@ export class Lobby {
         mats.push([mm, mm.clone()]);
         return mm;
       };
-      const track = (root) => root.traverse((o) => {
+      // geese: the root is a goose (a seated rider or a standing actor), so nothing in it casts a shadow
+      const track = (root, geese = false) => root.traverse((o) => {
         if (!o.isMesh || seen.has(o)) return;
         seen.add(o);
         o.material = Array.isArray(o.material) ? o.material.map(own) : own(o.material);
-        // the geese (skinned) cast no shadow here: a skinned shadow needs shaders three can't build ahead,
-        // and building them on the first frame froze the chooser ~120 ms; the bike's shadow stays
-        o.castShadow = !o.isSkinnedMesh;
+        // the geese cast no shadow here: a skinned shadow needs shaders three can't build ahead, and building
+        // them on the first frame froze the chooser ~120 ms; the bike's shadow stays. Every goose mesh, not just
+        // the skinned ones: the eyes ride the head bone unskinned, and alone they cast two floating shadows (#768)
+        o.castShadow = !geese && !o.isSkinnedMesh;
         if (o.isSkinnedMesh) o.frustumCulled = false;
       });
       track(model);
@@ -9666,7 +9690,8 @@ export class Lobby {
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
         const roots = Object.values(riders.riders).filter(Boolean).map((r) => r.root);
         for (const r of roots) r.visible = false;   // (seated hidden until warmed up)
-        track(model);                    // the geese join the silhouette
+        for (const r of roots) track(r, true);   // the geese join the silhouette (no shadows, #768)
+        track(model);
         const dark = sp.dark;
         sp.dark = null;
         this._setSpecialDark(sp, dark);
@@ -9683,7 +9708,7 @@ export class Lobby {
    * They stay put while the bike turns between them (so its frame and seats all show).
    * @param {object} sp the bike's chooser preview
    * @param {object|null} looks getSeatLooks (their bodies)
-   * @param {(root: THREE.Object3D) => void} track joins a model to the bike's materials (its silhouette)
+   * @param {(root: THREE.Object3D, geese?: boolean) => void} track joins a model to the bike's materials (its silhouette)
    * @param {number} bikeHalf half the bike's length in the chooser
    */
   _standOutfitGeese(sp, looks, track, bikeHalf) {
@@ -9707,7 +9732,7 @@ export class Lobby {
         // a little in front of the bike, clear of it as it turns, and inside the frame
         actor.root.position.set(dir * Math.min(0.92, bikeHalf * 0.97), 0, 0.85);
         actor.setHeading(-dir * 0.4);                  // facing you, turned in toward the bike
-        track(actor.root);
+        track(actor.root, true);
         const dark = sp.dark;
         sp.dark = null;
         this._setSpecialDark(sp, dark);                // (a silhouette for a locked reward bike)

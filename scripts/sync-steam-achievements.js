@@ -128,7 +128,7 @@ function describeCondition(id, fallback) {
     sling_stage3: 'Clear Slingshot stage 3',
     sling_25: 'Reach 25 km/h in a Slingshot launch',
     sling_40: 'Reach 40 km/h in a Slingshot launch',
-    sling_1000: 'Fly 1,000 m in one launch',
+    sling_1000: 'Fly 600 m in one launch',
     big_air: 'Land a Big Air off a ramp',
     frequent_flyer: 'Land 25 Big Airs',
     jackpot: 'Collect the pot of gold',
@@ -166,7 +166,7 @@ function describeCondition(id, fallback) {
     // Hidden on Steam (the sync sets the Hidden box from `hidden: true` in the defs):
     crashes_10: 'Crash 10 times in total',
     false_start: 'Crash within 3 seconds of GO',
-    so_close: 'Crash within 10 m of the finish',
+    so_close: 'Crash after the last checkpoint',
     weathered: 'Ride through a gust without crashing',
     gone_with_wind: 'Get pushed by 10 gusts',
     grand_tour: 'Ride 5 km in total in Tourist',

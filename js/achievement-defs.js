@@ -145,6 +145,18 @@ export const COLOUR_BIKES = Object.freeze(['default', 'bike_orange', 'bike_magen
 /** #608 · Full House: a finished ride in each of these (L.modesFinished). */
 export const FULL_HOUSE_MODES = Object.freeze(['grandma', 'daily', 'slingshot', 'coop', 'versus', 'tourist']);
 
+/** #769 · Full House's modes as the detail card names them. */
+export const FULL_HOUSE_MODE_NAMES = Object.freeze({
+  grandma: "Grandma's", daily: 'Daily Ride', slingshot: 'Slingshot', coop: 'Co-op', versus: 'Versus', tourist: 'Tourist',
+});
+
+/**
+ * #769 · every item an "all of these" badge needs, done or not, so the detail card can say which are
+ * left (the bar alone only says "5 of 7"). Bike labels come from the lobby, where the bike names live.
+ */
+export const checklistOf = (keys, list, labels = null) => L =>
+  keys.map(key => ({ key, label: labels ? labels[key] : '', done: ((L && L[list]) || []).includes(key) }));
+
 // prettier-ignore
 export const ACHIEVEMENTS = [
   // ── 1. First rides ────────────────────────────────────────
@@ -214,7 +226,7 @@ export const ACHIEVEMENTS = [
   // #716 (Pete 2026-11-09): stages 5 and 7 were too many stage goals; launch speeds instead.
   { id: 'sling_25',       section: 'sling', name: 'Flung',               icon: '💨', desc: 'Hit 25 km/h in a Slingshot launch',   ...count('slingTopSpeed', 25), unit: 'km/h' },
   { id: 'sling_40',       section: 'sling', name: 'Goose Cannonball',    icon: '🚀', desc: 'Hit 40 km/h in a Slingshot launch',   ...count('slingTopSpeed', 40), unit: 'km/h' },
-  { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm' },
+  { id: 'sling_1000',     section: 'sling', name: 'Long Fling',          icon: '🛫', desc: '600 m in one launch',                 ...count('slingBest', 600), stage: stageForDistance(600), unit: 'm' },   // was 1,000 m (stage 7 only, out of reach); id kept for saves + Steam
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
   { id: 'jackpot',        section: 'sling', name: 'Pot of Gold',         icon: '💰', desc: 'Collect the pot of gold',             ...count('jackpots', 1) },   // #546: id kept for saves + Steam
@@ -269,7 +281,7 @@ export const ACHIEVEMENTS = [
   // ── 13. Chaos (hidden) ───────────────────────────────────
   { id: 'crashes_10',     section: 'chaos', hidden: true, name: 'Frequent Faller', icon: '🤕', desc: 'Crash 10 times in total',   ...count('crashes', 10) },
   { id: 'false_start',    section: 'chaos', hidden: true, name: 'False Start',     icon: '🚦', desc: 'Crash within 3 s of GO',    ...count('falseStarts', 1) },
-  { id: 'so_close',       section: 'chaos', hidden: true, name: 'So Close',        icon: '🤏', desc: 'Crash within 10 m of the finish', ...count('soCloses', 1) },
+  { id: 'so_close',       section: 'chaos', hidden: true, name: 'So Close',        icon: '🤏', desc: 'Crash after the last checkpoint', ...count('soCloses', 1) },
   { id: 'weathered',      section: 'chaos', hidden: true, name: 'Weathered',       icon: '🌬️', desc: 'Ride through a gust without crashing', ...count('weathered', 1) },
   { id: 'gone_with_wind', section: 'chaos', hidden: true, name: 'Gone With the Wind', icon: '🌪️', desc: 'Get pushed by 10 gusts', ...count('gusts', 10) },
 
@@ -279,7 +291,8 @@ export const ACHIEVEMENTS = [
   // #608 · every mode needs co-op and versus, so it counts as multiplayer (js/rewards.js · MULTIPLAYER_IDS).
   { id: 'full_house',     section: 'explore', name: 'Full House',        icon: '🎪', desc: "Finish a ride in every mode: Grandma's, the Daily Ride, Slingshot, co-op, versus and Tourist",
     condition: (s, L) => FULL_HOUSE_MODES.every(m => (L.modesFinished || []).includes(m)),
-    progress: L => [FULL_HOUSE_MODES.filter(m => (L.modesFinished || []).includes(m)).length, FULL_HOUSE_MODES.length] },
+    progress: L => [FULL_HOUSE_MODES.filter(m => (L.modesFinished || []).includes(m)).length, FULL_HOUSE_MODES.length],
+    checklist: checklistOf(FULL_HOUSE_MODES, 'modesFinished', FULL_HOUSE_MODE_NAMES) },
 
   // ── 15. Grandma's in every colour ────────────────────────
   // F-1 hid these (riding the same 250 m seven times); restored 2026-10-20
@@ -294,7 +307,8 @@ export const ACHIEVEMENTS = [
   // #608 · any difficulty, like Grandma's Favourite.
   { id: 'rainbow_gold',    section: 'colours', name: 'Rainbow Gold',        icon: '🌈', desc: "Win gold on Grandma's on every bike colour (all 7)",
     condition: (s, L) => COLOUR_BIKES.every(k => (L.grandmaGoldBikes || []).includes(k)),
-    progress: L => [COLOUR_BIKES.filter(k => (L.grandmaGoldBikes || []).includes(k)).length, COLOUR_BIKES.length] },
+    progress: L => [COLOUR_BIKES.filter(k => (L.grandmaGoldBikes || []).includes(k)).length, COLOUR_BIKES.length],
+    checklist: checklistOf(COLOUR_BIKES, 'grandmaGoldBikes'), checklistKind: 'bikes' },
 
   // ── #500 · added after the first 100 (Clean riding section, last in the list); sling_500 Half a Klick was dropped to stay at Steam's 100 cap (stage 3 already needs 540 m) ──
   { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },
@@ -713,7 +727,14 @@ export function applyEvent(prev, type, d = {}, today = null) {
 export const STEADY_MIN_SPEED = 1;          // m/s: standing still is not riding
 export const ROAD_HALF_WIDTH = 2.5;         // metres from the centre: off-road past this
 export const FALSE_START_S = 3;
-export const SO_CLOSE_M = 10;
+export const SO_CLOSE_M = 10;            // a road with no checkpoints: the last 10 m
+
+/** Where the last checkpoint sits on a road (0 when it has none). Same list RaceManager builds. */
+export function lastCheckpointM(raceDistance, interval) {
+  const d = n(raceDistance), i = n(interval);
+  if (!(d > 0) || !(i > 0) || i >= d) return 0;
+  return Math.ceil(d / i - 1) * i;
+}
 
 export class RideTracker {
   constructor() {
@@ -770,7 +791,8 @@ export class RideTracker {
   }
 
   /**
-   * A crash. c: { ref, cause, distance, raceDistance }
+   * A crash. c: { ref, cause, distance, raceDistance, lastCheckpoint }
+   * So Close: anywhere past the ride's last checkpoint (the final stretch), not yet finished.
    * @returns {{ falseStart, soClose }}
    */
   crash(c = {}) {
@@ -781,8 +803,9 @@ export class RideTracker {
     if (this.gustActive) this.gustCrashed = true;
     const falseStart = this.sinceGo != null && this.sinceGo <= FALSE_START_S;
     this.sinceGo = null;                       // only the first crash after a GO
-    const left = n(c.raceDistance) - n(c.distance);
-    const soClose = n(c.raceDistance) > 0 && left >= 0 && left <= SO_CLOSE_M;
+    const race = n(c.raceDistance), at = n(c.distance);
+    const finalStretch = n(c.lastCheckpoint) > 0 ? n(c.lastCheckpoint) : race - SO_CLOSE_M;
+    const soClose = race > 0 && at >= finalStretch && at <= race;
     this.stripRun = 0; this.boostRun = 0; this.steadyRun = 0;
     return { falseStart, soClose };
   }
