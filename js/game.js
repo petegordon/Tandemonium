@@ -57,7 +57,7 @@ import { PhysicsFx } from './physics/physics-fx.js';
 import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint } from './rewards.js';
-import { gyroOnlySteer } from './achievement-defs.js';
+import { gyroOnlySteer, lastCheckpointM } from './achievement-defs.js';
 import { InputManager, readGyroRollMode, setControllerManager, steamXInputMap } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
@@ -7961,6 +7961,14 @@ class Game {
     this._quickCountdown = false;
   }
 
+  /** So Close: where this ride's last checkpoint sits (0 = none; the tracker falls back to the last 10 m). */
+  _lastCheckpointM() {
+    const rm = this.mode === 'versus' ? null : this.raceManager;
+    if (rm && Array.isArray(rm.checkpoints)) return rm.checkpoints.length ? rm.checkpoints[rm.checkpoints.length - 1] : 0;
+    const lvl = this.lobby && this.lobby.selectedLevel;
+    return lvl ? lastCheckpointM(lvl.distance, lvl.checkpointInterval) : 0;
+  }
+
   _recordCrash(cause, bike = this.bike) {
     // B-2: start the clock on the recovery the moment of impact, so
     // crash_recover measures what the player actually waits through, and let
@@ -7984,6 +7992,7 @@ class Game {
       raceDistance: (this.mode === 'versus'
         ? (this.lobby.selectedLevel && this.lobby.selectedLevel.distance)
         : (this.raceManager && this.raceManager.raceDistance)) || 0,
+      lastCheckpoint: this._lastCheckpointM(),   // So Close: past the last checkpoint
     });
     if (bike) {
       analytics.trackRideEvent('crash', bike.distanceTraveled, {
@@ -9412,6 +9421,7 @@ class Game {
         ref: this.raceManager,
         distance: this.bike.distanceTraveled,
         raceDistance: (this.raceManager && this.raceManager.raceDistance) || 0,
+        lastCheckpoint: this._lastCheckpointM(),
       });
     }
 

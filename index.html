@@ -2531,6 +2531,17 @@
     line-height: 1.5;
   }
   .ach-detail-time { white-space: nowrap; }
+  /* #769: Rainbow Gold's bikes / Full House's modes, each done, to do, or locked */
+  .ach-checklist {
+    list-style: none; margin: 0.7em auto 0; padding: 0; max-width: 34em;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(15em, 1fr)); gap: 0.25em 1.5em;
+    font-size: var(--uf-size-md); text-align: left;
+  }
+  .ach-check { color: rgba(255,255,255,0.85); }
+  .ach-check-mark { display: inline-block; width: 1.75em; text-align: center; }
+  .ach-check--done { color: rgba(140,255,160,0.95); }
+  .ach-check--locked { color: rgba(255,255,255,0.5); }
+  .ach-check-note { display: block; padding-left: 1.75em; font-size: 0.8em; white-space: nowrap; }   /* what unlocks it, under the name */
   .ach-detail-time b { color: #fff; font-weight: 700; }
   .lb-section-title {
     font-size: 13px;
@@ -6236,7 +6247,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.054d937 | 11-13-2026 22:39</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.6bdf675 | 11-13-2026 22:41</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

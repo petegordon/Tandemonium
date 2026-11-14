@@ -5,7 +5,7 @@ import fs from 'node:fs';
 
 import {
   ACHIEVEMENTS, SECTIONS, DEMO_UNEARNABLE, MEDAL_LEVELS,
-  emptyStats, migrateStats, applyEvent, RideTracker, versusResult, opensMedalGate,
+  emptyStats, migrateStats, applyEvent, RideTracker, lastCheckpointM, versusResult, opensMedalGate,
   STATS_VERSION, stageForDistance, RENAMED_IDS, migrateEarned, getDefinition,
   COLOUR_BIKES, FULL_HOUSE_MODES, finishModes, seedStats,
 } from '../../js/achievement-defs.js';
@@ -247,6 +247,25 @@ test('ride tracker: False Start and So Close', () => {
   const late = t.crash({ ref: 'r1', distance: 245, raceDistance: 250 });
   assert.deepEqual(late, { falseStart: false, soClose: true });
   assert.equal(t.snapshot().rideCrashes, 3);
+});
+
+test('So Close: anywhere past the last checkpoint', () => {
+  const t = new RideTracker();
+  const at = (distance, lastCheckpoint) => t.crash({ ref: 'r1', distance, raceDistance: 250, lastCheckpoint }).soClose;
+  assert.equal(at(199, 200), false);    // still before the last checkpoint
+  assert.equal(at(200, 200), true);     // right on it
+  assert.equal(at(205, 200), true);     // early in the final stretch: used to need the last 10 m
+  assert.equal(at(249, 200), true);
+  // No checkpoints on the road: the last 10 m, as before.
+  assert.equal(at(235, 0), false);
+  assert.equal(at(241, 0), true);
+});
+
+test('lastCheckpointM matches RaceManager', () => {
+  assert.equal(lastCheckpointM(250, 50), 200);
+  assert.equal(lastCheckpointM(260, 50), 250);
+  assert.equal(lastCheckpointM(250, 250), 0);   // Tourist: one "checkpoint" at the end = none
+  assert.equal(lastCheckpointM(250, 0), 0);
 });
 
 test('ride tracker: False Start only within 3 s of GO, versus included (m1)', () => {
