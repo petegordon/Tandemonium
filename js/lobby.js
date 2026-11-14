@@ -4489,7 +4489,8 @@ export class Lobby {
         '<span class="lb-name">' + this._escapeHtml((r.display_name || 'Player').split(' ')[0]) +
           (isYou ? '<span class="lb-you-tag">You</span>' : '') + '</span>' +
         modeHtml + warpHtml +
-        (r.collectibles != null ? '<span class="lb-collectibles">\uD83C\uDF81' + r.collectibles + '</span>' : '') +
+        // Number(): another player's row; an old one may hold text the server once let through.
+        (r.collectibles != null ? '<span class="lb-collectibles">\uD83C\uDF81' + (Math.max(0, Math.round(Number(r.collectibles))) || 0) + '</span>' : '') +
         '<span class="lb-time">' + (r.dnf ? 'DNF' : this._formatTime(r.time_ms)) + '</span>' +
       '</div>';
     }).join('');
