@@ -214,7 +214,7 @@ export const ACHIEVEMENTS = [
   // #716 (Pete 2026-11-09): stages 5 and 7 were too many stage goals; launch speeds instead.
   { id: 'sling_25',       section: 'sling', name: 'Flung',               icon: '💨', desc: 'Hit 25 km/h in a Slingshot launch',   ...count('slingTopSpeed', 25), unit: 'km/h' },
   { id: 'sling_40',       section: 'sling', name: 'Goose Cannonball',    icon: '🚀', desc: 'Hit 40 km/h in a Slingshot launch',   ...count('slingTopSpeed', 40), unit: 'km/h' },
-  { id: 'sling_1000',     section: 'sling', name: 'Kilometre Fling',     icon: '🛫', desc: '1,000 m in one launch',               ...count('slingBest', 1000), stage: stageForDistance(1000), unit: 'm' },
+  { id: 'sling_1000',     section: 'sling', name: 'Long Fling',          icon: '🛫', desc: '600 m in one launch',                 ...count('slingBest', 600), stage: stageForDistance(600), unit: 'm' },   // was 1,000 m (stage 7 only, out of reach); id kept for saves + Steam
   { id: 'big_air',        section: 'sling', name: 'Big Air',             icon: '🪂', desc: 'Land a Big Air off a ramp',           ...count('bigAirs', 1) },
   { id: 'frequent_flyer', section: 'sling', name: 'Frequent Flyer',      icon: '✈️', desc: 'Land 25 Big Airs',                    ...count('bigAirs', 25) },
   { id: 'jackpot',        section: 'sling', name: 'Pot of Gold',         icon: '💰', desc: 'Collect the pot of gold',             ...count('jackpots', 1) },   // #546: id kept for saves + Steam

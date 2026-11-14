@@ -128,7 +128,7 @@ function describeCondition(id, fallback) {
     sling_stage3: 'Clear Slingshot stage 3',
     sling_25: 'Reach 25 km/h in a Slingshot launch',
     sling_40: 'Reach 40 km/h in a Slingshot launch',
-    sling_1000: 'Fly 1,000 m in one launch',
+    sling_1000: 'Fly 600 m in one launch',
     big_air: 'Land a Big Air off a ramp',
     frequent_flyer: 'Land 25 Big Airs',
     jackpot: 'Collect the pot of gold',
