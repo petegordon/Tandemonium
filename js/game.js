@@ -121,6 +121,7 @@ import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
 import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
 import { installPhonePoolUI } from './remote/phone-pool-ui.js'; // more phones for co-op / versus (#562)
+import { cleanRemote } from './remote-safe.js'; // partner data: no markup, real numbers (security)
 
 // #421 · game states where a phone remote shows its pedals (else its menu pad).
 const PHONE_RIDE_STATES = new Set(['countdown', 'calibrating', 'playing', 'finishCinematic', 'versusCinematic']);
@@ -1759,7 +1760,8 @@ class Game {
     this.net.onProfileReceived = (profile) => {
       // Capture authoritative finish stats from captain
       if (profile && profile.type === 'finishStats') {
-        this._remoteFinishStats = profile;
+        // A partner's client may be modified: no markup, real numbers only (remote-safe.js).
+        this._remoteFinishStats = cleanRemote(profile);
         return;
       }
       // Handle tilt status from partner (motion availability only — NOT a
@@ -5896,7 +5898,9 @@ class Game {
       // used to be a full-width row under it, which pushed the tally off a
       // 1280×800 screen).
       // words: a word, not a number ("Adventurous"): a size that fits its cell on a TV (Steam playtest 2026-11-07)
-      const stat = (x) => '<uf-stat icon="' + x.icon + '" value="' + x.value + '" label="' + x.label + '"' + (x.words ? ' data-words' : '') + '></uf-stat>';
+      // Escaped: the values can come from the captain's client (stoker side).
+      const esc = (v) => this._escapeHtml(v);
+      const stat = (x) => '<uf-stat icon="' + esc(x.icon) + '" value="' + esc(x.value) + '" label="' + esc(x.label) + '"' + (x.words ? ' data-words' : '') + '></uf-stat>';
       const cells = [...left, ...right];
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
@@ -5944,29 +5948,33 @@ class Game {
         const p2SourceRow = isLocal && p2SteerSource !== 'none'
           ? '<div>' + sourceIcon(p2SteerSource) + ' <strong>' + p2SteerSource + '</strong></div>'
           : '';
+        // Numbers only: on the stoker side these come from the captain's client.
+        const num = (v) => { const x = Number(v); return Number.isFinite(x) ? Math.round(x) : 0; };
+        const side = (c) => ({ overallPct: num(c && c.overallPct), totalTaps: num(c && c.totalTaps), safePct: num(c && c.safePct), onRoadPct: num(c && c.onRoadPct) });
+        const cap = side(contrib.captain), stk = side(contrib.stoker);
         const contribDiv = document.createElement('div');
         contribDiv.className = 'victory-contrib';
         contribDiv.innerHTML =
           '<div class="victory-contrib-header">' +
-            '<span class="contrib-label captain-label">' + captainLabel + ' ' + contrib.captain.overallPct + '%</span>' +
-            '<span class="contrib-label stoker-label">' + stokerLabel + ' ' + contrib.stoker.overallPct + '%</span>' +
+            '<span class="contrib-label captain-label">' + captainLabel + ' ' + cap.overallPct + '%</span>' +
+            '<span class="contrib-label stoker-label">' + stokerLabel + ' ' + stk.overallPct + '%</span>' +
           '</div>' +
           '<div class="victory-contrib-bar">' +
-            '<div class="contrib-fill-captain" style="width:' + contrib.captain.overallPct + '%"></div>' +
-            '<div class="contrib-fill-stoker" style="width:' + contrib.stoker.overallPct + '%"></div>' +
+            '<div class="contrib-fill-captain" style="width:' + cap.overallPct + '%"></div>' +
+            '<div class="contrib-fill-stoker" style="width:' + stk.overallPct + '%"></div>' +
           '</div>' +
           '<div class="victory-contrib-detail">' +
             '<div class="contrib-col">' +
               p1SourceRow +
-              '<div>\uD83E\uDDB6 <strong>' + contrib.captain.totalTaps + '</strong></div>' +
-              '<div>\u2696\uFE0F <strong>' + contrib.captain.safePct + '%</strong></div>' +
-              '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.captain.onRoadPct + '%</strong></div>' +
+              '<div>\uD83E\uDDB6 <strong>' + cap.totalTaps + '</strong></div>' +
+              '<div>\u2696\uFE0F <strong>' + cap.safePct + '%</strong></div>' +
+              '<div>\uD83D\uDEE3\uFE0F <strong>' + cap.onRoadPct + '%</strong></div>' +
             '</div>' +
             '<div class="contrib-col">' +
               p2SourceRow +
-              '<div>\uD83E\uDDB6 <strong>' + contrib.stoker.totalTaps + '</strong></div>' +
-              '<div>\u2696\uFE0F <strong>' + contrib.stoker.safePct + '%</strong></div>' +
-              '<div>\uD83D\uDEE3\uFE0F <strong>' + contrib.stoker.onRoadPct + '%</strong></div>' +
+              '<div>\uD83E\uDDB6 <strong>' + stk.totalTaps + '</strong></div>' +
+              '<div>\u2696\uFE0F <strong>' + stk.safePct + '%</strong></div>' +
+              '<div>\uD83D\uDEE3\uFE0F <strong>' + stk.onRoadPct + '%</strong></div>' +
             '</div>' +
           '</div>';
         statsEl.appendChild(contribDiv);

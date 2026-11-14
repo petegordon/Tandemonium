@@ -643,20 +643,39 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
   if (!dailyDayAllowed(dayKey, today, warp)) {
     return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
   }
-  if (!dnf && !(timeMs >= 30000 && timeMs <= 900000)) {
+  if (!dnf && !(typeof timeMs === 'number' && timeMs >= 30000 && timeMs <= 900000)) {
     return jsonResponse({ error: 'Implausible time' }, 400, corsOrigin);
   }
 
+  // daily_results is not a STRICT table: a string sent here would be stored as
+  // text and shown on other players' boards. Whole numbers in range, or 0 / null.
+  const d = dailyNumbers({ distance, collectibles, crashes, syncPct, partnerUserId });
   const res = await env.DB.prepare(dailyUpsertSql(!!dnf)).bind(
     userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
-    distance || 0, collectibles || 0, crashes || 0, safetyUsed ? 1 : 0,
-    typeof syncPct === 'number' ? Math.round(syncPct) : null,
-    partnerUserId || null, warp ? 1 : 0
+    d.distance, d.collectibles, d.crashes, safetyUsed ? 1 : 0,
+    d.syncPct, d.partnerUserId, warp ? 1 : 0
   ).run();
   const improved = !dnf && !!(res && res.meta && res.meta.changes > 0);
 
   writeMetric(env, 'daily_submit', mode);
   return jsonResponse({ success: true, improved }, 200, corsOrigin);
+}
+
+/**
+ * The Daily Ride's numeric fields, made safe to store: a finite number in range
+ * becomes a whole number, anything else (a string, NaN, a negative) becomes 0,
+ * or null for the optional ones.
+ */
+export function dailyNumbers({ distance, collectibles, crashes, syncPct, partnerUserId } = {}) {
+  const whole = (v, max) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.min(Math.round(v), max) : 0);
+  return {
+    distance: whole(distance, 1000000),
+    collectibles: whole(collectibles, 10000),
+    crashes: whole(crashes, 10000),
+    syncPct: typeof syncPct === 'number' && Number.isFinite(syncPct) ? Math.max(0, Math.min(100, Math.round(syncPct))) : null,
+    // An account id; a partner's client may have sent it as a numeric string.
+    partnerUserId: /^[1-9]\d{0,15}$/.test(String(partnerUserId ?? '')) ? Number(partnerUserId) : null,
+  };
 }
 
 /**
