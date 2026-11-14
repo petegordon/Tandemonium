@@ -1,24 +1,29 @@
 #!/usr/bin/env node
 /**
- * Sync Steam Achievements — Puppeteer automation
+ * Sync Steam Achievements — Steamworks Bulk Import/Export
  *
- * Reads achievements from js/achievement-defs.js (source of truth, #401),
- * opens Steamworks in a visible browser, waits for login,
- * scrapes current achievements, then:
- *   1. deletes what Steamworks has and code lacks (opt-in, --delete)
- *   2. adds what code has and Steamworks lacks
- *   3. updates display name, description and Hidden where they differ from code
- *      (and renames an API name in place — RENAMED_API_NAMES, #575 — so the
- *      stat bit, and every player's unlock, carries over)
- *   4. uploads the earned + locked icons (scripts/achievement-icons.js) to every
- *      achievement that has none on Steamworks (--icons re-uploads all of them)
- * Deleting is opt-in: a deleted achievement is gone for every player who
- * earned it, so without --delete the script only lists what it would remove.
+ * Reads achievements from js/achievement-defs.js (source of truth, #401), opens
+ * Steamworks in a visible browser (the login is kept between runs), then:
+ *   1. exports the achievement definitions + localization CSVs
+ *      (Stats & Achievements → Achievements → Bulk Import/Export)
+ *   2. plans against the code: names, descriptions, Hidden (= spoiler), new achievements
+ *   3. writes corrected CSVs to steam/achievement-sync/ and uploads them, plus the
+ *      earned + locked icons for new achievements (--icons: every achievement)
+ *   4. checks Steamworks' Pending Changes, presses Save, re-exports and confirms
+ *      nothing is left to change
+ *
+ * Valve replaced the old achievements table in Nov 2026; the row-by-row editor
+ * this script used to drive is gone, and CSV import is the supported route.
+ *
+ * Not done by import, so the script only reports them for a person to handle:
+ *   - achievements on Steamworks that the code no longer has (deleting takes the
+ *     unlock away from every player who earned it)
+ *   - API renames (RENAMED_API_NAMES, #575): importing would add a second, empty
+ *     achievement, so the script stops instead
  * Steam caps an app at 100 achievements; the script stops before adding past it.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--delete] [--icons] [--no-icons]
- *                                           [--allow-empty] [--debug]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless]
  *
  * Default appId: steam_appid.txt. 4510250 = playtest, 4482940 = main game.
  * Nothing is live until someone presses Publish in Steamworks.
@@ -27,18 +32,20 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { renderIcons } = require('./achievement-icons');
+const { parseCsv, toCsv, planSync } = require('./lib/steam-achievement-csv.cjs');
 
 const STEAM_ACHIEVEMENT_CAP = 100;
 
 // #575 · API names renamed in code (old → new; js/achievement-defs.js RENAMED_IDS
-// in upper case). A Steamworks row still under the old name is edited to the new
-// one rather than deleted and re-added, which would reset the unlock for everyone.
+// in upper case). Import can't rename, so a pending one stops the sync.
 const RENAMED_API_NAMES = { TODAYS_LAUNCH: 'DAILY_LAUNCH' };
 
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const OUT_DIR = path.join(__dirname, '..', 'steam', 'achievement-sync');
+const PROFILE_DIR = path.join(os.homedir(), '.tandemonium-steamworks-profile');
 
-const DEBUG = process.argv.includes('--debug');
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ── Read achievements from the definitions module ────────────────
 // #401: all 100 (#500 added look_no_thumbs, sling_500 dropped for Steam's 100 cap). js/achievement-defs.js is ESM, so import it.
@@ -174,399 +181,112 @@ function describeCondition(id, fallback) {
   return descriptions[id] || fallback || id;
 }
 
-// ── Wait for user to press ENTER ─────────────────────────────────
-function waitForEnter() {
-  return new Promise(resolve => {
-    if (process.stdin.setRawMode) process.stdin.setRawMode(false);
-    process.stdin.resume();
-    process.stdin.once('data', () => {
-      resolve();
-    });
-  });
-}
+// ── Steamworks page helpers ──────────────────────────────────────
 
-// ── Wait for the achievements table to finish rendering ──────────
-// "Achievement Configuration" appears before the rows do. Scraping at that
-// moment read 0 rows and the sync re-added all 25 as duplicates (Sept 2026),
-// so wait until the row count holds steady across several polls.
-async function waitForTable(page, { timeout = 30000, interval = 1500, stablePolls = 3 } = {}) {
+const onAchievementsPage = async (page) =>
+  /^Achievements:/.test(await page.title().catch(() => ''));
+
+/**
+ * Wait for a signed-in achievements page. The login form is left alone while
+ * someone types: the page is only re-opened when the browser has clearly left
+ * the sign-in flow (a Steamworks page that isn't the achievements one), and no
+ * more than once every 20 s.
+ */
+async function ensureSignedIn(page, url, timeoutMs = 300000) {
+  if (await onAchievementsPage(page)) return true;
+  console.log('Not signed in — please sign in to Steamworks in the browser window (QR code or password)...');
+  const btn = await page.$('button#login_btn_signin').catch(() => null);
+  if (btn) await btn.click().catch(() => {});
   const start = Date.now();
-  let last = -1, stable = 0;
-  while (Date.now() - start < timeout) {
-    await sleep(interval);
-    const n = await page.evaluate(() =>
-      document.querySelectorAll('tr[id] input[value="Delete"]').length
-    ).catch(() => -1);
-    stable = (n === last && n >= 0) ? stable + 1 : 0;
-    last = n;
-    // A non-empty table settles fast; an empty one might still be loading, so
-    // it has to hold for the whole timeout before we believe it.
-    if (n > 0 && stable >= stablePolls) return n;
+  let lastNav = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await sleep(3000);
+    if (await onAchievementsPage(page)) return true;
+    const u = page.url();
+    const inLogin = /login|openid|steamcommunity|store\.steampowered/i.test(u);
+    if (!inLogin && /partner\.steamgames\.com/.test(u) && Date.now() - lastNav > 20000) {
+      lastNav = Date.now();
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
+    }
   }
-  return last;
+  return false;
 }
 
-// ── Scrape current achievements from Steamworks ──────────────────
-async function scrapeAchievements(page) {
-  // First dump the table structure for debugging
-  if (DEBUG) {
-    const tableDebug = await page.evaluate(() => {
-      const rows = document.querySelectorAll('tr');
-      const info = [];
-      let count = 0;
-      for (const row of rows) {
-        if (count >= 25) break;
-        const cells = row.querySelectorAll('td');
-        if (cells.length < 2) continue;
-        const cellInfo = Array.from(cells).slice(0, 4).map((c, i) => {
-          return `[${i}]="${c.textContent.trim().substring(0, 60).replace(/\n/g, '|')}"`;
-        });
-        info.push(`  row(${cells.length} cells): ${cellInfo.join('  ')}`);
-        count++;
-      }
-      return info.join('\n');
+async function openBulkPanel(page) {
+  for (let i = 0; i < 20; i++) {
+    const ok = await page.evaluate(() => {
+      const tab = [...document.querySelectorAll('div,a,button')].find(e => e.textContent.trim() === 'Bulk Import/Export');
+      if (!tab) return false;
+      tab.click();
+      return true;
     });
-    console.log(`\n  [DEBUG] Table rows:\n${tableDebug}\n`);
-  }
-
-  return page.evaluate(() => {
-    const achievements = [];
-    const rows = document.querySelectorAll('tr');
-    for (const row of rows) {
-      const cells = row.querySelectorAll('td');
-      if (cells.length < 3) continue;
-
-      // Only look at rows that have Edit/Delete links
-      const rowHTML = row.innerHTML;
-      if (!rowHTML.includes('Edit') || !rowHTML.includes('Delete')) continue;
-
-      // Skip header row
-      const firstCellText = cells[0].textContent.trim();
-      if (firstCellText === 'API Name' || firstCellText === '') continue;
-
-      // Get API Name: first line of first cell text
-      const firstLines = firstCellText.split('\n').map(l => l.trim()).filter(l => l);
-      const apiName = firstLines[0] || '';
-
-      // Display Name and Description: the two spans of the second cell
-      const spans = cells[1].querySelectorAll('span');
-      const secondLines = spans.length >= 2
-        ? [spans[0].textContent.trim(), spans[1].textContent.trim()]
-        : cells[1].textContent.trim().split('\n').map(l => l.trim()).filter(l => l);
-      const displayName = secondLines[0] || '';
-      const description = secondLines.slice(1).join(' ');
-
-      if (apiName && apiName !== 'API Name') {
-        // row.id is Steam's stat/bit id (e.g. "a20_3") — unique even when two
-        // rows share an API name, so deletes can target one row exactly. It is
-        // also what the icon upload needs (statID 20, bit 3).
-        const m = /^a(\d+)_(\d+)$/.exec(row.id || '');
-        achievements.push({
-          apiName, displayName, description,
-          hidden: (cells[3]?.textContent || '').trim() === 'Yes',
-          hasIcon: !!cells[4]?.querySelector('img'),
-          hasGrayIcon: !!cells[5]?.querySelector('img'),
-          rowId: row.id || null,
-          statId: m ? m[1] : null,
-          bit: m ? m[2] : null,
-        });
-      }
+    if (ok) {
+      await page.waitForFunction(() => [...document.querySelectorAll('button')].some(b => b.innerText.trim() === 'Export Definitions (.csv)'), { timeout: 15000 });
+      return;
     }
-    return achievements;
-  });
+    await sleep(1000);
+  }
+  throw new Error('Could not find the Bulk Import/Export tab — has the Steamworks page changed again?');
 }
 
-// ── Dump page HTML for debugging ─────────────────────────────────
-async function dumpFormDebug(page, label) {
-  if (!DEBUG) return;
-  const html = await page.evaluate(() => {
-    // Find ALL input-like elements
-    const inputs = document.querySelectorAll('input, textarea, select, [contenteditable]');
-    const info = [];
-    for (const el of inputs) {
-      info.push({
-        tag: el.tagName,
-        type: el.type || '',
-        name: el.name || '',
-        id: el.id || '',
-        value: (el.value || el.textContent || '').substring(0, 80),
-        placeholder: el.placeholder || '',
-        className: (el.className || '').substring(0, 40),
-        contentEditable: el.contentEditable,
-      });
-    }
-    // Also look for the last table row which should be the new one
-    const rows = document.querySelectorAll('tr');
-    const lastRows = Array.from(rows).slice(-3);
-    const rowHTML = lastRows.map(r => {
-      const cells = r.querySelectorAll('td');
-      return Array.from(cells).map((c, i) => `[${i}] ${c.innerHTML.substring(0, 200)}`).join('\n      ');
-    }).join('\n    ---\n    ');
-
-    return { inputs: info, lastRowsHTML: rowHTML };
-  });
-  console.log(`\n  [DEBUG ${label}] All inputs/selects (${html.inputs.length}):`);
-  for (const inp of html.inputs) {
-    console.log(`    <${inp.tag} type="${inp.type}" name="${inp.name}" id="${inp.id}" value="${inp.value.substring(0, 50)}" editable="${inp.contentEditable}">`);
-  }
-  console.log(`\n  [DEBUG ${label}] Last table rows HTML:`);
-  console.log(`    ${html.lastRowsHTML}`);
-  console.log('');
+async function clickButton(page, label) {
+  const ok = await page.evaluate(l => {
+    const b = [...document.querySelectorAll('button')].find(x => x.innerText.trim() === l);
+    if (b) b.click();
+    return !!b;
+  }, label);
+  if (!ok) throw new Error(`No "${label}" button on the page`);
 }
 
-// ── Delete an achievement by clicking its Delete button ──────────
-// Targets the row by its Steam row id, never by API name: with duplicates
-// present, "first row with this name" is the ORIGINAL — the one players'
-// unlocks are attached to.
-async function deleteAchievement(page, rowId, apiName) {
-  if (!rowId) return false;
-
-  // Handle the confirmation dialog
-  page.once('dialog', async dialog => {
-    await dialog.accept();
-  });
-
-  const deleted = await page.evaluate((id, name) => {
-    const row = document.getElementById(id);
-    if (!row) return false;
-    const firstCell = row.querySelector('td');
-    if (!firstCell || firstCell.textContent.trim().split('\n')[0].trim() !== name) return false;
-    const deleteBtn = Array.from(row.querySelectorAll('a, button, input[type="button"], input[type="submit"]'))
-      .find(el => (el.textContent || el.value || '').trim() === 'Delete');
-    if (!deleteBtn) return false;
-    deleteBtn.click();
-    return true;
-  }, rowId, apiName);
-
-  if (deleted) {
-    await sleep(2000);
+/** Download one export into dir and return its text. */
+async function exportCsv(page, dir, label, name) {
+  const file = path.join(dir, name);
+  if (fs.existsSync(file)) fs.unlinkSync(file);
+  await clickButton(page, label);
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    if (fs.existsSync(file) && !fs.existsSync(file + '.crdownload') && fs.statSync(file).size > 0) {
+      await sleep(300);
+      return fs.readFileSync(file, 'utf-8');
+    }
   }
-
-  return deleted;
+  throw new Error(`Export "${label}" did not download ${name}`);
 }
 
-// ── Add an achievement via the New Achievement form ──────────────
-async function addAchievement(page, achievement) {
-  // Click "New Achievement" button
-  const newBtn = await page.evaluate(() => {
-    const links = document.querySelectorAll('a, button, input[type="button"], input[type="submit"]');
-    for (const el of links) {
-      const text = (el.textContent || el.value || '').trim();
-      if (text === 'New Achievement') {
-        el.click();
-        return true;
-      }
-    }
-    return false;
-  });
-
-  if (!newBtn) {
-    console.error(`  Could not find "New Achievement" button`);
-    return false;
-  }
-
-  await sleep(2000);
-
-  // Scroll to bottom so new form is visible
-  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-  await sleep(500);
-
-  try {
-    // Find the editable API Name input — it has an id like "ach20_10_apiname"
-    // Use evaluateHandle to get a direct reference to the DOM element
-    const apiId = await page.evaluate(() => {
-      const all = document.querySelectorAll('input');
-      for (const inp of all) {
-        if (inp.id && inp.id.match(/^ach\d+_\d+_apiname$/)) {
-          // Check if it's currently visible (in the editable form)
-          const rect = inp.getBoundingClientRect();
-          if (rect.height > 0 && rect.width > 0) {
-            return inp.id;
-          }
-        }
-      }
-      return null;
-    });
-
-    if (!apiId) {
-      console.error(`  Could not find visible API Name input`);
-      if (DEBUG) {
-        await page.screenshot({ path: 'debug-add-failed.png', fullPage: true });
-        console.log('  [DEBUG] Screenshot saved to debug-add-failed.png');
-        // Dump all input IDs for debugging
-        const allIds = await page.evaluate(() => {
-          return Array.from(document.querySelectorAll('input'))
-            .filter(i => i.id)
-            .map(i => ({ id: i.id, type: i.type, visible: i.getBoundingClientRect().height > 0 }))
-            .filter(i => i.id.includes('ach'));
-        });
-        console.log(`  [DEBUG] Achievement inputs: ${JSON.stringify(allIds)}`);
-      }
-      return false;
-    }
-
-    if (DEBUG) console.log(`  [DEBUG] Found API Name input: #${apiId}`);
-
-    // 1. Click API Name, select all text, type new value
-    await page.click(`#${apiId}`, { clickCount: 3 });
-    await sleep(100);
-    await page.keyboard.type(achievement.apiName, { delay: 15 });
-    if (DEBUG) console.log(`  [DEBUG] Typed API Name: ${achievement.apiName}`);
-
-    // 2. Display Name — derive its ID from the API Name ID pattern
-    //    API Name id: ach20_10_apiname → base is "ach20_10"
-    //    But Display Name doesn't have an ID — it uses name="english"
-    //    From the screenshot, the visible english inputs are right after the API row
-    //    Just click on each one by finding them via evaluateHandle
-    const displayEl = await page.evaluateHandle(() => {
-      const inputs = document.querySelectorAll('input[name="english"]');
-      for (const inp of inputs) {
-        const rect = inp.getBoundingClientRect();
-        if (rect.height > 0 && rect.width > 0 && inp.type === 'text') {
-          return inp;  // First visible english input = Display Name
-        }
-      }
-      return null;
-    });
-
-    if (displayEl.asElement()) {
-      await displayEl.asElement().click({ clickCount: 3 });
-      await sleep(100);
-      await page.keyboard.type(achievement.displayName, { delay: 15 });
-      if (DEBUG) console.log(`  [DEBUG] Typed Display Name: ${achievement.displayName}`);
-    } else {
-      console.error(`  Could not find Display Name field`);
-    }
-
-    // 3. Description — second visible english input
-    const descEl = await page.evaluateHandle(() => {
-      const inputs = document.querySelectorAll('input[name="english"]');
-      const visible = [];
-      for (const inp of inputs) {
-        const rect = inp.getBoundingClientRect();
-        if (rect.height > 0 && rect.width > 0 && inp.type === 'text') {
-          visible.push(inp);
-        }
-      }
-      return visible.length >= 2 ? visible[1] : null;  // Second visible = Description
-    });
-
-    if (descEl.asElement()) {
-      await descEl.asElement().click({ clickCount: 3 });
-      await sleep(100);
-      await page.keyboard.type(achievement.description, { delay: 15 });
-      if (DEBUG) console.log(`  [DEBUG] Typed Description: ${achievement.description}`);
-    } else {
-      console.error(`  Could not find Description field`);
-    }
-
-    // Screenshot before save
-    if (DEBUG) {
-      await page.screenshot({ path: 'debug-before-save.png', fullPage: true });
-      console.log('  [DEBUG] Screenshot saved to debug-before-save.png');
-    }
-
-    // 4. Click Save
-    await sleep(300);
-    const saveEl = await page.evaluateHandle(() => {
-      const inputs = document.querySelectorAll('input[type="submit"]');
-      for (const inp of inputs) {
-        if (inp.value === 'Save') {
-          const rect = inp.getBoundingClientRect();
-          if (rect.height > 0 && rect.width > 0) return inp;
-        }
-      }
-      return null;
-    });
-
-    if (saveEl.asElement()) {
-      await saveEl.asElement().click();
-    } else {
-      console.error(`  Could not find Save button`);
-      return false;
-    }
-
-    await sleep(2000);
-    return true;
-
-  } catch (e) {
-    console.error(`  Error: ${e.message}`);
-    if (DEBUG) {
-      await page.screenshot({ path: 'debug-error.png', fullPage: true });
-    }
-    return false;
-  }
+async function exportBoth(page, cdp, appId) {
+  const dir = path.join(OUT_DIR, 'export');
+  fs.mkdirSync(dir, { recursive: true });
+  await cdp.send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: dir });
+  const defs = await exportCsv(page, dir, 'Export Definitions (.csv)', `${appId}-achievements-definitions.csv`);
+  const loc = await exportCsv(page, dir, 'Export Localization (.csv)', `${appId}-achievements-localization.csv`);
+  return { defRows: parseCsv(defs), locRows: parseCsv(loc) };
 }
 
-// ── Update name / description / Hidden of an existing row ────────
-// Opens the row's Edit form, sets the English fields and the Hidden box,
-// saves, and waits for the row to leave edit mode.
-async function updateAchievement(page, rowId, achievement) {
-  return page.evaluate(async (rowId, a) => {
-    const wait = ms => new Promise(r => setTimeout(r, ms));
-    let row = document.getElementById(rowId);
-    if (!row) return 'row not found';
-    const editBtn = row.querySelector('input[value="Edit"]');
-    if (!editBtn) return 'no Edit button';
-    editBtn.click();
-    for (let i = 0; i < 20; i++) {
-      await wait(250);
-      row = document.getElementById(rowId);
-      if (row && row.querySelectorAll('input[name="english"]:not([type="hidden"])').length >= 2) break;
+/** Steam wants PNGs named <API>_ACHIEVED.png / <API>_UNACHIEVED.png; ours render as JPG. */
+async function iconPngs(browser, achievements) {
+  const dir = path.join(OUT_DIR, 'icons');
+  fs.mkdirSync(dir, { recursive: true });
+  const files = await renderIcons(browser, achievements.map(a => ({ id: a.id, icon: a.icon })));
+  const page = await browser.newPage();
+  const out = [];
+  for (const f of files) {
+    const api = f.id.toUpperCase();
+    for (const [src, suffix] of [[f.earned, 'ACHIEVED'], [f.gray, 'UNACHIEVED']]) {
+      const dest = path.join(dir, `${api}_${suffix}.png`);
+      const b64 = fs.readFileSync(src).toString('base64');
+      await page.setViewport({ width: 256, height: 256 });
+      await page.setContent(`<body style="margin:0"><img id="i" src="data:image/jpeg;base64,${b64}" style="display:block;width:256px;height:256px"></body>`);
+      await page.waitForFunction(() => document.getElementById('i').complete);
+      await (await page.$('#i')).screenshot({ path: dest, type: 'png' });
+      out.push(dest);
     }
-    const en = [...row.querySelectorAll('input[name="english"]')].filter(e => e.type !== 'hidden');
-    if (en.length < 2) return 'edit form did not open';
-    const set = (el, v) => {
-      el.value = v;
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    };
-    set(en[0], a.displayName);
-    set(en[1], a.description);
-    if (a.fromApiName) {   // #575: rename in place
-      const api = row.querySelector('input[id$="_apiname"]');
-      if (!api) return 'no API Name input';
-      set(api, a.apiName);
-    }
-    const hidden = row.querySelector('input[type="checkbox"][id$="_hidden"]');
-    if (hidden && hidden.checked !== a.hidden) hidden.click();
-    const save = [...row.querySelectorAll('input[type="submit"]')].find(b => b.value === 'Save');
-    if (!save) return 'no Save button';
-    save.click();
-    for (let i = 0; i < 40; i++) {
-      await wait(250);
-      row = document.getElementById(rowId);
-      if (row && !row.querySelector('input[name="english"]:not([type="hidden"])')) return 'ok';
-    }
-    return 'save did not finish';
-  }, rowId, achievement);
-}
-
-// ── Upload one icon (earned or locked) ───────────────────────────
-// The Edit form posts multipart to /images/uploadachievement with the row's
-// statID + bit and requestType achievement | achievement_gray. Post the same
-// thing straight from the signed-in page; no file dialog involved.
-async function uploadIcon(page, appId, row, filePath, gray) {
-  const b64 = fs.readFileSync(filePath).toString('base64');
-  return page.evaluate(async ({ appId, statId, bit, b64, gray }) => {
-    if (typeof g_sessionID !== 'string') return 'no session id on the page';
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-    const fd = new FormData();
-    fd.append('sessionid', g_sessionID);
-    fd.append('MAX_FILE_SIZE', '3000000');
-    fd.append('appID', String(appId));
-    fd.append('statID', String(statId));
-    fd.append('bit', String(bit));
-    fd.append('requestType', gray ? 'achievement_gray' : 'achievement');
-    fd.append('image', new Blob([bytes], { type: 'image/jpeg' }), gray ? 'icon_gray.jpg' : 'icon.jpg');
-    const res = await fetch('/images/uploadachievement', { method: 'POST', body: fd, credentials: 'include' });
-    return res.ok ? 'ok' : `HTTP ${res.status}`;
-  }, { appId, statId: row.statId, bit: row.bit, b64, gray });
+  }
+  await page.close();
+  return out;
 }
 
 // ── Main ─────────────────────────────────────────────────────────
 async function main() {
-  // App ID: from CLI arg, or read from steam_appid.txt, or prompt
   let appId = process.argv.find(a => /^\d+$/.test(a));
   if (!appId) {
     try {
@@ -574,384 +294,135 @@ async function main() {
       console.log(`Read app ID ${appId} from steam_appid.txt`);
     } catch (e) {
       console.error('No app ID provided and steam_appid.txt not found.');
-      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--debug] [--delete] [--allow-empty]');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless]');
       process.exit(1);
     }
   }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
-  // Deletes are opt-in: Steam can't undo one for the players who earned it.
-  const skipDelete = !process.argv.includes('--delete');
-  if (process.argv.includes('--no-delete')) console.log('Note: --no-delete is the default now; pass --delete to remove achievements.');
-  const allowEmpty = process.argv.includes('--allow-empty');
   const iconsOff = process.argv.includes('--no-icons');
-  const iconsAll = process.argv.includes('--icons');   // re-upload every icon, not just missing ones
+  const iconsAll = process.argv.includes('--icons');
+  const headless = process.argv.includes('--headless');   // only works once the saved login is good
 
   console.log('=== Steam Achievement Sync ===');
   console.log(`App ID: ${appId}`);
-  console.log(`URL: ${url}`);
-  if (dryRun) console.log('DRY RUN — no changes will be made');
-  if (DEBUG) console.log('DEBUG mode enabled');
+  if (dryRun) console.log('DRY RUN — nothing is uploaded');
   console.log('');
 
-  // Parse achievements from code
-  const codeAchievements = await parseAchievementsFromCode();
-  console.log(`Found ${codeAchievements.length} achievements in code:`);
-  for (const a of codeAchievements) {
-    console.log(`  ${a.apiName} — "${a.displayName}"`);
-  }
-  console.log('');
-
-  if (codeAchievements.length > STEAM_ACHIEVEMENT_CAP) {
-    console.error(`Code defines ${codeAchievements.length} achievements; Steam allows ${STEAM_ACHIEVEMENT_CAP} per app.`);
-    console.error('Nothing changed. Cut the list (js/achievement-defs.js) or get Valve to raise the cap first.');
+  const code = await parseAchievementsFromCode();
+  console.log(`Found ${code.length} achievements in code.`);
+  if (code.length > STEAM_ACHIEVEMENT_CAP) {
+    console.error(`Code defines ${code.length}; Steam allows ${STEAM_ACHIEVEMENT_CAP} per app. Nothing changed.`);
     process.exit(1);
   }
 
-  // Launch browser
-  console.log('Launching browser — please log in to Steamworks if needed...');
   const browser = await puppeteer.launch({
-    headless: false,
-    defaultViewport: null,
-    args: ['--start-maximized'],
+    headless, defaultViewport: null, args: ['--start-maximized'], userDataDir: PROFILE_DIR,
   });
-
-  // Icons are rendered locally before anything touches Steamworks, so a font
-  // or network problem stops the run before it changes anything.
-  let iconFiles = new Map();
-  if (!iconsOff) {
-    console.log('Rendering achievement icons (steam/achievement-icons/)...');
-    const files = await renderIcons(browser, codeAchievements.map(a => ({ id: a.id, icon: a.icon })));
-    iconFiles = new Map(files.map(f => [f.id.toUpperCase(), f]));
-    console.log(`  ${files.length} earned + ${files.length} locked icons ready.`);
-    console.log('');
-  }
-
-  const page = await browser.newPage();
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-
-  // Check if we're on the achievements page or need to log in
-  const isOnPage = await page.evaluate(() => {
-    return document.body.textContent.includes('Achievement Configuration');
-  });
-
-  if (!isOnPage) {
-    // Click the "Sign in" button (button#login_btn_signin)
-    console.log('Not logged in — clicking Sign in...');
-    try {
-      const loginBtn = await page.$('button#login_btn_signin');
-      if (loginBtn) {
-        await loginBtn.click();
-        console.log('Clicked Sign in — please authenticate (QR code or credentials)...');
-      } else {
-        console.log('Could not find Sign in button — please log in manually...');
-      }
-    } catch (e) {
-      console.log('Please log in manually in the browser window...');
-    }
-
-    // Poll until we reach the achievements page (check every 3 seconds, timeout 2 minutes)
-    console.log('Waiting for login to complete...');
-    const loginTimeout = 120000;
-    const pollInterval = 3000;
-    const startTime = Date.now();
-    let loggedIn = false;
-
-    while (Date.now() - startTime < loginTimeout) {
-      await sleep(pollInterval);
-      try {
-        const currentUrl = page.url();
-        const onAchPage = await page.evaluate(() => {
-          return document.body.textContent.includes('Achievement Configuration');
-        });
-        if (onAchPage) {
-          loggedIn = true;
-          break;
-        }
-        // Check if login completed but we're on a different page — navigate to achievements
-        const onSteamworks = await page.evaluate(() => {
-          return document.body.textContent.includes('Steamworks') &&
-                 !document.body.textContent.includes('Sign in');
-        });
-        if (onSteamworks) {
-          console.log('Login detected — navigating to achievements page...');
-          await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-          await sleep(2000);
-          loggedIn = true;
-          break;
-        }
-        process.stdout.write('.');
-      } catch (e) {
-        // Page might be navigating, just wait
-      }
-    }
-
-    if (!loggedIn) {
-      console.error('\nLogin timeout — could not reach achievements page within 2 minutes.');
-      await browser.close();
-      process.exit(1);
-    }
-    console.log('\nLogged in successfully!');
-    console.log('');
-  }
-
-  // Scrape current achievements
-  console.log('Waiting for the achievements table to load...');
-  await waitForTable(page);
-  console.log('Scraping current achievements from Steamworks...');
-  await dumpFormDebug(page, 'initial page');
-  const steamAchievements = await scrapeAchievements(page);
-  console.log(`Found ${steamAchievements.length} achievements on Steamworks:`);
-  for (const a of steamAchievements) {
-    console.log(`  ${a.apiName} — "${a.displayName}"`);
-  }
-  console.log('');
-
-  // An empty read is far more likely to be a page that hasn't rendered than an
-  // app with no achievements — and acting on it re-adds everything as
-  // duplicates. Only proceed on an explicitly empty app.
-  if (steamAchievements.length === 0 && codeAchievements.length > 0 && !allowEmpty) {
-    console.error('Read 0 achievements from Steamworks — the table probably had not loaded.');
-    console.error('Nothing changed. Re-run, or pass --allow-empty if this app really has none yet.');
-    await browser.close();
-    process.exit(1);
-  }
-
-  // Duplicate API names on Steamworks mean something already went wrong; the
-  // name-keyed plan below can't reason about them safely.
-  const seen = new Map();
-  for (const a of steamAchievements) seen.set(a.apiName, (seen.get(a.apiName) || 0) + 1);
-  const dupes = [...seen].filter(([, n]) => n > 1).map(([name]) => name);
-  if (dupes.length > 0) {
-    console.error(`Steamworks has duplicate API names: ${dupes.join(', ')}`);
-    console.error('Nothing changed. Remove the extra rows by hand (keep the lowest id — the original) and re-run.');
-    await browser.close();
-    process.exit(1);
-  }
-
-  // Compare
-  const codeSet = new Map(codeAchievements.map(a => [a.apiName, a]));
-  const steamSet = new Map(steamAchievements.map(a => [a.apiName, a]));
-
-  // #575 · renames: Steamworks has the old name, lacks the new one, code has the new one.
-  const toRename = Object.entries(RENAMED_API_NAMES)
-    .filter(([from, to]) => steamSet.has(from) && !steamSet.has(to) && codeSet.has(to))
-    .map(([from, to]) => ({ ...codeSet.get(to), fromApiName: from }));
-  const renamedFrom = new Set(toRename.map(a => a.fromApiName));
-  const renamedTo = new Set(toRename.map(a => a.apiName));
-  const toAdd = codeAchievements.filter(a => !steamSet.has(a.apiName) && !renamedTo.has(a.apiName));
-  const toDelete = steamAchievements.filter(a => !codeSet.has(a.apiName) && !renamedFrom.has(a.apiName));
-  const existing = codeAchievements.filter(a => steamSet.has(a.apiName));
-  const differs = (a, s) => s.displayName !== a.displayName || s.description !== a.description || s.hidden !== a.hidden;
-  const toUpdate = existing.filter(a => differs(a, steamSet.get(a.apiName)));
-  const needsIcons = s => iconsAll || !s.hasIcon || !s.hasGrayIcon;
-  const iconCount = iconsOff ? 0
-    : existing.filter(a => needsIcons(steamSet.get(a.apiName))).length + toAdd.length;
-
-  console.log('=== Sync Plan ===');
-  console.log(`  Already there:  ${existing.length}`);
-  console.log(`  To add:         ${toAdd.length}`);
-  console.log(`  To rename:      ${toRename.length} (API name edited in place)`);
-  console.log(`  To delete:      ${toDelete.length}${skipDelete && toDelete.length ? ' (skipped without --delete)' : ''}`);
-  console.log(`  To update:      ${toUpdate.length} (name / description / hidden)`);
-  console.log(`  Icons to upload: ${iconsOff ? 'off (--no-icons)' : `${iconCount} achievements`}`);
-  console.log('');
-
-  // Steam refuses the 101st achievement; check before deleting anything.
-  const after = steamAchievements.length - (skipDelete ? 0 : toDelete.length) + toAdd.length;
-  if (after > STEAM_ACHIEVEMENT_CAP) {
-    console.error(`That would leave ${after} achievements on Steamworks; the cap is ${STEAM_ACHIEVEMENT_CAP}.`);
-    console.error(skipDelete && toDelete.length
-      ? 'Re-run with --delete to remove the ones no longer in code first.'
-      : 'Nothing changed.');
-    await browser.close();
-    process.exit(1);
-  }
-
-  for (const a of toUpdate) {
-    const s = steamSet.get(a.apiName);
-    const parts = [];
-    if (s.displayName !== a.displayName) parts.push(`name "${s.displayName}" -> "${a.displayName}"`);
-    if (s.description !== a.description) parts.push(`desc "${s.description}" -> "${a.description}"`);
-    if (s.hidden !== a.hidden) parts.push(`hidden ${s.hidden} -> ${a.hidden}`);
-    console.log(`  ~ ${a.apiName}: ${parts.join('; ')}`);
-  }
-  if (toUpdate.length) console.log('');
-
-  for (const a of toRename) {
-    const s = steamSet.get(a.fromApiName);
-    console.log(`  → ${a.fromApiName} -> ${a.apiName}: "${s.displayName}" -> "${a.displayName}"; "${s.description}" -> "${a.description}"`);
-  }
-  if (toRename.length) console.log('');
-
-  if (toDelete.length > 0) {
-    console.log(skipDelete
-      ? 'On Steamworks but not in code — WOULD be deleted with --delete (not deleting):'
-      : 'Achievements to DELETE (on Steamworks but not in code):');
-    for (const a of toDelete) console.log(`  - ${a.apiName} ("${a.displayName}")`);
-    console.log('');
-  }
-
-  if (toAdd.length === 0 && toRename.length === 0 && toUpdate.length === 0 && iconCount === 0 && (skipDelete || toDelete.length === 0)) {
-    console.log(toDelete.length ? 'Nothing to add or update (deletes skipped — see above).' : 'Everything is in sync! Nothing to do.');
-    await browser.close();
-    return;
-  }
-
-  if (toAdd.length > 0) {
-    console.log('Achievements to ADD (in code but not on Steamworks):');
-    for (const a of toAdd) console.log(`  + ${a.apiName} ("${a.displayName}") — ${a.description}`);
-    console.log('');
-  }
-
-  if (dryRun) {
-    console.log('DRY RUN complete. Run without --dry-run to apply changes.');
-    await browser.close();
-    return;
-  }
-
-  console.log('Applying changes...');
-  console.log('');
-
-  // In debug mode, limit to 1 delete and 1 add for testing
-  const deleteList = DEBUG ? toDelete.slice(0, 1) : toDelete;
-  const addList = DEBUG ? toAdd.slice(0, 1) : toAdd;
-
-  if (DEBUG && (toDelete.length > 1 || toAdd.length > 1)) {
-    console.log(`DEBUG: limiting to ${deleteList.length} delete(s) and ${addList.length} add(s)`);
-    console.log('');
-  }
-
-  // Delete achievements not in code
-  if (!skipDelete && deleteList.length > 0) {
-    console.log('Deleting achievements...');
-    for (const a of deleteList) {
-      process.stdout.write(`  Deleting ${a.apiName} (${a.rowId})...`);
-      const ok = await deleteAchievement(page, a.rowId, a.apiName);
-      console.log(ok ? ' done' : ' FAILED');
-    }
-    // Reload page after deletes
+  const fail = async (msg) => { console.error(msg); await browser.close(); process.exit(1); };
+  try {
+    const page = (await browser.pages())[0] || await browser.newPage();
+    const cdp = await page.createCDPSession();
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    await waitForTable(page);
-    console.log('');
-  }
+    if (!await ensureSignedIn(page, url)) await fail('Not signed in after 5 minutes. Nothing changed.');
 
-  // #575 · Rename pass: edit the old row's API Name (with its new text) so the
-  // stat bit, and every player's unlock, stays. If Steamworks keeps the old
-  // name, stop before the add pass would create a second, empty row: the
-  // fallback (drop the entry from RENAMED_API_NAMES, re-run with --delete) is
-  // delete-old + add-new, which takes the unlock away from everyone who has it,
-  // so a person decides that.
-  if (toRename.length > 0) {
-    console.log('Renaming achievements...');
-    for (const a of toRename) {
-      process.stdout.write(`  Renaming ${a.fromApiName} -> ${a.apiName}...`);
-      console.log(' ' + await updateAchievement(page, steamSet.get(a.fromApiName).rowId, a));
+    await openBulkPanel(page);
+    const before = await exportBoth(page, cdp, appId);
+    const onSteam = before.defRows.length - 1;
+    console.log(`Steamworks has ${onSteam} achievements.`);
+    if (onSteam === 0 && code.length > 0 && !process.argv.includes('--allow-empty')) {
+      await fail('The export came back empty — not trusting it (pass --allow-empty for a brand-new app). Nothing changed.');
     }
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-    await waitForTable(page);
-    const afterRename = await scrapeAchievements(page);
-    const stuck = toRename.filter(a => afterRename.some(x => x.apiName === a.fromApiName) || !afterRename.some(x => x.apiName === a.apiName));
-    if (stuck.length) {
-      console.error(`Steamworks kept the old API name for: ${stuck.map(a => a.fromApiName).join(', ')}.`);
-      console.error('Nothing else changed. Fallback: remove it from RENAMED_API_NAMES and re-run with --delete (delete old + add new; players lose that unlock).');
+
+    const plan = planSync(code, before.defRows, before.locRows, { renames: RENAMED_API_NAMES });
+    const after = onSteam + plan.add.length;
+    console.log('');
+    console.log('=== Sync Plan ===');
+    console.log(`  To add:    ${plan.add.length}`);
+    console.log(`  To update: ${plan.update.length} (name / description / hidden)`);
+    console.log(`  Not in code (left alone): ${plan.remove.length}`);
+    for (const a of plan.add) console.log(`  + ${a.apiName} "${a.displayName}" — ${a.description}${a.hidden ? ' [hidden]' : ''}`);
+    for (const u of plan.update) console.log(`  ~ ${u.apiName}: ${u.parts.join('; ')}`);
+    for (const r of plan.remove) console.log(`  - ${r.apiName} "${r.displayName}" (delete by hand in Steamworks if it should go)`);
+    console.log('');
+
+    if (plan.renamed.length) {
+      await fail(`Pending API rename(s): ${plan.renamed.map(r => `${r.from} -> ${r.to}`).join(', ')}.\n`
+        + 'Import cannot rename; it would add an empty second achievement. Rename it by hand in Steamworks, then re-run. Nothing changed.');
+    }
+    if (after > STEAM_ACHIEVEMENT_CAP) {
+      await fail(`That would make ${after} achievements; the cap is ${STEAM_ACHIEVEMENT_CAP}. Delete the old ones by hand first. Nothing changed.`);
+    }
+
+    const iconList = iconsOff ? [] : (iconsAll ? code : plan.add);
+    if (!plan.defsChanged && !plan.locChanged && iconList.length === 0) {
+      console.log('Everything is in sync. Nothing to do.');
       await browser.close();
-      process.exit(1);
+      return;
     }
-    console.log('');
-  }
 
-  // Add achievements from code
-  if (addList.length > 0) {
-    console.log('Adding achievements...');
-    for (const a of addList) {
-      // Re-check against the live table right before each add: never create
-      // a second row with an API name that already exists.
-      const live = await scrapeAchievements(page);
-      if (live.some(x => x.apiName === a.apiName)) {
-        console.log(`  Skipping ${a.apiName} — already on Steamworks`);
-        continue;
-      }
-      process.stdout.write(`  Adding ${a.apiName}...\n`);
-      const ok = await addAchievement(page, a);
-      console.log(ok ? '  done' : '  FAILED');
+    fs.mkdirSync(OUT_DIR, { recursive: true });
+    const uploads = [];
+    if (plan.defsChanged) {
+      const f = path.join(OUT_DIR, `${appId}-achievements-definitions.csv`);
+      fs.writeFileSync(f, toCsv(plan.defRows));
+      uploads.push(f);
     }
-    console.log('');
-  }
-
-  // Update pass: re-read the table (adds may have changed it), then fix any
-  // name / description / Hidden that differs — this also sets Hidden on rows
-  // just added, since the add form leaves it unticked.
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  await waitForTable(page);
-  let live = await scrapeAchievements(page);
-  const liveSet = new Map(live.map(s => [s.apiName, s]));
-  const updateList = codeAchievements.filter(a => liveSet.has(a.apiName) && differs(a, liveSet.get(a.apiName)));
-  if (updateList.length) {
-    console.log('Updating achievements...');
-    for (const a of (DEBUG ? updateList.slice(0, 1) : updateList)) {
-      process.stdout.write(`  Updating ${a.apiName}...`);
-      console.log(' ' + await updateAchievement(page, liveSet.get(a.apiName).rowId, a));
+    if (plan.locChanged) {
+      const f = path.join(OUT_DIR, `${appId}-achievements-localization.csv`);
+      fs.writeFileSync(f, toCsv(plan.locRows));
+      uploads.push(f);
     }
-    console.log('');
-  }
-
-  // Icon pass: earned + locked icon for every row missing one (or all with --icons).
-  if (!iconsOff) {
-    const iconList = codeAchievements.filter(a => liveSet.has(a.apiName) && needsIcons(liveSet.get(a.apiName)));
     if (iconList.length) {
-      console.log(`Uploading icons for ${iconList.length} achievements...`);
-      for (const a of (DEBUG ? iconList.slice(0, 1) : iconList)) {
-        const s = liveSet.get(a.apiName);
-        const f = iconFiles.get(a.apiName);
-        if (!s.statId || !f) { console.log(`  ${a.apiName}: skipped (no stat id or icon file)`); continue; }
-        const r1 = await uploadIcon(page, appId, s, f.earned, false);
-        const r2 = await uploadIcon(page, appId, s, f.gray, true);
-        console.log(`  ${a.apiName}: earned ${r1}, locked ${r2}`);
-      }
-      console.log('');
+      console.log(`Rendering icons for ${iconList.length} achievements...`);
+      uploads.push(...await iconPngs(browser, iconList));
     }
+    console.log(`Files ready in ${OUT_DIR} (${uploads.length}).`);
+
+    if (dryRun) {
+      console.log('DRY RUN complete. Run without --dry-run to upload and save.');
+      await browser.close();
+      return;
+    }
+
+    console.log('Uploading...');
+    const input = await page.$('input[type=file][name=upload]');
+    if (!input) await fail('No upload field on the Bulk Import/Export panel. Nothing changed.');
+    await input.uploadFile(...uploads);
+    const n = uploads.length;
+    try {
+      await page.waitForFunction(k => new RegExp(`Successful \\(${k} files?\\)`).test(document.body.innerText), { timeout: 60000 }, n);
+    } catch (e) {
+      const t = await page.evaluate(() => document.body.innerText);
+      const i = t.indexOf('Uploaded Files');
+      await fail(`Steamworks did not accept every file:\n${t.slice(i, i + 1500)}\nNothing saved — the browser's pending changes are discarded.`);
+    }
+    const pending = await page.evaluate(() => {
+      const t = document.body.innerText;
+      return [...t.matchAll(/^(To [A-Z][a-z]+(?: [a-z]+)*|Unmodified) \((\d+)\)$/gm)].map(m => `${m[1]} (${m[2]})`);
+    });
+    console.log(`Pending changes: ${pending.join(', ') || '(none listed)'}`);
+    if (/To Delete \(|To Remove \(/.test(pending.join(' '))) {
+      await fail('Steamworks wants to delete achievements — the sync never does that. Nothing saved.');
+    }
+
+    await clickButton(page, 'Save');
+    await page.waitForFunction(() => !/Pending Changes/.test(document.body.innerText) || /saved|success/i.test(document.body.innerText), { timeout: 60000 }).catch(() => {});
+    await sleep(3000);
+
+    // Confirm from a fresh export.
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+    await openBulkPanel(page);
+    const check = planSync(code, ...Object.values(await exportBoth(page, cdp, appId)));
+    if (check.add.length || check.update.length) {
+      await fail(`Saved, but Steamworks still differs:\n${[...check.add.map(a => `  + ${a.apiName}`), ...check.update.map(u => `  ~ ${u.apiName}: ${u.parts.join('; ')}`)].join('\n')}`);
+    }
+    console.log('');
+    console.log('Saved and verified. Press Publish in Steamworks to make it live.');
+    await browser.close();
+  } catch (e) {
+    await fail(`Fatal error: ${e && e.stack || e}`);
   }
-
-  // Final scrape to verify
-  console.log('Verifying...');
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
-  await waitForTable(page);
-  const finalAchievements = await scrapeAchievements(page);
-  console.log(`Steamworks now has ${finalAchievements.length} achievements.`);
-  console.log(`Code expects ${codeAchievements.length} achievements.`);
-
-  // Compare by name, not count — a count can match while names are wrong.
-  const finalNames = finalAchievements.map(a => a.apiName);
-  const missing = codeAchievements.filter(a => !finalNames.includes(a.apiName)).map(a => a.apiName);
-  const extra = finalNames.filter(n => !codeSet.has(n));
-  const doubled = finalNames.filter((n, i) => finalNames.indexOf(n) !== i);
-  const finalSet = new Map(finalAchievements.map(s => [s.apiName, s]));
-  const stillDiffer = codeAchievements.filter(a => finalSet.has(a.apiName) && differs(a, finalSet.get(a.apiName))).map(a => a.apiName);
-  const noIcon = iconsOff ? [] : codeAchievements
-    .filter(a => finalSet.has(a.apiName) && (!finalSet.get(a.apiName).hasIcon || !finalSet.get(a.apiName).hasGrayIcon))
-    .map(a => a.apiName);
-  if (missing.length) console.log(`  Missing:    ${missing.join(', ')}`);
-  if (extra.length) console.log(`  Not in code: ${extra.join(', ')}`);
-  if (doubled.length) console.log(`  DUPLICATED: ${[...new Set(doubled)].join(', ')}`);
-  if (stillDiffer.length) console.log(`  Text/hidden still differ: ${stillDiffer.join(', ')}`);
-  if (noIcon.length) console.log(`  Still missing an icon: ${noIcon.join(', ')}`);
-
-  if (!missing.length && !doubled.length && !stillDiffer.length && !noIcon.length && (skipDelete || !extra.length)) {
-    console.log('SYNC COMPLETE!');
-  } else {
-    console.log('WARNING: Steamworks does not match the code — review in the browser.');
-    console.log('Press ENTER to close the browser...');
-    await waitForEnter();
-  }
-
-  console.log('');
-  console.log('IMPORTANT: Go to the Publish tab in Steamworks to publish these changes!');
-
-  await browser.close();
 }
 
-main().catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+main();

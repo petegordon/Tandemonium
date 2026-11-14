@@ -1,12 +1,14 @@
 ---
 name: sync-steam-achievements
-description: Sync Steam achievements between js/achievements.js and the Steamworks dashboard using headful Puppeteer automation
+description: Sync Steam achievements from js/achievement-defs.js to the Steamworks dashboard through its Bulk Import/Export CSVs (Puppeteer, saved login)
 user-invocable: true
 ---
 
-Sync Steam achievements between the game codebase and the Steamworks dashboard.
+Sync Steam achievements from the game code to Steamworks.
 
-When invoked, run the sync script via Bash. The script opens a headful browser, auto-clicks Sign In, waits for the user to authenticate (QR code), then automatically scrapes, compares, deletes, and adds achievements to match the codebase.
+When invoked, run the sync script via Bash. It opens a browser with a saved Steamworks login
+(`~/.tandemonium-steamworks-profile`). If that login has expired the user signs in once in the
+window (QR code or password) and the script carries on.
 
 ## How to run
 
@@ -14,45 +16,40 @@ When invoked, run the sync script via Bash. The script opens a headful browser, 
 node scripts/sync-steam-achievements.js [appId] [flags]
 ```
 
-**App ID** is read automatically from `steam_appid.txt` if not provided on the command line.
+**App ID** comes from `steam_appid.txt` unless given (4510250 = playtest, 4482940 = main game).
 
 **Flags:**
-- `--dry-run` — Compare and report only, no changes
-- `--debug` — Limit to 1 delete + 1 add, screenshots, verbose logging
-- `--delete` — Also delete achievements on Steamworks that aren't in code (opt-in: a delete can't be undone for players who earned it). Without it the script only lists what would be deleted.
+- `--dry-run`: export, compare, write the CSVs to `steam/achievement-sync/`, upload nothing
+- `--icons`: also upload the earned + locked icon for every achievement (new ones always get icons)
+- `--no-icons`: never upload icons
+- `--headless`: no window (only when the saved login is still good)
 
 **Examples:**
-- Full sync (uses steam_appid.txt): `node scripts/sync-steam-achievements.js`
-- Full sync with explicit app: `node scripts/sync-steam-achievements.js 4482940`
-- Dry run: `node scripts/sync-steam-achievements.js --dry-run`
-- Test one add/delete: `node scripts/sync-steam-achievements.js --debug`
+- Check first: `node scripts/sync-steam-achievements.js --dry-run --headless`
+- Full sync: `node scripts/sync-steam-achievements.js`
 
 ## What the script does
 
-1. Parses achievements from `js/achievements.js` (source of truth)
-2. Opens Chrome to the Steamworks achievements page
-3. Clicks "Sign in" and polls until login completes (2 min timeout)
-4. Scrapes currently configured achievements
-5. Compares code vs Steamworks — shows sync plan
-6. Lists achievements on Steamworks not in code (deletes them only with `--delete`)
-7. Adds achievements in code not on Steamworks (clicks New Achievement, types API Name/Display Name/Description, clicks Save)
-8. Verifies final count matches
+1. Reads achievements from `js/achievement-defs.js`; Steam text comes from `describeCondition` in the script
+2. Opens Steamworks → Achievements → **Bulk Import/Export**, exports the definitions + localization CSVs
+3. Plans: new achievements, changed names / descriptions, Hidden (= Steam's `spoiler`)
+4. Writes corrected CSVs (plus `<API>_ACHIEVED.png` / `_UNACHIEVED.png` icons) and uploads them
+5. Checks Pending Changes (every file accepted, nothing to delete), presses **Save**
+6. Re-exports and confirms nothing differs
 
-## When to use
+Pure CSV logic: `scripts/lib/steam-achievement-csv.cjs` (unit tests in `test/unit/steam-achievement-csv.test.mjs`).
 
-- After adding, removing, or renaming achievements in `js/achievements.js`
-- When setting up a new Steam app (playtest or main game)
-- To verify achievements are in sync between code and Steamworks
+## Not done by the script (reported for a person)
+- Achievements on Steamworks but not in code: delete by hand (players who earned one lose it)
+- API renames (`RENAMED_API_NAMES`): import can't rename, so the script stops; rename by hand in Steamworks
 
 ## After running
 
-Remind the user to:
-1. Go to the **Publish** tab in Steamworks and publish the changes
-2. Achievement icons (256x256 jpg) must be uploaded manually via the Steamworks UI
+Remind the user to press **Publish** in Steamworks. Nothing is live until then.
 
 ## Important notes
-- `js/achievements.js` is the single source of truth — never modify it to match Steamworks
-- Steam API Names are ALWAYS `id.toUpperCase()` (e.g. `first_500m` → `FIRST_500M`)
-- Never create Stats with the same API Name as achievements (causes publish conflicts)
-- The playtest and main game have separate configurations — change `steam_appid.txt` or pass the app ID explicitly
-- The browser stays open on errors so the user can review and fix manually
+- `js/achievement-defs.js` is the source of truth; never change it to match Steamworks
+- Steam API names are always `id.toUpperCase()` (e.g. `first_500m` → `FIRST_500M`)
+- Never create Stats with the same API name as an achievement (publish conflicts)
+- Steam caps an app at 100 achievements; the script stops before going past it
+- Valve replaced the old achievements table in Nov 2026; if the Bulk Import/Export tab or its buttons move again, the script stops with a message rather than guessing

@@ -20,3 +20,6 @@ out/
 # cut), smoke-test screenshots (scripts/smoke-* → renders/*.png). Regenerable; finished
 # trailers are published to Steam / YouTube / a GitHub Release, not committed.
 renders/
+
+# Steamworks achievement sync exports + upload files (scripts/sync-steam-achievements.js)
+steam/achievement-sync/
