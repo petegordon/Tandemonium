@@ -1,0 +1,66 @@
+{
+  "bike_christmas": {
+    "name": "🏆 Christmas Cruiser",
+    "hint": "+ 🚴 Cyclists outfit"
+  },
+  "bike_newyears": {
+    "name": "🏆 New Year Rider",
+    "hint": "+ 💎 Fancy outfit"
+  },
+  "bike_birthday": {
+    "name": "🏆 Birthday Express",
+    "hint": "+ 👑 Georgian outfit"
+  },
+  "solo_flight": {
+    "name": "🪶 Solo Flight",
+    "hint": "+ 👑 Georgian outfit"
+  },
+  "solo_flight_locked": {
+    "name": "🔒 🪶 Solo Flight",
+    "hint": "0 of 80solo achievements+ 🤖 Robot outfit"
+  },
+  "default": {
+    "name": "Grandma's Classic",
+    "hint": ""
+  },
+  "bike_orange": {
+    "name": "Marmalade Express",
+    "hint": ""
+  },
+  "bike_magenta": {
+    "name": "Berry Blaster",
+    "hint": ""
+  },
+  "bike_red": {
+    "name": "Cherry Bomb",
+    "hint": ""
+  },
+  "bike_blue": {
+    "name": "Ocean Breeze",
+    "hint": ""
+  },
+  "bike_green": {
+    "name": "Jungle Cruiser",
+    "hint": ""
+  },
+  "bike_yellow": {
+    "name": "Banana Delivery",
+    "hint": ""
+  },
+  "time_warp": {
+    "name": "⏳ Time Warp",
+    "hint": "0 of 80solo achievements+ 🤖 Robot outfit"
+  },
+  "time_warp_locked": {
+    "name": "🔒 ⏳ Time Warp",
+    "hint": "0 of 90non-calendar achievements"
+  },
+  "gold_standard": {
+    "name": "👑 Gold Standard",
+    "hint": "0 of 90non-calendar achievements"
+  },
+  "gold_standard_locked": {
+    "name": "🔒 👑 Gold Standard",
+    "hint": "0 of 100achievements"
+  }
+}
