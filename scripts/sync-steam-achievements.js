@@ -166,7 +166,7 @@ function describeCondition(id, fallback) {
     // Hidden on Steam (the sync sets the Hidden box from `hidden: true` in the defs):
     crashes_10: 'Crash 10 times in total',
     false_start: 'Crash within 3 seconds of GO',
-    so_close: 'Crash within 10 m of the finish',
+    so_close: 'Crash after the last checkpoint',
     weathered: 'Ride through a gust without crashing',
     gone_with_wind: 'Get pushed by 10 gusts',
     grand_tour: 'Ride 5 km in total in Tourist',

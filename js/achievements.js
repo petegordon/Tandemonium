@@ -432,8 +432,8 @@ export class AchievementManager {
   }
 
   /** A crash, anywhere. Feeds the ride (False Start, So Close, Weathered) and the lifetime count. */
-  crash(cause, { ref, distance, raceDistance } = {}) {
-    const r = this.ride.crash({ ref, cause, distance, raceDistance });
+  crash(cause, { ref, distance, raceDistance, lastCheckpoint } = {}) {
+    const r = this.ride.crash({ ref, cause, distance, raceDistance, lastCheckpoint });
     return this.record('crash', r);
   }
 

@@ -269,7 +269,7 @@ export const ACHIEVEMENTS = [
   // ── 13. Chaos (hidden) ───────────────────────────────────
   { id: 'crashes_10',     section: 'chaos', hidden: true, name: 'Frequent Faller', icon: '🤕', desc: 'Crash 10 times in total',   ...count('crashes', 10) },
   { id: 'false_start',    section: 'chaos', hidden: true, name: 'False Start',     icon: '🚦', desc: 'Crash within 3 s of GO',    ...count('falseStarts', 1) },
-  { id: 'so_close',       section: 'chaos', hidden: true, name: 'So Close',        icon: '🤏', desc: 'Crash within 10 m of the finish', ...count('soCloses', 1) },
+  { id: 'so_close',       section: 'chaos', hidden: true, name: 'So Close',        icon: '🤏', desc: 'Crash after the last checkpoint', ...count('soCloses', 1) },
   { id: 'weathered',      section: 'chaos', hidden: true, name: 'Weathered',       icon: '🌬️', desc: 'Ride through a gust without crashing', ...count('weathered', 1) },
   { id: 'gone_with_wind', section: 'chaos', hidden: true, name: 'Gone With the Wind', icon: '🌪️', desc: 'Get pushed by 10 gusts', ...count('gusts', 10) },
 
@@ -713,7 +713,14 @@ export function applyEvent(prev, type, d = {}, today = null) {
 export const STEADY_MIN_SPEED = 1;          // m/s: standing still is not riding
 export const ROAD_HALF_WIDTH = 2.5;         // metres from the centre: off-road past this
 export const FALSE_START_S = 3;
-export const SO_CLOSE_M = 10;
+export const SO_CLOSE_M = 10;            // a road with no checkpoints: the last 10 m
+
+/** Where the last checkpoint sits on a road (0 when it has none). Same list RaceManager builds. */
+export function lastCheckpointM(raceDistance, interval) {
+  const d = n(raceDistance), i = n(interval);
+  if (!(d > 0) || !(i > 0) || i >= d) return 0;
+  return Math.ceil(d / i - 1) * i;
+}
 
 export class RideTracker {
   constructor() {
@@ -770,7 +777,8 @@ export class RideTracker {
   }
 
   /**
-   * A crash. c: { ref, cause, distance, raceDistance }
+   * A crash. c: { ref, cause, distance, raceDistance, lastCheckpoint }
+   * So Close: anywhere past the ride's last checkpoint (the final stretch), not yet finished.
    * @returns {{ falseStart, soClose }}
    */
   crash(c = {}) {
@@ -781,8 +789,9 @@ export class RideTracker {
     if (this.gustActive) this.gustCrashed = true;
     const falseStart = this.sinceGo != null && this.sinceGo <= FALSE_START_S;
     this.sinceGo = null;                       // only the first crash after a GO
-    const left = n(c.raceDistance) - n(c.distance);
-    const soClose = n(c.raceDistance) > 0 && left >= 0 && left <= SO_CLOSE_M;
+    const race = n(c.raceDistance), at = n(c.distance);
+    const finalStretch = n(c.lastCheckpoint) > 0 ? n(c.lastCheckpoint) : race - SO_CLOSE_M;
+    const soClose = race > 0 && at >= finalStretch && at <= race;
     this.stripRun = 0; this.boostRun = 0; this.steadyRun = 0;
     return { falseStart, soClose };
   }
