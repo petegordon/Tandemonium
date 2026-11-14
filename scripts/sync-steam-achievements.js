@@ -23,7 +23,11 @@
  * Steam caps an app at 100 achievements; the script stops before adding past it.
  *
  * Usage:
- *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless]
+ *   node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless] [--self-test [API_NAME]]
+ *
+ * --self-test [API_NAME] (default FIRST_500M): changes that achievement's description,
+ * syncs and verifies, then syncs the real text back and verifies again. Proves the
+ * whole upload → Save → verify path; nothing reaches players without Publish.
  *
  * Default appId: steam_appid.txt. 4510250 = playtest, 4482940 = main game.
  * Nothing is live until someone presses Publish in Steamworks.
@@ -294,13 +298,17 @@ async function main() {
       console.log(`Read app ID ${appId} from steam_appid.txt`);
     } catch (e) {
       console.error('No app ID provided and steam_appid.txt not found.');
-      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless]');
+      console.error('Usage: node scripts/sync-steam-achievements.js [appId] [--dry-run] [--icons] [--no-icons] [--headless] [--self-test [API_NAME]]');
       process.exit(1);
     }
   }
   const url = `https://partner.steamgames.com/apps/achievements/${appId}`;
   const dryRun = process.argv.includes('--dry-run');
   const iconsOff = process.argv.includes('--no-icons');
+  const stIdx = process.argv.indexOf('--self-test');
+  const selfTest = stIdx < 0 ? null
+    : (/^[A-Z0-9_]+$/.test(process.argv[stIdx + 1] || '') ? process.argv[stIdx + 1] : 'FIRST_500M');
+  if (selfTest && process.argv.includes('--dry-run')) { console.error('--self-test and --dry-run do not mix.'); process.exit(1); }
   const iconsAll = process.argv.includes('--icons');
   const headless = process.argv.includes('--headless');   // only works once the saved login is good
 
@@ -326,6 +334,8 @@ async function main() {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
     if (!await ensureSignedIn(page, url)) await fail('Not signed in after 5 minutes. Nothing changed.');
 
+    // One full pass: export, plan, upload, save, verify. Returns 'in-sync' | 'dry-run' | 'saved'.
+    const runSync = async (code, iconsOff) => {
     await openBulkPanel(page);
     const before = await exportBoth(page, cdp, appId);
     const onSteam = before.defRows.length - 1;
@@ -357,8 +367,7 @@ async function main() {
     const iconList = iconsOff ? [] : (iconsAll ? code : plan.add);
     if (!plan.defsChanged && !plan.locChanged && iconList.length === 0) {
       console.log('Everything is in sync. Nothing to do.');
-      await browser.close();
-      return;
+      return 'in-sync';
     }
 
     fs.mkdirSync(OUT_DIR, { recursive: true });
@@ -381,8 +390,7 @@ async function main() {
 
     if (dryRun) {
       console.log('DRY RUN complete. Run without --dry-run to upload and save.');
-      await browser.close();
-      return;
+      return 'dry-run';
     }
 
     console.log('Uploading...');
@@ -417,8 +425,28 @@ async function main() {
     if (check.add.length || check.update.length) {
       await fail(`Saved, but Steamworks still differs:\n${[...check.add.map(a => `  + ${a.apiName}`), ...check.update.map(u => `  ~ ${u.apiName}: ${u.parts.join('; ')}`)].join('\n')}`);
     }
-    console.log('');
-    console.log('Saved and verified. Press Publish in Steamworks to make it live.');
+    console.log('Saved and verified.');
+    return 'saved';
+    };
+
+    if (!selfTest) {
+      const r = await runSync(code, iconsOff);
+      if (r === 'saved') console.log('\nPress Publish in Steamworks to make it live.');
+    } else {
+      // --self-test: prove upload + Save + verify end to end without touching what players see.
+      // Change one description, sync, then sync the real text back. Nothing goes live without Publish.
+      const target = code.find(a => a.apiName === selfTest);
+      if (!target) await fail(`--self-test: no achievement ${selfTest} in code.`);
+      const marked = code.map(a => a === target ? { ...a, description: `${a.description} [sync test]` } : a);
+      console.log(`\n=== Self-test 1/2: mark ${target.apiName}'s description ===`);
+      const r1 = await runSync(marked, true);
+      if (r1 !== 'saved') await fail(`Self-test FAILED: step 1 returned ${r1}, expected saved.`);
+      console.log(`\n=== Self-test 2/2: put ${target.apiName} back ===`);
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 });
+      const r2 = await runSync(code, true);
+      if (r2 !== 'saved') await fail(`Self-test FAILED: step 2 returned ${r2}, expected saved. ${target.apiName} may still say "[sync test]" — re-run the sync.`);
+      console.log('\nSelf-test PASSED: upload, Save and verify all work. Steamworks is back to matching the code.');
+    }
     await browser.close();
   } catch (e) {
     await fail(`Fatal error: ${e && e.stack || e}`);

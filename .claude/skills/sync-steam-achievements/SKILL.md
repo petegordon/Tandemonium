@@ -23,10 +23,18 @@ node scripts/sync-steam-achievements.js [appId] [flags]
 - `--icons`: also upload the earned + locked icon for every achievement (new ones always get icons)
 - `--no-icons`: never upload icons
 - `--headless`: no window (only when the saved login is still good)
+- `--self-test [API_NAME]`: prove the whole path works. Appends " [sync test]" to one description
+  (default `FIRST_500M`), uploads, saves, verifies; then puts the real text back and verifies again.
+  Nothing reaches players without Publish. Ends with "Self-test PASSED" or "Self-test FAILED: …".
 
 **Examples:**
 - Check first: `node scripts/sync-steam-achievements.js --dry-run --headless`
 - Full sync: `node scripts/sync-steam-achievements.js`
+- Does the sync still work? (e.g. after Valve changes the page): `node scripts/sync-steam-achievements.js --self-test`
+
+**Reading the output:** "Pending changes: To Modify (n)" can exceed the planned updates. The upload
+rewrites every description from code, so whitespace-only differences on Steamworks (a trailing space)
+get normalized too. That's expected.
 
 ## What the script does
 
