@@ -48,7 +48,7 @@ import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { seedKeptOutfits, lockedOutfits, outfitLockHint, rewardProgress, timeWarpProgress, playerBotsProgress, isMultiplayerAchievement } from './rewards.js';
 import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
-import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
+import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, earnedLine, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
 import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
@@ -4677,8 +4677,30 @@ export class Lobby {
     card.achievement = this._achItem(d);
     card.number = d.n;
     card.total = this._achievements.getAllDefinitions().length;
-    card.extraHtml = this._medalTimesHtml(d);
+    card.extraHtml = this._medalTimesHtml(d) + this._achChecklistHtml(d);
     card.footHtml = bestLine ? '<div class="ach-detail-best">' + this._escapeHtml(bestLine) + '</div>' : '';
+  }
+
+  /**
+   * #769: an "all of these" badge (Rainbow Gold, Full House) lists every item by name: ✓ done, ○ still
+   * to do, 🔒 a bike that can't be ridden yet, with what unlocks it ("65 achievements"). '' for the rest.
+   */
+  _achChecklistHtml(d) {
+    if (!d.checklist || !d.checklist.length || d.secret || d.demoLocked) return '';
+    const bikes = d.checklistKind === 'bikes';
+    const rows = d.checklist.map(item => {
+      const label = bikes ? (BIKE_NAMES[item.key] || item.key) : (item.label || item.key);
+      let mark = '○', state = 'todo', note = '';
+      if (item.done) { mark = '✓'; state = 'done'; }
+      else if (bikes && !this._bikeRideable(item.key)) {
+        mark = '🔒'; state = 'locked';
+        note = earnedLine(item.key) || 'Full game';
+      }
+      return '<li class="ach-check ach-check--' + state + '" data-key="' + this._escapeHtml(item.key) + '">'
+        + '<span class="ach-check-mark">' + mark + '</span>' + this._escapeHtml(label)
+        + (note ? ' <span class="ach-check-note">' + this._escapeHtml(note) + '</span>' : '') + '</li>';
+    });
+    return '<ul class="ach-checklist">' + rows.join('') + '</ul>';
   }
 
   /**

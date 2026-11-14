@@ -145,6 +145,18 @@ export const COLOUR_BIKES = Object.freeze(['default', 'bike_orange', 'bike_magen
 /** #608 · Full House: a finished ride in each of these (L.modesFinished). */
 export const FULL_HOUSE_MODES = Object.freeze(['grandma', 'daily', 'slingshot', 'coop', 'versus', 'tourist']);
 
+/** #769 · Full House's modes as the detail card names them. */
+export const FULL_HOUSE_MODE_NAMES = Object.freeze({
+  grandma: "Grandma's", daily: 'Daily Ride', slingshot: 'Slingshot', coop: 'Co-op', versus: 'Versus', tourist: 'Tourist',
+});
+
+/**
+ * #769 · every item an "all of these" badge needs, done or not, so the detail card can say which are
+ * left (the bar alone only says "5 of 7"). Bike labels come from the lobby, where the bike names live.
+ */
+export const checklistOf = (keys, list, labels = null) => L =>
+  keys.map(key => ({ key, label: labels ? labels[key] : '', done: ((L && L[list]) || []).includes(key) }));
+
 // prettier-ignore
 export const ACHIEVEMENTS = [
   // ── 1. First rides ────────────────────────────────────────
@@ -279,7 +291,8 @@ export const ACHIEVEMENTS = [
   // #608 · every mode needs co-op and versus, so it counts as multiplayer (js/rewards.js · MULTIPLAYER_IDS).
   { id: 'full_house',     section: 'explore', name: 'Full House',        icon: '🎪', desc: "Finish a ride in every mode: Grandma's, the Daily Ride, Slingshot, co-op, versus and Tourist",
     condition: (s, L) => FULL_HOUSE_MODES.every(m => (L.modesFinished || []).includes(m)),
-    progress: L => [FULL_HOUSE_MODES.filter(m => (L.modesFinished || []).includes(m)).length, FULL_HOUSE_MODES.length] },
+    progress: L => [FULL_HOUSE_MODES.filter(m => (L.modesFinished || []).includes(m)).length, FULL_HOUSE_MODES.length],
+    checklist: checklistOf(FULL_HOUSE_MODES, 'modesFinished', FULL_HOUSE_MODE_NAMES) },
 
   // ── 15. Grandma's in every colour ────────────────────────
   // F-1 hid these (riding the same 250 m seven times); restored 2026-10-20
@@ -294,7 +307,8 @@ export const ACHIEVEMENTS = [
   // #608 · any difficulty, like Grandma's Favourite.
   { id: 'rainbow_gold',    section: 'colours', name: 'Rainbow Gold',        icon: '🌈', desc: "Win gold on Grandma's on every bike colour (all 7)",
     condition: (s, L) => COLOUR_BIKES.every(k => (L.grandmaGoldBikes || []).includes(k)),
-    progress: L => [COLOUR_BIKES.filter(k => (L.grandmaGoldBikes || []).includes(k)).length, COLOUR_BIKES.length] },
+    progress: L => [COLOUR_BIKES.filter(k => (L.grandmaGoldBikes || []).includes(k)).length, COLOUR_BIKES.length],
+    checklist: checklistOf(COLOUR_BIKES, 'grandmaGoldBikes'), checklistKind: 'bikes' },
 
   // ── #500 · added after the first 100 (Clean riding section, last in the list); sling_500 Half a Klick was dropped to stay at Steam's 100 cap (stage 3 already needs 540 m) ──
   { id: 'look_no_thumbs', section: 'clean', name: 'Look, No Thumbs',     icon: '🎮', desc: 'Finish a ride steering only by tilting your controller', condition: s => fin(s) && s.gyroOnly === true },

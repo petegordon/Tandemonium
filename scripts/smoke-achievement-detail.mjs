@@ -33,7 +33,7 @@ const storage = {
   tandemonium_tutorial_done: 'smoke',
   tandemonium_achievements: JSON.stringify([{ id: 'first_pedal', name: 'Kick Off', icon: '🦶', earnedAt: EARNED_AT }]),
   // a best-so-far with where + when it was set (Terminal Goose: 45 of 50 km/h on the Daily Ride)
-  tandemonium_achievement_stats: JSON.stringify({ v: 2, rides: 1, bests: { terminal_goose: 45 }, bestsAt: { terminal_goose: { level: 'daily', at: Date.UTC(2026, 10, 7, 22, 0) } } }),
+  tandemonium_achievement_stats: JSON.stringify({ v: 2, rides: 1, bests: { terminal_goose: 45 }, grandmaGoldBikes: ['default', 'bike_red'], modesFinished: ['grandma'], bestsAt: { terminal_goose: { level: 'daily', at: Date.UTC(2026, 10, 7, 22, 0) } } }),
 };
 
 // ── TV, one pad ──
@@ -246,6 +246,20 @@ await closeCard();
 const hidden = await open('false_start');
 check(!!hidden && hidden.state === 'secret' && hidden.name === '???' && hidden.kicker === 'Hidden', 'AD-05 a hidden achievement keeps its ??? and says Hidden', hidden);
 await h.shot(page, '5-tv-detail-hidden');
+await closeCard();
+// #769: Rainbow Gold lists the 7 bikes by name, each done, to do, or locked with what unlocks it; Full House its 6 modes.
+const checklistOf = () => page.evaluate(() => [...document.querySelectorAll('#ach-detail .ach-checklist .ach-check')].map((li) => ({ key: li.dataset.key, state: li.className.replace(/.*ach-check--/, ''), text: li.textContent })));
+await open('rainbow_gold');
+const rg = await checklistOf();
+const rgBy = Object.fromEntries(rg.map((r) => [r.key, r]));
+check(rg.length === 7 && rgBy.default?.state === 'done' && rgBy.bike_red?.state === 'done' && /Grandma's Classic/.test(rgBy.default.text) && /Cherry Bomb/.test(rgBy.bike_red.text)
+  && rgBy.bike_orange?.state === 'todo' && /Marmalade Express/.test(rgBy.bike_orange.text)
+  && rgBy.bike_blue?.state === 'locked' && /Ocean Breeze\s*65 achievements/.test(rgBy.bike_blue.text), 'AD-09 #769 Rainbow Gold lists all 7 bikes: ✓ gold, ○ to do, 🔒 locked with what unlocks it', rg);
+await h.shot(page, '5b-tv-detail-rainbow-gold');
+await closeCard();
+await open('full_house');
+const fh = await checklistOf();
+check(fh.length === 6 && fh.filter((r) => r.state === 'done').map((r) => r.key).join() === 'grandma' && fh.some((r) => /Daily Ride/.test(r.text) && r.state === 'todo'), 'AD-09 #769 Full House lists its 6 modes, done or not', fh);
 await closeCard();
 // #666 → #634: a held one (earned with a friend in a full-game room) keeps its own kicker + status on the kit card.
 const held = await page.evaluate(async () => {

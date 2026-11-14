@@ -68,3 +68,17 @@ test('each best remembers the ride and the time it was set (Pete: "what ride and
   const back = migrateStats(JSON.parse(JSON.stringify(L)));
   assert.deepEqual(back.bestsAt.terminal_goose, { level: 'grandma', at: 3000 });
 });
+
+// #769: Pete couldn't tell which of the 7 bikes Rainbow Gold still needed; the card now lists them.
+test('Rainbow Gold and Full House list every item, done or not', () => {
+  const L = { ...emptyStats(), grandmaGoldBikes: ['default', 'bike_red'], modesFinished: ['grandma', 'versus'] };
+  const rg = byId('rainbow_gold').checklist(L);
+  assert.deepEqual(rg.map(i => i.key), ['default', 'bike_orange', 'bike_magenta', 'bike_red', 'bike_blue', 'bike_green', 'bike_yellow']);
+  assert.deepEqual(rg.filter(i => i.done).map(i => i.key), ['default', 'bike_red']);
+  assert.equal(byId('rainbow_gold').checklistKind, 'bikes');
+  const fh = byId('full_house').checklist(L);
+  assert.equal(fh.length, 6);
+  assert.deepEqual(fh.filter(i => !i.done).map(i => i.label), ['Daily Ride', 'Slingshot', 'Co-op', 'Tourist']);
+  // old saves with no list yet
+  assert.ok(byId('rainbow_gold').checklist({}).every(i => !i.done));
+});
