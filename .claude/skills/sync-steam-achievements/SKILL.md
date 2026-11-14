@@ -23,6 +23,14 @@ node scripts/sync-steam-achievements.js [appId] [flags]
 - `--allow-empty` — proceed when Steam has no achievements yet
 - `--keep-open` — leave the browser open at the end
 
+## Does the sync still work? (self-test)
+
+```bash
+node scripts/steam-sync-self-test.js [appId] [API_NAME]   # default FIRST_500M
+```
+
+Runs the sync twice: first with that description marked " [sync test]" (it must save and verify), then without (real text back, verify again). Ends "Self-test PASSED" or "Self-test FAILED at step N". Use it after Valve changes the Steamworks page. Nothing reaches players without Publish. Passed on 4510250 on 2026-11-14.
+
 ## What the script does (#775)
 
 Steamworks redesigned the achievements page in Nov 2026; the script uses its **Bulk Import/Export** tab:
