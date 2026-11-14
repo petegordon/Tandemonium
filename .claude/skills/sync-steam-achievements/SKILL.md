@@ -1,12 +1,12 @@
 ---
 name: sync-steam-achievements
-description: Sync Steam achievements between js/achievements.js and the Steamworks dashboard using headful Puppeteer automation
+description: Sync Steam achievements between js/achievement-defs.js and Steamworks (Bulk Import/Export CSVs, headful Puppeteer)
 user-invocable: true
 ---
 
 Sync Steam achievements between the game codebase and the Steamworks dashboard.
 
-When invoked, run the sync script via Bash. The script opens a headful browser, auto-clicks Sign In, waits for the user to authenticate (QR code), then automatically scrapes, compares, deletes, and adds achievements to match the codebase.
+When invoked, run the sync script via Bash, `--dry-run` first. The script opens a headful browser with a saved Steamworks login (`~/.tandemonium-steamworks-profile`); if the login has expired it clicks Sign in and waits up to 5 minutes for the user (QR code or password + Steam Guard).
 
 ## How to run
 
@@ -14,45 +14,34 @@ When invoked, run the sync script via Bash. The script opens a headful browser, 
 node scripts/sync-steam-achievements.js [appId] [flags]
 ```
 
-**App ID** is read automatically from `steam_appid.txt` if not provided on the command line.
+**App ID** comes from `steam_appid.txt` if not given. 4510250 = playtest, 4482940 = main game (has no achievements yet; needs `--allow-empty`).
 
 **Flags:**
-- `--dry-run` — Compare and report only, no changes
-- `--debug` — Limit to 1 delete + 1 add, screenshots, verbose logging
-- `--delete` — Also delete achievements on Steamworks that aren't in code (opt-in: a delete can't be undone for players who earned it). Without it the script only lists what would be deleted.
+- `--dry-run` — export from Steam, compare, print the plan; upload nothing
+- `--icons` — re-upload every icon; `--icons=API_A,API_B` — just those
+- `--no-icons` — skip icons for new achievements
+- `--allow-empty` — proceed when Steam has no achievements yet
+- `--keep-open` — leave the browser open at the end
 
-**Examples:**
-- Full sync (uses steam_appid.txt): `node scripts/sync-steam-achievements.js`
-- Full sync with explicit app: `node scripts/sync-steam-achievements.js 4482940`
-- Dry run: `node scripts/sync-steam-achievements.js --dry-run`
-- Test one add/delete: `node scripts/sync-steam-achievements.js --debug`
+## What the script does (#775)
 
-## What the script does
+Steamworks redesigned the achievements page in Nov 2026; the script uses its **Bulk Import/Export** tab:
 
-1. Parses achievements from `js/achievements.js` (source of truth)
-2. Opens Chrome to the Steamworks achievements page
-3. Clicks "Sign in" and polls until login completes (2 min timeout)
-4. Scrapes currently configured achievements
-5. Compares code vs Steamworks — shows sync plan
-6. Lists achievements on Steamworks not in code (deletes them only with `--delete`)
-7. Adds achievements in code not on Steamworks (clicks New Achievement, types API Name/Display Name/Description, clicks Save)
-8. Verifies final count matches
+1. Reads `js/achievement-defs.js` (source of truth); descriptions from `describeCondition()` in the script
+2. Exports Steam's definitions + localization CSVs
+3. Compares: adds, display name / description changes, spoiler (= `hidden: true`) changes, renames (`RENAMED_API_NAMES`, edited in place via the inline editor so unlocks carry over), and rows Steam has that code lacks
+4. Uploads CSVs with only the rows that differ, then presses Save (Steam stages them as Pending Changes)
+5. Uploads `<API>_ACHIEVED.png` / `<API>_UNACHIEVED.png` icons for new achievements, with Steam's "Automatically generate unachieved icons" turned off
+6. Exports again and fails unless Steam matches the code
 
-## When to use
-
-- After adding, removing, or renaming achievements in `js/achievements.js`
-- When setting up a new Steam app (playtest or main game)
-- To verify achievements are in sync between code and Steamworks
+It never deletes: deleting removes the unlock from every player who earned it. Rows on Steam that aren't in code are listed; delete them in the Steamworks editor (X on the row) only if the user says so. Steam caps an app at 100 achievements; the script stops before adding past it.
 
 ## After running
 
-Remind the user to:
-1. Go to the **Publish** tab in Steamworks and publish the changes
-2. Achievement icons (256x256 jpg) must be uploaded manually via the Steamworks UI
+Remind the user to press **Publish** in Steamworks; nothing is live until then.
 
 ## Important notes
-- `js/achievements.js` is the single source of truth — never modify it to match Steamworks
+- `js/achievement-defs.js` is the single source of truth — never modify it to match Steamworks
 - Steam API Names are ALWAYS `id.toUpperCase()` (e.g. `first_500m` → `FIRST_500M`)
 - Never create Stats with the same API Name as achievements (causes publish conflicts)
-- The playtest and main game have separate configurations — change `steam_appid.txt` or pass the app ID explicitly
-- The browser stays open on errors so the user can review and fix manually
+- The playtest and main game have separate configurations — pass the app ID explicitly
