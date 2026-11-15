@@ -14,8 +14,9 @@
 //     4-letter code; the player finishes in a browser (their phone, or the
 //     system browser the Steam build opens) and types the code. The game
 //     polls the API with a secret only it holds. Linking from a phone adds a
-//     Discord with no account of its own; combining two accounts happens on
-//     housetandem.com (#612), and every link shows a notice with undo.
+//     Discord with no account of its own; if it has one, the phone shows both
+//     accounts and the player chooses Combine (#612). Every link and combine
+//     shows a notice with undo.
 
 import { API_BASE } from './config.js';
 import { getDeviceId, getSessionId, attachAccount } from './analytics.js';

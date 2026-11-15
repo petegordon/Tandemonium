@@ -224,11 +224,38 @@ export async function accountSummary(env, userId) {
   if (!u) return null;
   const n = async (sql) => ((await env.DB.prepare(sql).bind(userId).first()) || {}).n || 0;
   const logins = Object.entries(await listIdentities(env, userId)).map(([provider, v]) => ({ provider, name: v.name, avatar: v.avatar }));
+  // A combine moves everything in every House Tandem game, so the summary names the other games too.
+  const games = new Map();
+  const rows = async (sql) => {
+    try { return (await env.DB.prepare(sql).bind(userId).all()).results || []; } catch { return []; }
+  };
+  for (const r of await rows('SELECT game, COUNT(*) AS n FROM game_achievements WHERE user_id = ? GROUP BY game')) {
+    games.set(r.game, Number(r.n) || 0);
+  }
+  for (const r of await rows('SELECT DISTINCT game FROM game_stats WHERE user_id = ?')) if (!games.has(r.game)) games.set(r.game, 0);
+  for (const r of await rows('SELECT game FROM game_playtime WHERE user_id = ? AND seconds > 0')) if (!games.has(r.game)) games.set(r.game, 0);
+  games.delete('tandemonium');
   return {
     name: u.display_name, avatar: u.avatar_url, logins,
     rides: await n('SELECT COUNT(*) AS n FROM scores WHERE user_id = ?'),
     badges: await n('SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?'),
+    games: [...games].map(([game, badges]) => ({ game, title: GAME_TITLES[game] || game, badges })),
   };
+}
+
+const GAME_TITLES = Object.freeze({
+  dice: '7, 11, Doubles', coins: 'Carnival Dozer', roulette: 'Roulette', wheel: 'Carnival Wheel',
+  timber: 'Timber Tandem', sandhands: 'SandHands',
+});
+
+/** One line for a summary: "12 rides · 30 badges" (+ the other games it has played). */
+function summaryLines(acct) {
+  const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const lines = [`${count(acct.rides, 'ride')} · ${count(acct.badges, 'badge')} in Tandemonium`];
+  if (acct.games && acct.games.length) {
+    lines.push('Also: ' + acct.games.map((g) => g.badges ? `${g.title} (${count(g.badges, 'badge')})` : g.title).join(', '));
+  }
+  return lines;
 }
 
 function untilText(s) {
@@ -286,7 +313,7 @@ async function recordEvent(env, ev, deps) {
   const accountName = (account && account.display_name) || 'your account';
   const what = PROVIDER_NAMES[ev.provider] || 'A sign-in';
   const content = ev.kind === 'combine'
-    ? `House Tandem: the account "${ev.fromName || 'another account'}" was combined into "${accountName}". Not you, or didn't mean to? You can separate them until ${untilText(until)}: ${accountUrl(env)}`
+    ? `House Tandem: the ${what} account "${ev.fromName || ev.loginName || ''}" was combined into "${accountName}". Not you, or didn't mean to? You can separate them until ${untilText(until)}: ${accountUrl(env)}`
     : `House Tandem: ${what} account "${ev.loginName || ''}" was added to your House Tandem account "${accountName}". Not you? You can remove it until ${untilText(until)}: ${accountUrl(env)}`;
   await notifyAccountDiscord(env, ev.userId, content, deps);
 }
@@ -638,6 +665,37 @@ async function confirmPage(env, row, profile, confirmKey, error = '') {
     </form>`);
 }
 
+/**
+ * The phone's second page when the Discord has its own account: both accounts
+ * side by side, Combine or Cancel. Combining keeps the account on the screen.
+ */
+async function combinePage(env, row, confirmKey, otherId) {
+  const other = await accountSummary(env, otherId);
+  const into = await accountSummary(env, row.link_user_id);
+  const NAMES = { discord: 'Discord', steam: 'Steam', google: 'Google' };
+  const card = (label, a) => `
+    <div class="acct">
+      <div class="acct-label">${escapeHtml(label)}</div>
+      <div class="who">${a.avatar ? `<img src="${escapeHtml(a.avatar)}" alt="">` : ''}<span>${escapeHtml(a.name || 'House Tandem player')}</span></div>
+      <div class="acct-logins">${escapeHtml(a.logins.map((l) => NAMES[l.provider] || l.provider).join(' + '))}</div>
+      ${summaryLines(a).map((l) => `<div class="acct-stats">${escapeHtml(l)}</div>`).join('')}
+    </div>`;
+  const intoName = escapeHtml((into && into.name) || 'this account');
+  return page('Combine your accounts?', `
+    <p>This Discord already has its own House Tandem account. Combine it into <b>${intoName}</b>, the account on your screen?</p>
+    ${card('Your Discord account', other || { logins: [], rides: 0, badges: 0 })}
+    ${card('The account on your screen', into || { logins: [], rides: 0, badges: 0 })}
+    <p>Its rides, badges and progress in every House Tandem game move into <b>${intoName}</b>, and both sign-ins open it.
+       You can separate them again for ${UNDO_DAYS} days.</p>
+    <form method="POST" action="/auth/discord/confirm">
+      <input type="hidden" name="r" value="${escapeHtml(row.id)}">
+      <input type="hidden" name="k" value="${escapeHtml(confirmKey)}">
+      <input type="hidden" name="step" value="combine">
+      <button type="submit" name="ok" value="1">Combine</button>
+      <button type="submit" name="ok" value="0" class="ghost">Cancel</button>
+    </form>`);
+}
+
 /** POST /auth/discord/confirm (form) — the player typed the code on their screen. */
 export async function handleDiscordConfirm(request, env, url, deps) {
   let form;
@@ -652,7 +710,25 @@ export async function handleDiscordConfirm(request, env, url, deps) {
       .bind(JSON.stringify({ error }), row.id).run();
     return page(title, body);
   };
-  if (String(form.get('ok')) !== '1') return fail('cancelled', 'Cancelled', '<p>Nothing was changed. You can close this tab.</p>');
+  if (String(form.get('ok')) !== '1') {
+    return fail('cancelled', 'Cancelled', held.combine
+      ? '<p>Nothing was changed. Your Discord keeps its own account. You can close this tab.</p>'
+      : '<p>Nothing was changed. You can close this tab.</p>');
+  }
+
+  // Second step (Pete, 2026-11-15): the code matched and this Discord has its own account;
+  // the player saw both accounts and chose Combine.
+  if (String(form.get('step') || '') === 'combine') {
+    if (!held.combine || !row.link_user_id) return page('Something went wrong', '<p>Try again from the game.</p>', 400);
+    const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
+    const { status } = await combineInto(env, row.link_user_id, profile, deps);
+    await claimGuestPairs(env, cleanDeviceId(held.deviceId), row.link_user_id, deps);
+    const result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: status === 'combined' };
+    await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
+      .bind(JSON.stringify(result), row.id).run();
+    return page('Combined', `<p>Your Discord and its progress are now part of <b>${escapeHtml(result.user.name)}</b>. Look back at the game. You can close this tab.</p>
+      <p class="note">Didn't mean to? You can separate them for ${UNDO_DAYS} days from the game's Profile card or ${escapeHtml(accountUrl(env).replace(/^https:\/\//, ''))}.</p>`);
+  }
 
   const typed = String(form.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (typed !== row.user_code) {
@@ -669,11 +745,12 @@ export async function handleDiscordConfirm(request, env, url, deps) {
   const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
   let result;
   if (row.link_user_id) {
-    // A phone can add a Discord with no account; combining two accounts happens on the website.
-    const { status } = await addLogin(env, row.link_user_id, profile, deps);
+    // This Discord already has its own account: show both and let the player choose.
+    const { status, otherId } = await addLogin(env, row.link_user_id, profile, deps);
     if (status === 'combine') {
-      return fail('has_account', 'This Discord already has its own account',
-        `<p>Nothing was changed. To combine the two, go to <b>${escapeHtml(accountUrl(env).replace(/^https:\/\//, ''))}</b>, sign in with Discord, then choose <b>Link Steam</b>.</p>`);
+      await env.DB.prepare('UPDATE auth_requests SET profile_json = ? WHERE id = ?')
+        .bind(JSON.stringify({ ...held, combine: true }), row.id).run();
+      return combinePage(env, row, held.confirmKey, otherId);
     }
     await claimGuestPairs(env, deviceId, row.link_user_id, deps);
     result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: false };
@@ -1143,6 +1220,10 @@ function page(title, body, status = 200) {
   .code-input:focus { outline: none; border-color: #ffd36b; }
   .note { font-size: 14px; opacity: .75; }
   .error { color: #ff9b8a; font-weight: 600; }
+  .acct { background: #221c2c; border: 1px solid #3a3147; border-radius: 14px; padding: 12px; margin: 10px 0; }
+  .acct-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; opacity: .65; margin-bottom: 8px; }
+  .acct-logins { font-size: 14px; opacity: .8; margin-top: 8px; }
+  .acct-stats { font-size: 14px; }
 </style></head><body><main><div class="brand">House Tandem</div><h1>${escapeHtml(title)}</h1>${body}</main></body></html>`;
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' } });
 }

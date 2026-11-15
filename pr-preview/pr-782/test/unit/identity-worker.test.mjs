@@ -193,22 +193,88 @@ test('Steam player links a new Discord from the TV: one account, both pictures, 
   } finally { restore(); }
 });
 
-test('#612 · the phone never combines: a Discord with its own account is refused, nothing moves', async () => {
+/** A Steam TV links a Discord that has its own account: the phone types the code and lands on the Combine page. */
+async function phoneToCombine(env, db) {
+  const web = await deviceSignIn(env);   // Pete's Discord account, with a badge here and in Carnival Dozer
+  db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(web.user.id);
+  db.prepare("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (?, 'coins', 'jackpot')").run(web.user.id);
+  const steam = await steamTicket(env);
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
+  const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+  const k = html.match(/name="k" value="([^"]+)"/)[1];
+  const page = await (await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code, ok: '1' } })).text();
+  const poll = () => call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } }).then((r) => r.json());
+  const choose = (ok) => call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok } }).then((r) => r.text());
+  return { web, steam, begin, k, page, poll, choose };
+}
+
+test('#612 · TV combine: after the typed code the phone shows both accounts (every game) and nothing moves yet', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const web = await deviceSignIn(env);   // Pete's Discord account, with a badge
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(web.user.id);
-    const steam = await steamTicket(env);
-    let phone = '';
-    const res = await deviceSignIn(env, steam.token, { onConfirmed: (h) => { phone = h; } });
-    assert.equal(res.status, 'error');
-    assert.equal(res.error, 'has_account');
-    assert.match(phone, /already has its own account/);
-    assert.match(phone, /housetandem\.com\/account\.html/);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'both accounts are still there');
+    const { web, page, poll } = await phoneToCombine(env, db);
+    assert.match(page, /Combine your accounts\?/);
+    assert.match(page, /already has its own House Tandem account/);
+    assert.match(page, /pete_steam/, 'names the account on the screen');
+    assert.match(page, /0 rides · 1 badge in Tandemonium/);
+    assert.match(page, /Also: Carnival Dozer \(1 badge\)/, 'a combine moves every game, so the page says so');
+    assert.match(page, /name="step" value="combine"/);
+    assert.equal((await poll()).status, 'confirming', 'the TV keeps waiting while the phone decides');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'nothing combined before the choice');
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+  } finally { restore(); }
+});
+
+test('#612 · TV combine: Combine folds the Discord account into the Steam one, with a notice and full undo', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const { web, steam, choose, poll } = await phoneToCombine(env, db);
+    assert.match(await choose('1'), /now part of <b>pete_steam<\/b>/);
+    const done = await poll();
+    assert.equal(done.status, 'done');
+    assert.equal(done.linked, true);
+    assert.equal(done.merged, true, 'the TV pulls the combined progress');
+    assert.equal(done.user.id, steam.user.id, 'the account on the screen is kept');
+    assert.deepEqual(Object.keys(done.user.identities).sort(), ['discord', 'steam']);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, steam.user.id);
+    assert.equal(db.prepare("SELECT user_id FROM game_achievements WHERE achievement_id = 'jackpot'").get().user_id, steam.user.id);
+
+    const notices = (await (await call(env, '/me/notices', { token: done.token })).json()).notices;
+    assert.equal(notices[0].kind, 'combine');
+    assert.equal(notices[0].provider, 'discord');
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: done.token, body: { id: notices[0].id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'separated again');
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.equal(db.prepare("SELECT user_id FROM game_achievements WHERE achievement_id = 'jackpot'").get().user_id, web.user.id);
+  } finally { restore(); }
+});
+
+test('#612 · TV combine: Cancel changes nothing; Combine is refused without the typed code first', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const { web, choose, poll } = await phoneToCombine(env, db);
+    assert.match(await choose('0'), /keeps its own account/);
+    const res = await poll();
+    assert.equal(res.status, 'error');
+    assert.equal(res.error, 'cancelled');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+
+    // A new request: posting the Combine step straight away (no code typed) does nothing.
+    const steam = await steamTicket(env);
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
+    const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+    const k = html.match(/name="k" value="([^"]+)"/)[1];
+    const forced = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok: '1' } });
+    assert.equal(forced.status, 400);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'still two accounts');
   } finally { restore(); }
 });
 

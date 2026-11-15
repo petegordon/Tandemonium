@@ -4326,7 +4326,7 @@ export class Lobby {
           const err = info && info.error;
           if (!this.profilePopup.classList.contains('visible')) { this._hideProfileDevice(false); return; }
           if (err === 'has_account') {
-            // #612 · combining two accounts happens on the website, not from a phone.
+            // #612 · only from a server before the phone's Combine page (the phone now combines).
             this._hideProfileDevice();
             this._showProfileError(this._hasAccountMessage());
             return;
