@@ -326,6 +326,10 @@ uf-button[size="pill"] > img.bar-avatar[data-provider="steam"] { box-shadow: 0 0
   body > #profile-popup.bar-popup .profile-popup-qr svg { width: 9em; height: 9em; }
   body > #profile-popup.bar-popup .profile-popup-code { font-size: var(--uf-size-md); }
   body > #profile-popup.bar-popup .profile-popup-avatars img { width: 3.2em; height: 3.2em; }
+  /* #612 · "was combined into this one. Not you?" at the email line's size. */
+  body > #profile-popup.bar-popup .profile-popup-notice { max-width: none; padding: var(--uf-space-2) var(--uf-space-3); gap: 0; }
+  body > #profile-popup.bar-popup .profile-popup-notice-text { font-size: var(--uf-size-sm); }
+  body > #profile-popup.bar-popup .profile-popup-device-status { font-size: var(--uf-size-sm); line-height: 1.35; }
 }
 
 /* #517 · Settings (the Options overlay) owns the pad while it is open: the

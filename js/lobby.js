@@ -2658,6 +2658,7 @@ export class Lobby {
       // housetandem-web #37 · the riding stats: this device's unsynced counts join the account once,
       // and the account's come back (badges they earn arrive quietly, as one note)
       this._syncAccountStats();
+      this._checkAccountNotices();   // #612 · linked / combined lately? (with undo)
       // Sync all earned achievements to Steam profile (catches web/mobile unlocks)
       if (this._isSteam) {
         this._achievements.syncToSteam();
@@ -2693,14 +2694,18 @@ export class Lobby {
       }
     });
 
-    // Logout: sync achievements to server, then clear local state
-    logoutBtn.addEventListener('click', async () => {
-      // Push local achievements to server before clearing (no-op if none/anon)
-      await this._achievements.syncToServer();
-      // housetandem-web #37 · the riding stats and time in game go up, then the device starts empty:
-      // the next ride signed out (or the next account) never inherits this player's numbers
-      if (this.playtime) this.playtime.flush();
-      await this._achievements.syncStats().catch(() => {});
+    // Logout: sync achievements to server, then clear local state.
+    // sync: false after "Separate them" (#612): this device holds the combined
+    // account's badges, which must not be pushed back onto the account that stays.
+    this._signOut = async ({ sync = true } = {}) => {
+      if (sync) {
+        // Push local achievements to server before clearing (no-op if none/anon)
+        await this._achievements.syncToServer();
+        // housetandem-web #37 · the riding stats and time in game go up, then the device starts empty:
+        // the next ride signed out (or the next account) never inherits this player's numbers
+        if (this.playtime) this.playtime.flush();
+        await this._achievements.syncStats().catch(() => {});
+      }
       this._achievements.clear();
       this._achievements.resetStats();
       this.license.clear();
@@ -2708,7 +2713,9 @@ export class Lobby {
       updateUI(null);
       this._updateModeButtons();
       this._rebuildLevelCards();
-    });
+    };
+    logoutBtn.addEventListener('click', () => this._signOut());
+    this._bindAccountNotice(updateUI);
 
     // Steam build, signed out: sign back in with this PC's Steam account.
     const steamBtn = document.getElementById('profile-popup-steam');
@@ -2752,7 +2759,7 @@ export class Lobby {
     this.auth.resumeFromRedirect().catch((e) => console.warn('AUTH: Discord redirect sign-in failed', e));
     // Pick up sign-ins linked elsewhere (Discord linked from the Steam build shows on the web).
     if (this.auth.isLoggedIn() && !this.auth.isTokenExpired()) {
-      this.auth.refreshProfile().then((u) => { if (u) updateUI(u); }).catch(() => {});
+      this.auth.refreshProfile().then((u) => { if (u) updateUI(u); this._checkAccountNotices(); }).catch(() => {});
     }
 
     // Close popup when clicking outside
@@ -4117,12 +4124,87 @@ export class Lobby {
   /** The popup's pad-focusable buttons, top to bottom (hidden ones skipped, #332). */
   _profileItems() {
     const ids = this.auth.isLoggedIn()
-      ? ['profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
+      ? ['profile-popup-notice-undo', 'profile-popup-notice-ok', 'profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
       : ['profile-popup-steam', 'profile-popup-discord', 'profile-popup-signin-back'];
     // The QR's OPEN ON THIS COMPUTER sits just above CLOSE while the code is showing.
     const box = document.getElementById('profile-popup-device');
     if (box && !box.hidden) ids.splice(ids.length - 1, 0, 'profile-popup-open-browser');
     return ids.map((id) => document.getElementById(id)).filter((el) => el && !el.hidden && el.style.display !== 'none');
+  }
+
+  /**
+   * #612 · a sign-in was linked to this account, or another account combined
+   * into it, in the last 7 days and the player hasn't said "that was me" yet: the
+   * Profile card says so, with undo. A Steam-only player hears it only here (Steam
+   * can't message them); a Discord player also gets a direct message.
+   */
+  async _checkAccountNotices() {
+    const box = document.getElementById('profile-popup-notice');
+    if (!box || !this.auth.isLoggedIn()) return;
+    const notices = await this.auth.fetchNotices();
+    const n = notices.find((x) => !x.seen);
+    this._accountNotice = n || null;
+    const undoBtn = document.getElementById('profile-popup-notice-undo');
+    const okBtn = document.getElementById('profile-popup-notice-ok');
+    const show = (on) => { box.hidden = !on; undoBtn.hidden = !on; okBtn.hidden = !on; };
+    if (!n) { show(false); return; }
+    // Pete, 2026-11-15: always name the provider — "the Discord account …", never just "the account".
+    const name = (p) => (p === 'discord' ? 'Discord' : p === 'steam' ? 'Steam' : 'Google');
+    const day = (s) => new Date(s * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const what = n.kind === 'combine'
+      ? `The ${name(n.provider)} account “${n.from_name || n.login_name || ''}” was combined into this one on ${day(n.created_at)}.`
+      : `The ${name(n.provider)} account “${n.login_name || ''}” was linked to this account on ${day(n.created_at)}.`;
+    document.getElementById('profile-popup-notice-text').textContent = `${what} Not you? You can undo it until ${day(n.undo_until)}.`;
+    undoBtn.textContent = n.kind === 'combine' ? 'SEPARATE THEM' : 'NOT ME, REMOVE IT';
+    undoBtn.disabled = false;
+    show(true);
+    // The player who just linked it here already knows: the card shows it, no toast.
+    const justHere = this._justLinkedAt && n.created_at * 1000 >= this._justLinkedAt - 120000;
+    if (this._noticeToasted !== n.id && !justHere) {
+      this._noticeToasted = n.id;
+      showInfoToast('🔗', n.kind === 'combine' ? 'Accounts combined' : `${name(n.provider)} linked`, 'Open your profile to check it was you');
+    }
+    if (this._activeModal === 'profile' && this._modalFocus) this._modalFocus.setItems(this._profileItems(), 0);
+  }
+
+  /** The notice's two buttons: "that was me" (seen) and undo. */
+  _bindAccountNotice(updateUI) {
+    const undoBtn = document.getElementById('profile-popup-notice-undo');
+    const okBtn = document.getElementById('profile-popup-notice-ok');
+    if (!undoBtn || !okBtn) return;
+    okBtn.addEventListener('click', async () => {
+      const n = this._accountNotice;
+      if (!n) return;
+      await this.auth.markNoticeSeen(n.id);
+      this._checkAccountNotices();
+    });
+    undoBtn.addEventListener('click', async () => {
+      const n = this._accountNotice;
+      if (!n || undoBtn.disabled) return;
+      undoBtn.disabled = true;
+      const res = await this.auth.undoNotice(n.id);
+      if (res.error) {
+        undoBtn.disabled = false;
+        document.getElementById('profile-popup-notice-text').textContent = res.error;
+        return;
+      }
+      showInfoToast('↩️', n.kind === 'combine' ? 'Accounts separated' : 'Sign-in removed',
+        n.kind === 'combine' ? 'Each account has its own rides and badges again' : 'It no longer opens this account');
+      if (res.signed_out || n.kind === 'combine') {
+        // This device holds the combined account's badges: start clean, never push them back.
+        await this._signOut({ sync: false });
+        if (this._isSteam) await this.auth.loginWithSteam();
+        return;
+      }
+      const u = await this.auth.refreshProfile();
+      if (u) updateUI(u);
+      this._checkAccountNotices();
+    });
+  }
+
+  /** A phone link the server refused because that Discord has its own account. */
+  _hasAccountMessage() {
+    return 'That Discord already has its own account. To combine them, go to housetandem.com/account.html, sign in with Discord, then choose Link Steam.';
   }
 
   /**
@@ -4233,15 +4315,22 @@ export class Lobby {
     let dev;
     try {
       dev = await this.auth.startDiscordDevice({
-        onStatus: (s) => this._setProfileDeviceStatus(s === 'confirming' ? 'Confirm the code on your phone…' : 'Waiting for Discord…'),
+        onStatus: (s) => this._setProfileDeviceStatus(s === 'confirming' ? 'Type the code on your phone…' : 'Waiting for Discord…'),
         onDone: (user, info) => {
           if (user) {
+            if (info && info.linked) this._justLinkedAt = Date.now();
             if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
             if (this._profileUpdateUI) this._profileUpdateUI(user);
             return;
           }
           const err = info && info.error;
           if (!this.profilePopup.classList.contains('visible')) { this._hideProfileDevice(false); return; }
+          if (err === 'has_account') {
+            // #612 · only from a server before the phone's Combine page (the phone now combines).
+            this._hideProfileDevice();
+            this._showProfileError(this._hasAccountMessage());
+            return;
+          }
           // Expired or cancelled while the popup is still open: a fresh code.
           this._setProfileDeviceStatus(err === 'cancelled' ? 'Cancelled. Scan again to sign in.' : 'That code expired. Here is a new one.');
           setTimeout(() => { if (this.profilePopup.classList.contains('visible')) this._showProfileDevice(); }, 1500);
@@ -9063,9 +9152,13 @@ export class Lobby {
               onDone: (user, info) => {
                 this._p1DeviceStatus = null;
                 if (user) {
+                  if (info && info.linked) this._justLinkedAt = Date.now();
                   if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
                   if (this._profileUpdateUI) this._profileUpdateUI(user);
-                } else this._p1DeviceError = info && info.error === 'cancelled' ? 'Cancelled.' : 'That code expired. Try again.';
+                } else {
+                  const err = info && info.error;
+                  this._p1DeviceError = err === 'has_account' ? this._hasAccountMessage() : err === 'cancelled' ? 'Cancelled.' : 'That code expired. Try again.';
+                }
                 emit(1);
               },
             });

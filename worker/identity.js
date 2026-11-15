@@ -11,13 +11,18 @@
 //     and comes back to the game with the session in the URL fragment.
 //   - device: the sign-in finishes somewhere else (a phone scanning the TV's
 //     QR, or the system browser opened by the Steam build). The game polls
-//     with a secret only it holds. The browser shows a short code and asks
-//     "is this your screen?" before the session is handed over, so a shared
-//     link can't sign someone else into a stranger's game.
+//     with a secret only it holds. The player types the code the screen shows
+//     before the session is handed over, so a shared link can't sign someone
+//     else into a stranger's game (they would have to read that screen).
+//
+// Signed in already, either mode adds the sign-in to the account instead. See
+// "Linking and combining" below for the rules (#612).
 //
 // This lives in the Tandemonium worker for now. The House Tandem service
 // (auth.housetandem.com, UsersFirst/housetandem-web#21) takes it over later;
 // the tables and routes are shaped so they can move as they are.
+
+import { mergeAccounts, unmergeAccounts } from './account-merge.js';
 
 const REQUEST_TTL_S = 600;
 const DISCORD_API = 'https://discord.com/api';
@@ -107,45 +112,40 @@ export async function listIdentities(env, userId) {
   return out;
 }
 
-/**
- * Find or create the account for a sign-in. With `linkUserId` (the player is
- * already signed in and is adding a sign-in), the sign-in joins that account;
- * if it was already on another account, that account is merged into this one.
- * Returns { userId, merged }.
- */
-export async function upsertIdentity(env, { provider, providerId, name, avatar }, linkUserId = null, deps = {}) {
+/** The account a sign-in belongs to (or null). */
+async function identityOwner(env, provider, providerId, name = null, avatar = null) {
   providerId = String(providerId);
-  let existing = await env.DB.prepare(
+  const existing = await env.DB.prepare(
     'SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?'
   ).bind(provider, providerId).first();
-  if (!existing) {
-    // A user made by the old code after the migration's backfill: give them
-    // their identity row now instead of a second account.
-    const legacy = await env.DB.prepare('SELECT id FROM users WHERE provider = ? AND provider_id = ?')
-      .bind(provider, providerId).first();
-    if (legacy) {
-      await env.DB.prepare(
-        'INSERT OR IGNORE INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
-      ).bind(legacy.id, provider, providerId, name, avatar).run();
-      existing = { user_id: legacy.id };
-    }
-  }
+  if (existing) return existing.user_id;
+  // A user made by the old code after the migration's backfill: give them
+  // their identity row now instead of a second account.
+  const legacy = await env.DB.prepare('SELECT id FROM users WHERE provider = ? AND provider_id = ?')
+    .bind(provider, providerId).first();
+  if (!legacy) return null;
+  await env.DB.prepare(
+    'INSERT OR IGNORE INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
+  ).bind(legacy.id, provider, providerId, name, avatar).run();
+  return legacy.id;
+}
+
+/**
+ * Find or create the account for a sign-in. Returns { userId }.
+ *
+ * Adding a sign-in to an account someone is already signed in to is not done
+ * here: see addLogin (a sign-in with no account joins) and combineInto (one
+ * with its own account, after the player confirmed both). #612: nothing
+ * merges accounts as a side effect of signing in.
+ */
+export async function upsertIdentity(env, { provider, providerId, name, avatar }, linkUserId = null) {
+  if (linkUserId) throw new Error('upsertIdentity no longer links: use addLogin');
+  providerId = String(providerId);
+  const ownerId = await identityOwner(env, provider, providerId, name, avatar);
+  const existing = ownerId ? { user_id: ownerId } : null;
 
   let userId;
-  let merged = false;
-  if (linkUserId) {
-    const target = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(linkUserId).first();
-    if (!target) throw new Error('Account not found');
-    userId = target.id;
-    if (existing && existing.user_id !== userId) {
-      await mergeAccounts(env, existing.user_id, userId, deps);
-      merged = true;
-    } else if (!existing) {
-      await env.DB.prepare(
-        'INSERT INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
-      ).bind(userId, provider, providerId, name, avatar).run();
-    }
-  } else if (existing) {
+  if (existing) {
     userId = existing.user_id;
     await env.DB.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?')
       .bind(name, avatar, userId).run();
@@ -167,38 +167,195 @@ export async function upsertIdentity(env, { provider, providerId, name, avatar }
   await env.DB.prepare(
     "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
   ).bind(name, avatar, provider, providerId).run();
-  return { userId, merged };
+  return { userId };
+}
+
+export { mergeAccounts };
+
+// ------------------------------------------------------------
+// Linking and combining (#612)
+// ------------------------------------------------------------
+//
+// A sign-in is added to an account only when the player has proved both:
+//   1. the account: a sign-in to it within LINK_FRESH_S, checked when the link begins;
+//   2. the new sign-in: they just completed it at Discord or Steam;
+// and the link is completed by the same browser that began it (the request's
+// secret and the account's session), never by whoever opens the provider's page.
+// A sign-in that already has its own account is combined only after the player
+// saw both accounts and said yes. Every link and combine is an account event:
+// the account's Discord gets a message, the game and the website show a notice,
+// and it can be undone for UNDO_DAYS.
+
+const LINK_FRESH_S = 600;
+const UNDO_DAYS = 7;
+const PROVIDER_NAMES = { discord: 'Discord', steam: 'Steam', google: 'Google' };
+
+/** The session's claims, or null. */
+async function sessionClaims(request, env, deps) {
+  if (deps.claimsFromRequest) return deps.claimsFromRequest(request, env);
+  const sub = await deps.getUserFromRequest(request, env);
+  return sub ? { sub } : null;
+}
+
+/** A link may begin only on a session signed in within the last LINK_FRESH_S. */
+function freshEnough(claims) {
+  return !!(claims && claims.iat && claims.iat >= nowS() - LINK_FRESH_S);
+}
+function needFreshSignIn(deps, corsOrigin) {
+  return deps.jsonResponse({
+    error: 'For your safety, sign in again before linking another account.',
+    code: 'fresh_signin',
+  }, 401, corsOrigin);
+}
+
+/** A session for an account, and what the game and the website show about it. */
+async function sessionFor(env, userId, deps, via = null) {
+  const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
+  const identities = await listIdentities(env, userId);
+  const claims = { sub: userId, name: user.display_name, picture: user.avatar_url };
+  if (via) claims.via = via;
+  const token = await deps.createJWT(claims, env.JWT_SECRET);
+  return { token, user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities } };
+}
+
+/** What the combine screen shows about an account. */
+export async function accountSummary(env, userId) {
+  const u = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
+  if (!u) return null;
+  const n = async (sql) => ((await env.DB.prepare(sql).bind(userId).first()) || {}).n || 0;
+  const logins = Object.entries(await listIdentities(env, userId)).map(([provider, v]) => ({ provider, name: v.name, avatar: v.avatar }));
+  // A combine moves everything in every House Tandem game, so the summary names the other games too.
+  const games = new Map();
+  const rows = async (sql) => {
+    try { return (await env.DB.prepare(sql).bind(userId).all()).results || []; } catch { return []; }
+  };
+  for (const r of await rows('SELECT game, COUNT(*) AS n FROM game_achievements WHERE user_id = ? GROUP BY game')) {
+    games.set(r.game, Number(r.n) || 0);
+  }
+  for (const r of await rows('SELECT DISTINCT game FROM game_stats WHERE user_id = ?')) if (!games.has(r.game)) games.set(r.game, 0);
+  for (const r of await rows('SELECT game FROM game_playtime WHERE user_id = ? AND seconds > 0')) if (!games.has(r.game)) games.set(r.game, 0);
+  games.delete('tandemonium');
+  return {
+    name: u.display_name, avatar: u.avatar_url, logins,
+    rides: await n('SELECT COUNT(*) AS n FROM scores WHERE user_id = ?'),
+    badges: await n('SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?'),
+    games: [...games].map(([game, badges]) => ({ game, title: GAME_TITLES[game] || game, badges })),
+  };
+}
+
+const GAME_TITLES = Object.freeze({
+  dice: '7, 11, Doubles', coins: 'Carnival Dozer', roulette: 'Roulette', wheel: 'Carnival Wheel',
+  timber: 'Timber Tandem', sandhands: 'SandHands',
+});
+
+/** One line for a summary: "12 rides · 30 badges" (+ the other games it has played). */
+function summaryLines(acct) {
+  const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const lines = [`${count(acct.rides, 'ride')} · ${count(acct.badges, 'badge')} in Tandemonium`];
+  if (acct.games && acct.games.length) {
+    lines.push('Also: ' + acct.games.map((g) => g.badges ? `${g.title} (${count(g.badges, 'badge')})` : g.title).join(', '));
+  }
+  return lines;
+}
+
+function untilText(s) {
+  return new Date(s * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+function accountUrl(env) {
+  return env.ACCOUNT_URL || 'https://housetandem.com/account.html';
 }
 
 /**
- * Move everything from account `from` onto account `to`, then delete `from`.
- * Used when a player links a sign-in that already had its own account (signed
- * in with Discord on the web first, then linked Discord from the Steam build).
+ * Tell the account's Discord (every Discord on it) by direct message from the
+ * House Tandem bot. Discord only lets a bot message someone who shares a server
+ * with it; the sign-in joins most players to it. Never fails the link.
  */
-export async function mergeAccounts(env, from, to, deps = {}) {
-  if (!from || !to || from === to) return;
-  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).run();
-  await q('UPDATE user_identities SET user_id = ? WHERE user_id = ?', to, from);
-  await q('UPDATE scores SET user_id = ? WHERE user_id = ?', to, from);
-  await q('UPDATE score_contributions SET player_user_id = ? WHERE player_user_id = ?', to, from);
-  // Analytics sessions name the account by number ("26.0"): they follow it too.
-  await q('UPDATE sessions SET google_uid = ? WHERE CAST(google_uid AS INTEGER) = ?', String(to), from);
-  // Seats 2–4 on couch rides (migration 0016; absent before it is applied).
-  try { await q('UPDATE ride_seats SET user_id = ? WHERE user_id = ?', to, from); } catch (e) { if (!/no such table/.test(String(e && e.message))) throw e; }
-  await q(`INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, earned_at, score_id)
-           SELECT ?, achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?`, to, from);
-  await q('DELETE FROM user_achievements WHERE user_id = ?', from);
-  // One daily row per day per mode: keep `to`'s where both rode.
-  await q('UPDATE OR IGNORE daily_results SET user_id = ? WHERE user_id = ?', to, from);
-  await q('DELETE FROM daily_results WHERE user_id = ?', from);
-  await q('UPDATE daily_results SET partner_user_id = ? WHERE partner_user_id = ?', to, from);
-  await q('UPDATE OR IGNORE friends SET user_id = ? WHERE user_id = ?', to, from);
-  await q('UPDATE OR IGNORE friends SET friend_id = ? WHERE friend_id = ?', to, from);
-  await q('DELETE FROM friends WHERE user_id = ? OR friend_id = ? OR user_id = friend_id', from, from);
-  if (deps.mergePairKey) await deps.mergePairKey(env, String(from), String(to));
-  // The other games' rows (and time in game) reference users(id): move them before the delete.
-  if (deps.mergeGameAccounts) await deps.mergeGameAccounts(env, from, to);
-  await q('DELETE FROM users WHERE id = ?', from);
+export async function notifyAccountDiscord(env, userId, content, deps = {}) {
+  if (!env.DISCORD_BOT_TOKEN) return 0;
+  const fetchImpl = deps.fetchImpl || fetch;
+  let sent = 0;
+  try {
+    const rows = (await env.DB.prepare("SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord'")
+      .bind(userId).all()).results || [];
+    for (const r of rows) {
+      try {
+        const headers = { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}`, 'Content-Type': 'application/json' };
+        const ch = await fetchImpl(`${DISCORD_API}/v10/users/@me/channels`, {
+          method: 'POST', headers, body: JSON.stringify({ recipient_id: String(r.provider_id) }), signal: AbortSignal.timeout(5000),
+        });
+        if (!ch.ok) continue;
+        const { id } = await ch.json();
+        const msg = await fetchImpl(`${DISCORD_API}/v10/channels/${id}/messages`, {
+          method: 'POST', headers, body: JSON.stringify({ content, allowed_mentions: { parse: [] } }), signal: AbortSignal.timeout(5000),
+        });
+        if (msg.ok) sent++;
+      } catch {}
+    }
+  } catch (e) { console.error('account notice DM failed', e); }
+  deps.writeMetric && deps.writeMetric(env, sent ? 'account_notice_dm' : 'account_notice_dm_none');
+  return sent;
+}
+
+async function recordEvent(env, ev, deps) {
+  const at = nowS();
+  const until = at + UNDO_DAYS * 86400;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO account_events (user_id, kind, provider, provider_id, login_name, from_user_id, from_name, undo_json, created_at, undo_until)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(ev.userId, ev.kind, ev.provider || null, ev.providerId ? String(ev.providerId) : null, ev.loginName || null,
+           ev.fromUserId || null, ev.fromName || null, ev.undo ? JSON.stringify(ev.undo) : null, at, until).run();
+  } catch (e) {
+    // Migration 0020 not applied: the link still happens, without the notice.
+    console.error('account event not recorded', e);
+  }
+  const account = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(ev.userId).first();
+  const accountName = (account && account.display_name) || 'your account';
+  const what = PROVIDER_NAMES[ev.provider] || 'A sign-in';
+  const content = ev.kind === 'combine'
+    ? `House Tandem: the ${what} account "${ev.fromName || ev.loginName || ''}" was combined into "${accountName}". Not you, or didn't mean to? You can separate them until ${untilText(until)}: ${accountUrl(env)}`
+    : `House Tandem: ${what} account "${ev.loginName || ''}" was added to your House Tandem account "${accountName}". Not you? You can remove it until ${untilText(until)}: ${accountUrl(env)}`;
+  await notifyAccountDiscord(env, ev.userId, content, deps);
+}
+
+/**
+ * Add a sign-in to account `userId` when it has no account of its own.
+ * → { status: 'linked' | 'already' | 'combine', otherId? }
+ */
+export async function addLogin(env, userId, profile, deps = {}) {
+  const { provider, name, avatar } = profile;
+  const providerId = String(profile.providerId);
+  const owner = await identityOwner(env, provider, providerId, name, avatar);
+  if (owner && owner !== userId) return { status: 'combine', otherId: owner };
+  if (!owner) {
+    await env.DB.prepare(
+      'INSERT INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
+    ).bind(userId, provider, providerId, name, avatar).run();
+  }
+  await env.DB.prepare(
+    "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+  ).bind(name, avatar, provider, providerId).run();
+  if (owner) return { status: 'already' };
+  await recordEvent(env, { userId, kind: 'link', provider, providerId, loginName: name }, deps);
+  deps.writeMetric && deps.writeMetric(env, 'link_' + provider);
+  return { status: 'linked' };
+}
+
+/** The player confirmed: fold the sign-in's own account into `userId`. */
+async function combineInto(env, userId, profile, deps) {
+  const otherId = await identityOwner(env, profile.provider, profile.providerId);
+  if (!otherId || otherId === userId) return addLogin(env, userId, profile, deps);
+  const other = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(otherId).first();
+  const undo = await mergeAccounts(env, otherId, userId, deps);
+  await env.DB.prepare(
+    "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+  ).bind(profile.name, profile.avatar, profile.provider, String(profile.providerId)).run();
+  await recordEvent(env, {
+    userId, kind: 'combine', provider: profile.provider, providerId: profile.providerId, loginName: profile.name,
+    fromUserId: otherId, fromName: other && other.display_name, undo,
+  }, deps);
+  deps.writeMetric && deps.writeMetric(env, 'combine_' + profile.provider);
+  return { status: 'combined' };
 }
 
 /** A return URL is only followed back to a site the API already serves. */
@@ -255,7 +412,10 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
     returnTo = allowedReturnTo(body.return_to, env.CORS_ORIGIN, deps.pickCorsOrigin);
     if (!returnTo) return deps.jsonResponse({ error: 'return_to not allowed' }, 400, corsOrigin);
   }
-  const linkUserId = await deps.getUserFromRequest(request, env);
+  // Signed in: this links a Discord to the account, which needs a recent sign-in to it.
+  const claims = await sessionClaims(request, env, deps);
+  const linkUserId = claims ? claims.sub : null;
+  if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
 
   const deviceId = cleanDeviceId(body.device_id);
   const info = {};
@@ -387,51 +547,63 @@ export async function claimGuestPairs(env, deviceId, userId, deps) {
 
 /**
  * The website's Join checklist, after a Discord sign-in: record what was granted, keep the
- * verified email only while email is granted, and link the Steam account Discord verified
- * (the same link as "Sign in with Steam": a Steam account with its own rides merges in).
- * Never fails the sign-in. → true when a Steam account was merged in.
+ * verified email only while email is granted, and add the Steam account Discord verified
+ * (Discord checked it with Steam). Only a Steam with no account of its own is added: one
+ * with its own rides is combined only on the combine screen (#612).
+ * Never fails the sign-in. → 'linked' | 'already' | 'combine' | null
  */
 async function applyDiscordExtras(env, userId, profile, extras, deps) {
   try {
     await env.DB.prepare('UPDATE user_identities SET scopes = ?, email = ? WHERE provider = ? AND provider_id = ?')
       .bind(extras.scopes.join(' '), extras.email || null, 'discord', String(profile.providerId)).run();
   } catch (e) { console.error('saving Discord permissions failed', e); }
-  if (!extras.steamId) return false;
+  if (!extras.steamId) return null;
   try {
     const mine = await env.DB.prepare("SELECT 1 FROM user_identities WHERE user_id = ? AND provider = 'steam' AND provider_id = ?")
       .bind(userId, extras.steamId).first();
-    if (mine) return false;
+    if (mine) return 'already';
     const steam = await fetchSteamProfile(env, extras.steamId, deps.fetchImpl || fetch);
-    const { merged } = await upsertIdentity(env, steam, userId, deps);
-    deps.writeMetric && deps.writeMetric(env, 'link_steam_via_discord');
-    return merged;
+    const { status } = await addLogin(env, userId, steam, deps);
+    if (status === 'linked') deps.writeMetric && deps.writeMetric(env, 'link_steam_via_discord');
+    return status;
   } catch (e) {
     console.error('Steam link from Discord connections failed', e);
-    return false;
+    return null;
   }
 }
 
-/** Sign the profile in (or link it), store the session on the request. */
+/** A plain sign-in (no link): find or make the account, and its session. */
 async function finish(env, row, profile, deps, deviceId = null, extras = null) {
-  let { userId, merged } = await upsertIdentity(env, profile, row.link_user_id || null, deps);
+  const { userId } = await upsertIdentity(env, profile);
   await claimGuestPairs(env, deviceId, userId, deps);
-  if (extras) merged = (await applyDiscordExtras(env, userId, profile, extras, deps)) || merged;
-  const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
-  const identities = await listIdentities(env, userId);
-  const token = await deps.createJWT({ sub: userId, name: user.display_name, picture: user.avatar_url }, env.JWT_SECRET);
-  const result = {
-    token, merged, linked: !!row.link_user_id,
-    user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities },
-  };
+  const steamLink = extras ? await applyDiscordExtras(env, userId, profile, extras, deps) : null;
+  const result = await sessionFor(env, userId, deps, `${profile.provider}:${profile.providerId}`);
+  if (steamLink === 'combine') result.steam_has_account = true;
   const p = profile.provider || 'discord';
-  deps.writeMetric && deps.writeMetric(env, (row.link_user_id ? 'link_' : 'auth_') + p + (p === 'steam' ? '_web' : ''));
+  deps.writeMetric && deps.writeMetric(env, 'auth_' + p + (p === 'steam' ? '_web' : ''));
   return result;
 }
+
+/**
+ * A link's provider sign-in is done: hold the verified profile on the request
+ * and send the browser back with a one-time code. Only the tab that began the
+ * link (its secret + the account's session) can use it: POST /auth/link/complete.
+ */
+async function holdLink(env, row, profile, extras) {
+  const code = randomId(18);
+  const held = { profile, codeHash: await sha256(code), deviceId: requestDeviceId(row) };
+  if (extras) held.extras = { scopes: extras.scopes, email: extras.email, steamId: extras.steamId };
+  await env.DB.prepare("UPDATE auth_requests SET status = 'verified', profile_json = ? WHERE id = ?")
+    .bind(JSON.stringify(held), row.id).run();
+  return `${row.return_to}#ht_link=${encodeURIComponent(row.id + '.' + code)}`;
+}
+
+const EXPIRED_PAGE = () => page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
 
 /** GET /auth/discord/callback?code&state — Discord sends the browser back here. */
 export async function handleDiscordCallback(request, env, url, deps) {
   const row = await liveRequest(env, url.searchParams.get('state'));
-  if (!row || row.status !== 'pending') return page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
+  if (!row || row.status !== 'pending') return EXPIRED_PAGE();
   if (url.searchParams.get('error')) {
     await env.DB.prepare("UPDATE auth_requests SET status = 'error', result_json = ? WHERE id = ?")
       .bind(JSON.stringify({ error: 'cancelled' }), row.id).run();
@@ -448,54 +620,287 @@ export async function handleDiscordCallback(request, env, url, deps) {
   }
   // The website's checklist: signing in also joins the House Tandem server.
   const joined = wantsServerJoin(env, row) ? await addToServer(env, profile.providerId, accessToken, deps) : null;
+  const server = joined ? `&ht_server=${joined}` : '';
 
   if (row.mode === 'redirect') {
+    if (row.link_user_id) return Response.redirect((await holdLink(env, row, profile, extras)) + server, 302);
     const result = await finish(env, row, profile, deps, requestDeviceId(row), extras);
     await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
-    const server = joined ? `&ht_server=${joined}` : '';
-    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}${server}`, 302);
+    const steam = result.steam_has_account ? '&ht_steam=has_account' : '';
+    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}${server}${steam}`, 302);
   }
 
-  // Device mode: hold the profile until the player confirms the code on their screen.
+  // Device mode: hold the profile until the player types the code their screen shows.
   const confirmKey = randomId(12);
   await env.DB.prepare("UPDATE auth_requests SET status = 'confirm', profile_json = ? WHERE id = ?")
-    .bind(JSON.stringify({ ...profile, confirmKey, deviceId: requestDeviceId(row) }), row.id).run();
-  const action = row.link_user_id ? 'Link this Discord account to the game' : 'Sign in to the game';
-  return page('Is this your screen?', `
+    .bind(JSON.stringify({ ...profile, confirmKey, deviceId: requestDeviceId(row), tries: 0 }), row.id).run();
+  return confirmPage(env, row, profile, confirmKey);
+}
+
+const MAX_CODE_TRIES = 3;
+
+/**
+ * The phone's page: type the code the TV shows. Typing it (instead of agreeing
+ * with a code printed here) means a link someone sent you can't sign their TV
+ * in as you: you would have to read the code off their screen.
+ */
+async function confirmPage(env, row, profile, confirmKey, error = '') {
+  let action = 'sign the game in as you';
+  if (row.link_user_id) {
+    const acct = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(row.link_user_id).first();
+    action = `add your Discord to <b>${escapeHtml((acct && acct.display_name) || 'this')}</b>'s House Tandem account`;
+  }
+  return page('Type the code on your screen', `
     <div class="who"><img src="${escapeHtml(profile.avatar)}" alt=""><span>${escapeHtml(profile.name)}</span></div>
-    <p>The game is showing this code:</p>
-    <div class="code">${escapeHtml(row.user_code)}</div>
-    <p>Only continue if it matches the code on your TV or game screen.</p>
+    <p>Type the 4-letter code your TV or game screen is showing. This will ${action}.</p>
+    <p class="note">Only do this for a screen in front of you. If someone sent you this link, close it.</p>
+    ${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ''}
     <form method="POST" action="/auth/discord/confirm">
       <input type="hidden" name="r" value="${escapeHtml(row.id)}">
       <input type="hidden" name="k" value="${escapeHtml(confirmKey)}">
-      <button type="submit" name="ok" value="1">Yes, ${escapeHtml(action.charAt(0).toLowerCase() + action.slice(1))}</button>
-      <button type="submit" name="ok" value="0" class="ghost">No, cancel</button>
+      <input class="code-input" name="code" inputmode="text" autocomplete="off" autocapitalize="characters" spellcheck="false"
+             maxlength="4" minlength="4" required aria-label="Code on your screen" placeholder="····" autofocus>
+      <button type="submit" name="ok" value="1">Continue</button>
+      <button type="submit" name="ok" value="0" class="ghost" formnovalidate>Cancel</button>
     </form>`);
 }
 
-/** POST /auth/discord/confirm (form) — the player said the code matches. */
+/**
+ * The phone's second page when the Discord has its own account: both accounts
+ * side by side, Combine or Cancel. Combining keeps the account on the screen.
+ */
+async function combinePage(env, row, confirmKey, otherId) {
+  const other = await accountSummary(env, otherId);
+  const into = await accountSummary(env, row.link_user_id);
+  const NAMES = { discord: 'Discord', steam: 'Steam', google: 'Google' };
+  const card = (label, a) => `
+    <div class="acct">
+      <div class="acct-label">${escapeHtml(label)}</div>
+      <div class="who">${a.avatar ? `<img src="${escapeHtml(a.avatar)}" alt="">` : ''}<span>${escapeHtml(a.name || 'House Tandem player')}</span></div>
+      <div class="acct-logins">${escapeHtml(a.logins.map((l) => NAMES[l.provider] || l.provider).join(' + '))}</div>
+      ${summaryLines(a).map((l) => `<div class="acct-stats">${escapeHtml(l)}</div>`).join('')}
+    </div>`;
+  const intoName = escapeHtml((into && into.name) || 'this account');
+  return page('Combine your accounts?', `
+    <p>This Discord already has its own House Tandem account. Combine it into <b>${intoName}</b>, the account on your screen?</p>
+    ${card('Your Discord account', other || { logins: [], rides: 0, badges: 0 })}
+    ${card('The account on your screen', into || { logins: [], rides: 0, badges: 0 })}
+    <p>Its rides, badges and progress in every House Tandem game move into <b>${intoName}</b>, and both sign-ins open it.
+       You can separate them again for ${UNDO_DAYS} days.</p>
+    <form method="POST" action="/auth/discord/confirm">
+      <input type="hidden" name="r" value="${escapeHtml(row.id)}">
+      <input type="hidden" name="k" value="${escapeHtml(confirmKey)}">
+      <input type="hidden" name="step" value="combine">
+      <button type="submit" name="ok" value="1">Combine</button>
+      <button type="submit" name="ok" value="0" class="ghost">Cancel</button>
+    </form>`);
+}
+
+/** POST /auth/discord/confirm (form) — the player typed the code on their screen. */
 export async function handleDiscordConfirm(request, env, url, deps) {
   let form;
   try { form = await request.formData(); } catch { return page('Something went wrong', '<p>Try again from the game.</p>', 400); }
   const row = await liveRequest(env, String(form.get('r') || ''));
-  if (!row || row.status !== 'confirm') return page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
-  let profile = null;
-  try { profile = JSON.parse(row.profile_json); } catch {}
-  if (!profile || profile.confirmKey !== String(form.get('k') || '')) return page('Something went wrong', '<p>Try again from the game.</p>', 400);
+  if (!row || row.status !== 'confirm') return EXPIRED_PAGE();
+  let held = null;
+  try { held = JSON.parse(row.profile_json); } catch {}
+  if (!held || held.confirmKey !== String(form.get('k') || '')) return page('Something went wrong', '<p>Try again from the game.</p>', 400);
+  const fail = async (error, title, body) => {
+    await env.DB.prepare("UPDATE auth_requests SET status = 'error', result_json = ?, profile_json = NULL WHERE id = ?")
+      .bind(JSON.stringify({ error }), row.id).run();
+    return page(title, body);
+  };
   if (String(form.get('ok')) !== '1') {
-    await env.DB.prepare("UPDATE auth_requests SET status = 'error', result_json = ? WHERE id = ?")
-      .bind(JSON.stringify({ error: 'cancelled' }), row.id).run();
-    return page('Cancelled', '<p>Nothing was changed. You can close this tab.</p>');
+    return fail('cancelled', 'Cancelled', held.combine
+      ? '<p>Nothing was changed. Your Discord keeps its own account. You can close this tab.</p>'
+      : '<p>Nothing was changed. You can close this tab.</p>');
   }
-  const deviceId = cleanDeviceId(profile.deviceId);
-  delete profile.confirmKey;
-  delete profile.deviceId;
-  const result = await finish(env, row, profile, deps, deviceId);
+
+  // Second step (Pete, 2026-11-15): the code matched and this Discord has its own account;
+  // the player saw both accounts and chose Combine.
+  if (String(form.get('step') || '') === 'combine') {
+    if (!held.combine || !row.link_user_id) return page('Something went wrong', '<p>Try again from the game.</p>', 400);
+    const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
+    const { status } = await combineInto(env, row.link_user_id, profile, deps);
+    await claimGuestPairs(env, cleanDeviceId(held.deviceId), row.link_user_id, deps);
+    const result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: status === 'combined' };
+    await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
+      .bind(JSON.stringify(result), row.id).run();
+    return page('Combined', `<p>Your Discord and its progress are now part of <b>${escapeHtml(result.user.name)}</b>. Look back at the game. You can close this tab.</p>
+      <p class="note">Didn't mean to? You can separate them for ${UNDO_DAYS} days from the game's Profile card or ${escapeHtml(accountUrl(env).replace(/^https:\/\//, ''))}.</p>`);
+  }
+
+  const typed = String(form.get('code') || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (typed !== row.user_code) {
+    const tries = (held.tries || 0) + 1;
+    if (tries >= MAX_CODE_TRIES) {
+      return fail('cancelled', 'That code didn\'t match', '<p>Nothing was changed. Choose <b>Sign in with Discord</b> in the game again.</p>');
+    }
+    await env.DB.prepare('UPDATE auth_requests SET profile_json = ? WHERE id = ?').bind(JSON.stringify({ ...held, tries }), row.id).run();
+    const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
+    return confirmPage(env, row, profile, held.confirmKey, 'That isn\'t the code on the screen. Check it and try again.');
+  }
+
+  const deviceId = cleanDeviceId(held.deviceId);
+  const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
+  let result;
+  if (row.link_user_id) {
+    // This Discord already has its own account: show both and let the player choose.
+    const { status, otherId } = await addLogin(env, row.link_user_id, profile, deps);
+    if (status === 'combine') {
+      await env.DB.prepare('UPDATE auth_requests SET profile_json = ? WHERE id = ?')
+        .bind(JSON.stringify({ ...held, combine: true }), row.id).run();
+      return combinePage(env, row, held.confirmKey, otherId);
+    }
+    await claimGuestPairs(env, deviceId, row.link_user_id, deps);
+    result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: false };
+  } else {
+    result = await finish(env, row, profile, deps, deviceId);
+  }
   await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
     .bind(JSON.stringify(result), row.id).run();
   const done = row.link_user_id ? 'Discord is linked' : `Signed in as ${escapeHtml(result.user.name)}`;
   return page(done, '<p>Look back at the game. You can close this tab.</p>');
+}
+
+/** The verified link request this browser began: right secret, right account. */
+async function heldLinkRequest(request, env, body, deps, wantStatus) {
+  const claims = await sessionClaims(request, env, deps);
+  const row = await liveRequest(env, typeof body.id === 'string' ? body.id : '');
+  if (!row || !row.link_user_id || !claims || claims.sub !== row.link_user_id) return null;
+  if (!body.secret || (await sha256(String(body.secret))) !== row.secret_hash) return null;
+  if (row.status !== wantStatus) return null;
+  let held = null;
+  try { held = JSON.parse(row.profile_json); } catch {}
+  return held && held.profile ? { row, held } : null;
+}
+
+const LINK_GONE = 'This link has expired or was started somewhere else. Start it again from your account.';
+
+/**
+ * POST /auth/link/complete { id, code, secret } (signed in to the account that began it)
+ * → { status: 'linked', token, user } | { status: 'combine', into, other }
+ */
+export async function handleLinkComplete(request, env, corsOrigin, deps) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const got = await heldLinkRequest(request, env, body, deps, 'verified');
+  if (!got || !body.code || (await sha256(String(body.code))) !== got.held.codeHash) {
+    return deps.jsonResponse({ error: LINK_GONE, code: 'link_gone' }, 410, corsOrigin);
+  }
+  const { row, held } = got;
+  const userId = row.link_user_id;
+  const { status, otherId } = await addLogin(env, userId, held.profile, deps);
+  if (status === 'combine') {
+    await env.DB.prepare("UPDATE auth_requests SET status = 'combine' WHERE id = ?").bind(row.id).run();
+    return deps.jsonResponse({
+      status: 'combine', provider: held.profile.provider,
+      login: { name: held.profile.name, avatar: held.profile.avatar },
+      into: await accountSummary(env, userId), other: await accountSummary(env, otherId),
+    }, 200, corsOrigin);
+  }
+  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
+  await claimGuestPairs(env, cleanDeviceId(held.deviceId), userId, deps);
+  const steamLink = held.extras ? await applyDiscordExtras(env, userId, held.profile, held.extras, deps) : null;
+  const result = await sessionFor(env, userId, deps);
+  if (steamLink === 'combine') result.steam_has_account = true;
+  return deps.jsonResponse({ status: 'linked', ...result }, 200, corsOrigin);
+}
+
+/**
+ * POST /auth/link/combine { id, secret, ok } (signed in to the account that began it)
+ * ok: the player saw both accounts and chose to combine. → { status: 'combined', token, user }
+ */
+export async function handleLinkCombine(request, env, corsOrigin, deps) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const got = await heldLinkRequest(request, env, body, deps, 'combine');
+  if (!got) return deps.jsonResponse({ error: LINK_GONE, code: 'link_gone' }, 410, corsOrigin);
+  const { row, held } = got;
+  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
+  if (body.ok !== true) return deps.jsonResponse({ status: 'cancelled' }, 200, corsOrigin);
+  await combineInto(env, row.link_user_id, held.profile, deps);
+  if (held.extras) await applyDiscordExtras(env, row.link_user_id, held.profile, held.extras, deps);
+  return deps.jsonResponse({ status: 'combined', ...(await sessionFor(env, row.link_user_id, deps)) }, 200, corsOrigin);
+}
+
+// ------------------------------------------------------------
+// Notices and undo (#612)
+// ------------------------------------------------------------
+
+/** GET /me/notices → { notices: [{ id, kind, provider, login_name, from_name, created_at, undo_until, seen }] } */
+export async function handleNotices(request, env, corsOrigin, userId, deps) {
+  let rows = [];
+  try {
+    rows = (await env.DB.prepare(
+      `SELECT id, kind, provider, login_name, from_name, created_at, undo_until, seen_at FROM account_events
+       WHERE user_id = ? AND undone_at IS NULL AND undo_until > ? ORDER BY created_at DESC LIMIT 20`
+    ).bind(userId, nowS()).all()).results || [];
+  } catch { rows = []; }   // migration 0020 not applied yet
+  return deps.jsonResponse({
+    notices: rows.map((r) => ({
+      id: r.id, kind: r.kind, provider: r.provider, login_name: r.login_name, from_name: r.from_name,
+      created_at: r.created_at, undo_until: r.undo_until, seen: !!r.seen_at,
+    })),
+  }, 200, corsOrigin);
+}
+
+async function readBody(request) {
+  try { return await request.json(); } catch { return {}; }
+}
+
+/** POST /me/notices/seen { id } — the player read it; it stays undoable on the account page. */
+export async function handleNoticeSeen(request, env, corsOrigin, userId, deps) {
+  const body = await readBody(request);
+  await env.DB.prepare('UPDATE account_events SET seen_at = ? WHERE id = ? AND user_id = ?')
+    .bind(nowS(), Number(body.id) || 0, userId).run();
+  return deps.jsonResponse({ ok: true }, 200, corsOrigin);
+}
+
+/**
+ * POST /me/notices/undo { id } — remove a linked sign-in, or separate a combined
+ * account, within UNDO_DAYS. → { undone: true, signed_out }
+ * signed_out: this session came in through the sign-in that left, so it ends here
+ * (the game signs in again; the website asks the player to).
+ */
+export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
+  const body = await readBody(request);
+  const claims = await sessionClaims(request, env, deps);
+  const ev = await env.DB.prepare('SELECT * FROM account_events WHERE id = ? AND user_id = ?').bind(Number(body.id) || 0, userId).first();
+  if (!ev || ev.undone_at || ev.undo_until <= nowS()) {
+    return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
+  }
+  const via = claims && claims.via;
+  let leaving = [];
+  if (ev.kind === 'link') {
+    const others = await env.DB.prepare('SELECT COUNT(*) AS n FROM user_identities WHERE user_id = ? AND NOT (provider = ? AND provider_id = ?)')
+      .bind(userId, ev.provider, ev.provider_id).first();
+    if (!others || !others.n) {
+      return deps.jsonResponse({ error: 'That is the only sign-in on this account, so it can\'t be removed. Delete the account instead.' }, 409, corsOrigin);
+    }
+    await env.DB.prepare('DELETE FROM user_identities WHERE user_id = ? AND provider = ? AND provider_id = ?')
+      .bind(userId, ev.provider, ev.provider_id).run();
+    leaving = [`${ev.provider}:${ev.provider_id}`];
+  } else if (ev.kind === 'combine') {
+    let log = null;
+    try { log = JSON.parse(ev.undo_json); } catch {}
+    if (!log) return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
+    const ids = log.identities || [];
+    const moved = ids.length ? ((await env.DB.prepare(`SELECT provider, provider_id FROM user_identities WHERE id IN (${ids.map(() => '?').join(',')})`)
+      .bind(...ids).all()).results || []) : [];
+    try {
+      await unmergeAccounts(env, log);
+    } catch (e) {
+      console.error('separate failed', e);
+      return deps.jsonResponse({ error: 'The accounts could not be separated. Nothing more was changed.' }, 409, corsOrigin);
+    }
+    leaving = moved.map((m) => `${m.provider}:${m.provider_id}`);
+  } else {
+    return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
+  }
+  await env.DB.prepare('UPDATE account_events SET undone_at = ? WHERE id = ?').bind(nowS(), ev.id).run();
+  deps.writeMetric && deps.writeMetric(env, 'undo_' + ev.kind);
+  return deps.jsonResponse({ undone: true, kind: ev.kind, signed_out: !!(via && leaving.includes(via)) }, 200, corsOrigin);
 }
 
 /** POST /auth/poll { id, secret } → { status: pending | done | error | expired, ... } */
@@ -503,7 +908,7 @@ export async function handleAuthPoll(request, env, corsOrigin, deps) {
   let body = {};
   try { body = await request.json(); } catch {}
   const row = await liveRequest(env, body.id);
-  if (!row || !body.secret || (await sha256(String(body.secret))) !== row.secret_hash) {
+  if (!row || row.mode !== 'device' || !body.secret || (await sha256(String(body.secret))) !== row.secret_hash) {
     return deps.jsonResponse({ status: 'expired' }, 404, corsOrigin);
   }
   if (row.status === 'pending' || row.status === 'confirm') {
@@ -537,8 +942,9 @@ function steamCallbackUrl(url, id) {
 
 /**
  * POST /auth/steam/begin  { return_to, device_id? }
- * With a Bearer token the Steam account is linked to that account.
- * → { id, url, expires_in }
+ * With a Bearer token (signed in within LINK_FRESH_S) the Steam account is linked
+ * to that account; the page finishes it with `secret` (POST /auth/link/complete).
+ * → { id, secret, url, expires_in }
  */
 export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   if (!env.STEAM_WEB_API_KEY) return deps.jsonResponse({ error: 'Steam sign-in is not set up yet' }, 503, corsOrigin);
@@ -546,17 +952,20 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   try { body = await request.json(); } catch {}
   const returnTo = allowedReturnTo(body.return_to, env.CORS_ORIGIN, deps.pickCorsOrigin);
   if (!returnTo) return deps.jsonResponse({ error: 'return_to not allowed' }, 400, corsOrigin);
-  const linkUserId = await deps.getUserFromRequest(request, env);
+  const claims = await sessionClaims(request, env, deps);
+  const linkUserId = claims ? claims.sub : null;
+  if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
   const deviceId = cleanDeviceId(body.device_id);
   const id = randomId(12);
+  const secret = randomId(24);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
     `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
      VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, 'pending', ?, ?)`
-  ).bind(id, await sha256(randomId(24)), linkUserId || null, returnTo,
+  ).bind(id, await sha256(secret), linkUserId || null, returnTo,
          deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
   return deps.jsonResponse({
-    id, expires_in: REQUEST_TTL_S,
+    id, secret, expires_in: REQUEST_TTL_S,
     url: `${url.origin}/auth/steam/go?r=${encodeURIComponent(id)}`,
   }, 200, corsOrigin);
 }
@@ -627,17 +1036,21 @@ export async function handleSteamWebCallback(request, env, url, deps) {
   if (!row || row.provider !== 'steam' || row.status !== 'pending') {
     return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410);
   }
-  // Single use, whatever happens next.
-  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
-  if (url.searchParams.get('openid.mode') === 'cancel') return Response.redirect(row.return_to, 302);
+  // Single use, whatever happens next (a link's request lives on, held, for the page to finish).
+  await env.DB.prepare("UPDATE auth_requests SET status = 'used' WHERE id = ?").bind(row.id).run();
+  const drop = () => env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
+  if (url.searchParams.get('openid.mode') === 'cancel') { await drop(); return Response.redirect(row.return_to, 302); }
   const fetchImpl = deps.fetchImpl || fetch;
   let steamId;
   try {
     steamId = await verifySteamAssertion(url, row.id, fetchImpl);
   } catch (e) {
+    await drop();
     return page('Steam sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back and try again.</p>`, 401);
   }
   const profile = await fetchSteamProfile(env, steamId, fetchImpl);
+  if (row.link_user_id) return Response.redirect(await holdLink(env, row, profile, null), 302);
+  await drop();
   const result = await finish(env, row, profile, deps, requestDeviceId(row));
   return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
 }
@@ -802,6 +1215,15 @@ function page(title, body, status = 200) {
   form { display: grid; gap: 10px; margin-top: 20px; }
   button { font: inherit; font-weight: 700; padding: 14px; border-radius: 12px; border: 0; background: #5865f2; color: #fff; cursor: pointer; }
   button.ghost { background: transparent; color: #f4efe6; border: 1px solid #5b5068; font-weight: 500; }
+  .code-input { font: 700 40px/1 ui-monospace, Consolas, monospace; letter-spacing: .3em; text-align: center; text-transform: uppercase;
+                padding: 12px 8px 12px calc(8px + .3em); border-radius: 12px; border: 2px solid #5b5068; background: #2a2335; color: #ffd36b; width: 100%; box-sizing: border-box; }
+  .code-input:focus { outline: none; border-color: #ffd36b; }
+  .note { font-size: 14px; opacity: .75; }
+  .error { color: #ff9b8a; font-weight: 600; }
+  .acct { background: #221c2c; border: 1px solid #3a3147; border-radius: 14px; padding: 12px; margin: 10px 0; }
+  .acct-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; opacity: .65; margin-bottom: 8px; }
+  .acct-logins { font-size: 14px; opacity: .8; margin-top: 8px; }
+  .acct-stats { font-size: 14px; }
 </style></head><body><main><div class="brand">House Tandem</div><h1>${escapeHtml(title)}</h1>${body}</main></body></html>`;
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' } });
 }

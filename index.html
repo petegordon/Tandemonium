@@ -3919,6 +3919,26 @@
   .profile-popup-logout:hover {
     background: rgba(255,80,80,0.25);
   }
+  /* #612 · "Steam X was combined into this account. Not you?" */
+  .profile-popup-notice {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255,211,107,0.45);
+    border-radius: 8px;
+    background: rgba(255,211,107,0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-width: 260px;
+  }
+  .profile-popup-notice[hidden] { display: none; }
+  .profile-popup-notice-text { font-size: 11px; line-height: 1.4; color: rgba(255,255,255,0.85); text-align: center; }
+  .profile-popup-notice-undo, .profile-popup-notice-ok {
+    padding: 6px 12px; font-size: 11px; font-weight: 700; letter-spacing: 1px; border-radius: 6px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .profile-popup-notice-undo { border: 1px solid rgba(255,211,107,0.6); background: rgba(255,211,107,0.18); color: #ffd36b; }
+  .profile-popup-notice-ok { border: 1px solid rgba(255,255,255,0.25); background: transparent; color: rgba(255,255,255,0.75); }
   /* Controller-reachable sign-in proxy (#325) — affirmative, distinct from the
      red LOG OUT and the neutral CLOSE buttons. */
   .profile-popup-signin-btn {
@@ -5786,13 +5806,19 @@ ON</button>
             <div class="profile-popup-name" id="profile-popup-name"></div>
             <div class="profile-popup-email" id="profile-popup-email"></div>
             <div class="profile-popup-sub" id="profile-popup-prompt" hidden>Link Discord to keep your rides and achievements on housetandem.com and sign in on any device.</div>
+            <!-- #612: a sign-in was linked or an account combined in; 7 days to undo it. -->
+            <div class="profile-popup-notice" id="profile-popup-notice" role="status" hidden>
+              <div class="profile-popup-notice-text" id="profile-popup-notice-text"></div>
+              <button class="profile-popup-notice-undo" id="profile-popup-notice-undo"></button>
+              <button class="profile-popup-notice-ok" id="profile-popup-notice-ok">OK, THAT WAS ME</button>
+            </div>
             <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-link-discord" style="display:none;">LINK DISCORD</button>
             <button class="profile-popup-logout" id="profile-popup-logout">SIGN OUT</button>
             <button class="profile-popup-back" id="profile-popup-back">CLOSE</button>
           </div>
           <!-- #612: Discord replaces Google. Same device: the button goes to
                Discord and back. TV / desktop app: scan the QR with a phone (or the
-               desktop app opens your browser), sign in, check the code. -->
+               desktop app opens your browser), sign in, type the code. -->
           <div id="profile-popup-signin" style="display:none;">
             <div class="profile-popup-title">Sign in to House Tandem</div>
             <div class="profile-popup-sub">Save your scores, achievements and Tandem Tokens everywhere you play.</div>
@@ -5807,7 +5833,7 @@ ON</button>
             <ol class="profile-popup-steps">
               <li>Scan with your phone&rsquo;s camera</li>
               <li>Sign in with Discord</li>
-              <li>Check the code matches <b class="profile-popup-code" id="profile-popup-code"></b></li>
+              <li>Type this code on your phone <b class="profile-popup-code" id="profile-popup-code"></b></li>
             </ol>
             <div class="profile-popup-device-status" id="profile-popup-device-status" role="status"></div>
             <!-- Desktop app only: the same sign-in in this computer's browser instead of a phone. -->

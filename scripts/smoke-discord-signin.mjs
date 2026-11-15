@@ -11,6 +11,9 @@
 //      the QR; once linked, Discord is on the left and Steam on the right.
 //   C. Phone browser: the Discord button goes to Discord and back (a redirect);
 //      coming back with #ht_auth signs in, and the token leaves the URL.
+//   D. #612 · Steam build: an old session links after a quiet Steam re-sign-in;
+//      a Discord with its own account is refused with the website steps; a
+//      "combined" notice on the Profile card separates the accounts and signs in again.
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 import { installFakeSteam, ELECTRON_UA } from './lib/fake-steam.mjs';
 
@@ -22,11 +25,12 @@ const DISCORD_PIC = dot('#5865f2');
 const STEAM_PIC = dot('#66c0f4');
 
 /** Installed before navigation: answers the Tandemonium API from fixtures. */
-function fakeApi({ discordPic, steamPic, origin }) {
+function fakeApi({ discordPic, steamPic, origin, scenario = '' }) {
   const b64 = (o) => btoa(JSON.stringify(o)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   const jwt = (sub) => b64({ alg: 'HS256' }) + '.' + b64({ sub, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.sig';
   const state = (window.__api = JSON.parse(sessionStorage.getItem('__api') || '{"polls":0,"linked":false,"begins":[],"opened":[]}'));
   const save = () => sessionStorage.setItem('__api', JSON.stringify(state));
+  if (scenario && !state.scenario) { state.scenario = scenario; state.steamLogins = 0; state.undos = []; state.seen = []; save(); }
   const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
   const realFetch = window.fetch.bind(window);
   window.fetch = async (input, init = {}) => {
@@ -38,6 +42,11 @@ function fakeApi({ discordPic, steamPic, origin }) {
       const body = JSON.parse(init.body || '{}');
       state.begins.push({ mode: body.mode, authed });
       save();
+      if (/fresh/.test(state.scenario || '') && authed && !state.freshDone) {
+        state.freshDone = true;
+        save();
+        return json({ error: 'For your safety, sign in again before linking another account.', code: 'fresh_signin' }, 401);
+      }
       if (body.mode === 'redirect') return json({ id: 'r1', secret: 's', code: null, url: origin + '/index.html?back=1#ht_auth=' + jwt(7), expires_in: 600 });
       return json({ id: 'd1', secret: 's', code: 'K7QF', url: 'https://tandemonium-api.example.workers.dev/auth/discord/go?r=d1', expires_in: 600 });
     }
@@ -46,18 +55,36 @@ function fakeApi({ discordPic, steamPic, origin }) {
       save();
       if (state.polls < 2) return json({ status: 'pending' });
       if (state.polls < 3) return json({ status: 'confirming' });
+      const combined = /combined/.test(state.scenario || '');   // the phone chose Combine
       const ids = { discord: { name: 'Pete', avatar: discordPic } };
       if (state.linked) ids.steam = { name: 'pete_steam', avatar: steamPic };
-      return json({ status: 'done', token: jwt(7), linked: state.linked, merged: false, user: { id: 7, name: state.linked ? 'pete_steam' : 'Pete', avatar: discordPic, identities: ids } });
+      return json({ status: 'done', token: jwt(7), linked: state.linked, merged: combined, user: { id: 7, name: state.linked ? 'pete_steam' : 'Pete', avatar: discordPic, identities: ids } });
     }
     if (p === '/auth/steam') {
       state.linked = true;
+      state.steamLogins = (state.steamLogins || 0) + 1;
       save();
       return json({ token: jwt(7), user: { id: 7, name: 'pete_steam', avatar: steamPic, identities: { steam: { name: 'pete_steam', avatar: steamPic } } } });
     }
     if (p === '/me') {
       const ids = state.linked ? { steam: { name: 'pete_steam', avatar: steamPic } } : { discord: { name: 'Pete', avatar: discordPic } };
       return json({ user: { id: 7, display_name: state.linked ? 'pete_steam' : 'Pete', avatar_url: state.linked ? steamPic : discordPic, identities: ids }, achievements: [], bestScores: [] });
+    }
+    if (p === '/me/notices') {
+      const list = /notice/.test(state.scenario || '') && !(state.undos || []).length
+        ? [{ id: 5, kind: 'combine', provider: 'steam', login_name: 'pete_steam', from_name: 'Old Steam Pete', created_at: Math.floor(Date.now() / 1000) - 60, undo_until: Math.floor(Date.now() / 1000) + 6 * 86400, seen: (state.seen || []).includes(5) }]
+        : [];
+      return json({ notices: list });
+    }
+    if (p === '/me/notices/undo') {
+      state.undos = [...(state.undos || []), JSON.parse(init.body || '{}').id];
+      save();
+      return json({ undone: true, kind: 'combine', signed_out: true });
+    }
+    if (p === '/me/notices/seen') {
+      state.seen = [...(state.seen || []), JSON.parse(init.body || '{}').id];
+      save();
+      return json({ ok: true });
     }
     return json({ error: 'not faked' }, 404);
   };
@@ -200,6 +227,74 @@ const popupState = (page) => page.evaluate(() => {
   check(!after.hash.includes('ht_auth'), 'C: the token is taken off the URL', after.hash);
   check(after.toggleImg, 'C: the round Profile toggle shows the picture');
   await h.shot(page, 'C2-phone-signed-in');
+  await page.close();
+}
+
+// ── D. #612 · Steam build: fresh sign-in for a link, a Discord with its own account, the notice + undo ──
+const steamPage = (scenario) => h.gamePage({
+  viewport: { width: 1920, height: 1080 },
+  userAgent: ELECTRON_UA,
+  storage: { tandemonium_tutorial_done: 'smoke' },
+  before: async (pg) => {
+    await installFakeSteam(pg, { subscribed: true });
+    await pg.evaluateOnNewDocument(() => {
+      window.steam.getAuthTicket = () => Promise.resolve('tkt');
+      window.__opened = [];
+      window.electronApp.openSignIn = (u) => { window.__opened.push(u); return Promise.resolve(true); };
+      if (sessionStorage.getItem('__d_cleared')) return;
+      sessionStorage.setItem('__d_cleared', '1');
+      localStorage.removeItem('tandemonium_auth_user');
+      localStorage.removeItem('tandemonium_auth_token');
+    });
+    await pg.evaluateOnNewDocument(fakeApi, { discordPic: DISCORD_PIC, steamPic: STEAM_PIC, origin: h.origin, scenario });
+  },
+});
+{
+  const page = await steamPage('fresh combined');
+  await page.waitForFunction(() => document.getElementById('bar-profile').querySelector('img[data-provider="steam"]'), { timeout: 15000 }).catch(() => {});
+  await page.evaluate(() => document.getElementById('bar-profile').click());
+  await sleep(300);
+  await page.evaluate(() => document.getElementById('profile-popup-link-discord').click());
+  await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
+  const api = await page.evaluate(() => window.__api);
+  check(api.begins.length === 2 && api.begins.every((b) => b.authed) && api.steamLogins >= 2,
+    'D: an old session is refused once; the game signs in again with Steam (quietly) and the link begins', api);
+  let s = await popupState(page);
+  check(s.open && s.qr && s.code === 'K7QF', 'D: the Profile card stays open on the QR after the quiet Steam sign-in', s);
+  const step = await page.evaluate(() => document.querySelector('.profile-popup-steps li:last-child').textContent.trim());
+  check(/^Type this code on your phone/.test(step), 'D: the steps say to type the code on the phone', step);
+  // The phone typed the code and chose Combine on its page: the TV shows one account.
+  await page.waitForFunction(() => [...document.querySelectorAll('.info-toast')].some((t) => /now one/.test(t.textContent)), { timeout: 15000 }).catch(() => {});
+  const toast = await page.evaluate(() => [...document.querySelectorAll('.info-toast')].map((t) => t.textContent).join(' | '));
+  check(/Discord linked/.test(toast) && /Your Discord and Steam accounts are now one/.test(toast), 'D: after Combine on the phone the TV says the accounts are one', toast);
+  const who = await page.evaluate(() => ({ ids: Object.keys(window._game.lobby.auth.user.identities || {}).sort(), err: (() => { const e = document.getElementById('profile-popup-error'); return e && !e.hidden ? e.textContent : ''; })() }));
+  check(who.ids.join() === 'discord,steam' && !who.err, 'D: one account with Discord and Steam, no error', who);
+  await h.shot(page, 'D1-combined');
+  await page.close();
+}
+{
+  const page = await steamPage('notice');
+  await page.waitForFunction(() => { const b = document.getElementById('profile-popup-notice'); return b && !b.hidden; }, { timeout: 15000 }).catch(() => {});
+  await page.evaluate(() => document.getElementById('bar-profile').click());
+  await sleep(300);
+  const n = await page.evaluate(() => ({
+    shown: !document.getElementById('profile-popup-notice').hidden,
+    text: document.getElementById('profile-popup-notice-text').textContent,
+    undo: document.getElementById('profile-popup-notice-undo').textContent,
+    focusables: window._game.lobby._profileItems().map((e) => e.id),
+  }));
+  check(n.shown && /“Old Steam Pete” was combined into this one/.test(n.text) && n.text.includes('Not you? You can undo it until') && n.undo === 'SEPARATE THEM',
+    'D: the Profile card says an account was combined in, with SEPARATE THEM', n);
+  check(n.focusables[0] === 'profile-popup-notice-undo' && n.focusables[1] === 'profile-popup-notice-ok', 'D: a controller reaches SEPARATE THEM and OK first', n.focusables);
+  await h.shot(page, 'D2-combined-notice');
+  const loginsBefore = await page.evaluate(() => window.__api.steamLogins);
+  await page.evaluate(() => document.getElementById('profile-popup-notice-undo').click());
+  await page.waitForFunction((b) => window.__api.steamLogins > b, { timeout: 10000 }, loginsBefore).catch(() => {});
+  const after = await page.evaluate(() => ({ undos: window.__api.undos, logins: window.__api.steamLogins, notice: !document.getElementById('profile-popup-notice').hidden }));
+  check(after.undos.length === 1 && after.undos[0] === 5, 'D: SEPARATE THEM asks the server to undo that notice', after);
+  check(after.logins > loginsBefore, 'D: the Steam session ended and the game signed in with Steam again (its own account)', after);
+  await page.waitForFunction(() => document.getElementById('profile-popup-notice').hidden, { timeout: 5000 }).catch(() => {});
+  check(await page.evaluate(() => document.getElementById('profile-popup-notice').hidden), 'D: no notice once separated');
   await page.close();
 }
 
