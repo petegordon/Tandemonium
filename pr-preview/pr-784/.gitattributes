@@ -1,2 +1,0 @@
-# Vendored copies are compared byte-for-byte against their source repo (npm run check:ui); keep them LF on every platform.
-shared/ui/** text eol=lf
