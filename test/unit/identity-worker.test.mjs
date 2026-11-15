@@ -94,13 +94,15 @@ async function deviceSignIn(env, token = null, extra = {}) {
   const cb = await call(env, `/auth/discord/callback?code=c0de&state=${encodeURIComponent(state)}`);
   const html = await cb.text();
   assert.equal(cb.status, 200);
-  assert.ok(html.includes(begin.code), 'the confirm page shows the code from the screen');
+  assert.ok(!html.includes(begin.code), 'the phone never shows the code: the player types what the screen shows (#612)');
+  assert.ok(html.includes('name="code"'));
   poll = await (await call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } })).json();
-  assert.equal(poll.status, 'confirming', 'no session until the player confirms the code');
+  assert.equal(poll.status, 'confirming', 'no session until the player types the code');
 
   const k = html.match(/name="k" value="([^"]+)"/)[1];
-  const ok = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, ok: '1' } });
+  const ok = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code.toLowerCase(), ok: '1' } });
   assert.equal(ok.status, 200);
+  extra.onConfirmed && extra.onConfirmed(await ok.text());
   return (await call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } })).json();
 }
 
@@ -160,41 +162,143 @@ test('redirect sign-in goes back to the game with the session in the fragment; f
   } finally { restore(); }
 });
 
-test('Steam player links Discord: one account, both pictures; a Discord-only account is merged in', async () => {
+const steamTicket = (env) => call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } }).then((r) => r.json());
+
+test('Steam player links a new Discord from the TV: one account, both pictures, a notice', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    // Pete signed in with Discord on the web first and earned an achievement there.
-    const web = await deviceSignIn(env);
-    const webId = web.user.id;
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(webId);
-    db.prepare("INSERT INTO pairs (user_lo, user_hi, rides) VALUES (?, 'guest:abc', 3)").run(String(webId));
-
-    // Then the Steam build signs in by ticket: a separate account so far.
-    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
-    assert.notEqual(steam.user.id, webId);
+    const steam = await steamTicket(env);
     assert.deepEqual(Object.keys(steam.user.identities), ['steam']);
-
-    // Linking Discord from the Steam build merges the web account into the Steam one.
-    const linked = await deviceSignIn(env, steam.token);
+    let phone = '';
+    const linked = await deviceSignIn(env, steam.token, { onConfirmed: (h) => { phone = h; } });
     assert.equal(linked.status, 'done');
     assert.equal(linked.linked, true);
-    assert.equal(linked.merged, true);
     assert.equal(linked.user.id, steam.user.id);
     assert.deepEqual(Object.keys(linked.user.identities).sort(), ['discord', 'steam']);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(webId).n, 0);
-    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, steam.user.id);
-    assert.equal(db.prepare("SELECT rides FROM pairs WHERE user_hi = 'guest:abc'").get().rides, 3);
-    assert.equal(db.prepare("SELECT user_lo FROM pairs WHERE user_hi = 'guest:abc'").get().user_lo, String(steam.user.id));
+    assert.match(phone, /Discord is linked/);
 
-    // Next launch: the Steam ticket alone brings Discord along.
-    const again = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
-    assert.equal(again.user.id, steam.user.id);
+    const notices = (await (await call(env, '/me/notices', { token: linked.token })).json()).notices;
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].kind, 'link');
+    assert.equal(notices[0].provider, 'discord');
+    assert.equal(notices[0].login_name, 'Pete');
+    assert.ok(notices[0].undo_until > notices[0].created_at + 6 * 86400);
+
+    // Next launch: the Steam ticket alone brings Discord along; a Discord sign-in lands here too.
+    const again = await steamTicket(env);
     assert.equal(again.user.identities.discord.name, 'Pete');
-    // And a Discord sign-in on the web lands on the same account.
-    const web2 = await deviceSignIn(env);
-    assert.equal(web2.user.id, steam.user.id);
+    assert.equal((await deviceSignIn(env)).user.id, steam.user.id);
+  } finally { restore(); }
+});
+
+/** A Steam TV links a Discord that has its own account: the phone types the code and lands on the Combine page. */
+async function phoneToCombine(env, db) {
+  const web = await deviceSignIn(env);   // Pete's Discord account, with a badge here and in Carnival Dozer
+  db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(web.user.id);
+  db.prepare("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (?, 'coins', 'jackpot')").run(web.user.id);
+  const steam = await steamTicket(env);
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
+  const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+  const k = html.match(/name="k" value="([^"]+)"/)[1];
+  const page = await (await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code, ok: '1' } })).text();
+  const poll = () => call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } }).then((r) => r.json());
+  const choose = (ok) => call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok } }).then((r) => r.text());
+  return { web, steam, begin, k, page, poll, choose };
+}
+
+test('#612 · TV combine: after the typed code the phone shows both accounts (every game) and nothing moves yet', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const { web, page, poll } = await phoneToCombine(env, db);
+    assert.match(page, /Combine your accounts\?/);
+    assert.match(page, /already has its own House Tandem account/);
+    assert.match(page, /pete_steam/, 'names the account on the screen');
+    assert.match(page, /0 rides · 1 badge in Tandemonium/);
+    assert.match(page, /Also: Carnival Dozer \(1 badge\)/, 'a combine moves every game, so the page says so');
+    assert.match(page, /name="step" value="combine"/);
+    assert.equal((await poll()).status, 'confirming', 'the TV keeps waiting while the phone decides');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'nothing combined before the choice');
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+  } finally { restore(); }
+});
+
+test('#612 · TV combine: Combine folds the Discord account into the Steam one, with a notice and full undo', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const { web, steam, choose, poll } = await phoneToCombine(env, db);
+    assert.match(await choose('1'), /now part of <b>pete_steam<\/b>/);
+    const done = await poll();
+    assert.equal(done.status, 'done');
+    assert.equal(done.linked, true);
+    assert.equal(done.merged, true, 'the TV pulls the combined progress');
+    assert.equal(done.user.id, steam.user.id, 'the account on the screen is kept');
+    assert.deepEqual(Object.keys(done.user.identities).sort(), ['discord', 'steam']);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, steam.user.id);
+    assert.equal(db.prepare("SELECT user_id FROM game_achievements WHERE achievement_id = 'jackpot'").get().user_id, steam.user.id);
+
+    const notices = (await (await call(env, '/me/notices', { token: done.token })).json()).notices;
+    assert.equal(notices[0].kind, 'combine');
+    assert.equal(notices[0].provider, 'discord');
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: done.token, body: { id: notices[0].id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'separated again');
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.equal(db.prepare("SELECT user_id FROM game_achievements WHERE achievement_id = 'jackpot'").get().user_id, web.user.id);
+  } finally { restore(); }
+});
+
+test('#612 · TV combine: Cancel changes nothing; Combine is refused without the typed code first', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const { web, choose, poll } = await phoneToCombine(env, db);
+    assert.match(await choose('0'), /keeps its own account/);
+    const res = await poll();
+    assert.equal(res.status, 'error');
+    assert.equal(res.error, 'cancelled');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+
+    // A new request: posting the Combine step straight away (no code typed) does nothing.
+    const steam = await steamTicket(env);
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
+    const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+    const k = html.match(/name="k" value="([^"]+)"/)[1];
+    const forced = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok: '1' } });
+    assert.equal(forced.status, 400);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'still two accounts');
+  } finally { restore(); }
+});
+
+test('#612 · the phone must type the TV\'s code: wrong codes are refused, three strikes cancel', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' } })).json();
+    const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+    const k = html.match(/name="k" value="([^"]+)"/)[1];
+    const wrong = begin.code === 'ZZZZ' ? 'YYYY' : 'ZZZZ';
+    for (let i = 0; i < 2; i++) {
+      const page = await (await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: wrong, ok: '1' } })).text();
+      assert.match(page, /isn&#39;t the code on the screen|isn't the code on the screen/);
+    }
+    const third = await (await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: wrong, ok: '1' } })).text();
+    assert.match(third, /didn&#39;t match|didn't match/);
+    // Even the right code is too late now.
+    const late = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code, ok: '1' } });
+    assert.equal(late.status, 410);
+    const poll = await (await call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } })).json();
+    assert.equal(poll.status, 'error');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0);
   } finally { restore(); }
 });
 
@@ -344,10 +448,144 @@ async function steamWebSignIn(env, { token, steamId = '76561190000000001', tampe
   };
   if (tamper) tamper(p);
   for (const [k, v] of Object.entries(p)) returnTo.searchParams.set(k, v);
-  return call(env, returnTo.pathname + returnTo.search);
+  const res = await call(env, returnTo.pathname + returnTo.search);
+  res.begin = begin;
+  return res;
 }
 
-test('Steam sign-in on the web finds the account the Steam game made; linking from Discord merges', async () => {
+/** The #ht_link=<id>.<code> a link callback sent the browser back with. */
+function heldLink(res) {
+  const loc = res.headers.get('Location') || '';
+  const m = loc.match(/#ht_link=([^&]+)/);
+  assert.ok(m, 'back with a one-time link code: ' + loc);
+  const [id, code] = decodeURIComponent(m[1]).split('.');
+  return { id, code };
+}
+const complete = (env, token, body) => call(env, '/auth/link/complete', { method: 'POST', token, body });
+const combine = (env, token, body) => call(env, '/auth/link/combine', { method: 'POST', token, body });
+
+test('#612 · linking Steam on the website: back with a code, finished only by the tab that began it, combine only on yes, undo separates', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    // The Steam game made its own account and rode on it.
+    const game = await steamTicket(env);
+    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(game.user.id);
+    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 10, 1000, 'solo')").run(game.user.id);
+    db.prepare("INSERT INTO pairs (user_lo, user_hi, rides, distance) VALUES (?, 'guest:abc', 3, 30)").run(String(game.user.id));
+    // Pete signs in with Discord on the website and links Steam.
+    const web = await deviceSignIn(env);
+    db.prepare("INSERT INTO pairs (user_lo, user_hi, rides, distance) VALUES (?, 'guest:abc', 2, 20)").run(String(web.user.id));
+    const cb = await steamWebSignIn(env, { token: web.token });
+    assert.equal(cb.status, 302);
+    assert.ok(!cb.headers.get('Location').includes('ht_auth='), 'a link brings back no session');
+    const { id, code } = heldLink(cb);
+    const secret = cb.begin.secret;
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'nothing linked by the callback itself');
+
+    // Another browser (no secret, or someone else's session) can't finish it.
+    assert.equal((await complete(env, null, { id, code, secret })).status, 410);
+    assert.equal((await complete(env, game.token, { id, code, secret })).status, 410);
+    assert.equal((await complete(env, web.token, { id, code, secret: 'guess' })).status, 410);
+    assert.equal((await complete(env, web.token, { id, code: 'guess', secret })).status, 410);
+
+    // The tab that began it: the Steam account has its own progress, so it asks first.
+    const asked = await (await complete(env, web.token, { id, code, secret })).json();
+    assert.equal(asked.status, 'combine');
+    assert.equal(asked.provider, 'steam');
+    assert.equal(asked.other.name, 'pete_steam');
+    assert.equal(asked.other.rides, 1);
+    assert.equal(asked.other.badges, 1);
+    assert.equal(asked.into.name, 'Pete');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'still two until they say yes');
+    assert.equal((await complete(env, web.token, { id, code, secret })).status, 410, 'the code is single use');
+
+    const done = await (await combine(env, web.token, { id, secret, ok: true })).json();
+    assert.equal(done.status, 'combined');
+    assert.equal(done.user.id, web.user.id);
+    assert.deepEqual(Object.keys(done.user.identities).sort(), ['discord', 'steam']);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.equal(db.prepare("SELECT rides FROM pairs WHERE user_hi = 'guest:abc'").get().rides, 5, 'the pairs add up');
+    assert.equal((await combine(env, web.token, { id, secret, ok: true })).status, 410, 'single use');
+
+    // The Steam game now lands on the combined account and sees the notice.
+    const later = await steamTicket(env);
+    assert.equal(later.user.id, web.user.id);
+    const notices = (await (await call(env, '/me/notices', { token: later.token })).json()).notices;
+    assert.equal(notices.length, 1);
+    assert.equal(notices[0].kind, 'combine');
+    assert.equal(notices[0].from_name, 'pete_steam');
+
+    // "Separate them": the Steam account comes back as it was, and this Steam session ends.
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: later.token, body: { id: notices[0].id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(undo.signed_out, true, 'the session came in through Steam, which left');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, game.user.id);
+    assert.equal(db.prepare('SELECT user_id FROM scores').get().user_id, game.user.id);
+    assert.deepEqual(db.prepare("SELECT user_lo, rides FROM pairs WHERE user_hi = 'guest:abc' ORDER BY user_lo").all().map((r) => [r.user_lo, r.rides]),
+      [[String(game.user.id), 3], [String(web.user.id), 2]].sort());
+    assert.equal((await steamTicket(env)).user.id, game.user.id, 'Steam signs in to its own account again');
+    assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: web.token, body: { id: notices[0].id } })).status, 410, 'once');
+    assert.equal((await (await call(env, '/me/notices', { token: web.token })).json()).notices.length, 0);
+  } finally { restore(); }
+});
+
+test('#612 · a link is finished only by the browser that began it, with that account signed in', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    // Sam has a Steam account with progress and is signed in in their own browser.
+    const sam = await steamTicket(env);
+    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(sam.user.id);
+    // Another account begins a link; Sam finishes the Steam step in Sam's browser.
+    const other = await deviceSignIn(env);
+    const cb = await steamWebSignIn(env, { token: other.token });
+    const { id, code } = heldLink(cb);
+    // Sam's browser has the code but Sam's own session and no secret.
+    assert.equal((await complete(env, sam.token, { id, code, secret: 'unknown' })).status, 410);
+    assert.equal((await complete(env, sam.token, { id, code, secret: cb.begin.secret })).status, 410);
+    // The tab that began it has the secret but not the code.
+    assert.equal((await complete(env, other.token, { id, code: 'x', secret: cb.begin.secret })).status, 410);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, sam.user.id);
+  } finally { restore(); }
+});
+
+test('#612 · linking needs a sign-in from the last 10 minutes', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    const web = await deviceSignIn(env);
+    // The same session, signed 11 minutes ago.
+    const claims = JSON.parse(Buffer.from(web.token.split('.')[1], 'base64url').toString());
+    const old = await makeToken({ ...claims, iat: claims.iat - 660 });
+    for (const [p, body] of [['/auth/steam/begin', { return_to: 'https://tandemonium.housetandem.com/account' }],
+                             ['/auth/discord/begin', { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/account' }],
+                             ['/auth/discord/begin', { mode: 'device' }]]) {
+      const res = await call(env, p, { method: 'POST', token: old, body });
+      assert.equal(res.status, 401, p);
+      assert.equal((await res.json()).code, 'fresh_signin');
+    }
+    // Signed out, the same buttons are plain sign-ins.
+    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account' } })).status, 200);
+  } finally { restore(); }
+});
+
+/** A session token signed like the worker's, with chosen claims. */
+async function makeToken(payload) {
+  const enc = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const data = `${enc({ alg: 'HS256', typ: 'JWT' })}.${enc(payload)}`;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode('test-secret'), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = Buffer.from(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data))).toString('base64url');
+  return `${data}.${sig}`;
+}
+
+test('Steam sign-in on the web finds the account the Steam game made; linking from Discord asks to combine', async () => {
   const db = freshDb();
   const env = envFor(db);
   const { checks, restore } = mockSteamOpenId(true);
@@ -363,11 +601,14 @@ test('Steam sign-in on the web finds the account the Steam game made; linking fr
     assert.equal(checks[0].get('openid.mode'), 'check_authentication', 'Steam itself confirms the answer');
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
 
-    // Someone signed in with Discord on the web links Steam: the game account merges in.
+    // Someone signed in with Discord on the web links Steam: the game account combines in once they say yes.
     const discord = await deviceSignIn(env);
     assert.notEqual(discord.user.id, game.user.id);
     const link = await steamWebSignIn(env, { token: discord.token });
     assert.equal(link.status, 302);
+    const { id, code } = heldLink(link);
+    assert.equal((await (await complete(env, discord.token, { id, code, secret: link.begin.secret })).json()).status, 'combine');
+    assert.equal((await (await combine(env, discord.token, { id, secret: link.begin.secret, ok: true })).json()).status, 'combined');
     const after = await (await call(env, '/me', { token: discord.token })).json();
     assert.deepEqual(Object.keys(after.user.identities).sort(), ['discord', 'steam']);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
@@ -567,7 +808,7 @@ test('website sign-in with join_server: Discord link on the button, guilds.join,
   } finally { globalThis.fetch = inner; restore(); }
 });
 
-test('Join checklist permissions: email kept while granted, verified Steam connection links (and merges) the Steam account, unticked = asked for less', async () => {
+test('Join checklist permissions: email kept while granted, a verified Steam connection links a Steam with no account (never combines one), unticked = asked for less', async () => {
   const db = freshDb();
   const env = { ...envFor(db), CORS_ORIGIN: 'https://housetandem.com', DISCORD_GUILD_ID: 'G1', DISCORD_BOT_TOKEN: 'bot-token' };
   const STEAM_ID = '76561190000000001';
@@ -584,8 +825,9 @@ test('Join checklist permissions: email kept while granted, verified Steam conne
     const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes } })).json();
     const auth = new URL(begin.authorize_url);
     const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
-    const token = decodeURIComponent(cb.headers.get('Location').match(/ht_auth=([^&]+)/)[1]);
-    return { scope: auth.searchParams.get('scope'), token };
+    const loc = cb.headers.get('Location');
+    const token = decodeURIComponent(loc.match(/ht_auth=([^&]+)/)[1]);
+    return { scope: auth.searchParams.get('scope'), token, loc };
   };
   const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_identities WHERE provider = 'discord'").get();
   try {
@@ -599,12 +841,22 @@ test('Join checklist permissions: email kept while granted, verified Steam conne
     assert.equal(row.email, 'pete@example.com');
     assert.equal(row.scopes, 'identify guilds.join email connections');
     const me = await (await call(env, '/me', { token: r.token })).json();
-    assert.ok(me.user.identities.steam, 'the Steam account Discord verified is linked');
+    assert.ok(!me.user.identities.steam, 'a Steam with its own account is left on it (#612)');
     assert.ok(me.user.identities.discord);
-    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, row.user_id, 'one account');
-    assert.notEqual(steamUser, row.user_id);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 0, 'the Steam-only account merged in');
+    assert.match(r.loc, /ht_steam=has_account/, 'the page is told, so it can offer Link Steam (and the combine screen)');
+    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, steamUser);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 1, 'the Steam account is still its own');
     assert.ok(steam.token);
+
+    // A verified Steam with no account of its own is linked, with a notice.
+    const db3 = freshDb();
+    const env3 = { ...env, DB: d1(db3) };
+    const b3 = await (await call(env3, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
+    const cb3 = await call(env3, `/auth/discord/callback?code=c&state=${b3.id}`);
+    const t3 = decodeURIComponent(cb3.headers.get('Location').match(/ht_auth=([^&]+)/)[1]);
+    const me3 = await (await call(env3, '/me', { token: t3 })).json();
+    assert.ok(me3.user.identities.steam, 'the Steam account Discord verified is linked');
+    assert.equal((await (await call(env3, '/me/notices', { token: t3 })).json()).notices[0].provider, 'steam');
 
     // Email unticked next time: forgotten. Connections unticked: not fetched.
     conns = [];
@@ -914,5 +1166,119 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
     assert.equal(asked.length, 1);
     channelStatus = 403;
     assert.equal(await hello(d.token), null);
+  } finally { globalThis.fetch = inner; restore(); }
+});
+
+// ── #612 · combine records, separate restores ──
+import { mergeAccounts as mergeRecorded, unmergeAccounts } from '../../worker/account-merge.js';
+
+test('separate after combine: Daily rides on the same day, shared badges, friends, other games and time in game all come back', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const add = (sql, ...a) => db.prepare(sql).run(...a);
+  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (10, 'discord', 'a', 'Ann')");
+  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (20, 'steam', 'b', 'Bea')");
+  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (30, 'discord', 'c', 'Cat')");
+  add("INSERT INTO user_identities (user_id, provider, provider_id) VALUES (10, 'discord', 'a'), (20, 'steam', 'b'), (30, 'discord', 'c')");
+  add("INSERT INTO user_achievements (user_id, achievement_id) VALUES (10, 'shared'), (20, 'shared'), (20, 'bea_only')");
+  add("INSERT INTO daily_results (user_id, day_key, mode, time_ms) VALUES (10, '2026-11-10', 'solo', 100), (20, '2026-11-10', 'solo', 90), (20, '2026-11-11', 'solo', 80)");
+  add("INSERT INTO daily_results (user_id, day_key, mode, time_ms, partner_user_id) VALUES (30, '2026-11-12', 'pair', 70, 20)");
+  add('INSERT INTO friends (user_id, friend_id) VALUES (20, 30), (10, 30)');
+  add("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (10, 'dice', 'roll'), (20, 'dice', 'roll'), (20, 'dice', 'six')");
+  add('INSERT INTO game_stats (user_id, game, stats_json) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)', 10, 'dice', '{"a":1}', 20, 'dice', '{"b":2}', 20, 'coins', '{"c":3}');
+  add("INSERT INTO game_playtime (user_id, game, seconds, sessions) VALUES (10, 'dice', 100, 1), (20, 'dice', 50, 2), (20, 'coins', 40, 1)");
+  const snap = () => JSON.stringify({
+    ach: db.prepare('SELECT user_id, achievement_id FROM user_achievements ORDER BY user_id, achievement_id').all(),
+    daily: db.prepare('SELECT id, user_id, day_key, time_ms, partner_user_id FROM daily_results ORDER BY id').all(),
+    friends: db.prepare('SELECT user_id, friend_id FROM friends ORDER BY user_id, friend_id').all(),
+    gach: db.prepare('SELECT user_id, game, achievement_id FROM game_achievements ORDER BY user_id, game, achievement_id').all(),
+    gstats: db.prepare('SELECT user_id, game, stats_json FROM game_stats ORDER BY user_id, game').all(),
+    gtime: db.prepare('SELECT user_id, game, seconds, sessions FROM game_playtime ORDER BY user_id, game').all(),
+    ids: db.prepare('SELECT user_id, provider, provider_id FROM user_identities ORDER BY id').all(),
+    users: db.prepare('SELECT id, provider, provider_id, display_name FROM users ORDER BY id').all(),
+  });
+  const before = snap();
+  const { mergeGameAccounts } = await import('../../worker/games.js');
+  const log = JSON.parse(JSON.stringify(await mergeRecorded(env, 20, 10, { mergeGameAccounts })));   // stored as JSON
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = 20').get().n, 0);
+  assert.equal(db.prepare("SELECT time_ms FROM daily_results WHERE user_id = 10 AND day_key = '2026-11-10'").get().time_ms, 100, 'Ann keeps her own Daily on the shared day');
+  assert.equal(db.prepare("SELECT seconds FROM game_playtime WHERE user_id = 10 AND game = 'dice'").get().seconds, 150);
+  await unmergeAccounts(env, log);
+  assert.equal(snap(), before, 'everything is back where it was');
+});
+
+test('undo a link: the sign-in leaves the account; the session that came in through it ends', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    await deviceSignIn(env, steam.token);
+    const discordSession = await deviceSignIn(env);   // signed in through the Discord that was linked
+    assert.equal(discordSession.user.id, steam.user.id);
+    const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
+    // Seen: off the game's banner, still undoable on the account page.
+    await call(env, '/me/notices/seen', { method: 'POST', token: steam.token, body: { id: n.id } });
+    const after = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
+    assert.equal(after[0].seen, true);
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: discordSession.token, body: { id: n.id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(undo.signed_out, true);
+    assert.deepEqual(Object.keys((await (await call(env, '/me', { token: steam.token })).json()).user.identities), ['steam']);
+    // That Discord now signs in to an account of its own.
+    assert.notEqual((await deviceSignIn(env)).user.id, steam.user.id);
+  } finally { restore(); }
+});
+
+test('undo a link never removes the last sign-in on an account', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    await deviceSignIn(env, steam.token);
+    const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
+    db.prepare("DELETE FROM user_identities WHERE provider = 'steam'").run();   // only Discord is left
+    const res = await call(env, '/me/notices/undo', { method: 'POST', token: steam.token, body: { id: n.id } });
+    assert.equal(res.status, 409);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM user_identities').get().n, 1);
+  } finally { restore(); }
+});
+
+test('the combine screen\'s No: nothing changes, the request is gone', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    await steamTicket(env);
+    const web = await deviceSignIn(env);
+    const cb = await steamWebSignIn(env, { token: web.token });
+    const { id, code } = heldLink(cb);
+    assert.equal((await (await complete(env, web.token, { id, code, secret: cb.begin.secret })).json()).status, 'combine');
+    assert.equal((await (await combine(env, web.token, { id, secret: cb.begin.secret, ok: false })).json()).status, 'cancelled');
+    assert.equal((await combine(env, web.token, { id, secret: cb.begin.secret, ok: true })).status, 410);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+  } finally { restore(); }
+});
+
+test('the account\'s Discord is told by direct message, with the undo date and the account page', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), DISCORD_BOT_TOKEN: 'bot', ACCOUNT_URL: 'https://housetandem.com/account.html' };
+  const restore = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  const sent = [];
+  globalThis.fetch = async (input, init) => {
+    const u = String(input && input.url ? input.url : input);
+    if (u.endsWith('/v10/users/@me/channels')) { sent.push(['open', JSON.parse(init.body).recipient_id, init.headers.Authorization]); return Response.json({ id: 'dm1' }); }
+    if (u.endsWith('/v10/channels/dm1/messages')) { sent.push(['msg', JSON.parse(init.body).content]); return Response.json({ id: 'm1' }); }
+    return inner(input, init);
+  };
+  try {
+    const web = await deviceSignIn(env);   // Discord account
+    const { addLogin } = await import('../../worker/identity.js');
+    await addLogin(env, web.user.id, { provider: 'steam', providerId: '76561190000000009', name: 'petesteam', avatar: null });
+    assert.deepEqual(sent[0], ['open', DISCORD_PETE.id, 'Bot bot']);
+    assert.match(sent[1][1], /Steam account "petesteam" was added to your House Tandem account "Pete"/);
+    assert.match(sent[1][1], /until [A-Z][a-z]{2} \d{1,2}: https:\/\/housetandem\.com\/account\.html/);
   } finally { globalThis.fetch = inner; restore(); }
 });

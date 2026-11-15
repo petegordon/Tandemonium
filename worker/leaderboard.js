@@ -18,6 +18,7 @@ import {
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
+  handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
 } from './identity.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, mergeGameAccounts } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
@@ -56,7 +57,7 @@ export const houseTandemGames = {
 /** What the identity module needs from this worker. */
 const identityDeps = () => ({
   jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey, mergeGuestPairs, mergeGameAccounts,
-  userFromToken,
+  userFromToken, claimsFromRequest,
 });
 
 export default {
@@ -111,6 +112,13 @@ export default {
       if (path === '/auth/poll' && request.method === 'POST') {
         return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
+      // #612 · a link finishes in the tab that began it; a combine only after the player said yes.
+      if (path === '/auth/link/complete' && request.method === 'POST') {
+        return handleLinkComplete(request, env, corsOrigin, identityDeps());
+      }
+      if (path === '/auth/link/combine' && request.method === 'POST') {
+        return handleLinkCombine(request, env, corsOrigin, identityDeps());
+      }
 
       // Authed routes
       if (path === '/score' && request.method === 'POST') return withAuth(request, env, corsOrigin, submitScoreWithLimit);
@@ -124,6 +132,16 @@ export default {
       }
       if (path === '/auth/handoff/redeem' && request.method === 'POST') {
         return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
+      }
+      // #612 · what was linked or combined lately, and its 7-day undo.
+      if (path === '/me/notices' && request.method === 'GET') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleNotices(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/me/notices/seen' && request.method === 'POST') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleNoticeSeen(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/me/notices/undo' && request.method === 'POST') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleNoticeUndo(req, e, c, uid, identityDeps()));
       }
       if (path === '/me/discord') {
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
@@ -254,7 +272,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
   // Create server JWT (include email for dashboard access control)
-  const jwt = await createJWT({ sub: userId, name, picture, email }, env.JWT_SECRET);
+  const jwt = await createJWT({ sub: userId, name, picture, email, via: 'google:' + googleId }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
@@ -331,7 +349,8 @@ async function handleSteamAuth(request, env, corsOrigin) {
   // takes the account here, in the same request (no extra request to lose).
   await attachSessionAccount(env, body.session_id, userId);
 
-  const jwt = await createJWT({ sub: userId, name, picture: avatarUrl }, env.JWT_SECRET);
+  // via: the sign-in this session came through (an undo that removes it ends the session).
+  const jwt = await createJWT({ sub: userId, name, picture: avatarUrl, via: 'steam:' + steamId }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
@@ -1197,7 +1216,8 @@ async function verifyGoogleIdToken(token, expectedAud) {
 export const PLAYER_LIMIT = 30;
 export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
-  '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete']);
+  '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
+  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo']);
 
 /** Which per-player bucket a request writes to, or null (reads: the IP ceiling only). */
 export async function playerBucket(request, env, path, clientIP) {
@@ -2582,6 +2602,8 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM user_identities WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
+  // #612 · its link / combine notices (migration 0020; absent before it is applied).
+  try { await q('DELETE FROM account_events WHERE user_id = ?', userId).run(); } catch (e) { if (!/no such table/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
@@ -2614,6 +2636,17 @@ async function withDashboardAuth(request, env, corsOrigin, handler) {
 async function userFromToken(token, env) {
   try {
     return (await verifyJWT(token, env.JWT_SECRET)).sub;
+  } catch {
+    return null;
+  }
+}
+
+/** The session's claims (sub, iat, via...), or null. */
+async function claimsFromRequest(request, env) {
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return null;
+  try {
+    return await verifyJWT(auth.slice(7), env.JWT_SECRET);
   } catch {
     return null;
   }
