@@ -2600,9 +2600,10 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM game_stats WHERE user_id = ?', userId),
     q('DELETE FROM game_playtime WHERE user_id = ?', userId),
     q('DELETE FROM user_identities WHERE user_id = ?', userId),
-    q('DELETE FROM account_events WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
+  // #612 · its link / combine notices (migration 0020; absent before it is applied).
+  try { await q('DELETE FROM account_events WHERE user_id = ?', userId).run(); } catch (e) { if (!/no such table/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
