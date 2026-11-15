@@ -55,10 +55,10 @@ function fakeApi({ discordPic, steamPic, origin, scenario = '' }) {
       save();
       if (state.polls < 2) return json({ status: 'pending' });
       if (state.polls < 3) return json({ status: 'confirming' });
-      if (/has_account/.test(state.scenario || '')) return json({ status: 'error', error: 'has_account' });
+      const combined = /combined/.test(state.scenario || '');   // the phone chose Combine
       const ids = { discord: { name: 'Pete', avatar: discordPic } };
       if (state.linked) ids.steam = { name: 'pete_steam', avatar: steamPic };
-      return json({ status: 'done', token: jwt(7), linked: state.linked, merged: false, user: { id: 7, name: state.linked ? 'pete_steam' : 'Pete', avatar: discordPic, identities: ids } });
+      return json({ status: 'done', token: jwt(7), linked: state.linked, merged: combined, user: { id: 7, name: state.linked ? 'pete_steam' : 'Pete', avatar: discordPic, identities: ids } });
     }
     if (p === '/auth/steam') {
       state.linked = true;
@@ -250,7 +250,7 @@ const steamPage = (scenario) => h.gamePage({
   },
 });
 {
-  const page = await steamPage('fresh has_account');
+  const page = await steamPage('fresh combined');
   await page.waitForFunction(() => document.getElementById('bar-profile').querySelector('img[data-provider="steam"]'), { timeout: 15000 }).catch(() => {});
   await page.evaluate(() => document.getElementById('bar-profile').click());
   await sleep(300);
@@ -263,13 +263,13 @@ const steamPage = (scenario) => h.gamePage({
   check(s.open && s.qr && s.code === 'K7QF', 'D: the Profile card stays open on the QR after the quiet Steam sign-in', s);
   const step = await page.evaluate(() => document.querySelector('.profile-popup-steps li:last-child').textContent.trim());
   check(/^Type this code on your phone/.test(step), 'D: the steps say to type the code on the phone', step);
-  await page.waitForFunction(() => { const e = document.getElementById('profile-popup-error'); return e && !e.hidden && e.textContent; }, { timeout: 15000 }).catch(() => {});
-  const err = await page.evaluate(() => { const e = document.getElementById('profile-popup-error'); return e && !e.hidden ? e.textContent : null; });
-  check(err && /already has its own account/.test(err) && err.includes('housetandem.com/account.html') && /Link Steam/.test(err),
-    'D: a Discord with its own account is refused with the website steps', err);
-  s = await popupState(page);
-  check(!s.qr && s.linkBtn, 'D: the QR steps aside and LINK DISCORD is back', s);
-  await h.shot(page, 'D1-has-account');
+  // The phone typed the code and chose Combine on its page: the TV shows one account.
+  await page.waitForFunction(() => [...document.querySelectorAll('.info-toast')].some((t) => /now one/.test(t.textContent)), { timeout: 15000 }).catch(() => {});
+  const toast = await page.evaluate(() => [...document.querySelectorAll('.info-toast')].map((t) => t.textContent).join(' | '));
+  check(/Discord linked/.test(toast) && /Your Discord and Steam accounts are now one/.test(toast), 'D: after Combine on the phone the TV says the accounts are one', toast);
+  const who = await page.evaluate(() => ({ ids: Object.keys(window._game.lobby.auth.user.identities || {}).sort(), err: (() => { const e = document.getElementById('profile-popup-error'); return e && !e.hidden ? e.textContent : ''; })() }));
+  check(who.ids.join() === 'discord,steam' && !who.err, 'D: one account with Discord and Steam, no error', who);
+  await h.shot(page, 'D1-combined');
   await page.close();
 }
 {
