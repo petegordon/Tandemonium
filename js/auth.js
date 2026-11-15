@@ -12,8 +12,10 @@
 //     Discord and back; the session comes back in the URL fragment.
 //   - device code (TV, Steam build, or linking): the game shows a QR + a
 //     4-letter code; the player finishes in a browser (their phone, or the
-//     system browser the Steam build opens) and confirms the code. The game
-//     polls the API with a secret only it holds.
+//     system browser the Steam build opens) and types the code. The game
+//     polls the API with a secret only it holds. Linking from a phone adds a
+//     Discord with no account of its own; combining two accounts happens on
+//     housetandem.com (#612), and every link shows a notice with undo.
 
 import { API_BASE } from './config.js';
 import { getDeviceId, getSessionId, attachAccount } from './analytics.js';
@@ -165,13 +167,30 @@ export class AuthManager {
     return this.user;
   }
 
-  async _beginDiscord(body) {
-    const headers = { 'Content-Type': 'application/json' };
-    // Signed in already: the Discord sign-in is linked to this account.
-    if (this.token && !this.isTokenExpired()) headers.Authorization = `Bearer ${this.token}`;
-    const res = await fetch(`${API_BASE}/auth/discord/begin`, {
-      method: 'POST', headers, body: JSON.stringify({ ...body, device_id: deviceIdForSignIn() }),
-    });
+  /**
+   * Start a Discord sign-in. Signed in already (and not `signIn`), it links Discord
+   * to this account; the server wants a sign-in from the last few minutes for that
+   * (#612), which the Steam build gets by signing in again with Steam.
+   */
+  async _beginDiscord(body, { signIn = false } = {}) {
+    const send = () => {
+      const headers = { 'Content-Type': 'application/json' };
+      if (!signIn && this.token && !this.isTokenExpired()) headers.Authorization = `Bearer ${this.token}`;
+      return fetch(`${API_BASE}/auth/discord/begin`, {
+        method: 'POST', headers, body: JSON.stringify({ ...body, device_id: deviceIdForSignIn() }),
+      });
+    };
+    let res = await send();
+    if (res.status === 401) {
+      const data = await res.clone().json().catch(() => ({}));
+      if (data.code === 'fresh_signin') {
+        const steam = typeof window !== 'undefined' && window.steam;
+        let again = false;
+        try { again = !!(steam && (await steam.isAvailable()) && (await this.loginWithSteam({ quiet: true }))); } catch (e) {}
+        if (!again) throw new Error('For your safety, sign out and sign in again, then link Discord.');
+        res = await send();
+      }
+    }
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(data.error || ('Discord sign-in unavailable (' + res.status + ')'));
@@ -183,7 +202,7 @@ export class AuthManager {
   async signInWithDiscordRedirect() {
     try {
       const returnTo = location.origin + location.pathname + location.search;
-      const req = await this._beginDiscord({ mode: 'redirect', return_to: returnTo });
+      const req = await this._beginDiscord({ mode: 'redirect', return_to: returnTo }, { signIn: true });
       location.assign(req.url);
       return true;
     } catch (e) {
@@ -277,7 +296,8 @@ export class AuthManager {
     return false;
   }
 
-  async loginWithSteam() {
+  /** `quiet`: a fresh session for the same player (before a link), so no login callback. */
+  async loginWithSteam({ quiet = false } = {}) {
     try {
       const steamId = await window.steam.getSteamId();
       const personaName = await window.steam.getPlayerName();
@@ -303,7 +323,7 @@ export class AuthManager {
       // #612: the account's name and picture; the Steam picture comes along in identities.
       this._applySession(data.token, { ...data.user, name: personaName || data.user.name }, { id: steamId, provider: 'steam' });
 
-      if (this._onLoginCallback) this._onLoginCallback(this.user);
+      if (!quiet && this._onLoginCallback) this._onLoginCallback(this.user);
       return true;
     } catch (e) {
       console.error('AUTH: Steam login error:', e);
@@ -367,6 +387,41 @@ export class AuthManager {
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res = await fetch(`${API_BASE}/leaderboard?${params}`, { headers });
     return res.ok ? res.json() : { entries: [] };
+  }
+
+  /**
+   * #612 · what was linked to or combined into this account lately:
+   * [{ id, kind: 'link'|'combine', provider, login_name, from_name, created_at, undo_until, seen }]
+   */
+  async fetchNotices() {
+    if (!this.token) return [];
+    try {
+      const res = await fetch(`${API_BASE}/me/notices`, { headers: { 'Authorization': `Bearer ${this.token}` } });
+      return res.ok ? ((await res.json()).notices || []) : [];
+    } catch (e) { return []; }
+  }
+
+  async markNoticeSeen(id) {
+    if (!this.token) return;
+    try {
+      await fetch(`${API_BASE}/me/notices/seen`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ id }),
+      });
+    } catch (e) {}
+  }
+
+  /** Remove a linked sign-in / separate a combined account. → { undone, signed_out } or { error } */
+  async undoNotice(id) {
+    if (!this.token) return { error: 'Sign in first' };
+    try {
+      const res = await fetch(`${API_BASE}/me/notices/undo`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
+        body: JSON.stringify({ id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      return res.ok ? data : { error: data.error || 'That could not be undone.' };
+    } catch (e) { return { error: 'Offline. Try again in a moment.' }; }
   }
 
   async getMe() {
