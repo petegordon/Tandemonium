@@ -4148,11 +4148,12 @@ export class Lobby {
     const okBtn = document.getElementById('profile-popup-notice-ok');
     const show = (on) => { box.hidden = !on; undoBtn.hidden = !on; okBtn.hidden = !on; };
     if (!n) { show(false); return; }
-    const name = (p) => (p === 'discord' ? 'Discord' : p === 'steam' ? 'Steam' : 'A sign-in');
+    // Pete, 2026-11-15: always name the provider — "the Discord account …", never just "the account".
+    const name = (p) => (p === 'discord' ? 'Discord' : p === 'steam' ? 'Steam' : 'Google');
     const day = (s) => new Date(s * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     const what = n.kind === 'combine'
-      ? `The account “${n.from_name || name(n.provider)}” was combined into this one on ${day(n.created_at)}.`
-      : `${name(n.provider)} “${n.login_name || ''}” was linked to this account on ${day(n.created_at)}.`;
+      ? `The ${name(n.provider)} account “${n.from_name || n.login_name || ''}” was combined into this one on ${day(n.created_at)}.`
+      : `The ${name(n.provider)} account “${n.login_name || ''}” was linked to this account on ${day(n.created_at)}.`;
     document.getElementById('profile-popup-notice-text').textContent = `${what} Not you? You can undo it until ${day(n.undo_until)}.`;
     undoBtn.textContent = n.kind === 'combine' ? 'SEPARATE THEM' : 'NOT ME, REMOVE IT';
     undoBtn.disabled = false;
