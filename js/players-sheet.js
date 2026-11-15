@@ -240,8 +240,8 @@ export class PlayersSheet {
       let qr = '';
       try { const q = qrcode(0, 'M'); q.addData(a.url); q.make(); qr = q.createSvgTag({ cellSize: 3, margin: 1 }); } catch (e) {}
       accPanel = `<div class="pl-acc-panel"><div class="pl-acc-qr">${qr}</div>
-        <ol class="pl-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Check the code <b class="pl-acc-code">${esc(a.code)}</b></li></ol>
-        <p class="pl-acc-status">${a.status === 'confirming' ? 'Confirm the code on your phone…' : 'Waiting for Discord…'}</p></div>`;
+        <ol class="pl-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Type this code on your phone <b class="pl-acc-code">${esc(a.code)}</b></li></ol>
+        <p class="pl-acc-status">${a.status === 'confirming' ? 'Type the code on your phone…' : 'Waiting for Discord…'}</p></div>`;
       accBtns = `<uf-button size="sm" data-act="cancel" ${fid('cancel')}>Hide</uf-button>`;
     } else if (v.person) {
       accBtns = v.canSignOut ? `<uf-button size="sm" data-act="signout" ${fid('signout')}>Sign out</uf-button>`
