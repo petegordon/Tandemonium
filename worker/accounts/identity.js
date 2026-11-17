@@ -159,7 +159,10 @@ export async function resolveSession(env, claims) {
   if (login) return { ...claims, sub: login.user_id, lid: login.login_id };
   if (claims.sub == null) return null;
   const lid = await firstLogin(env, claims.sub);
-  return lid == null ? null : { ...claims, lid };
+  if (lid != null) return { ...claims, lid };
+  // An account with no sign-in row at all (none are expected): still that account.
+  const user = await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?').bind(claims.sub).first();
+  return user ? { ...claims, lid: null } : null;
 }
 
 /**

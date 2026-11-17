@@ -10,7 +10,9 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../../worker/leaderboard.js';
-import { mergeStats, cleanClientDelta, capPlaySeconds, recordPlay, MAX_PLAY_REPORT_S, mergeGameAccounts } from '../../worker/games.js';
+import { mergeStats, cleanClientDelta, capPlaySeconds, recordPlay, recordGame, gameProfile, combineStats, MAX_PLAY_REPORT_S } from '../../worker/games.js';
+import '../../worker/leaderboard.js';   // registers the account tables a combine updates
+import { combineAccounts, separateAccount } from '../../worker/accounts/combine.js';
 import {
   toAccountDelta, fromAccount, mergeAfterSync, baseFromAccount, baseAfterSend, emptyBase, hasCounters, tokenUser,
   ADD_KEYS, MAX_KEYS, OR_KEYS, UNION_KEYS, RECENT_KEYS, DEVICE_KEYS,
@@ -64,7 +66,9 @@ function jwt(sub) {
   return `${h}.${p}.${sig}`;
 }
 function addUser(db, name) {
-  const r = db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', ?, ?)").run(name + Math.random(), name);
+  const key = name + Math.random();
+  const r = db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('account', ?, ?)").run(key, name);
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, 'discord', ?, ?)").run(Number(r.lastInsertRowid), key, name);   // #783: an account has a login
   return Number(r.lastInsertRowid);
 }
 const call = (env, p, { method = 'GET', body, token, text } = {}) => {
@@ -212,7 +216,7 @@ test('POST /games/:game/sync: time for any House Tandem game, stats for Tandemon
   assert.equal((await r.json()).stats, undefined);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM game_stats WHERE game = 'dice'").get().n, 0);
   assert.equal((await call(env, '/games/notagame/sync', { method: 'POST', body: {}, token })).status, 404);
-  db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_500m')").run(u);
+  db.prepare("INSERT INTO user_achievements (user_id, login_id, achievement_id) VALUES (?, (SELECT login_id FROM user_logins WHERE user_id = ?), 'first_500m')").run(u, u);
   const me = await (await call(env, '/me/games', { token })).json();
   assert.equal(me.games.tandemonium.stats.rides, 2);
   assert.equal(me.games.tandemonium.playtime.seconds, 20);
@@ -224,7 +228,7 @@ test('POST /games/:game/sync: time for any House Tandem game, stats for Tandemon
   assert.equal(db.prepare('SELECT COUNT(*) n FROM game_playtime').get().n, 0);
 });
 
-test('an account merge moves the games\' rows (achievements join, time adds up)', async () => {
+test('#783 · combining accounts: game rows stay with each login and read as one account; separating gives them back', async () => {
   const db = freshDb();
   const env = envFor(db);
   const a = addUser(db, 'A'), b = addUser(db, 'B');
@@ -232,14 +236,37 @@ test('an account merge moves the games\' rows (achievements join, time adds up)'
   await recordPlay(env, a, 'dice', 100, t0);
   await recordPlay(env, b, 'dice', 50, t0);
   await recordPlay(env, b, 'coins', 40, t0);
-  db.prepare("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (?, 'dice', 'x')").run(b);
-  db.prepare("INSERT INTO game_stats (user_id, game, stats_json) VALUES (?, 'coins', '{\"games\":3}')").run(b);
-  await mergeGameAccounts(env, b, a);
-  db.prepare('DELETE FROM users WHERE id = ?').run(b);   // what mergeAccounts does next: no rows left to block it
-  const rows = db.prepare('SELECT game, seconds FROM game_playtime WHERE user_id = ? ORDER BY game').all(a);
-  assert.deepEqual(rows.map((r) => [r.game, r.seconds]), [['coins', 40], ['dice', 150]]);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM game_achievements WHERE user_id = ?').get(a).n, 1);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM game_stats WHERE user_id = ?').get(a).n, 1);
+  await recordGame(env, a, 'dice', { add: { rolls: 4 }, max: { best: 9 } }, ['x']);
+  await recordGame(env, b, 'dice', { add: { rolls: 6 }, max: { best: 7 }, union: { partners: ['7'] } }, ['x', 'y']);
+  await recordGame(env, b, 'coins', { add: { games: 3 } }, []);
+  const before = JSON.stringify(db.prepare('SELECT * FROM game_playtime ORDER BY login_id, game').all())
+    + JSON.stringify(db.prepare('SELECT user_id, login_id, game, stats_json FROM game_stats ORDER BY login_id, game').all())
+    + JSON.stringify(db.prepare('SELECT user_id, login_id, game, achievement_id FROM game_achievements ORDER BY login_id, achievement_id').all());
+
+  const moved = await combineAccounts(env, b, a);
+  const dice = await gameProfile(env, a, 'dice');
+  assert.equal(dice.playtime.seconds, 150, 'time adds up');
+  assert.deepEqual(dice.earned.sort(), ['x', 'y'], 'a badge both earned shows once');
+  assert.deepEqual(dice.stats, { rolls: 10, best: 9, partners: ['7'] }, 'each stat by its own rule');
+  assert.equal((await gameProfile(env, a, 'coins')).stats.games, 3);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM game_playtime').get().n, 3, 'the rows themselves are untouched: one per login and game');
+  // The cap is per account: B's login can't count a minute A's login already counted.
+  assert.equal((await recordPlay(env, a, 'dice', 60, t0 + 1000, moved.logins[0])).added, 6);
+
+  await separateAccount(env, moved, a);
+  db.prepare("UPDATE game_playtime SET seconds = 50, last_played = (SELECT last_played FROM game_playtime WHERE game = 'coins'), last_report_ms = ? WHERE login_id = ? AND game = 'dice'").run(t0, moved.logins[0]);
+  const after = JSON.stringify(db.prepare('SELECT * FROM game_playtime ORDER BY login_id, game').all())
+    + JSON.stringify(db.prepare('SELECT user_id, login_id, game, stats_json FROM game_stats ORDER BY login_id, game').all())
+    + JSON.stringify(db.prepare('SELECT user_id, login_id, game, achievement_id FROM game_achievements ORDER BY login_id, achievement_id').all());
+  assert.equal(after, before);
+});
+
+test('combineStats: add / max / union by rule; a stat with no rule keeps the value of the first login', () => {
+  assert.deepEqual(combineStats([
+    { stats: { rides: 2, top: 30, old: 'a' }, ops: { rides: 'add', top: 'max' } },
+    { stats: { rides: 3, top: 20, old: 'b', days: ['2026-11-01'] }, ops: { rides: 'add', top: 'max', days: 'recent' } },
+  ]), { rides: 5, top: 30, old: 'a', days: ['2026-11-01'] });
+  assert.deepEqual(combineStats([]), {});
 });
 
 test('the playtime helper counts visible, non-idle time and reports whole seconds', async () => {

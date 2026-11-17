@@ -67,11 +67,14 @@ export async function combineAccounts(env, from, to) {
   const first = logins[0] ?? null;
 
   for (const t of TABLES) {
-    const a = t.text ? String(from) : from;
+    // (Analytics sessions keep the account number as text, some as "26.0".)
+    const olds = t.text ? [String(from), from + '.0'] : [from];
     const b = t.text ? String(to) : to;
-    // A row from before logins were recorded: it was this account's, so its first login's.
-    if (first != null) await run(env, `UPDATE ${t.table} SET ${t.login} = ? WHERE ${t.user} = ? AND ${t.login} IS NULL`, first, a);
-    await run(env, `UPDATE ${t.table} SET ${t.user} = ? WHERE ${t.user} = ?`, b, a);
+    for (const a of olds) {
+      // A row from before logins were recorded: it was this account's, so its first login's.
+      if (first != null) await run(env, `UPDATE ${t.table} SET ${t.login} = ? WHERE ${t.user} = ? AND ${t.login} IS NULL`, first, a);
+      await run(env, `UPDATE ${t.table} SET ${t.user} = ? WHERE ${t.user} = ?`, b, a);
+    }
   }
   let events = [];
   try {
