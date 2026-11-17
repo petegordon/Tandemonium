@@ -659,6 +659,10 @@ async function holdLink(env, row, profile, extras) {
   return `${row.return_to}#ht_link=${encodeURIComponent(row.id + '.' + code)}`;
 }
 
+/** A sign-in page failed on our side: say so, and nothing about why (that is in the log). */
+export const signInErrorPage = () => page('Something went wrong',
+  '<p>Sign-in did not finish, and nothing was changed. Go back and try again.</p>', 500);
+
 const EXPIRED_PAGE = () => page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
 
 /** GET /auth/discord/callback?code&state — Discord sends the browser back here. */

@@ -19,7 +19,7 @@ import {
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
-  resolveSession, firstLogin, ensureDeviceLogin,
+  resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
@@ -116,7 +116,9 @@ export default {
       return new Response(null, { headers: corsHeaders(corsOrigin) });
     }
 
-    try {
+    // Every route is awaited here, so a failure anywhere in one is answered below (and
+    // logged) instead of leaving the Worker with an unhandled rejection: Cloudflare's 1101 page.
+    const route = async () => {
       const path = url.pathname;
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       // Rate limits, one place for every route (see limitRequest).
@@ -268,9 +270,16 @@ export default {
       }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
+    };
+    try {
+      return await route();
     } catch (e) {
-      try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
-      return jsonResponse({ error: e.message }, 500, corsOrigin);
+      const message = (e && e.message) || String(e);
+      console.error('request failed', request.method, url.pathname, (e && e.stack) || message);
+      try { writeMetric(env, 'error', message); } catch (_) { /* don't mask original error */ }
+      // The pages a browser is sent to during sign-in get a page, not JSON.
+      if (SIGNIN_PAGES.has(url.pathname)) return signInErrorPage();
+      return jsonResponse({ error: message }, 500, corsOrigin);
     }
   }
 };
@@ -1371,6 +1380,9 @@ export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
   '/auth/link/complete', '/auth/link/combine', '/me/notices/undo']);
+// The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
+const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
+  '/auth/steam/go', '/auth/steam/callback']);
 
 /** Which per-player bucket a request writes to, or null (reads: the IP ceiling only). */
 export async function playerBucket(request, env, path, clientIP) {
@@ -2847,7 +2859,11 @@ async function createJWT(payload, secret, ttlSeconds) {
   const now = Math.floor(Date.now() / 1000);
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const body = btoa(JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) }))
+  // A name can hold any character, and btoa takes only Latin-1: write the rest as \uXXXX,
+  // so the token is plain ASCII and every reader's JSON.parse gives the name back.
+  const json = JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) })
+    .replace(/[\u0080-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const body = btoa(json)
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   const data = `${header}.${body}`;
 

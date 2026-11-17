@@ -1478,3 +1478,50 @@ test('Daily: a partner is kept only with the room’s proof or the partner’s o
     assert.deepEqual(c, [{ role: 'solo', p: 0, t: 1e6 }], 'junk becomes numbers in range; unknown roles are dropped');
   } finally { restore(); }
 });
+
+test('a name outside Latin-1 signs in, and its session reads back with the name intact', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const name = '“Pétè” 山口 🚲';
+  const restore = mockFetch({ ...DISCORD_PETE, global_name: name });
+  try {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
+    assert.equal(cb.status, 302);
+    const token = decodeURIComponent(cb.headers.get('Location').split('#ht_auth=')[1]);
+    assert.match(token, /^[A-Za-z0-9_.-]+$/);
+    const claims = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    assert.equal(claims.name, name, 'a plain atob + JSON.parse reader gets the name');
+    const me = await call(env, '/me', { token });
+    assert.equal(me.status, 200);
+  } finally { restore(); }
+});
+
+test('a failure inside a sign-in page is answered with a page and logged, never left unhandled', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  const logged = [];
+  const realError = console.error;
+  console.error = (...a) => logged.push(a.join(' '));
+  try {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const realPrepare = env.DB.prepare;
+    // The first sign-in makes the account (an INSERT); the second updates it, and that fails.
+    await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
+    const again = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    env.DB.prepare = (sql) => { if (/^UPDATE users SET/.test(sql)) throw new Error('database said no'); return realPrepare(sql); };
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(again.id)}`);
+    assert.equal(cb.status, 500);
+    assert.match(cb.headers.get('Content-Type'), /text\/html/);
+    const html = await cb.text();
+    assert.ok(html.includes('Something went wrong'));
+    assert.ok(!html.includes('database said no'), 'the page does not show the cause');
+    assert.ok(logged.some((l) => l.includes('/auth/discord/callback') && l.includes('database said no')), 'the log does');
+    // A script's route answers in JSON.
+    env.DB.prepare = () => { throw new Error('database said no'); };
+    const api = await call(env, '/auth/poll', { method: 'POST', body: { id: again.id, secret: again.secret } });
+    assert.equal(api.status, 500);
+    assert.equal((await api.json()).error, 'database said no');
+  } finally { console.error = realError; restore(); }
+});
