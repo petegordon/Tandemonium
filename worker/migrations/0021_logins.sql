@@ -240,3 +240,6 @@ CREATE INDEX IF NOT EXISTS idx_pairs_last_ride ON pairs(last_ride);
 -- separated by the new code: their undo window is closed here.
 ALTER TABLE account_events ADD COLUMN moved_json TEXT;
 UPDATE account_events SET undo_until = created_at WHERE kind = 'combine' AND undone_at IS NULL;
+
+-- A link remembers the login that began it, so the session it hands back is still that login.
+ALTER TABLE auth_requests ADD COLUMN link_login_id INTEGER;
