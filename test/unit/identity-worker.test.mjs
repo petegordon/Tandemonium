@@ -1516,6 +1516,8 @@ test('a failure inside a sign-in page is answered with a page and logged, never 
     assert.match(cb.headers.get('Content-Type'), /text\/html/);
     const html = await cb.text();
     assert.ok(html.includes('Something went wrong'));
+    assert.ok(html.includes('try again later'), 'a problem on our side may last: say so');
+    assert.ok(html.includes('mailto:hello@housetandem.com'), 'and who to write to');
     assert.ok(!html.includes('database said no'), 'the page does not show the cause');
     assert.ok(logged.some((l) => l.includes('/auth/discord/callback') && l.includes('database said no')), 'the log does');
     // A script's route answers in JSON.
