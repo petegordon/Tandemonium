@@ -3,8 +3,13 @@
 // ============================================================
 //
 // A House Tandem account (a `users` row) can have several sign-ins linked to
-// it in `user_identities`: Discord, Steam, and the legacy Google. They are
+// it in `user_logins`: Discord, Steam, and the legacy Google. They are
 // joined by provider id, never by email.
+//
+// #783 · a session is a LOGIN (the token's `lid`), and its account is whatever
+// account that login belongs to now (resolveSession). Every record a game writes
+// carries both ids, so combining accounts and separating them again is exact
+// (combine.js). A guest device is a login too (provider 'device').
 //
 // Discord sign-in has two modes:
 //   - redirect: the web game on the same device. The browser goes to Discord
@@ -22,7 +27,7 @@
 // (auth.housetandem.com, UsersFirst/housetandem-web#21) takes it over later;
 // the tables and routes are shaped so they can move as they are.
 
-import { mergeAccounts, unmergeAccounts } from './account-merge.js';
+import { combineAccounts, separateAccount, splitLogin, absorbLogin } from './combine.js';
 
 const REQUEST_TTL_S = 600;
 const DISCORD_API = 'https://discord.com/api';
@@ -99,7 +104,7 @@ export function discordAvatarUrl(user) {
 /** Every sign-in on an account, as { provider: { name, avatar } }. */
 export async function listIdentities(env, userId) {
   const rows = await env.DB.prepare(
-    'SELECT provider, provider_id, display_name, avatar_url, last_login_at, linked_at FROM user_identities WHERE user_id = ? ORDER BY linked_at'
+    "SELECT provider, provider_id, display_name, avatar_url, last_login_at, linked_at FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY linked_at"
   ).bind(userId).all();
   const out = {};
   for (const r of rows.results || []) {
@@ -116,18 +121,48 @@ export async function listIdentities(env, userId) {
 async function identityOwner(env, provider, providerId, name = null, avatar = null) {
   providerId = String(providerId);
   const existing = await env.DB.prepare(
-    'SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?'
+    'SELECT user_id FROM user_logins WHERE provider = ? AND provider_id = ?'
   ).bind(provider, providerId).first();
-  if (existing) return existing.user_id;
-  // A user made by the old code after the migration's backfill: give them
-  // their identity row now instead of a second account.
-  const legacy = await env.DB.prepare('SELECT id FROM users WHERE provider = ? AND provider_id = ?')
-    .bind(provider, providerId).first();
-  if (!legacy) return null;
-  await env.DB.prepare(
-    'INSERT OR IGNORE INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
-  ).bind(legacy.id, provider, providerId, name, avatar).run();
-  return legacy.id;
+  return existing ? existing.user_id : null;
+}
+
+/** A sign-in's row: { login_id, user_id } or null. */
+export async function loginRow(env, provider, providerId) {
+  return env.DB.prepare('SELECT login_id, user_id FROM user_logins WHERE provider = ? AND provider_id = ?')
+    .bind(provider, String(providerId)).first();
+}
+
+/** An account's first real sign-in (not a guest device): where records go when a session names none. */
+export async function firstLogin(env, userId) {
+  const row = await env.DB.prepare("SELECT login_id FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
+    .bind(userId).first();
+  return row ? row.login_id : null;
+}
+
+/**
+ * #783 · who a verified session token is, now: its login (the token's `lid`, or the
+ * sign-in named by `via` in tokens from before lids) and the account that login belongs
+ * to today. So a session follows its login through a combine or a separate. A token with
+ * neither is its account's first sign-in. → the claims with `sub` and `lid` set, or null
+ * when the login and the account are both gone.
+ */
+export async function resolveSession(env, claims) {
+  if (!claims) return null;
+  let login = null;
+  if (Number.isInteger(claims.lid)) {
+    login = await env.DB.prepare('SELECT login_id, user_id FROM user_logins WHERE login_id = ?').bind(claims.lid).first();
+  }
+  if (!login && typeof claims.via === 'string' && claims.via.includes(':')) {
+    const i = claims.via.indexOf(':');
+    login = await loginRow(env, claims.via.slice(0, i), claims.via.slice(i + 1));
+  }
+  if (login) return { ...claims, sub: login.user_id, lid: login.login_id };
+  if (claims.sub == null) return null;
+  const lid = await firstLogin(env, claims.sub);
+  if (lid != null) return { ...claims, lid };
+  // An account with no sign-in row at all (none are expected): still that account.
+  const user = await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?').bind(claims.sub).first();
+  return user ? { ...claims, lid: null } : null;
 }
 
 /**
@@ -150,27 +185,28 @@ export async function upsertIdentity(env, { provider, providerId, name, avatar }
     await env.DB.prepare('UPDATE users SET display_name = ?, avatar_url = ? WHERE id = ?')
       .bind(name, avatar, userId).run();
   } else {
+    // (users.provider / provider_id are legacy columns: a unique filler now, never read.)
+    const filler = crypto.randomUUID();
     const ins = await env.DB.prepare(
       'INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?)'
-    ).bind(provider, providerId, name, avatar).run();
+    ).bind('account', filler, name, avatar).run();
     userId = ins.meta && ins.meta.last_row_id;
     if (!userId) {
       const row = await env.DB.prepare('SELECT id FROM users WHERE provider = ? AND provider_id = ?')
-        .bind(provider, providerId).first();
+        .bind('account', filler).first();
       userId = row.id;
     }
     await env.DB.prepare(
-      'INSERT OR IGNORE INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
+      'INSERT OR IGNORE INTO user_logins (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
     ).bind(userId, provider, providerId, name, avatar).run();
   }
 
   await env.DB.prepare(
-    "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+    "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
   ).bind(name, avatar, provider, providerId).run();
-  return { userId };
+  const login = await loginRow(env, provider, providerId);
+  return { userId, loginId: login ? login.login_id : null };
 }
-
-export { mergeAccounts };
 
 // ------------------------------------------------------------
 // Linking and combining (#612)
@@ -209,11 +245,24 @@ function needFreshSignIn(deps, corsOrigin) {
 }
 
 /** A session for an account, and what the game and the website show about it. */
-async function sessionFor(env, userId, deps, via = null) {
+export async function sessionFor(env, userId, deps, login = null) {
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
   const identities = await listIdentities(env, userId);
   const claims = { sub: userId, name: user.display_name, picture: user.avatar_url };
-  if (via) claims.via = via;
+  // `login`: a login id, or 'provider:id'. None given: the account's first sign-in.
+  let row = null;
+  if (Number.isInteger(login)) {
+    row = await env.DB.prepare('SELECT login_id, provider, provider_id FROM user_logins WHERE login_id = ? AND user_id = ?').bind(login, userId).first();
+  } else if (typeof login === 'string' && login.includes(':')) {
+    const i = login.indexOf(':');
+    row = await env.DB.prepare('SELECT login_id, provider, provider_id FROM user_logins WHERE provider = ? AND provider_id = ? AND user_id = ?')
+      .bind(login.slice(0, i), login.slice(i + 1), userId).first();
+  }
+  if (!row) {
+    row = await env.DB.prepare("SELECT login_id, provider, provider_id FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
+      .bind(userId).first();
+  }
+  if (row) { claims.lid = row.login_id; claims.via = row.provider + ':' + row.provider_id; }
   const token = await deps.createJWT(claims, env.JWT_SECRET);
   return { token, user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities } };
 }
@@ -229,7 +278,7 @@ export async function accountSummary(env, userId) {
   const rows = async (sql) => {
     try { return (await env.DB.prepare(sql).bind(userId).all()).results || []; } catch { return []; }
   };
-  for (const r of await rows('SELECT game, COUNT(*) AS n FROM game_achievements WHERE user_id = ? GROUP BY game')) {
+  for (const r of await rows('SELECT game, COUNT(DISTINCT achievement_id) AS n FROM game_achievements WHERE user_id = ? GROUP BY game')) {
     games.set(r.game, Number(r.n) || 0);
   }
   for (const r of await rows('SELECT DISTINCT game FROM game_stats WHERE user_id = ?')) if (!games.has(r.game)) games.set(r.game, 0);
@@ -238,7 +287,7 @@ export async function accountSummary(env, userId) {
   return {
     name: u.display_name, avatar: u.avatar_url, logins,
     rides: await n('SELECT COUNT(*) AS n FROM scores WHERE user_id = ?'),
-    badges: await n('SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?'),
+    badges: await n('SELECT COUNT(DISTINCT achievement_id) AS n FROM user_achievements WHERE user_id = ?'),
     games: [...games].map(([game, badges]) => ({ game, title: GAME_TITLES[game] || game, badges })),
   };
 }
@@ -275,7 +324,7 @@ export async function notifyAccountDiscord(env, userId, content, deps = {}) {
   const fetchImpl = deps.fetchImpl || fetch;
   let sent = 0;
   try {
-    const rows = (await env.DB.prepare("SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord'")
+    const rows = (await env.DB.prepare("SELECT provider_id FROM user_logins WHERE user_id = ? AND provider = 'discord'")
       .bind(userId).all()).results || [];
     for (const r of rows) {
       try {
@@ -301,12 +350,12 @@ async function recordEvent(env, ev, deps) {
   const until = at + UNDO_DAYS * 86400;
   try {
     await env.DB.prepare(
-      `INSERT INTO account_events (user_id, kind, provider, provider_id, login_name, from_user_id, from_name, undo_json, created_at, undo_until)
+      `INSERT INTO account_events (user_id, kind, provider, provider_id, login_name, from_user_id, from_name, moved_json, created_at, undo_until)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(ev.userId, ev.kind, ev.provider || null, ev.providerId ? String(ev.providerId) : null, ev.loginName || null,
-           ev.fromUserId || null, ev.fromName || null, ev.undo ? JSON.stringify(ev.undo) : null, at, until).run();
+           ev.fromUserId || null, ev.fromName || null, ev.moved ? JSON.stringify(ev.moved) : null, at, until).run();
   } catch (e) {
-    // Migration 0020 not applied: the link still happens, without the notice.
+    // Never fails the link: it still happens, without the notice.
     console.error('account event not recorded', e);
   }
   const account = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(ev.userId).first();
@@ -329,16 +378,18 @@ export async function addLogin(env, userId, profile, deps = {}) {
   if (owner && owner !== userId) return { status: 'combine', otherId: owner };
   if (!owner) {
     await env.DB.prepare(
-      'INSERT INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO user_logins (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
     ).bind(userId, provider, providerId, name, avatar).run();
   }
   await env.DB.prepare(
-    "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+    "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
   ).bind(name, avatar, provider, providerId).run();
-  if (owner) return { status: 'already' };
+  const login = await loginRow(env, provider, providerId);
+  const loginId = login ? login.login_id : null;
+  if (owner) return { status: 'already', loginId };
   await recordEvent(env, { userId, kind: 'link', provider, providerId, loginName: name }, deps);
   deps.writeMetric && deps.writeMetric(env, 'link_' + provider);
-  return { status: 'linked' };
+  return { status: 'linked', loginId };
 }
 
 /** The player confirmed: fold the sign-in's own account into `userId`. */
@@ -346,13 +397,13 @@ async function combineInto(env, userId, profile, deps) {
   const otherId = await identityOwner(env, profile.provider, profile.providerId);
   if (!otherId || otherId === userId) return addLogin(env, userId, profile, deps);
   const other = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(otherId).first();
-  const undo = await mergeAccounts(env, otherId, userId, deps);
+  const moved = await combineAccounts(env, otherId, userId);
   await env.DB.prepare(
-    "UPDATE user_identities SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+    "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
   ).bind(profile.name, profile.avatar, profile.provider, String(profile.providerId)).run();
   await recordEvent(env, {
     userId, kind: 'combine', provider: profile.provider, providerId: profile.providerId, loginName: profile.name,
-    fromUserId: otherId, fromName: other && other.display_name, undo,
+    fromUserId: otherId, fromName: other && other.display_name, moved,
   }, deps);
   deps.writeMetric && deps.writeMetric(env, 'combine_' + profile.provider);
   return { status: 'combined' };
@@ -429,9 +480,9 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   const code = mode === 'device' ? randomCode(4) : null;
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
-     VALUES (?, ?, 'discord', ?, ?, ?, ?, 'pending', ?, ?)`
-  ).bind(id, await sha256(secret), mode, code, linkUserId || null, returnTo,
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, 'discord', ?, ?, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(id, await sha256(secret), mode, code, linkUserId || null, linkUserId ? (claims.lid ?? null) : null, returnTo,
          Object.keys(info).length ? JSON.stringify(info) : null, nowS()).run();
 
   return deps.jsonResponse({
@@ -537,11 +588,21 @@ export async function addToServer(env, discordUserId, accessToken, deps = {}) {
  * A pair row is a nicety: a failure here never fails the sign-in.
  */
 export async function claimGuestPairs(env, deviceId, userId, deps) {
-  if (!deviceId || !userId || !deps || !deps.mergeGuestPairs) return;
+  if (!deviceId || !userId || !deps || !deps.deviceKeys) return;
   try {
-    await deps.mergeGuestPairs(env, deviceId, userId);
+    // #783 · the guest is a device login with a small account of its own: it joins this
+    // account, with what was recorded under it. Its key is then retired, so the next guest
+    // on this device starts a new record (for whoever signs in next).
+    for (const key of await deps.deviceKeys(env, deviceId)) {
+      const login = await loginRow(env, 'device', key);
+      if (!login || login.user_id === userId) continue;
+      const real = await env.DB.prepare("SELECT 1 AS x FROM user_logins WHERE user_id = ? AND provider != 'device' LIMIT 1").bind(login.user_id).first();
+      if (real) continue;   // already someone's
+      await absorbLogin(env, login.login_id, userId);
+      await env.DB.prepare('UPDATE user_logins SET provider_id = ? WHERE login_id = ?').bind(key + ':claimed:' + login.login_id, login.login_id).run();
+    }
   } catch (e) {
-    console.error('guest pair merge failed', e);
+    console.error('guest claim failed', e);
   }
 }
 
@@ -554,12 +615,12 @@ export async function claimGuestPairs(env, deviceId, userId, deps) {
  */
 async function applyDiscordExtras(env, userId, profile, extras, deps) {
   try {
-    await env.DB.prepare('UPDATE user_identities SET scopes = ?, email = ? WHERE provider = ? AND provider_id = ?')
+    await env.DB.prepare('UPDATE user_logins SET scopes = ?, email = ? WHERE provider = ? AND provider_id = ?')
       .bind(extras.scopes.join(' '), extras.email || null, 'discord', String(profile.providerId)).run();
   } catch (e) { console.error('saving Discord permissions failed', e); }
   if (!extras.steamId) return null;
   try {
-    const mine = await env.DB.prepare("SELECT 1 FROM user_identities WHERE user_id = ? AND provider = 'steam' AND provider_id = ?")
+    const mine = await env.DB.prepare("SELECT 1 FROM user_logins WHERE user_id = ? AND provider = 'steam' AND provider_id = ?")
       .bind(userId, extras.steamId).first();
     if (mine) return 'already';
     const steam = await fetchSteamProfile(env, extras.steamId, deps.fetchImpl || fetch);
@@ -723,7 +784,7 @@ export async function handleDiscordConfirm(request, env, url, deps) {
     const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
     const { status } = await combineInto(env, row.link_user_id, profile, deps);
     await claimGuestPairs(env, cleanDeviceId(held.deviceId), row.link_user_id, deps);
-    const result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: status === 'combined' };
+    const result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)), linked: true, merged: status === 'combined' };
     await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
       .bind(JSON.stringify(result), row.id).run();
     return page('Combined', `<p>Your Discord and its progress are now part of <b>${escapeHtml(result.user.name)}</b>. Look back at the game. You can close this tab.</p>
@@ -753,7 +814,7 @@ export async function handleDiscordConfirm(request, env, url, deps) {
       return combinePage(env, row, held.confirmKey, otherId);
     }
     await claimGuestPairs(env, deviceId, row.link_user_id, deps);
-    result = { ...(await sessionFor(env, row.link_user_id, deps)), linked: true, merged: false };
+    result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)), linked: true, merged: false };
   } else {
     result = await finish(env, row, profile, deps, deviceId);
   }
@@ -802,7 +863,7 @@ export async function handleLinkComplete(request, env, corsOrigin, deps) {
   await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
   await claimGuestPairs(env, cleanDeviceId(held.deviceId), userId, deps);
   const steamLink = held.extras ? await applyDiscordExtras(env, userId, held.profile, held.extras, deps) : null;
-  const result = await sessionFor(env, userId, deps);
+  const result = await sessionFor(env, userId, deps, row.link_login_id ?? null);
   if (steamLink === 'combine') result.steam_has_account = true;
   return deps.jsonResponse({ status: 'linked', ...result }, 200, corsOrigin);
 }
@@ -821,7 +882,7 @@ export async function handleLinkCombine(request, env, corsOrigin, deps) {
   if (body.ok !== true) return deps.jsonResponse({ status: 'cancelled' }, 200, corsOrigin);
   await combineInto(env, row.link_user_id, held.profile, deps);
   if (held.extras) await applyDiscordExtras(env, row.link_user_id, held.profile, held.extras, deps);
-  return deps.jsonResponse({ status: 'combined', ...(await sessionFor(env, row.link_user_id, deps)) }, 200, corsOrigin);
+  return deps.jsonResponse({ status: 'combined', ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)) }, 200, corsOrigin);
 }
 
 // ------------------------------------------------------------
@@ -870,37 +931,39 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
   if (!ev || ev.undone_at || ev.undo_until <= nowS()) {
     return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
   }
-  const via = claims && claims.via;
+  // #783 · the logins that leave this account. A session follows its login, so one that came
+  // in through a leaving login is that login's own account from here on (signed_out tells
+  // the game and the website to sign in again and show it).
   let leaving = [];
   if (ev.kind === 'link') {
-    const others = await env.DB.prepare('SELECT COUNT(*) AS n FROM user_identities WHERE user_id = ? AND NOT (provider = ? AND provider_id = ?)')
-      .bind(userId, ev.provider, ev.provider_id).first();
+    const login = await loginRow(env, ev.provider, ev.provider_id);
+    if (!login || login.user_id !== userId) return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
+    const others = await env.DB.prepare("SELECT COUNT(*) AS n FROM user_logins WHERE user_id = ? AND login_id != ? AND provider != 'device'")
+      .bind(userId, login.login_id).first();
     if (!others || !others.n) {
-      return deps.jsonResponse({ error: 'That is the only sign-in on this account, so it can\'t be removed. Delete the account instead.' }, 409, corsOrigin);
+      return deps.jsonResponse({ error: "That is the only sign-in on this account, so it can't be removed. Delete the account instead." }, 409, corsOrigin);
     }
-    await env.DB.prepare('DELETE FROM user_identities WHERE user_id = ? AND provider = ? AND provider_id = ?')
-      .bind(userId, ev.provider, ev.provider_id).run();
-    leaving = [`${ev.provider}:${ev.provider_id}`];
+    // The sign-in gets an account of its own again, with whatever was recorded under it.
+    await splitLogin(env, login.login_id, { name: ev.login_name });
+    leaving = [login.login_id];
   } else if (ev.kind === 'combine') {
-    let log = null;
-    try { log = JSON.parse(ev.undo_json); } catch {}
-    if (!log) return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
-    const ids = log.identities || [];
-    const moved = ids.length ? ((await env.DB.prepare(`SELECT provider, provider_id FROM user_identities WHERE id IN (${ids.map(() => '?').join(',')})`)
-      .bind(...ids).all()).results || []) : [];
+    let moved = null;
+    try { moved = JSON.parse(ev.moved_json); } catch {}
+    let back = null;
     try {
-      await unmergeAccounts(env, log);
+      back = moved ? await separateAccount(env, moved, userId) : null;
     } catch (e) {
       console.error('separate failed', e);
       return deps.jsonResponse({ error: 'The accounts could not be separated. Nothing more was changed.' }, 409, corsOrigin);
     }
-    leaving = moved.map((m) => `${m.provider}:${m.provider_id}`);
+    if (!back) return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
+    leaving = back.logins;
   } else {
     return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
   }
   await env.DB.prepare('UPDATE account_events SET undone_at = ? WHERE id = ?').bind(nowS(), ev.id).run();
   deps.writeMetric && deps.writeMetric(env, 'undo_' + ev.kind);
-  return deps.jsonResponse({ undone: true, kind: ev.kind, signed_out: !!(via && leaving.includes(via)) }, 200, corsOrigin);
+  return deps.jsonResponse({ undone: true, kind: ev.kind, signed_out: !!(claims && leaving.includes(claims.lid)) }, 200, corsOrigin);
 }
 
 /** POST /auth/poll { id, secret } → { status: pending | done | error | expired, ... } */
@@ -960,9 +1023,9 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   const secret = randomId(24);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
-     VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, 'pending', ?, ?)`
-  ).bind(id, await sha256(secret), linkUserId || null, returnTo,
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, ?, 'pending', ?, ?)`
+  ).bind(id, await sha256(secret), linkUserId || null, linkUserId ? (claims.lid ?? null) : null, returnTo,
          deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
   return deps.jsonResponse({
     id, secret, expires_in: REQUEST_TTL_S,
@@ -1092,7 +1155,7 @@ export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
   const channels = String(env.DISCORD_HELLO_CHANNEL_IDS || '').split(',').map((c) => c.trim()).filter((c) => /^\d+$/.test(c));
   if (!discordId || !channels.length || !env.DISCORD_BOT_TOKEN) return null;
   try {
-    const row = await env.DB.prepare("SELECT said_hello_at FROM user_identities WHERE provider = 'discord' AND provider_id = ?")
+    const row = await env.DB.prepare("SELECT said_hello_at FROM user_logins WHERE provider = 'discord' AND provider_id = ?")
       .bind(String(discordId)).first();
     if (row && row.said_hello_at) return true;
   } catch { return null; }   // migration 0018 not applied yet
@@ -1114,7 +1177,7 @@ export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
       if (!Array.isArray(msgs) || !msgs.length) break;
       if (msgs.some((m) => m && m.author && String(m.author.id) === String(discordId) && TYPED.has(Number(m.type || 0)))) {
         try {
-          await env.DB.prepare("UPDATE user_identities SET said_hello_at = ? WHERE provider = 'discord' AND provider_id = ?")
+          await env.DB.prepare("UPDATE user_logins SET said_hello_at = ? WHERE provider = 'discord' AND provider_id = ?")
             .bind(nowS(), String(discordId)).run();
         } catch {}
         deps.writeMetric && deps.writeMetric(env, 'discord_said_hello');
@@ -1135,7 +1198,7 @@ export async function discordSaidHello(env, discordId, joinedAt, deps = {}) {
  */
 export async function discordMemberStatus(env, userId, fetchImpl = fetch) {
   const row = await env.DB.prepare(
-    "SELECT provider_id FROM user_identities WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC LIMIT 1"
+    "SELECT provider_id FROM user_logins WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC LIMIT 1"
   ).bind(userId).first();
   if (!row) return { linked: false, member: null };
   const discordId = row.provider_id;
@@ -1167,14 +1230,14 @@ export async function discordMemberStatus(env, userId, fetchImpl = fetch) {
 const HANDOFF_TTL_S = 60;
 
 /** POST /auth/handoff (signed in) → { code, expires_in } */
-export async function handleHandoffCreate(request, env, corsOrigin, userId, deps) {
+export async function handleHandoffCreate(request, env, corsOrigin, userId, deps, loginId = null) {
   const id = randomId(12);
   const secret = randomId(18);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
-     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, NULL, 'done', ?)`
-  ).bind(id, await sha256(secret), userId, nowS()).run();
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, created_at)
+     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, ?, NULL, 'done', ?)`
+  ).bind(id, await sha256(secret), userId, loginId ?? null, nowS()).run();
   return deps.jsonResponse({ code: `${id}.${secret}`, expires_in: HANDOFF_TTL_S }, 200, corsOrigin);
 }
 
@@ -1191,7 +1254,8 @@ export async function handleHandoffRedeem(request, env, corsOrigin, deps) {
   if (row.created_at < nowS() - HANDOFF_TTL_S || (await sha256(secret)) !== row.secret_hash) return gone();
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(row.link_user_id).first();
   if (!user) return gone();
-  const token = await deps.createJWT({ sub: user.id, name: user.display_name, picture: user.avatar_url }, env.JWT_SECRET);
+  // The other site is the same login as the one that asked (#783).
+  const { token } = await sessionFor(env, user.id, deps, row.link_login_id ?? null);
   const identities = await listIdentities(env, user.id);
   deps.writeMetric && deps.writeMetric(env, 'auth_handoff');
   return deps.jsonResponse({ token, user: { id: user.id, name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
@@ -1226,4 +1290,22 @@ function page(title, body, status = 200) {
   .acct-stats { font-size: 14px; }
 </style></head><body><main><div class="brand">House Tandem</div><h1>${escapeHtml(title)}</h1>${body}</main></body></html>`;
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' } });
+}
+
+/**
+ * #783 · a guest device as a login: provider 'device', its guest key as the id, with a
+ * small account of its own (it joins a real account when that device signs in, see
+ * claimGuestPairs). Made the first time a guest is recorded. → { userId, loginId }
+ */
+export async function ensureDeviceLogin(env, key) {
+  const have = await loginRow(env, 'device', key);
+  if (have) return { userId: have.user_id, loginId: have.login_id };
+  const ins = await env.DB.prepare('INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, NULL)')
+    .bind('account', crypto.randomUUID(), 'Guest').run();
+  const userId = ins.meta && ins.meta.last_row_id;
+  await env.DB.prepare('INSERT OR IGNORE INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, ?, ?, ?)')
+    .bind(userId, 'device', String(key), 'Guest').run();
+  const row = await loginRow(env, 'device', key);
+  if (row && row.user_id !== userId) await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();   // lost a race
+  return { userId: row.user_id, loginId: row.login_id };
 }

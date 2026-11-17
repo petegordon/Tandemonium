@@ -81,7 +81,7 @@ const upload = (env, extra = {}, opts = {}) => call(env, '/share', {
 function addUser(db, { name = 'Pete', discord = true } = {}) {
   const r = db.prepare("INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES ('steam', ?, ?, NULL)").run(String(Math.random()), name);
   const id = Number(r.lastInsertRowid);
-  if (discord) db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, 'discord', ?, ?, ?)")
+  if (discord) db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, 'discord', ?, ?, ?)")
     .run(id, '8035' + id, name + ' on discord', 'https://cdn.discordapp.com/avatars/8035/abc.png?size=128');
   return id;
 }
