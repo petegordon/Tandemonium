@@ -26,7 +26,8 @@ function room(now) {
   };
   const r = new TandemRoom(state, {});
   const connect = async (role, name) => {
-    const q = new URLSearchParams({ room: 'TNDM-ABCD', role }); if (name) q.set('name', name);
+    // Each seat dials from its own device, as the game does (the seat is that device's).
+    const q = new URLSearchParams({ room: 'TNDM-ABCD', role, device: 'device-' + role }); if (name) q.set('name', name);
     await r.fetch({ url: 'https://relay/?' + q });
     return socks.at(-1);
   };
@@ -46,7 +47,7 @@ test('a never-used room says fresh; the next joiner hears when it was used and w
     now += 2 * 3600_000;
     // a new instance (the DO was evicted): the record comes back from storage
     const R2 = { ...R, r: R.fresh() };
-    const sto = await (async () => { const q = new URLSearchParams({ room: 'TNDM-ABCD', role: 'stoker' }); await R2.r.fetch({ url: 'https://relay/?' + q }); return R.socks.at(-1); })();
+    const sto = await (async () => { const q = new URLSearchParams({ room: 'TNDM-ABCD', role: 'stoker', device: 'device-stoker' }); await R2.r.fetch({ url: 'https://relay/?' + q }); return R.socks.at(-1); })();
     assert.deepEqual(sto.sent[0], { type: 'waiting', fresh: false, lastUsedAt: 1_005_000, partnerSeenAt: 1_005_000, partnerName: 'Pete' });
   } finally { Date.now = realNow; }
 });
@@ -99,14 +100,15 @@ test('#620 still holds: a re-dial never tells the partner "disconnect" (no await
 });
 
 test('#694 partner-ready names each side to the other (null when a side gave no name)', async () => {
+  const pick = ({ type, role, name }) => ({ type, role, name });   // (2026-11-17 adds pair / p2p / partnerGuest: relay-seats.test.mjs)
   const R = room();
   const cap = await R.connect('captain', 'Pete');
   const sto = await R.connect('stoker', 'Sam');
-  assert.deepEqual(sto.sent[0], { type: 'partner-ready', role: 'captain', name: 'Pete' });
-  assert.deepEqual(cap.sent.at(-1), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
+  assert.deepEqual(pick(sto.sent[0]), { type: 'partner-ready', role: 'captain', name: 'Pete' });
+  assert.deepEqual(pick(cap.sent.at(-1)), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
   const R2 = room();
   const cap2 = await R2.connect('captain');
   const sto2 = await R2.connect('stoker', 'Sam');
-  assert.deepEqual(sto2.sent[0], { type: 'partner-ready', role: 'captain', name: null });
-  assert.deepEqual(cap2.sent.at(-1), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
+  assert.deepEqual(pick(sto2.sent[0]), { type: 'partner-ready', role: 'captain', name: null });
+  assert.deepEqual(pick(cap2.sent.at(-1)), { type: 'partner-ready', role: 'stoker', name: 'Sam' });
 });

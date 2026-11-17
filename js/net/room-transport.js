@@ -16,6 +16,15 @@ import {
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
 } from '../config.js';
 import { isMediaEnabled } from '../edition.js';
+import { getDeviceId } from '../analytics.js';
+
+/** 2026-11-17 · the relay closes a connection with this reason when both seats are taken. */
+const ROOM_FULL_REASON = 'room-full';
+
+/** '&device=<id>' for the relay (this device's analytics id), or '' when storage is unavailable. */
+function deviceParam() {
+  try { const d = getDeviceId(); return d ? '&device=' + encodeURIComponent(d) : ''; } catch (e) { return ''; }
+}
 
 // Fast lane for high-rate, latest-wins traffic (bike STATE / LEAN). A second
 // data channel on the same RTCPeerConnection, unordered with no retransmits,
@@ -131,7 +140,9 @@ export class RoomTransport {
   async _fetchIceServers() {
     if (this._iceServers) return this._iceServers;
     try {
-      const resp = await fetch(TURN_CREDENTIALS_URL);
+      // Only a connection holding a seat in this room gets TURN credentials (the relay checks).
+      const q = '?room=' + encodeURIComponent(this.roomCode || '') + '&role=' + encodeURIComponent(this.role || '') + deviceParam();
+      const resp = await fetch(TURN_CREDENTIALS_URL + q);
       const data = await resp.json();
       if (data.iceServers && data.iceServers.urls) {
         // CF returns { iceServers: { urls: [...], username, credential } }
@@ -217,6 +228,11 @@ export class RoomTransport {
           this.partnerAbsent = false;
           // #694: a relay from this change on names the partner (an older one doesn't).
           if (typeof parsed.name === 'string' && parsed.name) this.partnerName = parsed.name.slice(0, 32);
+          // 2026-11-17: the room's proof of who rode (for the score post), its P2P key, and a
+          // guest partner's key (their pair record is found by it, never by their device id).
+          if (typeof parsed.pair === 'string') this.pairProof = parsed.pair;
+          if (typeof parsed.p2p === 'string') this.p2pKey = parsed.p2p;
+          this.partnerGuestKey = typeof parsed.partnerGuest === 'string' ? parsed.partnerGuest : null;
           if (this.transport === 'relay' && !this._heartbeatInterval) {
             this._startHeartbeat();
           }
@@ -546,6 +562,9 @@ export class RoomTransport {
     this._relayPartnerReady = false;
     this._relayDidOpen = false;
     let url = this._fallbackUrl + '?room=' + this.roomCode + '&role=' + this.role;
+    // The seat is this device's while it holds it (and for a while after it leaves): a reload or
+    // re-dial gets it back; anyone else is told the room is full (worker/relay.js).
+    url += deviceParam();
     if (this._relayToken) url += '&token=' + encodeURIComponent(this._relayToken);
     // #694: the name the room remembers this seat by ("Pete was here 3 min ago" on the partner's side)
     if (this._displayName) url += '&name=' + encodeURIComponent(String(this._displayName).slice(0, 32));
@@ -581,6 +600,18 @@ export class RoomTransport {
     ws.onclose = (ev) => {
       if (!current()) return;
       this._relayWs = null;
+      // Both seats belong to other riders: stop, and say so. Re-dialling can't help.
+      if (ev && ev.reason === ROOM_FULL_REASON) {
+        console.warn('NET: Relay says the room is full');
+        this._evicted = true;
+        this.roomFull = true;
+        clearTimeout(this._reconnectTimeout);
+        clearTimeout(this._authRetryTimer);
+        clearTimeout(this._relayRetryTimer);
+        if (this.connected) { this.connected = false; this._stopHeartbeat(); }
+        if (this.onDisconnected) this.onDisconnected('That room is full. Check the code with your partner, or make a new room.');
+        return;
+      }
       // The relay replaced this socket with a newer one for the same room + role:
       // another connection holds the seat now. Re-dialling would replace it back.
       if (ev && ev.reason === 'replaced') {
@@ -703,8 +734,12 @@ export class RoomTransport {
       this.peer = null;
     }
 
-    const peerId = this.roomCode + '-' + this.role;
-    const partnerPeerId = this.roomCode + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
+    // Peer ids carry the room's P2P key (the relay gives it only to the two seat holders), so
+    // nobody who just knows the room code can find, or pose as, either peer. No key (an older
+    // relay): stay on the relay.
+    if (!this.p2pKey) return;
+    const peerId = this.roomCode + '-' + this.p2pKey + '-' + this.role;
+    const partnerPeerId = this.roomCode + '-' + this.p2pKey + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
 
     this._fetchIceServers().then(iceServers => {
       // Destroyed while the TURN fetch was in flight: a Peer made now would never be destroyed,
@@ -728,6 +763,8 @@ export class RoomTransport {
       });
 
       this.peer.on('connection', (conn) => {
+        // Only the partner's peer id (see above); anyone else is refused.
+        if (conn.peer !== partnerPeerId) { try { conn.close(); } catch (e) { /* gone */ } return; }
         this.conn = conn;
         this._setupP2PUpgradeConnection();
       });

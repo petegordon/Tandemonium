@@ -22,6 +22,7 @@ import {
 } from './identity.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, mergeGameAccounts } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
+import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
 
 /**
  * #612 · what other House Tandem game Workers may do, through the private
@@ -360,6 +361,33 @@ async function handleSteamAuth(request, env, corsOrigin) {
 // SCORES
 // ============================================================
 
+/** The roles a ride's contributions may have. */
+const CONTRIBUTION_ROLES = ['captain', 'stoker', 'solo'];
+
+/** A ride's optional fields, made safe to store (finite numbers in range, short strings). */
+export function scoreFields({ collectiblesCount, inputSource, difficulty, scoreMultiplier } = {}) {
+  const str = (v, dflt) => (typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v) ? v : dflt);
+  return {
+    collectiblesCount: typeof collectiblesCount === 'number' && Number.isFinite(collectiblesCount) && collectiblesCount >= 0
+      ? Math.min(Math.round(collectiblesCount), 10000) : 0,
+    inputSource: str(inputSource, 'none'),
+    difficulty: str(difficulty, 'adventurous'),
+    scoreMultiplier: typeof scoreMultiplier === 'number' && Number.isFinite(scoreMultiplier) && scoreMultiplier > 0
+      ? Math.min(scoreMultiplier, 10) : 1.0,
+  };
+}
+
+/** A contribution's numbers: finite and in range, anything else 0. */
+export function contributionNumbers(s = {}) {
+  const num = (v, lo, hi) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(lo, Math.min(v, hi)) : 0);
+  return {
+    overallPct: num(s.overallPct, 0, 100), totalTaps: Math.round(num(s.totalTaps, 0, 1e6)),
+    correctTaps: Math.round(num(s.correctTaps, 0, 1e6)), wrongTaps: Math.round(num(s.wrongTaps, 0, 1e6)),
+    totalPower: num(s.totalPower, 0, 1e9), safePct: num(s.safePct, 0, 100), dangerPct: num(s.dangerPct, 0, 100),
+    onRoadPct: num(s.onRoadPct, 0, 100), centerPct: num(s.centerPct, 0, 100), avgLateral: num(s.avgLateral, -1000, 1000),
+  };
+}
+
 async function submitScore(request, env, corsOrigin, userId) {
   const body = await request.json();
   const { levelId, distance, timeMs, collectiblesCount, inputSource, contributions, newAchievements,
@@ -368,6 +396,10 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   if (!levelId || !distance || !timeMs) {
     return jsonResponse({ error: 'Missing required fields' }, 400, corsOrigin);
+  }
+  // Numbers are numbers (the tables aren't STRICT: a string would be stored as text).
+  if (typeof distance !== 'number' || !Number.isFinite(distance) || typeof timeMs !== 'number' || !Number.isFinite(timeMs)) {
+    return jsonResponse({ error: 'Invalid numbers' }, 400, corsOrigin);
   }
 
   // Validate level ID
@@ -420,11 +452,37 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   writeMetric(env, 'score_submit', levelId);
 
+  const f = scoreFields({ collectiblesCount, inputSource, difficulty, scoreMultiplier });
+
+  // 2026-11-17 · online: who rode with the caller comes only from the room's pair proof
+  // (the relay signs who held each seat). A couch whose Player 1 is signed out posts under
+  // Player 2 with this device as the guest captain (couch-pair.js guestCaptainSubmit).
+  const partner = !isLocal && (mode === 'captain' || mode === 'stoker')
+    ? await partnerFromProof(env.RELAY_SECRET, body.pairProof, userId, mode) : null;
+  const couchGuest = !partner && body.couchGuest === true && mode === 'stoker' && contributions && contributions.captain
+    ? await guestKey(env.RELAY_SECRET, cleanDeviceId(contributions.captain.guestDeviceId)) : null;
+  if (contributions && typeof contributions === 'object' && !isLocal) {
+    const own = mode || 'solo';
+    for (const [role, stats] of Object.entries(contributions)) {
+      if (!stats || typeof stats !== 'object' || !CONTRIBUTION_ROLES.includes(role)) { delete contributions[role]; continue; }
+      delete stats.guestDeviceId;
+      delete stats.guestKey;
+      if (role === own || role === 'solo') stats.userId = userId;
+      else if (partner && partner.role === role) {
+        stats.userId = partner.userId || null;
+        if (partner.guestKey) stats.guestKey = partner.guestKey;
+      } else if (couchGuest && role === 'captain') {
+        stats.userId = null;
+        stats.guestKey = couchGuest;
+      } else stats.userId = null;   // a partner named without proof is not kept
+    }
+  }
+
   // Insert score
   const scoreRes = await env.DB.prepare(
     'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(userId, levelId, distance, timeMs, mode || 'solo', collectiblesCount || 0, inputSource || 'none',
-         difficulty || 'adventurous', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
+  ).bind(userId, levelId, distance, timeMs, mode || 'solo', f.collectiblesCount, f.inputSource,
+         f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
 
   const scoreId = scoreRes.meta.last_row_id;
 
@@ -438,11 +496,18 @@ async function submitScore(request, env, corsOrigin, userId) {
       const seat = seatRiders.find((r) => r.role === role);
       stats.userId = role === 'captain' ? userId : (seat ? seat.userId : null);
       delete stats.guestDeviceId;
+      delete stats.guestKey;
     }
   }
 
+  if (contributions && isLocal) {
+    for (const role of Object.keys(contributions)) {
+      if (!CONTRIBUTION_ROLES.includes(role) || !contributions[role] || typeof contributions[role] !== 'object') delete contributions[role];
+    }
+  }
   if (contributions) {
-    for (const [role, stats] of Object.entries(contributions)) {
+    for (const [role, raw] of Object.entries(contributions)) {
+      const stats = { ...raw, ...contributionNumbers(raw) };
       batchStmts.push(
         env.DB.prepare(
           `INSERT INTO score_contributions
@@ -478,8 +543,8 @@ async function submitScore(request, env, corsOrigin, userId) {
     try {
       await env.DB.prepare(
         'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(seat.userId, levelId, distance, timeMs, seat.role, collectiblesCount || 0, inputSource || 'none',
-             difficulty || 'adventurous', safetyUsed ? 1 : 0, scoreMultiplier || 1.0).run();
+      ).bind(seat.userId, levelId, distance, timeMs, seat.role, f.collectiblesCount, f.inputSource,
+             f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
       const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
         env.DB.prepare('INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)').bind(seat.userId, achId, scoreId));
       if (achStmts.length) await env.DB.batch(achStmts);
@@ -497,7 +562,7 @@ async function submitScore(request, env, corsOrigin, userId) {
     for (const [role, stats] of Object.entries(contributions)) {
       if (role === 'solo') continue;
       if (stats.userId) riders.push(String(stats.userId));
-      else if (stats.guestDeviceId) riders.push('guest:' + stats.guestDeviceId);
+      else if (isGuestKey(stats.guestKey)) riders.push('guest:' + stats.guestKey);   // set above, never from the body
     }
     if (riders.length === 2) {
       try {
@@ -608,12 +673,23 @@ async function handlePair(request, env, corsOrigin, userId) {
   const other = url.searchParams.get('with');
   if (!other) return jsonResponse({ error: 'Missing ?with' }, 400, corsOrigin);
 
-  const [lo, hi] = pairKey(userId, other);
-  let row;
+  // A guest is looked up by their guest key (what the room gave the partner). A couch asks
+  // with this device's own id, which maps to the same key; rows from before the keys still
+  // sit under the raw id.
+  const keys = [other];
+  if (other.startsWith('guest:') && !isGuestKey(other.slice(6))) {
+    const gk = await guestKey(env.RELAY_SECRET, cleanDeviceId(other.slice(6)));
+    if (gk) keys.unshift('guest:' + gk);
+  }
+  let row = null;
   try {
-    row = await env.DB.prepare(
-      'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
-    ).bind(lo, hi).first();
+    for (const k of keys) {
+      const [lo, hi] = pairKey(userId, k);
+      row = await env.DB.prepare(
+        'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
+      ).bind(lo, hi).first();
+      if (row) break;
+    }
   } catch (e) {
     // Migration 0009 (pairs) is applied by hand after the worker deploys;
     // until then there is simply no history to show.
@@ -669,6 +745,9 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
   // daily_results is not a STRICT table: a string sent here would be stored as
   // text and shown on other players' boards. Whole numbers in range, or 0 / null.
   const d = dailyNumbers({ distance, collectibles, crashes, syncPct, partnerUserId });
+  // 2026-11-17 · a partner is kept only with proof: the room's pair proof (online) or
+  // the partner's own sign-in (a couch Player 2's seat token).
+  if (d.partnerUserId != null && !(await dailyPartnerProven(env, body, userId, d.partnerUserId))) d.partnerUserId = null;
   const res = await env.DB.prepare(dailyUpsertSql(!!dnf)).bind(
     userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
     d.distance, d.collectibles, d.crashes, safetyUsed ? 1 : 0,
@@ -678,6 +757,21 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
 
   writeMetric(env, 'daily_submit', mode);
   return jsonResponse({ success: true, improved }, 200, corsOrigin);
+}
+
+/** Does the Daily post prove `partnerId` rode with `userId`? */
+async function dailyPartnerProven(env, body, userId, partnerId) {
+  for (const role of ['captain', 'stoker']) {
+    const p = await partnerFromProof(env.RELAY_SECRET, body.pairProof, userId, role);
+    if (p && p.userId && String(p.userId) === String(partnerId)) return true;
+  }
+  if (typeof body.seatToken === 'string' && env.JWT_SECRET) {
+    try {
+      const t = await verifyJWT(body.seatToken, env.JWT_SECRET);
+      if (t && t.sub != null && String(t.sub) === String(partnerId) && String(t.sub) !== String(userId)) return true;
+    } catch { /* not a sign-in of ours */ }
+  }
+  return false;
 }
 
 /**
@@ -784,6 +878,9 @@ function dailyKeyUTC(now = Date.now()) {
  */
 async function mergeGuestPairs(env, deviceId, userId) {
   if (!deviceId || !userId) return;
+  // Since 2026-11-17 a guest's pairs are keyed by their guest key; older ones by the raw id.
+  const gk = await guestKey(env.RELAY_SECRET, deviceId);
+  if (gk) await mergePairKey(env, 'guest:' + gk, String(userId));
   return mergePairKey(env, 'guest:' + deviceId, String(userId));
 }
 

@@ -49,7 +49,7 @@ const allow = { limit: async () => ({ success: true }) };
 function envFor(db) {
   return {
     DB: d1(db), CORS_ORIGIN: 'https://tandemonium.housetandem.com', JWT_SECRET: 'test-secret',
-    DISCORD_CLIENT_ID: 'cid', DISCORD_CLIENT_SECRET: 'csecret', STEAM_WEB_API_KEY: 'steamkey',
+    DISCORD_CLIENT_ID: 'cid', DISCORD_CLIENT_SECRET: 'csecret', STEAM_WEB_API_KEY: 'steamkey', RELAY_SECRET: 'relay-secret',
     AUTH_LIMITER: allow, READ_LIMITER: allow,
   };
 }
@@ -380,7 +380,7 @@ test('#609 couch pairs: both signed in → one pair both can read; P1 signed out
     // P1 signed out: Sam's own session posts the ride as the stoker, P1 = this device's guest.
     db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
     const res = await call(env, '/score', { method: 'POST', token: p2.token, body: {
-      ...base, mode: 'stoker', newAchievements: ['first_finish'],
+      ...base, mode: 'stoker', couchGuest: true, newAchievements: ['first_finish'],
       contributions: { captain: { ...contributions.captain, userId: null, guestDeviceId: 'dev1' }, stoker: { ...contributions.stoker, userId: p2.user.id } } } });
     assert.equal(res.status, 200);
     const guest = await (await call(env, '/pair?with=guest%3Adev1', { token: p2.token })).json();
@@ -977,7 +977,7 @@ test('#678 guest pair → this device signs in (Steam) → the pair is under the
     const sam = await deviceSignIn(env);   // Sam's own sign-in, no device id: nothing to claim
     // Pete rode on device 'devA' signed out; Sam posted the ride, Pete = guest:devA.
     const res = await call(env, '/score', { method: 'POST', token: sam.token, body: {
-      levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'stoker',
+      levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'stoker', couchGuest: true,
       contributions: { captain: { overallPct: 55, userId: null, guestDeviceId: 'devA' }, stoker: { overallPct: 45, userId: sam.user.id } } } });
     assert.equal(res.status, 200, await res.clone().text());
     assert.equal((await (await call(env, '/pair?with=guest%3AdevA', { token: sam.token })).json()).rides, 1);
@@ -1281,4 +1281,106 @@ test('the account\'s Discord is told by direct message, with the undo date and t
     assert.match(sent[1][1], /Steam account "petesteam" was added to your House Tandem account "Pete"/);
     assert.match(sent[1][1], /until [A-Z][a-z]{2} \d{1,2}: https:\/\/housetandem\.com\/account\.html/);
   } finally { globalThis.fetch = inner; restore(); }
+});
+
+// ------------------------------------------------------------
+// 2026-11-17 · who rode together: a score or Daily post names a partner only with proof
+// ------------------------------------------------------------
+import { signPairProof, guestKey as guestKeyFor } from '../../worker/room-proof.js';
+
+const RIDE = { levelId: 'grandma', distance: 1200, timeMs: 200000 };
+const C2 = (stoker) => ({ captain: { overallPct: 55 }, stoker: { overallPct: 45, ...stoker } });
+const freshScoreClock = (db) => db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
+const contribUser = (db, role) => db.prepare('SELECT player_user_id FROM score_contributions WHERE role = ? ORDER BY id DESC LIMIT 1').get(role).player_user_id;
+
+test('online score: a partner named in the body is not kept; the room’s proof names them', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const pete = await (await call(env, '/auth/steam', { method: 'POST', body: STEAM_PETE })).json();
+    const sam = await deviceSignIn(env);
+    const post = (body) => { freshScoreClock(db); return call(env, '/score', { method: 'POST', token: pete.token, body: { ...RIDE, mode: 'captain', ...body } }); };
+
+    // No proof: the ride is Pete's; the claimed partner is dropped, no pair, no Daily access.
+    assert.equal((await post({ contributions: C2({ userId: sam.user.id }) })).status, 200);
+    assert.equal(contribUser(db, 'captain'), pete.user.id, 'the caller’s own seat is always the caller');
+    assert.equal(contribUser(db, 'stoker'), null);
+    assert.equal(pairRows(db).length, 0);
+
+    // Proofs that don't fit: forged, someone else's room, Pete in the other seat.
+    const forged = await signPairProof('wrong-secret', 'TNDM-ABCD', { u: pete.user.id }, { u: sam.user.id });
+    const others = await signPairProof('relay-secret', 'TNDM-ABCD', { u: sam.user.id }, { u: 999 });
+    const swapped = await signPairProof('relay-secret', 'TNDM-ABCD', { u: sam.user.id }, { u: pete.user.id });
+    for (const pairProof of [forged, others, swapped, 'junk']) {
+      assert.equal((await post({ pairProof, contributions: C2({ userId: sam.user.id }) })).status, 200);
+      assert.equal(contribUser(db, 'stoker'), null);
+    }
+    assert.equal(pairRows(db).length, 0);
+
+    // The room's proof: Sam is the partner (even if the body says someone else).
+    const proof = await signPairProof('relay-secret', 'TNDM-ABCD', { u: pete.user.id }, { u: sam.user.id });
+    assert.equal((await post({ pairProof: proof, contributions: C2({ userId: 12345 }) })).status, 200);
+    assert.equal(contribUser(db, 'stoker'), sam.user.id);
+    const pair = await (await call(env, '/pair?with=' + sam.user.id, { token: pete.token })).json();
+    assert.equal(pair.rides, 1);
+  } finally { restore(); }
+});
+
+test('online score with a guest partner: keyed by the guest key from the proof, claimed when that device signs in', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const sam = await deviceSignIn(env);
+    const gk = await guestKeyFor('relay-secret', 'device-guest-1');
+    freshScoreClock(db);
+    // A body naming a guest (by device id or key) without proof records nothing.
+    await call(env, '/score', { method: 'POST', token: sam.token, body: { ...RIDE, mode: 'stoker',
+      contributions: { captain: { overallPct: 50, guestDeviceId: 'device-guest-1', guestKey: gk }, stoker: { overallPct: 50 } } } });
+    assert.equal(pairRows(db).length, 0);
+
+    freshScoreClock(db);
+    const proof = await signPairProof('relay-secret', 'TNDM-ABCD', { g: gk }, { u: sam.user.id });
+    await call(env, '/score', { method: 'POST', token: sam.token, body: { ...RIDE, mode: 'stoker', pairProof: proof,
+      contributions: { captain: { overallPct: 50 }, stoker: { overallPct: 50 } } } });
+    assert.deepEqual(pairRows(db).map((r) => [r.user_lo, r.user_hi].sort()), [[String(sam.user.id), 'guest:' + gk].sort()]);
+    assert.ok(!JSON.stringify(pairRows(db)).includes('device-guest-1'), 'the device id is never stored');
+    assert.equal((await (await call(env, '/pair?with=guest%3A' + gk, { token: sam.token })).json()).rides, 1);
+
+    const pete = await (await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: 'device-guest-1' } })).json();
+    assert.equal((await (await call(env, '/pair?with=' + sam.user.id, { token: pete.token })).json()).rides, 1, 'the guest’s history is now Pete’s');
+  } finally { restore(); }
+});
+
+test('Daily: a partner is kept only with the room’s proof or the partner’s own sign-in; numbers stay numbers', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), SCORE_LIMITER: allow, DAILY_LIMITER: allow };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const pete = await (await call(env, '/auth/steam', { method: 'POST', body: STEAM_PETE })).json();
+    const sam = await deviceSignIn(env);
+    const day = new Date(Date.now() - 9 * 3600 * 1000).toISOString().slice(0, 10);
+    const daily = async (extra, timeMs) => call(env, '/daily', { method: 'POST', token: pete.token,
+      body: { dayKey: day, mode: 'pair', timeMs, dnf: false, distance: 1200, partnerUserId: sam.user.id, ...extra } });
+    const partner = () => db.prepare('SELECT partner_user_id p FROM daily_results WHERE user_id = ?').get(pete.user.id).p;
+
+    assert.equal((await daily({}, 300000)).status, 200);
+    assert.equal(partner(), null, 'no proof: not kept');
+    const proof = await signPairProof('relay-secret', 'TNDM-ABCD', { u: pete.user.id }, { u: sam.user.id });
+    await daily({ pairProof: proof }, 290000);
+    assert.equal(partner(), sam.user.id);
+    await daily({ seatToken: sam.token }, 280000);
+    assert.equal(partner(), sam.user.id, 'a couch Player 2’s own sign-in proves it too');
+
+    freshScoreClock(db);
+    assert.equal((await call(env, '/score', { method: 'POST', token: pete.token, body: { ...RIDE, distance: '1200' } })).status, 400);
+    freshScoreClock(db);
+    await call(env, '/score', { method: 'POST', token: pete.token, body: { ...RIDE, mode: 'solo', collectiblesCount: '<b>9</b>',
+      inputSource: '<img>', contributions: { solo: { overallPct: 'x', totalTaps: 1e12 }, evil: { overallPct: 1 } } } });
+    const row = db.prepare('SELECT collectibles_count c, input_source i FROM scores ORDER BY id DESC LIMIT 1').get();
+    assert.deepEqual({ ...row }, { c: 0, i: 'none' });
+    const c = db.prepare('SELECT role, contribution_pct p, pedal_taps t FROM score_contributions ORDER BY id DESC LIMIT 2').all().map((r) => ({ ...r }));
+    assert.deepEqual(c, [{ role: 'solo', p: 0, t: 1e6 }], 'junk becomes numbers in range; unknown roles are dropped');
+  } finally { restore(); }
 });

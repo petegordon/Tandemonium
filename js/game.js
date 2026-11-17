@@ -1848,7 +1848,7 @@ class Game {
       if (profile.name) this._partnerName = profile.name;
       // D-9: and their anonymous device id, so a guest partner still builds a
       // shared history with a signed-in rider.
-      if (profile.deviceId) this._partnerDeviceId = profile.deviceId;
+      // (An older partner build also sends its device id; it is never used: device ids stay private.)
       // #548 · the partner's goose look (outfit, colourway, body); an older build sends none,
       // and their goose then mirrors mine (seatLooks).
       if (profile.look) {
@@ -4848,8 +4848,9 @@ class Game {
       previousBest = before && before.best && level ? before.best[level.id] : null;
     } else {
       const auth = this.lobby.auth;
-      const partner = this._partnerServerId ||
-        (this._partnerDeviceId ? 'guest:' + this._partnerDeviceId : null);
+      // A guest partner's pair record is keyed by the guest key the room gave us, not their device id.
+      const guest = this.net && this.net.partnerGuestKey;
+      const partner = this._partnerServerId || (guest ? 'guest:' + guest : null);
       if (!auth || !auth.isLoggedIn() || !partner || this.mode === 'solo' || this.mode === 'local') return;
 
       try { pair = await auth.fetchPair(partner); } catch { return; }
@@ -4906,7 +4907,10 @@ class Game {
         crashes: summary.crashes,
         safetyUsed: false,
         syncPct: this.sharedPedal ? Math.round(this.sharedPedal.offsetScore * 100) : null,
-        partnerUserId: this._partnerServerId || (this._seatAccount() ? this._seatAccount().user.id : null)
+        partnerUserId: this._partnerServerId || (this._seatAccount() ? this._seatAccount().user.id : null),
+        // 2026-11-17: the server keeps a partner only with proof: the room's (online) or
+        // Player 2's own sign-in (couch).
+        ...this._partnerProof(),
       });
       if (res && res.success) {
         analytics.trackEvent('daily_submit', { key: level.key, improved: !!res.improved });
@@ -5696,10 +5700,8 @@ class Game {
     }
     // Anonymous players have no name — show a friendly label to the partner. (#312)
     if (!profile.name) profile.name = GUEST_NAME;
-    // D-9: the anonymous per-browser id, so a signed-in partner can build a
-    // pair record with this rider even if they never sign in. It is the same
-    // id analytics already uses; it identifies a browser, not a person.
-    try { profile.deviceId = analytics.getDeviceId(); } catch {}
+    // (2026-11-17: no device id here any more. A guest's pair record is keyed by the guest key
+    // the relay gives the partner; device ids open a guest's history, so they stay private.)
     profile.bikeColor = this._getFrameColor(this.lobby.selectedPreset);
     profile.look = lookToWire(getP1Look());   // #548: my goose, for the partner's screen
     if (this.lobby.roomProfileFields) Object.assign(profile, this.lobby.roomProfileFields());   // PR #397 M1
@@ -6136,6 +6138,20 @@ class Game {
     }
   }
 
+  /**
+   * 2026-11-17 · what proves who rode with us, for the score and Daily posts: online, the
+   * room's pair proof (the relay signs who held each seat); on a couch, Player 2's own sign-in.
+   */
+  _partnerProof() {
+    const out = {};
+    if (this.net && typeof this.net.pairProof === 'string') out.pairProof = this.net.pairProof;
+    if (this.mode === 'local') {
+      const acc = this._seatAccount();
+      if (acc && acc.token) out.seatToken = acc.token;
+    }
+    return out;
+  }
+
   async _submitScore() {
     const auth = this.lobby.auth;
     if (!auth || !auth.isLoggedIn()) return this._submitCouchAsP2();
@@ -6175,17 +6191,10 @@ class Game {
         const partnerRole = myRole === 'captain' ? 'stoker' : 'captain';
         contrib[myRole].userId = myServerId;
         contrib[partnerRole].userId = this._partnerServerId;
-        // D-9: a partner who never signs in still counts as a partner. Their
-        // device id keys the pair record, and the server migrates it to their
-        // account if they ever do sign in — so the friend who "just plays on
-        // your phone" stops being invisible to the game.
-        if (!contrib[partnerRole].userId && this._partnerDeviceId) {
-          contrib[partnerRole].guestDeviceId = this._partnerDeviceId;
-        }
-        if (!contrib[myRole].userId) {
-          contrib[myRole].guestDeviceId = analytics.getDeviceId();
-        }
+        // D-9 / 2026-11-17: the server takes the partner (an account, or a guest's key, so a
+        // friend who never signs in still counts) only from the room's pair proof.
         data.contributions = { captain: contrib.captain, stoker: contrib.stoker };
+        Object.assign(data, this._partnerProof());
       } else if (this.mode === 'local') {
         // #612 · couch co-op: Player 1 is the captain; Player 2 the stoker. A
         // signed-in Player 2 rides on their own account: the server checks their
