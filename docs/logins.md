@@ -72,6 +72,13 @@ under the account's Discord login.
   (`tandemonium-api-staging`, `--env staging`) and its own secrets. No Discord or Steam
   secrets are set there: test with tokens signed by staging's `JWT_SECRET`.
 
+**Staging and production share one daily write allowance.** On Cloudflare's free plan an
+account may write 100,000 rows a day across all its D1 databases; past that, writes are
+refused until midnight UTC. A full copy of production is about 320,000 rows (nearly all of
+them analytics `events`), so importing one into staging uses up the day and production
+sign-ins fail (this happened on 2026-11-17). When rehearsing, leave `events` and
+`ride_events` out of the import, or be on the Workers Paid plan.
+
 ## Shipping migration 0021
 
 The new code needs the new tables, and the old code needs the old ones, so the migration and
