@@ -64,7 +64,7 @@ function seeded() {
   add('player-b', null, null);
   add('player-c', '12.0', '2.2.2.2');
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (38, 'discord', 'd-pete', 'petegordon')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id) VALUES (38, 'discord', 'd-pete'), (38, 'steam', '7656-pete')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id) VALUES (38, 'discord', 'd-pete'), (38, 'steam', '7656-pete')").run();
   return db;
 }
 
@@ -149,7 +149,7 @@ test('players: signed-in accounts by sign-in name, guests only if they rode, dev
   const now = Date.now();
   const iso = (m) => new Date(now + m * 60000).toISOString();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
   db.prepare('UPDATE sessions SET started_at = ? ').run(iso(-60));
   db.prepare("INSERT INTO sessions (id, started_at, google_uid, platform) VALUES ('wolf-1', ?, '28.0', 'steam')").run(iso(-50));
   db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed)
@@ -181,7 +181,7 @@ test('the sign-in update can beat the create: the row is made, and the create ke
 });
 
 test('merging accounts moves the analytics sessions too', async () => {
-  const { mergeAccounts } = await import('../../worker/identity.js');
+  const { mergeAccounts } = await import('../../worker/accounts/identity.js');
   const db = seeded();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (26, 'steam', 's-old', 'pete')").run();
   db.prepare("INSERT INTO sessions (id, started_at, google_uid) VALUES ('old-steam', ?, '26.0')").run(new Date().toISOString());
@@ -223,7 +223,7 @@ test('a ride records every seat; accounts only from each seat\'s own token', asy
 test('players: couch seat time counts for the seat\'s account, even on the developer\'s machine', async () => {
   const db = seeded();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
   const start = new Date(Date.now() - 30 * 60000).toISOString();
   // Pete's session (account 1), Sam rides as Player 2 for 12 minutes and finishes.
   db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed, duration_ms)
@@ -240,7 +240,7 @@ test('players: couch seat time counts for the seat\'s account, even on the devel
 });
 
 test('merging accounts moves couch seats too', async () => {
-  const { mergeAccounts } = await import('../../worker/identity.js');
+  const { mergeAccounts } = await import('../../worker/accounts/identity.js');
   const db = seeded();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (51, 'steam', 's-x', 'x')").run();
   db.prepare("INSERT INTO rides (id, session_id, level, input_method, started_at) VALUES (?, 'player-a', 'grandma', 'k', ?)").run(RIDE, new Date().toISOString());

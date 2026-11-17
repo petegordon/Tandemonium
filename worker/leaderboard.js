@@ -19,8 +19,10 @@ import {
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
-} from './identity.js';
-import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, mergeGameAccounts } from './games.js';
+  resolveSession, firstLogin, ensureDeviceLogin,
+} from './accounts/identity.js';
+import { registerAccountTables } from './accounts/combine.js';
+import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
 
@@ -35,31 +37,73 @@ export const houseTandemGames = {
     const name = String((profile && profile.name) || 'Discord player').slice(0, 64);
     const avatar = typeof (profile && profile.avatar) === 'string' && /^https:\/\/cdn\.discordapp\.com\//.test(profile.avatar)
       ? profile.avatar : discordAvatarUrl({ id: discordId });
-    const { userId } = await upsertIdentity(env, { provider: 'discord', providerId: discordId, name, avatar }, null, identityDeps());
+    const { userId, loginId } = await upsertIdentity(env, { provider: 'discord', providerId: discordId, name, avatar }, null, identityDeps());
     const user = await env.DB.prepare('SELECT display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
-    return { userId, name: user ? user.display_name : name, avatar: user ? user.avatar_url : avatar };
+    // #783 · loginId: pass it back to recordGame / recordPlay so the write is recorded under this Discord.
+    return { userId, loginId, name: user ? user.display_name : name, avatar: user ? user.avatar_url : avatar };
   },
   async verifySession(env, token) {
     if (typeof token !== 'string' || token.length > 4096) return null;
     let payload;
-    try { payload = await verifyJWT(token, env.JWT_SECRET); } catch { return null; }
+    try { payload = await resolveSession(env, await verifyJWT(token, env.JWT_SECRET)); } catch { return null; }
+    if (!payload) return null;
     const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(payload.sub).first();
     if (!user) return null;
     const ids = await listIdentities(env, user.id);
     const avatar = (ids.discord && ids.discord.avatar) || user.avatar_url;
-    return { userId: user.id, name: user.display_name, avatar };
+    return { userId: user.id, loginId: payload.lid, name: user.display_name, avatar };
   },
   gameProfile: (env, userId, game) => gameProfile(env, userId, game),
-  recordGame: (env, userId, game, delta, earned) => recordGame(env, userId, game, delta, earned),
+  // #783 · loginId (from resolveDiscord / verifySession) says which login recorded it. A game
+  // Worker that doesn't pass one yet: the account's Discord login (they are Discord Activities),
+  // else its first sign-in.
+  recordGame: async (env, userId, game, delta, earned, loginId) =>
+    recordGame(env, userId, game, delta, earned, await rpcLogin(env, userId, loginId)),
   /** housetandem-web #37 · active seconds in a game (a delta, capped to real time). */
-  recordPlay: (env, userId, game, seconds) => recordPlay(env, userId, game, seconds),
+  recordPlay: async (env, userId, game, seconds, loginId) =>
+    recordPlay(env, userId, game, seconds, Date.now(), await rpcLogin(env, userId, loginId)),
 };
+
+/** The login an RPC write is recorded under (see houseTandemGames.recordGame). */
+async function rpcLogin(env, userId, loginId) {
+  if (Number.isInteger(loginId)) {
+    const row = await env.DB.prepare('SELECT 1 AS x FROM user_logins WHERE login_id = ? AND user_id = ?').bind(loginId, userId).first();
+    if (row) return loginId;
+  }
+  const discord = await env.DB.prepare("SELECT login_id FROM user_logins WHERE user_id = ? AND provider = 'discord' ORDER BY login_id LIMIT 1")
+    .bind(userId).first();
+  return discord ? discord.login_id : firstLogin(env, userId);
+}
+
+// #783 · Tandemonium's tables that carry (account, login): what a combine or a separate
+// updates. The accounts module never names them itself.
+registerAccountTables([
+  { table: 'scores', user: 'user_id', login: 'login_id' },
+  { table: 'score_contributions', user: 'player_user_id', login: 'player_login_id' },
+  { table: 'user_achievements', user: 'user_id', login: 'login_id' },
+  { table: 'daily_results', user: 'user_id', login: 'login_id' },
+  { table: 'daily_results', user: 'partner_user_id', login: 'partner_login_id' },
+  { table: 'ride_seats', user: 'user_id', login: 'login_id' },
+  { table: 'pairs', user: 'user_lo', login: 'login_lo' },
+  { table: 'pairs', user: 'user_hi', login: 'login_hi' },
+  { table: 'friends', user: 'user_id', login: 'login_id' },
+  { table: 'friends', user: 'friend_user_id', login: 'friend_login_id' },
+  { table: 'discord_posts', user: 'user_id', login: 'login_id' },
+  { table: 'sessions', user: 'google_uid', login: 'login_id', text: true },
+  ...GAME_ACCOUNT_TABLES,
+]);
 
 /** What the identity module needs from this worker. */
 const identityDeps = () => ({
-  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, mergePairKey, mergeGuestPairs, mergeGameAccounts,
-  userFromToken, claimsFromRequest,
+  jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, deviceKeys,
+  userFromToken, claimsFromRequest, sessionFromRequest, sessionFromToken,
 });
+
+/** A device id's guest login keys: the guest key, and the raw id (records from before the keys). */
+async function deviceKeys(env, deviceId) {
+  const gk = await guestKey(env.RELAY_SECRET, deviceId);
+  return gk ? [gk, deviceId] : [deviceId];
+}
 
 export default {
   async fetch(request, env) {
@@ -129,7 +173,7 @@ export default {
       }
       // #612 · open another House Tandem site (dice) already signed in.
       if (path === '/auth/handoff' && request.method === 'POST') {
-        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleHandoffCreate(req, e, c, uid, identityDeps()));
+        return withAuth(request, env, corsOrigin, (req, e, c, uid, lid) => handleHandoffCreate(req, e, c, uid, identityDeps(), lid));
       }
       if (path === '/auth/handoff/redeem' && request.method === 'POST') {
         return handleHandoffRedeem(request, env, corsOrigin, identityDeps());
@@ -269,11 +313,11 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const email = payload.email || null;
 
   // #612: Google is a legacy sign-in; its users keep their account.
-  const { userId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
+  const { userId, loginId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
-  // Create server JWT (include email for dashboard access control)
-  const jwt = await createJWT({ sub: userId, name, picture, email, via: 'google:' + googleId }, env.JWT_SECRET);
+  // Create server JWT (include email for dashboard access control). #783: lid = this login.
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
@@ -344,14 +388,14 @@ async function handleSteamAuth(request, env, corsOrigin) {
   }
 
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
-  const { userId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
+  const { userId, loginId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
   // The Steam build signs in just after launch: this ride's analytics session
   // takes the account here, in the same request (no extra request to lose).
-  await attachSessionAccount(env, body.session_id, userId);
+  await attachSessionAccount(env, body.session_id, userId, loginId);
 
-  // via: the sign-in this session came through (an undo that removes it ends the session).
-  const jwt = await createJWT({ sub: userId, name, picture: avatarUrl, via: 'steam:' + steamId }, env.JWT_SECRET);
+  // #783 · lid: the login this session is (its account is whatever that login belongs to).
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
@@ -388,8 +432,9 @@ export function contributionNumbers(s = {}) {
   };
 }
 
-async function submitScore(request, env, corsOrigin, userId) {
+async function submitScore(request, env, corsOrigin, userId, loginId) {
   const body = await request.json();
+  if (loginId == null) loginId = await firstLogin(env, userId);
   const { levelId, distance, timeMs, collectiblesCount, inputSource, contributions, newAchievements,
           difficulty, safetyUsed, scoreMultiplier } = body;
   let { mode } = body;
@@ -423,11 +468,10 @@ async function submitScore(request, env, corsOrigin, userId) {
   if (isLocal && Array.isArray(body.seats)) {
     for (const seat of body.seats.slice(0, 3)) {
       if (!seat || typeof seat.token !== 'string' || !['captain', 'stoker'].includes(seat.role)) continue;
-      let p;
-      try { p = await verifyJWT(seat.token, env.JWT_SECRET); } catch { continue; }
+      const p = await claimsFromToken(seat.token, env);   // #783: the seat's account and login, as they stand now
       const sid = p && p.sub;
       if (!sid || String(sid) === String(userId) || seatRiders.some((r) => String(r.userId) === String(sid))) continue;
-      seatRiders.push({ userId: sid, role: seat.role, newAchievements: Array.isArray(seat.newAchievements) ? seat.newAchievements.slice(0, 100) : [] });
+      seatRiders.push({ userId: sid, loginId: p.lid, role: seat.role, newAchievements: Array.isArray(seat.newAchievements) ? seat.newAchievements.slice(0, 100) : [] });
     }
   }
 
@@ -467,21 +511,27 @@ async function submitScore(request, env, corsOrigin, userId) {
       if (!stats || typeof stats !== 'object' || !CONTRIBUTION_ROLES.includes(role)) { delete contributions[role]; continue; }
       delete stats.guestDeviceId;
       delete stats.guestKey;
-      if (role === own || role === 'solo') stats.userId = userId;
-      else if (partner && partner.role === role) {
-        stats.userId = partner.userId || null;
-        if (partner.guestKey) stats.guestKey = partner.guestKey;
+      stats.userId = null;        // a partner named without proof is not kept
+      stats.loginId = null;
+      stats.pairUser = null;      // the account a pair record is kept with (a guest's small account too)
+      if (role === own || role === 'solo') {
+        stats.userId = stats.pairUser = userId;
+        stats.loginId = loginId;
+      } else if (partner && partner.role === role) {
+        const who = await partnerLogin(env, partner);
+        if (who) { stats.userId = who.guest ? null : who.userId; stats.loginId = who.loginId; stats.pairUser = who.userId; }
       } else if (couchGuest && role === 'captain') {
-        stats.userId = null;
-        stats.guestKey = couchGuest;
-      } else stats.userId = null;   // a partner named without proof is not kept
+        const who = await ensureDeviceLogin(env, couchGuest);
+        stats.loginId = who.loginId;
+        stats.pairUser = who.userId;
+      }
     }
   }
 
-  // Insert score
+  // Insert score (#783: under this login, for this account)
   const scoreRes = await env.DB.prepare(
-    'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-  ).bind(userId, levelId, distance, timeMs, mode || 'solo', f.collectiblesCount, f.inputSource,
+    'INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).bind(userId, loginId, levelId, distance, timeMs, mode || 'solo', f.collectiblesCount, f.inputSource,
          f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
 
   const scoreId = scoreRes.meta.last_row_id;
@@ -494,7 +544,8 @@ async function submitScore(request, env, corsOrigin, userId) {
     for (const [role, stats] of Object.entries(contributions)) {
       if (!stats || typeof stats !== 'object') continue;
       const seat = seatRiders.find((r) => r.role === role);
-      stats.userId = role === 'captain' ? userId : (seat ? seat.userId : null);
+      stats.userId = stats.pairUser = role === 'captain' ? userId : (seat ? seat.userId : null);
+      stats.loginId = role === 'captain' ? loginId : (seat ? seat.loginId : null);
       delete stats.guestDeviceId;
       delete stats.guestKey;
     }
@@ -511,11 +562,11 @@ async function submitScore(request, env, corsOrigin, userId) {
       batchStmts.push(
         env.DB.prepare(
           `INSERT INTO score_contributions
-           (score_id, role, player_user_id, contribution_pct, pedal_taps, pedal_correct, pedal_wrong, pedal_power,
+           (score_id, role, player_user_id, player_login_id, contribution_pct, pedal_taps, pedal_correct, pedal_wrong, pedal_power,
             balance_safe_pct, balance_danger_pct, on_road_pct, center_pct, avg_lateral_offset)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).bind(
-          scoreId, role, stats.userId || null, stats.overallPct || 0,
+          scoreId, role, stats.userId || null, stats.loginId ?? null, stats.overallPct || 0,
           stats.totalTaps || 0, stats.correctTaps || 0, stats.wrongTaps || 0, stats.totalPower || 0,
           stats.safePct || 0, stats.dangerPct || 0, stats.onRoadPct || 0, stats.centerPct || 0,
           stats.avgLateral || 0
@@ -526,11 +577,8 @@ async function submitScore(request, env, corsOrigin, userId) {
 
   if (newAchievements && Array.isArray(newAchievements)) {
     for (const achId of newAchievements) {
-      batchStmts.push(
-        env.DB.prepare(
-          'INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)'
-        ).bind(userId, achId, scoreId)
-      );
+      if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+      batchStmts.push(badgeInsert(env, userId, loginId, achId, scoreId));
     }
   }
 
@@ -542,11 +590,11 @@ async function submitScore(request, env, corsOrigin, userId) {
   for (const seat of seatRiders) {
     try {
       await env.DB.prepare(
-        'INSERT INTO scores (user_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).bind(seat.userId, levelId, distance, timeMs, seat.role, f.collectiblesCount, f.inputSource,
+        'INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).bind(seat.userId, seat.loginId, levelId, distance, timeMs, seat.role, f.collectiblesCount, f.inputSource,
              f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
       const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
-        env.DB.prepare('INSERT OR IGNORE INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, ?, ?)').bind(seat.userId, achId, scoreId));
+        badgeInsert(env, seat.userId, seat.loginId, achId, scoreId));
       if (achStmts.length) await env.DB.batch(achStmts);
     } catch (err) {
       console.error('seat ride failed', err);   // Player 1's ride is saved either way
@@ -558,13 +606,13 @@ async function submitScore(request, env, corsOrigin, userId) {
   // a guest stoker gives an account id and 'guest:<device_id>' (D-9), so the
   // record still accumulates and is migrated if that guest ever signs in.
   if (contributions) {
+    // #783 · a pair is two logins (a guest is a device login), each with its account beside it.
     const riders = [];
     for (const [role, stats] of Object.entries(contributions)) {
       if (role === 'solo') continue;
-      if (stats.userId) riders.push(String(stats.userId));
-      else if (isGuestKey(stats.guestKey)) riders.push('guest:' + stats.guestKey);   // set above, never from the body
+      if (stats.loginId != null && stats.pairUser != null) riders.push({ loginId: stats.loginId, userId: stats.pairUser });   // set above, never from the body
     }
-    if (riders.length === 2) {
+    if (riders.length === 2 && String(riders[0].userId) !== String(riders[1].userId)) {
       try {
         await upsertPairRide(env, riders[0], riders[1], {
           levelId, timeMs, distance, dayKey: body.dailyKey || null
@@ -618,12 +666,16 @@ function pairKey(a, b) {
  * Called from the score submit path when two riders are identifiable.
  */
 async function upsertPairRide(env, a, b, { levelId, timeMs, distance, dayKey }) {
-  if (!a || !b || String(a) === String(b)) return;
-  const [lo, hi] = pairKey(a, b);
+  if (!a || !b || a.loginId == null || b.loginId == null || a.loginId === b.loginId) return;
+  if (String(a.userId) === String(b.userId)) return;   // a pair with yourself is not a pair
+  const [lo, hi] = a.loginId < b.loginId ? [a, b] : [b, a];
 
+  // #783 · the row is these two LOGINS'. The two PEOPLE's record is all their logins' rows
+  // together (pairSummary), which is where the streak carries on from.
   const existing = await env.DB.prepare(
-    'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
-  ).bind(lo, hi).first();
+    'SELECT * FROM pairs WHERE login_lo = ? AND login_hi = ?'
+  ).bind(lo.loginId, hi.loginId).first();
+  const together = pairSummary(await pairRows(env, a.userId, b.userId));
 
   let best = {};
   try { best = existing && existing.best_json ? JSON.parse(existing.best_json) : {}; } catch { best = {}; }
@@ -633,9 +685,9 @@ async function upsertPairRide(env, a, b, { levelId, timeMs, distance, dayKey }) 
 
   // The pair's daily streak counts CONSECUTIVE DAYS here only when the ride was
   // on Today's Road; ordinary rides update everything else and leave it alone.
-  let streak = existing ? existing.daily_streak : 0;
-  let bestStreak = existing ? existing.daily_best_streak : 0;
-  let lastKey = existing ? existing.daily_last_key : null;
+  let streak = together ? together.daily_streak : 0;
+  let bestStreak = together ? together.daily_best_streak : 0;
+  let lastKey = together ? together.daily_last_key : null;
   if (dayKey) {
     if (lastKey === dayKey) {
       // already counted today
@@ -649,10 +701,11 @@ async function upsertPairRide(env, a, b, { levelId, timeMs, distance, dayKey }) 
   }
 
   await env.DB.prepare(
-    `INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride,
+    `INSERT INTO pairs (login_lo, login_hi, user_lo, user_hi, rides, distance, best_json, last_ride,
                         daily_streak, daily_best_streak, daily_last_key)
-     VALUES (?, ?, 1, ?, ?, datetime('now'), ?, ?, ?)
-     ON CONFLICT(user_lo, user_hi) DO UPDATE SET
+     VALUES (?, ?, ?, ?, 1, ?, ?, datetime('now'), ?, ?, ?)
+     ON CONFLICT(login_lo, login_hi) DO UPDATE SET
+       user_lo = excluded.user_lo, user_hi = excluded.user_hi,
        rides = rides + 1,
        distance = distance + excluded.distance,
        best_json = excluded.best_json,
@@ -660,7 +713,73 @@ async function upsertPairRide(env, a, b, { levelId, timeMs, distance, dayKey }) 
        daily_streak = excluded.daily_streak,
        daily_best_streak = excluded.daily_best_streak,
        daily_last_key = excluded.daily_last_key`
-  ).bind(lo, hi, distance || 0, JSON.stringify(best), streak, bestStreak, lastKey).run();
+  ).bind(lo.loginId, hi.loginId, lo.userId, hi.userId, distance || 0, JSON.stringify(best), streak, bestStreak, lastKey).run();
+}
+
+/** Every pair row between two accounts (one per pair of their logins). */
+async function pairRows(env, userA, userB) {
+  if (userA == null || userB == null || String(userA) === String(userB)) return [];
+  const res = await env.DB.prepare(
+    'SELECT * FROM pairs WHERE (user_lo = ? AND user_hi = ?) OR (user_lo = ? AND user_hi = ?)'
+  ).bind(userA, userB, userB, userA).all();
+  return res.results || [];
+}
+
+/**
+ * Two people's record from their logins' rows: rides and distance add, the better time
+ * per level and the later last ride win, the streak is the most recent one. Null for none.
+ */
+export function pairSummary(rows) {
+  if (!rows || !rows.length) return null;
+  const out = { rides: 0, distance: 0, best: {}, last_ride: null, daily_streak: 0, daily_best_streak: 0, daily_last_key: null };
+  for (const r of rows) {
+    out.rides += r.rides || 0;
+    out.distance += r.distance || 0;
+    let best = {};
+    try { best = r.best_json ? JSON.parse(r.best_json) : {}; } catch { best = {}; }
+    for (const [level, ms] of Object.entries(best)) {
+      if (typeof ms === 'number' && (!out.best[level] || ms < out.best[level])) out.best[level] = ms;
+    }
+    if (r.last_ride && (!out.last_ride || r.last_ride > out.last_ride)) out.last_ride = r.last_ride;
+    out.daily_best_streak = Math.max(out.daily_best_streak, r.daily_best_streak || 0);
+    if (r.daily_last_key && (!out.daily_last_key || r.daily_last_key > out.daily_last_key
+        || (r.daily_last_key === out.daily_last_key && (r.daily_streak || 0) > out.daily_streak))) {
+      out.daily_last_key = r.daily_last_key;
+      out.daily_streak = r.daily_streak || 0;
+    }
+  }
+  return out;
+}
+
+/** The account a /pair?with= value names: an account number, or 'guest:<guest key | device id>'. */
+async function pairPartner(env, other) {
+  if (/^[1-9]\d{0,15}$/.test(other)) return Number(other);
+  if (!other.startsWith('guest:')) return null;
+  const key = other.slice(6);
+  const keys = isGuestKey(key) ? [key] : await deviceKeys(env, cleanDeviceId(key) || '');
+  for (const k of keys) {
+    if (!k) continue;
+    // A guest's login keeps its key until that device signs in; then it is "<key>:claimed:<n>".
+    const row = await env.DB.prepare(
+      "SELECT user_id FROM user_logins WHERE provider = 'device' AND (provider_id = ? OR provider_id LIKE ?) ORDER BY login_id DESC LIMIT 1"
+    ).bind(k, k + ':claimed:%').first();
+    if (row) return row.user_id;
+  }
+  return null;
+}
+
+/** The partner a pair proof names, as a login: { userId, loginId, guest } or null. */
+async function partnerLogin(env, partner) {
+  if (partner.guestKey) return { ...(await ensureDeviceLogin(env, partner.guestKey)), guest: true };
+  // The login the relay saw (its account may have changed since); else the account's first sign-in.
+  if (Number.isInteger(partner.loginId)) {
+    const row = await env.DB.prepare('SELECT login_id, user_id FROM user_logins WHERE login_id = ?').bind(partner.loginId).first();
+    if (row) return { userId: row.user_id, loginId: row.login_id, guest: false };
+  }
+  const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(partner.userId).first();
+  if (!user) return null;
+  const loginId = await firstLogin(env, user.id);
+  return loginId == null ? null : { userId: user.id, loginId, guest: false };
 }
 
 function dayGap(a, b) {
@@ -674,42 +793,21 @@ async function handlePair(request, env, corsOrigin, userId) {
   if (!other) return jsonResponse({ error: 'Missing ?with' }, 400, corsOrigin);
 
   // A guest is looked up by their guest key (what the room gave the partner). A couch asks
-  // with this device's own id, which maps to the same key; rows from before the keys still
-  // sit under the raw id.
-  const keys = [other];
-  if (other.startsWith('guest:') && !isGuestKey(other.slice(6))) {
-    const gk = await guestKey(env.RELAY_SECRET, cleanDeviceId(other.slice(6)));
-    if (gk) keys.unshift('guest:' + gk);
-  }
-  let row = null;
-  try {
-    for (const k of keys) {
-      const [lo, hi] = pairKey(userId, k);
-      row = await env.DB.prepare(
-        'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
-      ).bind(lo, hi).first();
-      if (row) break;
-    }
-  } catch (e) {
-    // Migration 0009 (pairs) is applied by hand after the worker deploys;
-    // until then there is simply no history to show.
-    if (!/no such table: pairs/.test(String(e && e.message))) throw e;
-    row = null;
-  }
-
-  if (!row) {
+  // with this device's own id, which maps to the same key. #783: the answer is the two
+  // ACCOUNTS' record, whichever of their logins rode.
+  const partner = await pairPartner(env, other);
+  const sum = partner == null ? null : pairSummary(await pairRows(env, userId, partner));
+  if (!sum) {
     return jsonResponse({ pair: null, rides: 0, distance: 0, best: {}, daily_streak: 0 }, 200, corsOrigin);
   }
-  let best = {};
-  try { best = row.best_json ? JSON.parse(row.best_json) : {}; } catch { best = {}; }
   return jsonResponse({
-    pair: [row.user_lo, row.user_hi],
-    rides: row.rides,
-    distance: row.distance,
-    best,
-    last_ride: row.last_ride,
-    daily_streak: row.daily_streak,
-    daily_best_streak: row.daily_best_streak
+    pair: pairKey(userId, partner),
+    rides: sum.rides,
+    distance: sum.distance,
+    best: sum.best,
+    last_ride: sum.last_ride,
+    daily_streak: sum.daily_streak,
+    daily_best_streak: sum.daily_best_streak
   }, 200, corsOrigin);
 }
 
@@ -720,7 +818,7 @@ async function handlePair(request, env, corsOrigin, userId) {
  * is kept only when the day has no row yet, and never replaces a finish.
  * Responds { success, improved } — improved = this ride is now the day's best.
  */
-async function handleDailySubmit(request, env, corsOrigin, userId) {
+async function handleDailySubmit(request, env, corsOrigin, userId, loginId) {
   const body = await request.json();
   const { dayKey, mode, timeMs, dnf, distance, collectibles, crashes, safetyUsed, syncPct, partnerUserId } = body;
   const warp = body.warp === true;   // #611 · ridden in time warp (ahead of the real date)
@@ -747,31 +845,41 @@ async function handleDailySubmit(request, env, corsOrigin, userId) {
   const d = dailyNumbers({ distance, collectibles, crashes, syncPct, partnerUserId });
   // 2026-11-17 · a partner is kept only with proof: the room's pair proof (online) or
   // the partner's own sign-in (a couch Player 2's seat token).
-  if (d.partnerUserId != null && !(await dailyPartnerProven(env, body, userId, d.partnerUserId))) d.partnerUserId = null;
-  const res = await env.DB.prepare(dailyUpsertSql(!!dnf)).bind(
-    userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
+  const partner = d.partnerUserId != null ? await dailyPartner(env, body, userId, d.partnerUserId) : null;
+  if (loginId == null) loginId = await firstLogin(env, userId);
+  // #783 · the row is this login's (one per login, day and mode). The account's result for
+  // the day is the best of its logins' rows, so "improved" is judged against that.
+  const before = await env.DB.prepare(
+    'SELECT MIN(time_ms) AS best FROM daily_results WHERE user_id = ? AND day_key = ? AND mode = ? AND dnf = 0 AND time_ms IS NOT NULL'
+  ).bind(userId, dayKey, mode).first();
+  await env.DB.prepare(dailyUpsertSql(!!dnf)).bind(
+    loginId, userId, dayKey, mode, dnf ? null : Math.round(timeMs), dnf ? 1 : 0,
     d.distance, d.collectibles, d.crashes, safetyUsed ? 1 : 0,
-    d.syncPct, d.partnerUserId, warp ? 1 : 0
+    d.syncPct, partner ? partner.userId : null, partner ? partner.loginId : null, warp ? 1 : 0
   ).run();
-  const improved = !dnf && !!(res && res.meta && res.meta.changes > 0);
+  const improved = !dnf && (!before || before.best == null || Math.round(timeMs) < before.best);
 
   writeMetric(env, 'daily_submit', mode);
   return jsonResponse({ success: true, improved }, 200, corsOrigin);
 }
 
-/** Does the Daily post prove `partnerId` rode with `userId`? */
-async function dailyPartnerProven(env, body, userId, partnerId) {
+/**
+ * The partner a Daily post may name: `partnerId` only when the post proves they rode
+ * together (the room's pair proof, or a couch Player 2's own sign-in). → { userId, loginId } | null
+ */
+async function dailyPartner(env, body, userId, partnerId) {
   for (const role of ['captain', 'stoker']) {
     const p = await partnerFromProof(env.RELAY_SECRET, body.pairProof, userId, role);
-    if (p && p.userId && String(p.userId) === String(partnerId)) return true;
+    if (p && p.userId && String(p.userId) === String(partnerId)) {
+      const who = await partnerLogin(env, p);
+      if (who && !who.guest) return { userId: who.userId, loginId: who.loginId };
+    }
   }
   if (typeof body.seatToken === 'string' && env.JWT_SECRET) {
-    try {
-      const t = await verifyJWT(body.seatToken, env.JWT_SECRET);
-      if (t && t.sub != null && String(t.sub) === String(partnerId) && String(t.sub) !== String(userId)) return true;
-    } catch { /* not a sign-in of ours */ }
+    const t = await claimsFromToken(body.seatToken, env);
+    if (t && t.sub != null && String(t.sub) === String(partnerId) && String(t.sub) !== String(userId)) return { userId: t.sub, loginId: t.lid };
   }
-  return false;
+  return null;
 }
 
 /**
@@ -792,22 +900,24 @@ export function dailyNumbers({ distance, collectibles, crashes, syncPct, partner
 }
 
 /**
- * #641 · the daily_results write. One row per (user, day, mode) stays the rule
- * (the UNIQUE key); what changed is that a better time UPDATES it. A finish
- * replaces a DNF or a slower finish; a DNF only fills an empty day.
+ * #641 · the daily_results write. One row per (login, day, mode) is the rule
+ * (the UNIQUE key, #783); a better time UPDATES it. A finish replaces a DNF or a
+ * slower finish; a DNF only fills an empty day. The account's result for the day
+ * is the best of its logins' rows (DAILY_BEST).
  */
 export function dailyUpsertSql(dnf) {
   const insert = `INSERT INTO daily_results
-       (user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id, warp)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+       (login_id, user_id, day_key, mode, time_ms, dnf, distance, collectibles, crashes, safety_used, sync_pct, partner_user_id, partner_login_id, warp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
   if (dnf) return insert + `
-       ON CONFLICT(user_id, day_key, mode) DO NOTHING`;
+       ON CONFLICT(login_id, day_key, mode) DO NOTHING`;
   return insert + `
-       ON CONFLICT(user_id, day_key, mode) DO UPDATE SET
+       ON CONFLICT(login_id, day_key, mode) DO UPDATE SET
+         user_id = excluded.user_id,
          time_ms = excluded.time_ms, dnf = 0, distance = excluded.distance,
          collectibles = excluded.collectibles, crashes = excluded.crashes,
          safety_used = excluded.safety_used, sync_pct = excluded.sync_pct,
-         partner_user_id = excluded.partner_user_id, warp = excluded.warp
+         partner_user_id = excluded.partner_user_id, partner_login_id = excluded.partner_login_id, warp = excluded.warp
        WHERE daily_results.dnf = 1 OR daily_results.time_ms IS NULL
           OR excluded.time_ms < daily_results.time_ms`;
 }
@@ -841,7 +951,6 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
     return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
   }
 
-  const me = String(userId);
   const rows = await env.DB.prepare(
     `SELECT d.user_id, d.mode, d.time_ms, d.dnf, d.distance, d.collectibles,
             d.crashes, d.safety_used, d.sync_pct, d.warp, u.display_name, u.avatar_url
@@ -852,16 +961,26 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
          d.user_id = ?
          OR EXISTS (
            SELECT 1 FROM pairs p
-           WHERE (p.user_lo = ? AND p.user_hi = CAST(d.user_id AS TEXT))
-              OR (p.user_hi = ? AND p.user_lo = CAST(d.user_id AS TEXT))
+           WHERE (p.user_lo = ? AND p.user_hi = d.user_id)
+              OR (p.user_hi = ? AND p.user_lo = d.user_id)
          )
        )
      ORDER BY d.dnf ASC, d.time_ms ASC`
-  ).bind(key, userId, me, me).all();
+  ).bind(key, userId, userId, userId).all();
+
+  // #783 · an account with two logins can have two rows for a day and mode: its result is
+  // the better one (the rows come best first).
+  const seen = new Set();
+  const results = (rows.results || []).filter((r) => {
+    const k = r.user_id + ':' + r.mode;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 
   return jsonResponse({
     key,
-    results: rows.results || [],
+    results,
     note: 'You and the people you have ridden with. There is no global daily board.'
   }, 200, corsOrigin);
 }
@@ -871,85 +990,9 @@ function dailyKeyUTC(now = Date.now()) {
   return new Date(now - 9 * 3600 * 1000).toISOString().slice(0, 10);
 }
 
-/**
- * D-9 / #678 · when a guest signs in, the history they built as a guest
- * becomes theirs. Called on sign-in (/auth/steam, /auth/google, and the
- * Discord / Steam-web finish) with the device id the game sent.
- */
-async function mergeGuestPairs(env, deviceId, userId) {
-  if (!deviceId || !userId) return;
-  // Since 2026-11-17 a guest's pairs are keyed by their guest key; older ones by the raw id.
-  const gk = await guestKey(env.RELAY_SECRET, deviceId);
-  if (gk) await mergePairKey(env, 'guest:' + gk, String(userId));
-  return mergePairKey(env, 'guest:' + deviceId, String(userId));
-}
-
-/**
- * Fold every pair row keyed by `fromKey` into `toKey`: a guest who signed in,
- * or (#612) an account merged into another when a sign-in was linked.
- *
- *   - no row for the new pair yet: the guest row moves over as it is;
- *   - a row already there: rides and distance add up, the better time per
- *     level wins, the later last ride wins, the best streak is the larger;
- *   - a row between `fromKey` and `toKey` themselves (this device's guest rode
- *     with the account now signing in on it) would become a pair with
- *     yourself, so it is dropped.
- *
- * Each row's write and the guest row's delete go in one batch (a D1
- * transaction), so a retry after a failure never counts a ride twice, and a
- * second sign-in finds nothing left to move.
- */
-async function mergePairKey(env, fromKey, toKey) {
-  const guestKey = String(fromKey);
-  const real = String(toKey);
-  if (!guestKey || !real || guestKey === real) return;
-
-  const rows = await env.DB.prepare(
-    'SELECT * FROM pairs WHERE user_lo = ? OR user_hi = ?'
-  ).bind(guestKey, guestKey).all();
-
-  for (const row of rows.results || []) {
-    const other = row.user_lo === guestKey ? row.user_hi : row.user_lo;
-    const dropGuestRow = env.DB.prepare(
-      'DELETE FROM pairs WHERE user_lo = ? AND user_hi = ?'
-    ).bind(row.user_lo, row.user_hi);
-    if (other === real) {                               // riding with yourself
-      await dropGuestRow.run();
-      continue;
-    }
-    const [lo, hi] = pairKey(real, other);
-
-    const target = await env.DB.prepare(
-      'SELECT * FROM pairs WHERE user_lo = ? AND user_hi = ?'
-    ).bind(lo, hi).first();
-
-    let write;
-    if (!target) {
-      write = env.DB.prepare(
-        `INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride,
-                            daily_streak, daily_best_streak, daily_last_key)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(lo, hi, row.rides, row.distance, row.best_json, row.last_ride,
-             row.daily_streak, row.daily_best_streak, row.daily_last_key);
-    } else {
-      // Both rows exist: add the rides together and keep the better times.
-      let a = {}, b = {};
-      try { a = target.best_json ? JSON.parse(target.best_json) : {}; } catch {}
-      try { b = row.best_json ? JSON.parse(row.best_json) : {}; } catch {}
-      for (const [level, t] of Object.entries(b)) {
-        if (typeof t === 'number' && t > 0 && (!a[level] || t < a[level])) a[level] = t;
-      }
-      write = env.DB.prepare(
-        `UPDATE pairs SET rides = rides + ?, distance = distance + ?, best_json = ?,
-                          last_ride = NULLIF(MAX(COALESCE(last_ride, ''), COALESCE(?, '')), ''),
-                          daily_best_streak = MAX(COALESCE(daily_best_streak, 0), ?)
-         WHERE user_lo = ? AND user_hi = ?`
-      ).bind(row.rides || 0, row.distance || 0, JSON.stringify(a), row.last_ride,
-             row.daily_best_streak || 0, lo, hi);
-    }
-    await env.DB.batch([write, dropGuestRow]);
-  }
-}
+// (#783 · a guest who signs in: their device login joins the account, with its pair rows
+// (accounts/identity.js claimGuestPairs). Nothing is merged row by row any more: two
+// people's record is read from all their logins' rows, see pairSummary.)
 
 // ============================================================
 // LEADERBOARD
@@ -1003,7 +1046,7 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 
   // Friends scope
   if (scope === 'friends') {
-    conditions.push('(s.user_id = ? OR s.user_id IN (SELECT friend_id FROM friends WHERE user_id = ?))');
+    conditions.push('(s.user_id = ? OR s.user_id IN (SELECT friend_user_id FROM friends WHERE user_id = ?))');
     params.push(authedUserId, authedUserId);
   }
 
@@ -1048,7 +1091,8 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const userPlaceholders = userIds.map(() => '?').join(',');
 
   const achResults = await env.DB.prepare(
-    `SELECT user_id, achievement_id, score_id FROM user_achievements WHERE user_id IN (${userPlaceholders})`
+    `SELECT user_id, achievement_id, MIN(score_id) AS score_id FROM user_achievements
+     WHERE user_id IN (${userPlaceholders}) GROUP BY user_id, achievement_id`
   ).bind(...userIds).all();
 
   const achMap = {};
@@ -1093,9 +1137,7 @@ async function handlePlayerProfile(request, env, url, corsOrigin) {
     .bind(playerId).first();
   if (!user) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
 
-  const achievements = await env.DB.prepare(
-    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
-  ).bind(playerId).all();
+  const achievements = await env.DB.prepare(ACCOUNT_BADGES).bind(playerId).all();
 
   let bestScores, recentScores;
   if (levelFilter) {
@@ -1130,13 +1172,26 @@ async function handlePlayerProfile(request, env, url, corsOrigin) {
 // ME + SYNC
 // ============================================================
 
+/**
+ * #783 · an account's badges: one row per badge, whichever of its logins earned it
+ * (two that both did: the earlier date).
+ */
+const ACCOUNT_BADGES = `SELECT achievement_id, MIN(earned_at) AS earned_at, MIN(score_id) AS score_id
+  FROM user_achievements WHERE user_id = ? GROUP BY achievement_id`;
+
+/** A badge for the account, recorded under this login, unless the account already has it. */
+function badgeInsert(env, userId, loginId, achievementId, scoreId = null) {
+  return env.DB.prepare(
+    `INSERT OR IGNORE INTO user_achievements (user_id, login_id, achievement_id, score_id)
+     SELECT ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM user_achievements WHERE user_id = ? AND achievement_id = ?)`
+  ).bind(userId, loginId, achievementId, scoreId, userId, achievementId);
+}
+
 async function getMe(request, env, corsOrigin, userId) {
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url, created_at FROM users WHERE id = ?')
     .bind(userId).first();
 
-  const achievements = await env.DB.prepare(
-    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
-  ).bind(userId).all();
+  const achievements = await env.DB.prepare(ACCOUNT_BADGES).bind(userId).all();
 
   const bestScores = await env.DB.prepare(
     `SELECT level_id, MIN(time_ms) as best_time, MAX(distance) as max_distance, COUNT(*) as rides
@@ -1153,26 +1208,26 @@ async function getMe(request, env, corsOrigin, userId) {
   }, 200, corsOrigin);
 }
 
-async function syncAchievements(request, env, corsOrigin, userId) {
+async function syncAchievements(request, env, corsOrigin, userId, loginId) {
   const body = await request.json();
   const { achievements } = body;
 
   if (!Array.isArray(achievements)) {
     return jsonResponse({ error: 'Invalid achievements' }, 400, corsOrigin);
   }
+  if (loginId == null) loginId = await firstLogin(env, userId);
 
+  // A device sends everything it holds, most of it the account's already: only what the
+  // account lacks is recorded (under this login).
   let synced = 0;
-  for (const achId of achievements) {
-    const res = await env.DB.prepare(
-      'INSERT OR IGNORE INTO user_achievements (user_id, achievement_id) VALUES (?, ?)'
-    ).bind(userId, achId).run();
+  for (const achId of achievements.slice(0, 500)) {
+    if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+    const res = await badgeInsert(env, userId, loginId, achId).run();
     if (res.meta.changes > 0) synced++;
   }
 
   // Return all server-side achievements
-  const serverAchs = await env.DB.prepare(
-    'SELECT achievement_id, earned_at, score_id FROM user_achievements WHERE user_id = ?'
-  ).bind(userId).all();
+  const serverAchs = await env.DB.prepare(ACCOUNT_BADGES).bind(userId).all();
 
   return jsonResponse({
     synced,
@@ -1184,7 +1239,7 @@ async function syncAchievements(request, env, corsOrigin, userId) {
 // RELAY TOKEN
 // ============================================================
 
-async function issueRelayToken(request, env, corsOrigin, userId) {
+async function issueRelayToken(request, env, corsOrigin, userId, loginId) {
   if (!env.RELAY_SECRET) {
     return jsonResponse({ error: 'Relay auth not configured' }, 503, corsOrigin);
   }
@@ -1197,7 +1252,8 @@ async function issueRelayToken(request, env, corsOrigin, userId) {
   writeMetric(env, 'relay_token', room);
 
   // Short-lived token (5 minutes)
-  const token = await createJWT({ sub: userId, room, role }, env.RELAY_SECRET, 300);
+  // lid: the login in this seat, so the room's pair proof can name it (#783).
+  const token = await createJWT({ sub: userId, lid: loginId ?? null, room, role }, env.RELAY_SECRET, 300);
   return jsonResponse({ token }, 200, corsOrigin);
 }
 
@@ -1369,8 +1425,8 @@ async function checkRateLimit(limiter, key, corsOrigin, env) {
 }
 
 // The per-player limit is applied in limitRequest, like every route's.
-async function submitScoreWithLimit(request, env, corsOrigin, userId) {
-  return submitScore(request, env, corsOrigin, userId);
+async function submitScoreWithLimit(request, env, corsOrigin, userId, loginId) {
+  return submitScore(request, env, corsOrigin, userId, loginId);
 }
 
 // ============================================================
@@ -1461,8 +1517,9 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   // sign-in finishes after launch): attach the account from the verified
   // token. Only to a guest session, so it can't move one between accounts.
   if (typeof body.account_token === 'string' && env.JWT_SECRET) {
-    const acct = parseInt((await userFromToken(body.account_token, env)) ?? '', 10);
-    if (acct > 0) await attachSessionAccount(env, sessionId, acct);
+    const who = await sessionFromToken(body.account_token, env);
+    const acct = parseInt((who && who.userId) ?? '', 10);
+    if (acct > 0) await attachSessionAccount(env, sessionId, acct, who.loginId);
   }
 
   // Always update IP address (captures it even for sessions created before migration)
@@ -1490,13 +1547,16 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
  * COALESCE here never moves a session that already has one. Never fails the
  * caller (a sign-in must not fail over analytics).
  */
-export async function attachSessionAccount(env, sessionId, userId) {
+export async function attachSessionAccount(env, sessionId, userId, loginId = null) {
   const acct = parseInt(userId, 10);
   if (!isValidUUID(sessionId) || !(acct > 0)) return;
   try {
     await env.DB.batch([
       ...ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }]),
-      env.DB.prepare('UPDATE sessions SET google_uid = COALESCE(google_uid, ?) WHERE id = ?').bind(String(acct), sessionId),
+      // #783: with the login it signed in through (kept only when the account is taken here too).
+      env.DB.prepare(
+        'UPDATE sessions SET login_id = CASE WHEN google_uid IS NULL THEN ? ELSE login_id END, google_uid = COALESCE(google_uid, ?) WHERE id = ?'
+      ).bind(Number.isInteger(loginId) ? loginId : null, String(acct), sessionId),
     ]);
   } catch (e) {
     console.error('session account attach failed', e);
@@ -1609,14 +1669,16 @@ export async function saveRideSeats(env, rideId, seats) {
       if (!(seat >= 1 && seat <= 4) || used.has(seat)) continue;
       used.add(seat);
       let userId = null;
+      let loginId = null;
       if (typeof s.account_token === 'string' && env.JWT_SECRET) {
-        const sub = parseInt((await userFromToken(s.account_token, env)) ?? '', 10);
-        if (sub > 0) userId = sub;
+        const who = await sessionFromToken(s.account_token, env);
+        const sub = parseInt((who && who.userId) ?? '', 10);
+        if (sub > 0) { userId = sub; loginId = who.loginId ?? null; }
       }
       rows.push(env.DB.prepare(
-        `INSERT OR IGNORE INTO ride_seats (ride_id, seat, user_id, role, team, input_type, controller)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
-      ).bind(rideId, seat, userId, clip(s.role, 16), clip(s.team, 4), clip(s.input_type, 24), clip(s.controller, 80)));
+        `INSERT OR IGNORE INTO ride_seats (ride_id, seat, user_id, login_id, role, team, input_type, controller)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(rideId, seat, userId, loginId, clip(s.role, 16), clip(s.team, 4), clip(s.input_type, 24), clip(s.controller, 80)));
     }
     if (rows.length) await env.DB.batch(rows);
   } catch (e) {
@@ -1897,7 +1959,7 @@ async function resolveDevExclusions(env, ex) {
   const accounts = new Set(ex.accounts);
   for (const { provider, providerId } of ex.identities) {
     const row = await env.DB.prepare(
-      'SELECT user_id FROM user_identities WHERE provider = ? AND provider_id = ?'
+      'SELECT user_id FROM user_logins WHERE provider = ? AND provider_id = ?'
     ).bind(provider, providerId).first();
     if (row && row.user_id) accounts.add(Number(row.user_id));
   }
@@ -2230,8 +2292,8 @@ async function dashPlayers(env, since, ex) {
   const names = new Map();
   if (accts.length) {
     const ids = await env.DB.prepare(
-      `SELECT user_id, provider, display_name FROM user_identities
-       WHERE user_id IN (${accts.map(() => '?').join(',')}) ORDER BY id`
+      `SELECT user_id, provider, display_name FROM user_logins
+       WHERE user_id IN (${accts.map(() => '?').join(',')}) AND provider != 'device' ORDER BY login_id`
     ).bind(...accts).all();
     for (const r of ids.results || []) {
       if (!names.has(r.user_id)) names.set(r.user_id, []);
@@ -2651,13 +2713,20 @@ function jsonResponse(data, status, corsOrigin) {
   });
 }
 
+/**
+ * A signed-in route. The handler gets the account (userId) and, last, the login the
+ * session is (loginId): every write records both (#783).
+ */
 async function withAuth(request, env, corsOrigin, handler) {
-  const userId = await getUserFromRequest(request, env);
-  if (!userId) return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
-  // #612: a session can outlive its account (deleted, or merged into another).
-  const exists = await env.DB.prepare('SELECT 1 AS ok FROM users WHERE id = ?').bind(userId).first();
-  if (!exists) return jsonResponse({ error: 'Account not found', code: 'account_gone' }, 401, corsOrigin);
-  return handler(request, env, corsOrigin, userId);
+  const auth = request.headers.get('Authorization');
+  if (!auth || !auth.startsWith('Bearer ')) return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
+  let raw;
+  try { raw = await verifyJWT(auth.slice(7), env.JWT_SECRET); } catch { return jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin); }
+  // #612: a session can outlive its account (deleted). One whose login moved to another
+  // account (combined, separated) follows the login.
+  const claims = await resolveSession(env, raw);
+  if (!claims) return jsonResponse({ error: 'Account not found', code: 'account_gone' }, 401, corsOrigin);
+  return handler(request, env, corsOrigin, claims.sub, claims.lid);
 }
 
 /**
@@ -2670,14 +2739,15 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   let body = {};
   try { body = await request.json(); } catch {}
   if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
-  const key = String(userId);
+  const key = userId;
   const counts = {};
   for (const [name, sql, arg] of [
     ['rides', 'SELECT COUNT(*) AS n FROM scores WHERE user_id = ?', userId],
-    ['achievements', 'SELECT COUNT(*) AS n FROM user_achievements WHERE user_id = ?', userId],
-    ['pairs', 'SELECT COUNT(*) AS n FROM pairs WHERE user_lo = ? OR user_hi = ?', key],
+    ['achievements', 'SELECT COUNT(DISTINCT achievement_id) AS n FROM user_achievements WHERE user_id = ?', userId],
+    // the people ridden with (two people's record can be several rows, one per pair of logins)
+    ['pairs', 'SELECT COUNT(DISTINCT CASE WHEN user_lo = ? THEN user_hi ELSE user_lo END) AS n FROM pairs WHERE (user_lo = ? OR user_hi = ?) AND user_lo != user_hi', key],
   ]) {
-    const r = await env.DB.prepare(sql).bind(...(name === 'pairs' ? [arg, arg] : [arg])).first();
+    const r = await env.DB.prepare(sql).bind(...(name === 'pairs' ? [arg, arg, arg] : [arg])).first();
     counts[name] = (r && r.n) || 0;
   }
   const mine = 'SELECT id FROM scores WHERE user_id = ?';
@@ -2685,18 +2755,20 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   await env.DB.batch([
     q(`UPDATE user_achievements SET score_id = NULL WHERE score_id IN (${mine})`, userId),
     q(`DELETE FROM score_contributions WHERE score_id IN (${mine})`, userId),
-    q('UPDATE score_contributions SET player_user_id = NULL WHERE player_user_id = ?', userId),
+    q('UPDATE score_contributions SET player_user_id = NULL, player_login_id = NULL WHERE player_user_id = ?', userId),
     q('DELETE FROM scores WHERE user_id = ?', userId),
     q('DELETE FROM user_achievements WHERE user_id = ?', userId),
     q('DELETE FROM daily_results WHERE user_id = ?', userId),
-    q('UPDATE daily_results SET partner_user_id = NULL WHERE partner_user_id = ?', userId),
-    q('DELETE FROM friends WHERE user_id = ? OR friend_id = ?', userId, userId),
+    q('UPDATE daily_results SET partner_user_id = NULL, partner_login_id = NULL WHERE partner_user_id = ?', userId),
+    q('DELETE FROM friends WHERE user_id = ? OR friend_user_id = ?', userId, userId),
     q('DELETE FROM pairs WHERE user_lo = ? OR user_hi = ?', key, key),
     q('DELETE FROM auth_requests WHERE link_user_id = ?', userId),
     q('DELETE FROM game_achievements WHERE user_id = ?', userId),
     q('DELETE FROM game_stats WHERE user_id = ?', userId),
     q('DELETE FROM game_playtime WHERE user_id = ?', userId),
-    q('DELETE FROM user_identities WHERE user_id = ?', userId),
+    q('DELETE FROM discord_posts WHERE user_id = ?', userId),
+    q('UPDATE ride_seats SET user_id = NULL, login_id = NULL WHERE user_id = ?', userId),
+    q('DELETE FROM user_logins WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
   // #612 · its link / combine notices (migration 0020; absent before it is applied).
@@ -2729,36 +2801,45 @@ async function withDashboardAuth(request, env, corsOrigin, handler) {
   return handler(request, env, corsOrigin, payload.sub);
 }
 
-/** The account id in a session token (or null). */
-async function userFromToken(token, env) {
+/**
+ * #783 · a session token's claims as they stand now: `lid` is the login the session is,
+ * `sub` the account that login belongs to today (see resolveSession). Null when the token
+ * is bad or its account is gone.
+ */
+async function claimsFromToken(token, env) {
   try {
-    return (await verifyJWT(token, env.JWT_SECRET)).sub;
+    return await resolveSession(env, await verifyJWT(token, env.JWT_SECRET));
   } catch {
     return null;
   }
 }
 
-/** The session's claims (sub, iat, via...), or null. */
+/** The account id in a session token (or null). */
+async function userFromToken(token, env) {
+  const c = await claimsFromToken(token, env);
+  return c ? c.sub : null;
+}
+
+/** The session's claims (sub, lid, iat, via...), or null. */
 async function claimsFromRequest(request, env) {
   const auth = request.headers.get('Authorization');
   if (!auth || !auth.startsWith('Bearer ')) return null;
-  try {
-    return await verifyJWT(auth.slice(7), env.JWT_SECRET);
-  } catch {
-    return null;
-  }
+  return claimsFromToken(auth.slice(7), env);
 }
 
 async function getUserFromRequest(request, env) {
-  const auth = request.headers.get('Authorization');
-  if (!auth || !auth.startsWith('Bearer ')) return null;
-  const token = auth.slice(7);
-  try {
-    const payload = await verifyJWT(token, env.JWT_SECRET);
-    return payload.sub;
-  } catch {
-    return null;
-  }
+  const c = await claimsFromRequest(request, env);
+  return c ? c.sub : null;
+}
+
+/** { userId, loginId } for a request / a token, or null. */
+async function sessionFromRequest(request, env) {
+  const c = await claimsFromRequest(request, env);
+  return c ? { userId: c.sub, loginId: c.lid } : null;
+}
+async function sessionFromToken(token, env) {
+  const c = await claimsFromToken(token, env);
+  return c ? { userId: c.sub, loginId: c.lid } : null;
 }
 
 // Simple JWT implementation using Web Crypto

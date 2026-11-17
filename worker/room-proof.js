@@ -68,9 +68,9 @@ export const SEAT_HOLD_MS = 10 * 60 * 1000;
 /** How long a pair proof lets the two riders post their ride. */
 export const PAIR_PROOF_TTL_S = 6 * 3600;
 
-/** A seat as a proof names it: { u: accountId } or { g: guestKey }. */
+/** A seat as a proof names it: { u: accountId, l?: loginId } or { g: guestKey }. */
 function seatOf(s) {
-  if (s && s.u != null && s.u !== '') return { u: String(s.u) };
+  if (s && s.u != null && s.u !== '') return Number.isInteger(s.l) ? { u: String(s.u), l: s.l } : { u: String(s.u) };
   if (s && isGuestKey(s.g)) return { g: s.g };
   return null;
 }
@@ -82,7 +82,8 @@ export async function signPairProof(secret, room, captain, stoker) {
 
 /**
  * The API: from a posted proof, the partner of `userId` riding as `myRole`, or null.
- * → { role, userId } (a signed-in partner) or { role, guestKey } (a guest partner).
+ * → { role, userId, loginId? } (a signed-in partner, with the login in the seat when the
+ *   relay knew it) or { role, guestKey } (a guest partner).
  */
 export async function partnerFromProof(secret, proof, userId, myRole) {
   if (!secret || !proof || typeof proof !== 'string' || proof.length > 2000) return null;
@@ -95,6 +96,6 @@ export async function partnerFromProof(secret, proof, userId, myRole) {
   const role = myRole === 'captain' ? 'stoker' : 'captain';
   const other = seatOf(p[role]);
   if (!other) return null;
-  if (other.u) return other.u === String(userId) ? null : { role, userId: other.u };
+  if (other.u) return other.u === String(userId) ? null : { role, userId: other.u, loginId: other.l ?? null };
   return { role, guestKey: other.g };
 }

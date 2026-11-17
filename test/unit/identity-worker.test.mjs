@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import worker from '../../worker/leaderboard.js';
-import { allowedReturnTo, discordAvatarUrl } from '../../worker/identity.js';
+import { allowedReturnTo, discordAvatarUrl } from '../../worker/accounts/identity.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -46,6 +46,31 @@ function d1(db) {
 }
 
 const allow = { limit: async () => ({ success: true }) };
+
+// #783 · rows carry the login that recorded them and the account they count for.
+/** An account's first login id. */
+const loginOf = (db, userId) => db.prepare('SELECT login_id FROM user_logins WHERE user_id = ? ORDER BY login_id LIMIT 1').get(userId).login_id;
+const badge = (db, userId, id, scoreId = null) => db.prepare('INSERT INTO user_achievements (user_id, login_id, achievement_id, score_id) VALUES (?, ?, ?, ?)').run(userId, loginOf(db, userId), id, scoreId);
+const gameBadge = (db, userId, game, id) => db.prepare('INSERT INTO game_achievements (user_id, login_id, game, achievement_id) VALUES (?, ?, ?, ?)').run(userId, loginOf(db, userId), game, id);
+const ride = (db, userId, mode = 'solo', distance = 10, timeMs = 1000) => db.prepare("INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode) VALUES (?, ?, 'grandma', ?, ?, ?)").run(userId, loginOf(db, userId), distance, timeMs, mode).lastInsertRowid;
+/** The owner of a badge, as accounts (a badge row per login that earned it). */
+/** A guest device's login (provider 'device'), with its small account: made if new. */
+function guestLogin(db, key) {
+  let row = db.prepare("SELECT login_id, user_id FROM user_logins WHERE provider = 'device' AND provider_id = ?").get(key);
+  if (!row) {
+    const userId = db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('account', ?, 'Guest')").run('guest-' + key).lastInsertRowid;
+    db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, 'device', ?, 'Guest')").run(userId, key);
+    row = db.prepare("SELECT login_id, user_id FROM user_logins WHERE provider = 'device' AND provider_id = ?").get(key);
+  }
+  return { userId: row.user_id, loginId: row.login_id };
+}
+/** An account with one Discord login, made straight in the tables. → its id, as a string */
+function account(db, key, name) {
+  const userId = db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('account', ?, ?)").run('test-' + key, name).lastInsertRowid;
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, 'discord', ?, ?)").run(userId, key, name);
+  return String(userId);
+}
+const badgeOwners = (db, id) => db.prepare('SELECT DISTINCT user_id FROM user_achievements WHERE achievement_id = ? ORDER BY user_id').all(id).map((r) => r.user_id);
 function envFor(db) {
   return {
     DB: d1(db), CORS_ORIGIN: 'https://tandemonium.housetandem.com', JWT_SECRET: 'test-secret',
@@ -196,8 +221,8 @@ test('Steam player links a new Discord from the TV: one account, both pictures, 
 /** A Steam TV links a Discord that has its own account: the phone types the code and lands on the Combine page. */
 async function phoneToCombine(env, db) {
   const web = await deviceSignIn(env);   // Pete's Discord account, with a badge here and in Carnival Dozer
-  db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(web.user.id);
-  db.prepare("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (?, 'coins', 'jackpot')").run(web.user.id);
+  badge(db, web.user.id, 'first_ride');
+  gameBadge(db, web.user.id, 'coins', 'jackpot');
   const steam = await steamTicket(env);
   const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
   const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
@@ -302,13 +327,24 @@ test('#612 · the phone must type the TV\'s code: wrong codes are refused, three
   } finally { restore(); }
 });
 
-test('a Steam user created by the old code after the backfill keeps their account', async () => {
-  const db = freshDb();
+test('#783 · an account that had no login row gets one from the migration, and keeps its number', async () => {
+  // (Before logins, a sign-in could exist only as the users row's own provider columns.)
+  const db = new DatabaseSync(':memory:');
+  db.exec('PRAGMA foreign_keys = ON;');
+  db.exec(fs.readFileSync(path.join(ROOT, 'worker/schema.sql'), 'utf8'));
+  const run = (m) => {
+    const text = fs.readFileSync(path.join(ROOT, 'worker/migrations', m), 'utf8').split(/\r?\n/).filter((l) => !l.trim().startsWith('--')).join(String.fromCharCode(10));
+    for (const stmt of text.split(';')) { const q = stmt.trim(); if (!q) continue; try { db.exec(q); } catch (e) { if (!/duplicate column|already exists|no such table/i.test(e.message)) throw e; } }
+  };
+  const all = fs.readdirSync(path.join(ROOT, 'worker/migrations')).filter((m) => m.endsWith('.sql')).sort();
+  for (const m of all.filter((m) => m < '0021')) run(m);
+  db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('steam', '76561190000000001', 'old')").run();
+  const before = db.prepare('SELECT id FROM users').get().id;
+  db.prepare('DELETE FROM user_identities').run();
+  run('0021_logins.sql');
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('steam', '76561190000000001', 'old')").run();
-    const before = db.prepare('SELECT id FROM users').get().id;
     const res = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
     assert.equal(res.user.id, before);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
@@ -341,7 +377,12 @@ test('couch co-op: the ride saves for Player 1 and, by their own sign-in, Player
     assert.deepEqual(ach, [`${p1.user.id}:first_finish`, `${p2.user.id}:first_finish`, `${p2.user.id}:first_pedal`]);
     const pair = db.prepare('SELECT user_lo, user_hi, rides FROM pairs').all();
     assert.equal(pair.length, 1);
-    assert.deepEqual([pair[0].user_lo, pair[0].user_hi].sort(), [String(p1.user.id), String(p2.user.id)].sort());
+    assert.deepEqual([pair[0].user_lo, pair[0].user_hi].sort(), [p1.user.id, p2.user.id].sort());
+    // #783 · each row says which login recorded it
+    const logins = db.prepare('SELECT user_id, login_id FROM scores ORDER BY id').all();
+    assert.deepEqual(logins.map((r) => r.login_id), [loginOf(db, p1.user.id), loginOf(db, p2.user.id)]);
+    assert.deepEqual(db.prepare('SELECT player_login_id FROM score_contributions ORDER BY id').all().map((r) => r.player_login_id).sort(),
+      [loginOf(db, p1.user.id), loginOf(db, p2.user.id)].sort());
     assert.equal(db.prepare('SELECT COUNT(*) n FROM scores WHERE user_id = ?').get(stranger).n, 0);
 
     // A forged seat token (not signed by us) is ignored; Player 1's ride still saves.
@@ -395,9 +436,9 @@ test('existing users keep their sign-in after the migration', () => {
   const db = freshDb();
   db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('google', 'g1', 'Old')").run();
   // Re-running the backfill (as the migration does) picks up rows created before it.
-  db.exec(`INSERT OR IGNORE INTO user_identities (user_id, provider, provider_id, display_name, avatar_url, linked_at)
+  db.exec(`INSERT OR IGNORE INTO user_logins (user_id, provider, provider_id, display_name, avatar_url, linked_at)
            SELECT id, provider, provider_id, display_name, avatar_url, created_at FROM users`);
-  assert.equal(db.prepare("SELECT provider FROM user_identities WHERE provider_id = 'g1'").get().provider, 'google');
+  assert.equal(db.prepare("SELECT provider FROM user_logins WHERE provider_id = 'g1'").get().provider, 'google');
 });
 
 test('helpers: return URLs and default Discord avatars', () => {
@@ -471,18 +512,19 @@ test('#612 · linking Steam on the website: back with a code, finished only by t
   try {
     // The Steam game made its own account and rode on it.
     const game = await steamTicket(env);
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(game.user.id);
-    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 10, 1000, 'solo')").run(game.user.id);
-    db.prepare("INSERT INTO pairs (user_lo, user_hi, rides, distance) VALUES (?, 'guest:abc', 3, 30)").run(String(game.user.id));
+    badge(db, game.user.id, 'first_ride');
+    ride(db, game.user.id);
+    putPair(db, game.user.id, 'guest:abc', { rides: 3, distance: 30 });
     // Pete signs in with Discord on the website and links Steam.
     const web = await deviceSignIn(env);
-    db.prepare("INSERT INTO pairs (user_lo, user_hi, rides, distance) VALUES (?, 'guest:abc', 2, 20)").run(String(web.user.id));
+    putPair(db, web.user.id, 'guest:abc', { rides: 2, distance: 20 });
+    const withGuest = async (token) => (await (await call(env, '/pair?with=guest%3Aabc', { token })).json()).rides;
     const cb = await steamWebSignIn(env, { token: web.token });
     assert.equal(cb.status, 302);
     assert.ok(!cb.headers.get('Location').includes('ht_auth='), 'a link brings back no session');
     const { id, code } = heldLink(cb);
     const secret = cb.begin.secret;
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'nothing linked by the callback itself');
+    assert.equal(db.prepare("SELECT COUNT(DISTINCT user_id) n FROM user_logins WHERE provider != 'device'").get().n, 2, 'nothing linked by the callback itself');
 
     // Another browser (no secret, or someone else's session) can't finish it.
     assert.equal((await complete(env, null, { id, code, secret })).status, 410);
@@ -498,16 +540,17 @@ test('#612 · linking Steam on the website: back with a code, finished only by t
     assert.equal(asked.other.rides, 1);
     assert.equal(asked.other.badges, 1);
     assert.equal(asked.into.name, 'Pete');
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'still two until they say yes');
+    assert.equal(db.prepare("SELECT COUNT(DISTINCT user_id) n FROM user_logins WHERE provider != 'device'").get().n, 2, 'still two until they say yes');
     assert.equal((await complete(env, web.token, { id, code, secret })).status, 410, 'the code is single use');
 
     const done = await (await combine(env, web.token, { id, secret, ok: true })).json();
     assert.equal(done.status, 'combined');
     assert.equal(done.user.id, web.user.id);
     assert.deepEqual(Object.keys(done.user.identities).sort(), ['discord', 'steam']);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+    assert.equal(db.prepare("SELECT COUNT(DISTINCT user_id) n FROM user_logins WHERE provider != 'device'").get().n, 1);
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
-    assert.equal(db.prepare("SELECT rides FROM pairs WHERE user_hi = 'guest:abc'").get().rides, 5, 'the pairs add up');
+    assert.equal(await withGuest(done.token), 5, 'the pairs add up');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM pairs').get().n, 2, 'as two rows still: one per login');
     assert.equal((await combine(env, web.token, { id, secret, ok: true })).status, 410, 'single use');
 
     // The Steam game now lands on the combined account and sees the notice.
@@ -522,11 +565,11 @@ test('#612 · linking Steam on the website: back with a code, finished only by t
     const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: later.token, body: { id: notices[0].id } })).json();
     assert.equal(undo.undone, true);
     assert.equal(undo.signed_out, true, 'the session came in through Steam, which left');
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT COUNT(DISTINCT user_id) n FROM user_logins WHERE provider != 'device'").get().n, 2);
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, game.user.id);
     assert.equal(db.prepare('SELECT user_id FROM scores').get().user_id, game.user.id);
-    assert.deepEqual(db.prepare("SELECT user_lo, rides FROM pairs WHERE user_hi = 'guest:abc' ORDER BY user_lo").all().map((r) => [r.user_lo, r.rides]),
-      [[String(game.user.id), 3], [String(web.user.id), 2]].sort());
+    assert.equal(await withGuest(web.token), 2, 'each account has its own record with the guest again');
+    assert.equal(await withGuest((await steamTicket(env)).token), 3);
     assert.equal((await steamTicket(env)).user.id, game.user.id, 'Steam signs in to its own account again');
     assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: web.token, body: { id: notices[0].id } })).status, 410, 'once');
     assert.equal((await (await call(env, '/me/notices', { token: web.token })).json()).notices.length, 0);
@@ -540,7 +583,7 @@ test('#612 · a link is finished only by the browser that began it, with that ac
   try {
     // Sam has a Steam account with progress and is signed in in their own browser.
     const sam = await steamTicket(env);
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id) VALUES (?, 'first_ride')").run(sam.user.id);
+    badge(db, sam.user.id, 'first_ride');
     // Another account begins a link; Sam finishes the Steam step in Sam's browser.
     const other = await deviceSignIn(env);
     const cb = await steamWebSignIn(env, { token: other.token });
@@ -551,7 +594,7 @@ test('#612 · a link is finished only by the browser that began it, with that ac
     // The tab that began it has the secret but not the code.
     assert.equal((await complete(env, other.token, { id, code: 'x', secret: cb.begin.secret })).status, 410);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
-    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, sam.user.id);
+    assert.equal(db.prepare("SELECT user_id FROM user_logins WHERE provider = 'steam'").get().user_id, sam.user.id);
   } finally { restore(); }
 });
 
@@ -667,24 +710,22 @@ test('deleting an account removes every record on it; the partner keeps their ow
     const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
     await deviceSignIn(env, p1.token);   // Pete links Discord: two sign-ins on one account
     // Sam, the couch partner, has their own account.
-    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
-    const sam = db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id;
+    const sam = Number(account(db, 'sam', 'Sam'));
+    const L1 = loginOf(db, p1.user.id), LS = loginOf(db, sam);
 
     // A couch ride: Pete (P1) and Sam (P2) both credited; plus daily, friends, pairs.
-    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 1200, 200000, 'captain')").run(p1.user.id);
-    const s1 = db.prepare('SELECT id FROM scores WHERE user_id = ?').get(p1.user.id).id;
-    db.prepare("INSERT INTO scores (user_id, level_id, distance, time_ms, mode) VALUES (?, 'grandma', 1200, 200000, 'stoker')").run(sam);
-    const s2 = db.prepare('SELECT id FROM scores WHERE user_id = ?').get(sam).id;
-    for (const s of [s1, s2]) {
-      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id) VALUES (?, 'captain', ?)").run(s, p1.user.id);
-      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id) VALUES (?, 'stoker', ?)").run(s, sam);
+    const s1 = ride(db, p1.user.id, 'captain', 1200, 200000);
+    const s2 = ride(db, sam, 'stoker', 1200, 200000);
+    for (const sc of [s1, s2]) {
+      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id, player_login_id) VALUES (?, 'captain', ?, ?)").run(sc, p1.user.id, L1);
+      db.prepare("INSERT INTO score_contributions (score_id, role, player_user_id, player_login_id) VALUES (?, 'stoker', ?, ?)").run(sc, sam, LS);
     }
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, 'first_finish', ?)").run(p1.user.id, s1);
-    db.prepare("INSERT INTO user_achievements (user_id, achievement_id, score_id) VALUES (?, 'first_finish', ?)").run(sam, s2);
-    db.prepare("INSERT INTO daily_results (user_id, day_key, mode, partner_user_id) VALUES (?, '2026-11-07', 'pair', ?)").run(p1.user.id, sam);
-    db.prepare("INSERT INTO daily_results (user_id, day_key, mode, partner_user_id) VALUES (?, '2026-11-07', 'pair', ?)").run(sam, p1.user.id);
-    db.prepare('INSERT INTO friends (user_id, friend_id) VALUES (?, ?)').run(sam, p1.user.id);
-    db.prepare('INSERT INTO pairs (user_lo, user_hi, rides) VALUES (?, ?, 1)').run(String(Math.min(p1.user.id, sam)), String(Math.max(p1.user.id, sam)));
+    badge(db, p1.user.id, 'first_finish', s1);
+    badge(db, sam, 'first_finish', s2);
+    db.prepare("INSERT INTO daily_results (user_id, login_id, day_key, mode, partner_user_id, partner_login_id) VALUES (?, ?, '2026-11-07', 'pair', ?, ?)").run(p1.user.id, L1, sam, LS);
+    db.prepare("INSERT INTO daily_results (user_id, login_id, day_key, mode, partner_user_id, partner_login_id) VALUES (?, ?, '2026-11-07', 'pair', ?, ?)").run(sam, LS, p1.user.id, L1);
+    db.prepare('INSERT INTO friends (user_id, login_id, friend_user_id, friend_login_id) VALUES (?, ?, ?, ?)').run(sam, LS, p1.user.id, L1);
+    putPair(db, p1.user.id, sam, { rides: 1, distance: 1200 });
 
     // Without the typed confirmation, nothing happens.
     assert.equal((await call(env, '/me/delete', { method: 'POST', body: {}, token: p1.token })).status, 400);
@@ -700,17 +741,18 @@ test('deleting an account removes every record on it; the partner keeps their ow
     const id = p1.user.id;
     const n = (sql, ...a) => db.prepare(sql).get(...a).n;
     assert.equal(n('SELECT COUNT(*) n FROM users WHERE id = ?', id), 0);
-    assert.equal(n('SELECT COUNT(*) n FROM user_identities WHERE user_id = ?', id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM user_logins WHERE user_id = ?', id), 0);
     assert.equal(n('SELECT COUNT(*) n FROM scores WHERE user_id = ?', id), 0);
     assert.equal(n('SELECT COUNT(*) n FROM score_contributions WHERE player_user_id = ?', id), 0);
     assert.equal(n('SELECT COUNT(*) n FROM user_achievements WHERE user_id = ?', id), 0);
     assert.equal(n('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? OR partner_user_id = ?', id, id), 0);
-    assert.equal(n('SELECT COUNT(*) n FROM friends WHERE user_id = ? OR friend_id = ?', id, id), 0);
-    assert.equal(n('SELECT COUNT(*) n FROM pairs WHERE user_lo = ? OR user_hi = ?', String(id), String(id)), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM friends WHERE user_id = ? OR friend_user_id = ?', id, id), 0);
+    assert.equal(n('SELECT COUNT(*) n FROM pairs WHERE user_lo = ? OR user_hi = ?', id, id), 0);
+    assert.equal(out.pairs, 1, 'one person ridden with');
     // Sam keeps their own ride, achievement and daily result, with Pete taken off.
     assert.equal(n('SELECT COUNT(*) n FROM scores WHERE user_id = ?', sam), 1);
     assert.equal(n('SELECT COUNT(*) n FROM user_achievements WHERE user_id = ?', sam), 1);
-    assert.equal(n('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? AND partner_user_id IS NULL', sam), 1);
+    assert.equal(n('SELECT COUNT(*) n FROM daily_results WHERE user_id = ? AND partner_user_id IS NULL AND partner_login_id IS NULL', sam), 1);
     assert.equal(n('SELECT COUNT(*) n FROM score_contributions WHERE score_id = ? AND player_user_id IS NULL', s2), 1);
 
     // The old session is refused with a code the game understands; Steam sign-in starts fresh.
@@ -829,11 +871,11 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     const token = decodeURIComponent(loc.match(/ht_auth=([^&]+)/)[1]);
     return { scope: auth.searchParams.get('scope'), token, loc };
   };
-  const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_identities WHERE provider = 'discord'").get();
+  const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_logins WHERE provider = 'discord'").get();
   try {
     // The Steam game made its own account first, with a ride on it.
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: STEAM_ID, personaName: 'p', ticket: 't' } })).json();
-    const steamUser = db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id;
+    const steamUser = db.prepare("SELECT user_id FROM user_logins WHERE provider = 'steam'").get().user_id;
 
     let r = await signIn(['guilds.join', 'email', 'connections', 'bogus']);
     assert.equal(r.scope, 'identify guilds.join email connections', 'junk scopes are dropped');
@@ -844,7 +886,7 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     assert.ok(!me.user.identities.steam, 'a Steam with its own account is left on it (#612)');
     assert.ok(me.user.identities.discord);
     assert.match(r.loc, /ht_steam=has_account/, 'the page is told, so it can offer Link Steam (and the combine screen)');
-    assert.equal(db.prepare("SELECT user_id FROM user_identities WHERE provider = 'steam'").get().user_id, steamUser);
+    assert.equal(db.prepare("SELECT user_id FROM user_logins WHERE provider = 'steam'").get().user_id, steamUser);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 1, 'the Steam account is still its own');
     assert.ok(steam.token);
 
@@ -872,7 +914,7 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     conns = [{ type: 'steam', id: STEAM_ID, verified: false }];
     const begin = await (await call(env2, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
     await call(env2, `/auth/discord/callback?code=c&state=${begin.id}`);
-    assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_identities WHERE provider = 'steam'").get().n, 0);
+    assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider = 'steam'").get().n, 0);
   } finally { globalThis.fetch = inner; restore(); }
 });
 
@@ -962,12 +1004,20 @@ test('handoff: a signed-in link opens another site signed in, once, within a min
 // ── #678 · a guest's pairs move to the account when that device signs in ──
 
 const STEAM_PETE = { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' };
-const pairRows = (db) => db.prepare('SELECT user_lo, user_hi, rides, distance, best_json, last_ride FROM pairs ORDER BY user_lo, user_hi').all();
+const pairRows = (db) => db.prepare('SELECT login_lo, login_hi, user_lo, user_hi, rides, distance, best_json, last_ride FROM pairs ORDER BY login_lo, login_hi').all();
+/** #783 · one side of a pair: an account id (its first login), or 'guest:<device key>' (a device login). */
+const pairSide = (db, x) => (typeof x === 'string' && x.startsWith('guest:')
+  ? guestLogin(db, x.slice(6)) : { userId: Number(x), loginId: loginOf(db, Number(x)) });
 function putPair(db, a, b, { rides, distance, best = {}, lastRide, bestStreak = 0 }) {
-  const [lo, hi] = String(a) < String(b) ? [String(a), String(b)] : [String(b), String(a)];
-  db.prepare(`INSERT INTO pairs (user_lo, user_hi, rides, distance, best_json, last_ride, daily_streak, daily_best_streak, daily_last_key)
-              VALUES (?, ?, ?, ?, ?, ?, 0, ?, NULL)`).run(lo, hi, rides, distance, JSON.stringify(best), lastRide, bestStreak);
+  const A = pairSide(db, a), B = pairSide(db, b);
+  const [lo, hi] = A.loginId < B.loginId ? [A, B] : [B, A];
+  db.prepare(`INSERT INTO pairs (login_lo, login_hi, user_lo, user_hi, rides, distance, best_json, last_ride, daily_streak, daily_best_streak, daily_last_key)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, NULL)`).run(lo.loginId, hi.loginId, lo.userId, hi.userId, rides, distance, JSON.stringify(best), lastRide ?? null, bestStreak);
 }
+/** Pair rows that still belong to an unclaimed guest device. */
+const guestPairRows = (db) => db.prepare(
+  `SELECT COUNT(*) n FROM pairs p WHERE EXISTS (SELECT 1 FROM user_logins l WHERE l.login_id IN (p.login_lo, p.login_hi)
+     AND l.provider = 'device' AND l.provider_id NOT LIKE '%:claimed:%')`).get().n;
 
 test('#678 guest pair → this device signs in (Steam) → the pair is under the account and readable; a second sign-in adds nothing', async () => {
   const db = freshDb();
@@ -989,7 +1039,7 @@ test('#678 guest pair → this device signs in (Steam) → the pair is under the
     assert.deepEqual(fromPete.best, { grandma: 200000 });
     const fromSam = await (await call(env, '/pair?with=' + pete.user.id, { token: sam.token })).json();
     assert.deepEqual(fromSam, fromPete, 'Sam sees the same record');
-    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_lo LIKE 'guest:%' OR user_hi LIKE 'guest:%'").get().n, 0, 'no guest row left');
+    assert.equal(guestPairRows(db), 0, 'no guest row left');
 
     // Signing in again (the Steam build does on every token refresh) counts nothing twice.
     await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: 'devA' } });
@@ -1009,10 +1059,8 @@ test('#678 collision: rides and distance add, the better time per level and the 
   try {
     const pete = await (await call(env, '/auth/steam', { method: 'POST', body: STEAM_PETE })).json();
     const P = String(pete.user.id);
-    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
-    const S = String(db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id);
-    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'kim', 'Kim')").run();
-    const K = String(db.prepare("SELECT id FROM users WHERE provider_id = 'kim'").get().id);
+    const S = account(db, 'sam', 'Sam');
+    const K = account(db, 'kim', 'Kim');
 
     putPair(db, P, S, { rides: 2, distance: 2400, best: { grandma: 200000, forest: 300000 }, lastRide: '2026-11-01 10:00:00', bestStreak: 3 });
     putPair(db, 'guest:devA', S, { rides: 3, distance: 3000, best: { grandma: 180000, river: 250000 }, lastRide: '2026-11-05 10:00:00', bestStreak: 1 });
@@ -1035,10 +1083,11 @@ test('#678 collision: rides and distance add, the better time per level and the 
     assert.equal(withKim.rides, 1);
     assert.deepEqual(withKim.best, { grandma: 210000 });
 
-    const keys = pairRows(db).map((r) => `${r.user_lo}|${r.user_hi}`).sort();
-    const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-    assert.deepEqual(keys, [key(P, S), key(P, K), key('guest:devB', S)].sort(), 'no self-pair, no devA rows, devB untouched');
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM pairs WHERE user_lo = user_hi').get().n, 0);
+    // #783 · nothing was merged row by row: devA's login joined Pete's account, and the two
+    // people's record is read from all their logins' rows. devB is still a guest.
+    assert.equal(guestPairRows(db), 1, 'devB untouched');
+    assert.equal((await (await call(env, '/pair?with=' + P, { token: pete.token })).json()).rides, 0, 'a pair with yourself is not a pair');
+    assert.equal((await (await call(env, '/me/delete', { method: 'POST', token: pete.token, body: { confirm: 'no' } })).status), 400);
 
     // Again, by Discord redirect this time: nothing moves twice.
     const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devA' } })).json();
@@ -1053,14 +1102,13 @@ test('#678 Discord redirect and Steam on the web claim the device too; a seat si
   const env = envFor(db);
   const { restore } = mockSteamOpenId(true);
   try {
-    db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'sam', 'Sam')").run();
-    const S = String(db.prepare("SELECT id FROM users WHERE provider_id = 'sam'").get().id);
+    const S = account(db, 'sam', 'Sam');
     putPair(db, 'guest:devR', S, { rides: 2, distance: 2000, lastRide: '2026-11-05 10:00:00' });
     putPair(db, 'guest:devW', S, { rides: 6, distance: 6000, lastRide: '2026-11-05 10:00:00' });
 
     // A seat sign-in on devR sends no device id: devR's guest stays put.
     const seat = await deviceSignIn(env);
-    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_hi = 'guest:devR' OR user_lo = 'guest:devR'").get().n, 1);
+    assert.equal(guestPairRows(db), 2, 'devR and devW are still guests');
 
     // Player 1 on devR signs in by redirect.
     const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devR' } })).json();
@@ -1085,7 +1133,7 @@ test('#678 Discord redirect and Steam on the web claim the device too; a seat si
     const steamLoc = (await call(env, returnTo.pathname + returnTo.search)).headers.get('Location');
     const steamToken = decodeURIComponent(steamLoc.split('#ht_auth=')[1]);
     assert.equal((await (await call(env, '/pair?with=' + S, { token: steamToken })).json()).rides, 6);
-    assert.equal(db.prepare("SELECT COUNT(*) n FROM pairs WHERE user_lo LIKE 'guest:%' OR user_hi LIKE 'guest:%'").get().n, 0);
+    assert.equal(guestPairRows(db), 0);
   } finally { restore(); }
 });
 
@@ -1140,7 +1188,7 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
     assert.equal(await hello(d.token), false, "Discord's join notice in #welcome isn't a hello");
     pages = [[{ ...msg(11, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 19 }]];
     assert.equal(await hello(d.token), true, 'a reply is');
-    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
+    db.prepare('UPDATE user_logins SET said_hello_at = NULL').run();
     assert.ok(asked[0].endsWith('/v10/channels/111/messages?limit=100'));
     asked.length = 0;
 
@@ -1150,7 +1198,7 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
     assert.equal(await hello(d.token), true);
     assert.equal(asked.length, 2);
     assert.ok(asked[1].includes('before=201'));
-    assert.ok(db.prepare("SELECT said_hello_at FROM user_identities WHERE provider = 'discord'").get().said_hello_at > 0);
+    assert.ok(db.prepare("SELECT said_hello_at FROM user_logins WHERE provider = 'discord'").get().said_hello_at > 0);
 
     // Remembered: Discord isn't asked again.
     asked.length = 0;
@@ -1159,7 +1207,7 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
     assert.equal(asked.length, 0);
 
     // Paging stops at the join time; a channel the bot can't read is unknown.
-    db.prepare('UPDATE user_identities SET said_hello_at = NULL').run();
+    db.prepare('UPDATE user_logins SET said_hello_at = NULL').run();
     pages = [others(100, 300, '2026-11-01T00:00:00Z'), [msg(101, DISCORD_PETE.id, '2026-10-01T00:00:00Z')]];
     asked.length = 0;
     assert.equal(await hello(d.token), false, 'older than joining: not looked at');
@@ -1170,41 +1218,84 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
 });
 
 // ── #612 · combine records, separate restores ──
-import { mergeAccounts as mergeRecorded, unmergeAccounts } from '../../worker/account-merge.js';
+import { combineAccounts, separateAccount } from '../../worker/accounts/combine.js';
 
-test('separate after combine: Daily rides on the same day, shared badges, friends, other games and time in game all come back', async () => {
+test('#783 · combine then separate: every row goes back to the login that recorded it, rides made in between too', async () => {
   const db = freshDb();
-  const env = envFor(db);
+  const env = { ...envFor(db), SCORE_LIMITER: allow };
   const add = (sql, ...a) => db.prepare(sql).run(...a);
-  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (10, 'discord', 'a', 'Ann')");
-  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (20, 'steam', 'b', 'Bea')");
-  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (30, 'discord', 'c', 'Cat')");
-  add("INSERT INTO user_identities (user_id, provider, provider_id) VALUES (10, 'discord', 'a'), (20, 'steam', 'b'), (30, 'discord', 'c')");
-  add("INSERT INTO user_achievements (user_id, achievement_id) VALUES (10, 'shared'), (20, 'shared'), (20, 'bea_only')");
-  add("INSERT INTO daily_results (user_id, day_key, mode, time_ms) VALUES (10, '2026-11-10', 'solo', 100), (20, '2026-11-10', 'solo', 90), (20, '2026-11-11', 'solo', 80)");
-  add("INSERT INTO daily_results (user_id, day_key, mode, time_ms, partner_user_id) VALUES (30, '2026-11-12', 'pair', 70, 20)");
-  add('INSERT INTO friends (user_id, friend_id) VALUES (20, 30), (10, 30)');
-  add("INSERT INTO game_achievements (user_id, game, achievement_id) VALUES (10, 'dice', 'roll'), (20, 'dice', 'roll'), (20, 'dice', 'six')");
-  add('INSERT INTO game_stats (user_id, game, stats_json) VALUES (?, ?, ?), (?, ?, ?), (?, ?, ?)', 10, 'dice', '{"a":1}', 20, 'dice', '{"b":2}', 20, 'coins', '{"c":3}');
-  add("INSERT INTO game_playtime (user_id, game, seconds, sessions) VALUES (10, 'dice', 100, 1), (20, 'dice', 50, 2), (20, 'coins', 40, 1)");
+  // Ann (10, Discord login 1), Bea (20, Steam login 2), Cat (30, Discord login 3).
+  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (10, 'account', 'a', 'Ann'), (20, 'account', 'b', 'Bea'), (30, 'account', 'c', 'Cat')");
+  add("INSERT INTO user_logins (login_id, user_id, provider, provider_id) VALUES (1, 10, 'discord', 'a'), (2, 20, 'steam', 'b'), (3, 30, 'discord', 'c')");
+  add("INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode) VALUES (10, 1, 'grandma', 10, 1000, 'solo'), (20, 2, 'grandma', 20, 900, 'solo')");
+  add("INSERT INTO score_contributions (score_id, role, player_user_id, player_login_id) VALUES (1, 'solo', 10, 1), (2, 'solo', 20, 2)");
+  add("INSERT INTO user_achievements (user_id, login_id, achievement_id, earned_at) VALUES (10, 1, 'shared', '2026-11-02'), (20, 2, 'shared', '2026-11-01'), (20, 2, 'bea_only', '2026-11-03')");
+  add("INSERT INTO daily_results (user_id, login_id, day_key, mode, time_ms) VALUES (10, 1, '2026-11-10', 'solo', 100000), (20, 2, '2026-11-10', 'solo', 90000), (20, 2, '2026-11-11', 'solo', 80000)");
+  add("INSERT INTO daily_results (user_id, login_id, day_key, mode, time_ms, partner_user_id, partner_login_id) VALUES (30, 3, '2026-11-12', 'pair', 70000, 20, 2)");
+  add('INSERT INTO friends (user_id, login_id, friend_user_id, friend_login_id) VALUES (20, 2, 30, 3), (10, 1, 30, 3)');
+  add('INSERT INTO pairs (login_lo, login_hi, user_lo, user_hi, rides, distance) VALUES (1, 3, 10, 30, 2, 200), (2, 3, 20, 30, 5, 500)');
+  add("INSERT INTO game_achievements (user_id, login_id, game, achievement_id) VALUES (10, 1, 'dice', 'roll'), (20, 2, 'dice', 'roll'), (20, 2, 'dice', 'six')");
+  add('INSERT INTO game_stats (user_id, login_id, game, stats_json, ops_json) VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)',
+    10, 1, 'dice', '{"rolls":4,"best":9}', '{"rolls":"add","best":"max"}', 20, 2, 'dice', '{"rolls":6,"best":7}', '{"rolls":"add","best":"max"}', 20, 2, 'coins', '{"c":3}', '{"c":"add"}');
+  add("INSERT INTO game_playtime (user_id, login_id, game, seconds, sessions) VALUES (10, 1, 'dice', 100, 1), (20, 2, 'dice', 50, 2), (20, 2, 'coins', 40, 1)");
+  add("INSERT INTO sessions (id, started_at, google_uid, login_id) VALUES ('s-ann', '2026-11-01', '10', 1), ('s-bea', '2026-11-01', '20', 2)");
   const snap = () => JSON.stringify({
-    ach: db.prepare('SELECT user_id, achievement_id FROM user_achievements ORDER BY user_id, achievement_id').all(),
-    daily: db.prepare('SELECT id, user_id, day_key, time_ms, partner_user_id FROM daily_results ORDER BY id').all(),
-    friends: db.prepare('SELECT user_id, friend_id FROM friends ORDER BY user_id, friend_id').all(),
-    gach: db.prepare('SELECT user_id, game, achievement_id FROM game_achievements ORDER BY user_id, game, achievement_id').all(),
-    gstats: db.prepare('SELECT user_id, game, stats_json FROM game_stats ORDER BY user_id, game').all(),
-    gtime: db.prepare('SELECT user_id, game, seconds, sessions FROM game_playtime ORDER BY user_id, game').all(),
-    ids: db.prepare('SELECT user_id, provider, provider_id FROM user_identities ORDER BY id').all(),
+    scores: db.prepare('SELECT id, user_id, login_id FROM scores ORDER BY id').all(),
+    contrib: db.prepare('SELECT score_id, player_user_id, player_login_id FROM score_contributions ORDER BY id').all(),
+    ach: db.prepare('SELECT user_id, login_id, achievement_id FROM user_achievements ORDER BY login_id, achievement_id').all(),
+    daily: db.prepare('SELECT id, user_id, login_id, day_key, time_ms, partner_user_id, partner_login_id FROM daily_results ORDER BY id').all(),
+    friends: db.prepare('SELECT user_id, login_id, friend_user_id, friend_login_id FROM friends ORDER BY login_id').all(),
+    pairs: db.prepare('SELECT login_lo, login_hi, user_lo, user_hi, rides FROM pairs ORDER BY login_lo').all(),
+    gach: db.prepare('SELECT user_id, login_id, game, achievement_id FROM game_achievements ORDER BY login_id, game, achievement_id').all(),
+    gstats: db.prepare('SELECT user_id, login_id, game, stats_json FROM game_stats ORDER BY login_id, game').all(),
+    gtime: db.prepare('SELECT user_id, login_id, game, seconds, sessions FROM game_playtime ORDER BY login_id, game').all(),
+    sessions: db.prepare('SELECT id, google_uid, login_id FROM sessions ORDER BY id').all(),
+    logins: db.prepare('SELECT login_id, user_id, provider, provider_id FROM user_logins ORDER BY login_id').all(),
     users: db.prepare('SELECT id, provider, provider_id, display_name FROM users ORDER BY id').all(),
   });
   const before = snap();
-  const { mergeGameAccounts } = await import('../../worker/games.js');
-  const log = JSON.parse(JSON.stringify(await mergeRecorded(env, 20, 10, { mergeGameAccounts })));   // stored as JSON
+
+  // Bea's account folds into Ann's.
+  const moved = JSON.parse(JSON.stringify(await combineAccounts(env, 20, 10)));   // stored as JSON
+  assert.deepEqual(moved.logins, [2]);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = 20').get().n, 0);
-  assert.equal(db.prepare("SELECT time_ms FROM daily_results WHERE user_id = 10 AND day_key = '2026-11-10'").get().time_ms, 100, 'Ann keeps her own Daily on the shared day');
-  assert.equal(db.prepare("SELECT seconds FROM game_playtime WHERE user_id = 10 AND game = 'dice'").get().seconds, 150);
-  await unmergeAccounts(env, log);
-  assert.equal(snap(), before, 'everything is back where it was');
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM scores WHERE user_id = 10').get().n, 2);
+
+  // Read as ONE account: a shared badge once (the earlier date), time added, stats by rule,
+  // the day's better Daily, and one record with Cat from both logins' rides.
+  const { gameProfile } = await import('../../worker/games.js');
+  const dice = await gameProfile(env, 10, 'dice');
+  assert.deepEqual(dice.earned.sort(), ['roll', 'six']);
+  assert.deepEqual(dice.stats, { rolls: 10, best: 9 });
+  assert.equal(dice.playtime.seconds, 150);
+  const annToken = await makeToken({ sub: 10, lid: 1 });
+  const me = await (await call(env, '/me', { token: annToken })).json();
+  assert.deepEqual(me.achievements.map((a) => [a.achievement_id, a.earned_at]).sort(), [['bea_only', '2026-11-03'], ['shared', '2026-11-01']]);
+  const board = await (await call(env, '/daily?key=2026-11-10', { token: annToken })).json();
+  assert.deepEqual(board.results.map((r) => [r.user_id, r.time_ms]), [[10, 90000]], 'the better of the two logins\u2019 times');
+  assert.equal((await (await call(env, '/pair?with=30', { token: annToken })).json()).rides, 7);
+
+  // A session that came in through Bea's Steam login is now Ann's account, and what it
+  // records is recorded under that login.
+  const beaToken = await makeToken({ sub: 20, lid: 2 });
+  assert.equal((await (await call(env, '/me', { token: beaToken })).json()).user.id, 10, 'the session follows its login');
+  freshScoreClock(db);
+  const posted = await call(env, '/score', { method: 'POST', token: beaToken, body: { levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'solo', newAchievements: ['after_combine', 'shared'] } });
+  assert.equal(posted.status, 200, await posted.clone().text());
+  assert.deepEqual({ ...db.prepare('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1').get() }, { user_id: 10, login_id: 2 });
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM user_achievements WHERE achievement_id = 'shared'").get().n, 2, 'a badge the account already has is not recorded again');
+
+  // Separate: Bea is account 20 again, with everything her login recorded, before and after.
+  const back = await separateAccount(env, moved, 10);
+  assert.deepEqual(back, { userId: 20, logins: [2] });
+  assert.deepEqual({ ...db.prepare('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1').get() }, { user_id: 20, login_id: 2 }, 'the ride made in between goes with the login that made it');
+  assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'after_combine'").get().user_id, 20);
+  assert.equal((await (await call(env, '/me', { token: beaToken })).json()).user.id, 20);
+  db.prepare('DELETE FROM score_contributions WHERE score_id = (SELECT MAX(id) FROM scores)').run();
+  db.prepare("DELETE FROM user_achievements WHERE achievement_id = 'after_combine'").run();
+  db.prepare('DELETE FROM scores WHERE id = (SELECT MAX(id) FROM scores)').run();
+  assert.equal(snap(), before, 'everything else is back exactly where it was');
+  assert.equal(await separateAccount(env, moved, 10), null, 'only once');
 });
 
 test('undo a link: the sign-in leaves the account; the session that came in through it ends', async () => {
@@ -1238,10 +1329,10 @@ test('undo a link never removes the last sign-in on an account', async () => {
     const steam = await steamTicket(env);
     await deviceSignIn(env, steam.token);
     const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
-    db.prepare("DELETE FROM user_identities WHERE provider = 'steam'").run();   // only Discord is left
+    db.prepare("DELETE FROM user_logins WHERE provider = 'steam'").run();   // only Discord is left
     const res = await call(env, '/me/notices/undo', { method: 'POST', token: steam.token, body: { id: n.id } });
     assert.equal(res.status, 409);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM user_identities').get().n, 1);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM user_logins').get().n, 1);
   } finally { restore(); }
 });
 
@@ -1275,7 +1366,7 @@ test('the account\'s Discord is told by direct message, with the undo date and t
   };
   try {
     const web = await deviceSignIn(env);   // Discord account
-    const { addLogin } = await import('../../worker/identity.js');
+    const { addLogin } = await import('../../worker/accounts/identity.js');
     await addLogin(env, web.user.id, { provider: 'steam', providerId: '76561190000000009', name: 'petesteam', avatar: null });
     assert.deepEqual(sent[0], ['open', DISCORD_PETE.id, 'Bot bot']);
     assert.match(sent[1][1], /Steam account "petesteam" was added to your House Tandem account "Pete"/);
@@ -1344,8 +1435,11 @@ test('online score with a guest partner: keyed by the guest key from the proof, 
     const proof = await signPairProof('relay-secret', 'TNDM-ABCD', { g: gk }, { u: sam.user.id });
     await call(env, '/score', { method: 'POST', token: sam.token, body: { ...RIDE, mode: 'stoker', pairProof: proof,
       contributions: { captain: { overallPct: 50 }, stoker: { overallPct: 50 } } } });
-    assert.deepEqual(pairRows(db).map((r) => [r.user_lo, r.user_hi].sort()), [[String(sam.user.id), 'guest:' + gk].sort()]);
-    assert.ok(!JSON.stringify(pairRows(db)).includes('device-guest-1'), 'the device id is never stored');
+    const guest = db.prepare("SELECT login_id, user_id FROM user_logins WHERE provider = 'device' AND provider_id = ?").get(gk);
+    assert.ok(guest, 'the guest is a device login, keyed by the guest key');
+    assert.deepEqual(pairRows(db).map((r) => [r.login_lo, r.login_hi].sort()), [[loginOf(db, sam.user.id), guest.login_id].sort()]);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider_id LIKE '%device-guest-1%'").get().n, 0, 'the device id is never stored');
+    assert.equal(db.prepare("SELECT player_login_id FROM score_contributions WHERE role = 'captain' ORDER BY id DESC LIMIT 1").get().player_login_id, guest.login_id);
     assert.equal((await (await call(env, '/pair?with=guest%3A' + gk, { token: sam.token })).json()).rides, 1);
 
     const pete = await (await call(env, '/auth/steam', { method: 'POST', body: { ...STEAM_PETE, device_id: 'device-guest-1' } })).json();

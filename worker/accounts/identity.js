@@ -938,7 +938,7 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
     const others = await env.DB.prepare("SELECT COUNT(*) AS n FROM user_logins WHERE user_id = ? AND login_id != ? AND provider != 'device'")
       .bind(userId, login.login_id).first();
     if (!others || !others.n) {
-      return deps.jsonResponse({ error: 'That is the only sign-in on this account, so it can't be removed. Delete the account instead.' }, 409, corsOrigin);
+      return deps.jsonResponse({ error: "That is the only sign-in on this account, so it can't be removed. Delete the account instead." }, 409, corsOrigin);
     }
     // The sign-in gets an account of its own again, with whatever was recorded under it.
     await splitLogin(env, login.login_id, { name: ev.login_name });
@@ -1227,14 +1227,14 @@ export async function discordMemberStatus(env, userId, fetchImpl = fetch) {
 const HANDOFF_TTL_S = 60;
 
 /** POST /auth/handoff (signed in) → { code, expires_in } */
-export async function handleHandoffCreate(request, env, corsOrigin, userId, deps) {
+export async function handleHandoffCreate(request, env, corsOrigin, userId, deps, loginId = null) {
   const id = randomId(12);
   const secret = randomId(18);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, created_at)
-     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, NULL, 'done', ?)`
-  ).bind(id, await sha256(secret), userId, nowS()).run();
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, created_at)
+     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, ?, NULL, 'done', ?)`
+  ).bind(id, await sha256(secret), userId, loginId ?? null, nowS()).run();
   return deps.jsonResponse({ code: `${id}.${secret}`, expires_in: HANDOFF_TTL_S }, 200, corsOrigin);
 }
 
@@ -1251,7 +1251,8 @@ export async function handleHandoffRedeem(request, env, corsOrigin, deps) {
   if (row.created_at < nowS() - HANDOFF_TTL_S || (await sha256(secret)) !== row.secret_hash) return gone();
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(row.link_user_id).first();
   if (!user) return gone();
-  const token = await deps.createJWT({ sub: user.id, name: user.display_name, picture: user.avatar_url }, env.JWT_SECRET);
+  // The other site is the same login as the one that asked (#783).
+  const { token } = await sessionFor(env, user.id, deps, row.link_login_id ?? null);
   const identities = await listIdentities(env, user.id);
   deps.writeMetric && deps.writeMetric(env, 'auth_handoff');
   return deps.jsonResponse({ token, user: { id: user.id, name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
@@ -1286,4 +1287,22 @@ function page(title, body, status = 200) {
   .acct-stats { font-size: 14px; }
 </style></head><body><main><div class="brand">House Tandem</div><h1>${escapeHtml(title)}</h1>${body}</main></body></html>`;
   return new Response(html, { status, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'X-Frame-Options': 'DENY' } });
+}
+
+/**
+ * #783 · a guest device as a login: provider 'device', its guest key as the id, with a
+ * small account of its own (it joins a real account when that device signs in, see
+ * claimGuestPairs). Made the first time a guest is recorded. → { userId, loginId }
+ */
+export async function ensureDeviceLogin(env, key) {
+  const have = await loginRow(env, 'device', key);
+  if (have) return { userId: have.user_id, loginId: have.login_id };
+  const ins = await env.DB.prepare('INSERT INTO users (provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, NULL)')
+    .bind('account', crypto.randomUUID(), 'Guest').run();
+  const userId = ins.meta && ins.meta.last_row_id;
+  await env.DB.prepare('INSERT OR IGNORE INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, ?, ?, ?)')
+    .bind(userId, 'device', String(key), 'Guest').run();
+  const row = await loginRow(env, 'device', key);
+  if (row && row.user_id !== userId) await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();   // lost a race
+  return { userId: row.user_id, loginId: row.login_id };
 }
