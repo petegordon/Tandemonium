@@ -181,6 +181,7 @@ test('an evicted transport is not re-dialled by a token retry, a pending refusal
 test('two P2P upgrade attempts close together leave one Peer, not a leaked one', async () => {
   const t = transport();
   t.roomCode = 'TNDM-AAAA'; t.role = 'captain';
+  t.p2pKey = 'k1';                                // the room's P2P key (from partner-ready)
   delete t._attemptP2PUpgrade;                    // the real one this time
   const peers = [];
   globalThis.window = { Peer: class { constructor(id) { this.id = id; this.destroyed = false; peers.push(this); } on() {} destroy() { this.destroyed = true; } } };
@@ -257,4 +258,55 @@ test('partner-ready with a name sets partnerName; one without leaves it null', (
   sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'partner-ready', role: 'captain', name: 'Pete' }) });
   assert.equal(t2.partnerName, 'Pete');
   t2._stopHeartbeat();
+});
+
+// 2026-11-17 · rooms belong to their riders.
+test('peer ids carry the room’s P2P key; without one (an older relay) there is no P2P attempt', async () => {
+  const t = transport();
+  t.roomCode = 'TNDM-AAAA'; t.role = 'captain';
+  delete t._attemptP2PUpgrade;
+  const peers = [];
+  let onConnection = null;
+  globalThis.window = { Peer: class { constructor(id) { this.id = id; peers.push(this); } on(ev, fn) { if (ev === 'connection') onConnection = fn; } destroy() {} } };
+  t._fetchIceServers = () => Promise.resolve([]);
+  try {
+    t._attemptP2PUpgrade();
+    await flush();
+    assert.equal(peers.length, 0, 'no key: stay on the relay');
+    t.p2pKey = 'abc123';
+    t._attemptP2PUpgrade();
+    await flush();
+  } finally { delete globalThis.window; }
+  assert.equal(peers[0].id, 'TNDM-AAAA-abc123-captain');
+  // Only the partner's peer id is let in: someone who just knows the room code is refused.
+  let closed = false;
+  onConnection({ peer: 'TNDM-AAAA-captain'.replace('captain', 'stoker'), close() { closed = true; }, on() {} });
+  assert.equal(closed, true, 'a stranger’s connection is closed');
+  assert.notEqual(t.conn && t.conn.peer, 'TNDM-AAAA-stoker');
+});
+
+test('partner-ready keeps the pair proof, P2P key and guest key; "room-full" stops dialling and says so', () => {
+  const t = transport();
+  t.enterRoom('TNDM-AAAA', 'stoker');
+  sockets[0].open();
+  t._handleMessage(JSON.stringify({ type: 'partner-ready', role: 'captain', name: 'Pete', pair: 'p.r.f', p2p: 'k9', partnerGuest: 'h_' + 'a'.repeat(22) }));
+  assert.equal(t.pairProof, 'p.r.f');
+  assert.equal(t.p2pKey, 'k9');
+  assert.equal(t.partnerGuestKey, 'h_' + 'a'.repeat(22));
+  t._stopHeartbeat();   // partner-ready started the (real) heartbeat interval
+
+  const u = transport();
+  let said = null;
+  u.onDisconnected = (r) => { said = r; };
+  u.enterRoom('TNDM-BBBB', 'stoker');
+  sockets.at(-1).open();
+  sockets.at(-1).drop('room-full');
+  runTimers();
+  assert.match(said, /room is full/);
+  assert.equal(u.roomFull, true);
+  const n = sockets.length;
+  u.retryWithToken('t');
+  runTimers();
+  assert.equal(sockets.length, n, 'no re-dial into a full room');
+  u._stopHeartbeat();
 });

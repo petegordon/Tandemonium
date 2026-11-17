@@ -19,3 +19,11 @@ dataset = "tandemonium_relay"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TandemRoom"]
+
+# 2026-11-17 · per IP: room connects and TURN requests. Room codes are 4 characters,
+# so guessing them must be slow; a venue's machines share one IP, hence the headroom.
+[[unsafe.bindings]]
+name = "RELAY_IP_LIMITER"
+type = "ratelimit"
+namespace_id = "1020"
+simple = { limit = 120, period = 60 }
