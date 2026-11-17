@@ -4,7 +4,7 @@
 //
 // Tandemonium keeps its own tables (user_achievements, scores). The other
 // House Tandem games (dice first, then roulette, coins, ...) store here:
-// game_achievements and game_stats, keyed by account and game.
+// game_achievements and game_stats, keyed by login and game, read per account (#783).
 //
 // Games never write over the public API. A game's own Worker reaches these
 // through the HouseTandemGames RPC entrypoint (worker/index.js), bound as a
@@ -142,90 +142,119 @@ const playtimeOut = (r) => (r ? {
   seconds: r.seconds || 0, sessions: r.sessions || 0, firstPlayed: r.first_played || null, lastPlayed: r.last_played || null,
 } : { seconds: 0, sessions: 0, firstPlayed: null, lastPlayed: null });
 
+// #783 · every row here is keyed by the LOGIN that recorded it (login_id) and carries the
+// account it counts for (user_id). An account's numbers are its logins' rows read together:
+// time adds up, a badge shows once, stats combine by each stat's own rule (ops_json).
+
+const PLAY_SUM = `SELECT SUM(seconds) AS seconds, SUM(sessions) AS sessions, MIN(first_played) AS first_played,
+  MAX(last_played) AS last_played, MAX(last_report_ms) AS last_report_ms, COUNT(*) AS n FROM game_playtime WHERE user_id = ? AND game = ?`;
+
 /** An account's time in one game. */
 export async function getPlaytime(env, userId, game) {
   checkGame(game);
-  const r = await env.DB.prepare('SELECT seconds, sessions, first_played, last_played FROM game_playtime WHERE user_id = ? AND game = ?')
-    .bind(userId, game).first();
-  return playtimeOut(r);
+  const r = await env.DB.prepare(PLAY_SUM).bind(userId, game).first();
+  return playtimeOut(r && r.n ? r : null);
 }
 
 /** Add a delta of active seconds (capped). → { seconds, sessions, firstPlayed, lastPlayed, added } */
-export async function recordPlay(env, userId, game, seconds, nowMs = Date.now()) {
+export async function recordPlay(env, userId, game, seconds, nowMs = Date.now(), loginId = null) {
   checkGame(game);
   if (!PLAYTIME_GAMES.includes(game)) throw new Error('bad game');
-  const row = await env.DB.prepare(
-    'SELECT seconds, sessions, first_played, last_played, last_report_ms FROM game_playtime WHERE user_id = ? AND game = ?'
-  ).bind(userId, game).first();
+  // The cap is per account: two logins of one person can't count the same minute twice.
+  const sum = await env.DB.prepare(PLAY_SUM).bind(userId, game).first();
+  const row = sum && sum.n ? sum : null;
   const added = capPlaySeconds(seconds, row ? row.last_report_ms : null, nowMs);
   if (added <= 0) return { ...playtimeOut(row), added: 0 };
-  if (!row) {
-    const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
-    if (!user) throw new Error('account not found');
-  }
+  const login = loginId ?? await defaultLogin(env, userId);
+  if (login == null) throw new Error('account not found');
   const gap = row && Number.isFinite(row.last_report_ms) ? (nowMs - row.last_report_ms) / 1000 : Infinity;
   const newSession = gap > SESSION_GAP_S ? 1 : 0;
   const iso = new Date(nowMs).toISOString();
   await env.DB.prepare(
-    `INSERT INTO game_playtime (user_id, game, seconds, sessions, first_played, last_played, last_report_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id, game) DO UPDATE SET seconds = seconds + excluded.seconds, sessions = sessions + excluded.sessions,
+    `INSERT INTO game_playtime (login_id, user_id, game, seconds, sessions, first_played, last_played, last_report_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(login_id, game) DO UPDATE SET seconds = seconds + excluded.seconds, sessions = sessions + excluded.sessions,
        first_played = COALESCE(first_played, excluded.first_played), last_played = excluded.last_played,
        last_report_ms = excluded.last_report_ms`
-  ).bind(userId, game, added, newSession, iso, iso, nowMs).run();
+  ).bind(login, userId, game, added, newSession, iso, iso, nowMs).run();
   return {
     seconds: ((row && row.seconds) || 0) + added, sessions: ((row && row.sessions) || 0) + newSession,
     firstPlayed: (row && row.first_played) || iso, lastPlayed: iso, added,
   };
 }
 
+/** An account's first real sign-in: where a write goes when the caller names no login. */
+async function defaultLogin(env, userId) {
+  const row = await env.DB.prepare("SELECT login_id FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
+    .bind(userId).first();
+  return row ? row.login_id : null;
+}
+
+const OPS = ['add', 'max', 'or', 'union', 'recent', 'latest', 'maxmap'];
+
+/** Which rule each key of a delta uses: { rides: 'add', bestStreak: 'max' }. */
+export function opsOfDelta(delta) {
+  const out = {};
+  for (const op of OPS) for (const k of Object.keys((delta && delta[op]) || {})) if (KEY_RE.test(k)) out[k] = op;
+  return out;
+}
+
 /**
- * An account merge (identity.js · mergeAccounts): the games' rows move to `to`.
- * Achievements join; time in game adds up; stats keep `to`'s where both have
- * them (a game's merge rules aren't known here) and move `from`'s otherwise.
+ * One account's stats from its logins' rows ([{ stats, ops }], oldest login first): each
+ * stat combines by its own rule. A stat with no known rule (stored before rules were kept)
+ * keeps the first login's value.
  */
-export async function mergeGameAccounts(env, from, to) {
-  const q = (sql, ...args) => env.DB.prepare(sql).bind(...args).run();
-  await q(`INSERT OR IGNORE INTO game_achievements (user_id, game, achievement_id, earned_at)
-           SELECT ?, game, achievement_id, earned_at FROM game_achievements WHERE user_id = ?`, to, from);
-  await q('DELETE FROM game_achievements WHERE user_id = ?', from);
-  await q('UPDATE OR IGNORE game_stats SET user_id = ? WHERE user_id = ?', to, from);
-  await q('DELETE FROM game_stats WHERE user_id = ?', from);
-  await q(`INSERT INTO game_playtime (user_id, game, seconds, sessions, first_played, last_played, last_report_ms)
-           SELECT ?, game, seconds, sessions, first_played, last_played, last_report_ms FROM game_playtime WHERE user_id = ? AND true
-           ON CONFLICT(user_id, game) DO UPDATE SET seconds = seconds + excluded.seconds, sessions = sessions + excluded.sessions,
-             first_played = MIN(COALESCE(first_played, excluded.first_played), COALESCE(excluded.first_played, first_played)),
-             last_played = MAX(COALESCE(last_played, ''), COALESCE(excluded.last_played, '')),
-             last_report_ms = MAX(COALESCE(last_report_ms, 0), COALESCE(excluded.last_report_ms, 0))`, to, from);
-  await q('DELETE FROM game_playtime WHERE user_id = ?', from);
+export function combineStats(rows) {
+  let out = {};
+  const ops = {};
+  for (const r of rows) {
+    const delta = {};
+    for (const [k, v] of Object.entries(r.stats || {})) {
+      const op = (r.ops && r.ops[k]) || ops[k];
+      if (op && OPS.includes(op)) { (delta[op] ||= {})[k] = v; ops[k] = op; }
+      else if (!(k in out)) out[k] = v;
+    }
+    out = mergeStats(out, delta);
+  }
+  return out;
+}
+
+const parse = (s) => { try { return JSON.parse(s || '{}') || {}; } catch { return {}; } };
+
+async function accountStats(env, userId, game) {
+  const rows = (await env.DB.prepare('SELECT stats_json, ops_json FROM game_stats WHERE user_id = ? AND game = ? ORDER BY login_id')
+    .bind(userId, game).all()).results || [];
+  return combineStats(rows.map((r) => ({ stats: parse(r.stats_json), ops: parse(r.ops_json) })));
 }
 
 /** What an account has in one game: earned achievement ids and lifetime stats. */
 export async function gameProfile(env, userId, game) {
   checkGame(game);
-  const rows = await env.DB.prepare('SELECT achievement_id FROM game_achievements WHERE user_id = ? AND game = ?')
+  const rows = await env.DB.prepare('SELECT DISTINCT achievement_id FROM game_achievements WHERE user_id = ? AND game = ?')
     .bind(userId, game).all();
-  const s = await env.DB.prepare('SELECT stats_json FROM game_stats WHERE user_id = ? AND game = ?').bind(userId, game).first();
-  let stats = {};
-  try { stats = JSON.parse((s && s.stats_json) || '{}'); } catch {}
-  return { earned: (rows.results || []).map((r) => r.achievement_id), stats, playtime: await getPlaytime(env, userId, game) };
+  return {
+    earned: (rows.results || []).map((r) => r.achievement_id),
+    stats: await accountStats(env, userId, game), playtime: await getPlaytime(env, userId, game),
+  };
 }
 
-/** Store a game's stats delta and achievements; returns the ones that are new. */
-export async function recordGame(env, userId, game, delta, earned) {
+/** Store a game's stats delta and achievements under `loginId`; returns the ones new to the account. */
+export async function recordGame(env, userId, game, delta, earned, loginId = null) {
   checkGame(game);
   const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
   if (!user) throw new Error('account not found');
+  const login = loginId ?? await defaultLogin(env, userId);
+  if (login == null) throw new Error('account not found');
   if (delta && typeof delta === 'object') {
-    const cur = await env.DB.prepare('SELECT stats_json FROM game_stats WHERE user_id = ? AND game = ?').bind(userId, game).first();
-    let stats = {};
-    try { stats = JSON.parse((cur && cur.stats_json) || '{}'); } catch {}
-    const next = JSON.stringify(mergeStats(stats, delta));
+    const cur = await env.DB.prepare('SELECT stats_json, ops_json FROM game_stats WHERE login_id = ? AND game = ?').bind(login, game).first();
+    const next = JSON.stringify(mergeStats(parse(cur && cur.stats_json), delta));
     if (next.length > MAX_STATS_BYTES) throw new Error('stats too large');
+    const ops = JSON.stringify({ ...parse(cur && cur.ops_json), ...opsOfDelta(delta) });
     await env.DB.prepare(
-      `INSERT INTO game_stats (user_id, game, stats_json, updated_at) VALUES (?, ?, ?, datetime('now'))
-       ON CONFLICT(user_id, game) DO UPDATE SET stats_json = excluded.stats_json, updated_at = excluded.updated_at`
-    ).bind(userId, game, next).run();
+      `INSERT INTO game_stats (login_id, user_id, game, stats_json, ops_json, updated_at) VALUES (?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(login_id, game) DO UPDATE SET stats_json = excluded.stats_json, ops_json = excluded.ops_json,
+         user_id = excluded.user_id, updated_at = excluded.updated_at`
+    ).bind(login, userId, game, next, ops).run();
   }
   const ids = [...new Set((Array.isArray(earned) ? earned : []).filter((a) => typeof a === 'string' && ACH_RE.test(a)))]
     .slice(0, MAX_EARNED_PER_CALL);
@@ -233,11 +262,18 @@ export async function recordGame(env, userId, game, delta, earned) {
   const have = new Set((await gameProfile(env, userId, game)).earned);
   const fresh = ids.filter((a) => !have.has(a));
   for (const a of fresh) {
-    await env.DB.prepare('INSERT OR IGNORE INTO game_achievements (user_id, game, achievement_id) VALUES (?, ?, ?)')
-      .bind(userId, game, a).run();
+    await env.DB.prepare('INSERT OR IGNORE INTO game_achievements (login_id, user_id, game, achievement_id) VALUES (?, ?, ?, ?)')
+      .bind(login, userId, game, a).run();
   }
   return { newlyEarned: fresh };
 }
+
+/** The tables of this module that carry (account, login), for combine and separate. */
+export const GAME_ACCOUNT_TABLES = Object.freeze([
+  { table: 'game_achievements', user: 'user_id', login: 'login_id' },
+  { table: 'game_stats', user: 'user_id', login: 'login_id' },
+  { table: 'game_playtime', user: 'user_id', login: 'login_id' },
+]);
 
 /**
  * GET /me/games → { games: { dice: { earned: [{ id, earnedAt }], stats, playtime } } }
@@ -246,22 +282,25 @@ export async function recordGame(env, userId, game, delta, earned) {
  * { seconds, sessions, firstPlayed, lastPlayed } (zeros when never reported).
  */
 export async function handleMeGames(request, env, corsOrigin, userId, deps) {
+  // A badge two logins both earned shows once, with the earlier date.
   const rows = await env.DB.prepare(
-    'SELECT game, achievement_id, earned_at FROM game_achievements WHERE user_id = ? ORDER BY earned_at'
+    'SELECT game, achievement_id, MIN(earned_at) AS earned_at FROM game_achievements WHERE user_id = ? GROUP BY game, achievement_id ORDER BY earned_at'
   ).bind(userId).all();
   const tand = await env.DB.prepare(
-    'SELECT achievement_id, earned_at FROM user_achievements WHERE user_id = ? ORDER BY earned_at'
+    'SELECT achievement_id, MIN(earned_at) AS earned_at FROM user_achievements WHERE user_id = ? GROUP BY achievement_id ORDER BY earned_at'
   ).bind(userId).all();
-  const stats = await env.DB.prepare('SELECT game, stats_json FROM game_stats WHERE user_id = ?').bind(userId).all();
-  const play = await env.DB.prepare('SELECT game, seconds, sessions, first_played, last_played FROM game_playtime WHERE user_id = ?')
-    .bind(userId).all();
+  const stats = await env.DB.prepare('SELECT game, stats_json, ops_json FROM game_stats WHERE user_id = ? ORDER BY login_id').bind(userId).all();
+  const play = await env.DB.prepare(
+    `SELECT game, SUM(seconds) AS seconds, SUM(sessions) AS sessions, MIN(first_played) AS first_played, MAX(last_played) AS last_played
+     FROM game_playtime WHERE user_id = ? GROUP BY game`
+  ).bind(userId).all();
   const games = {};
   const of = (g) => (games[g] ||= { earned: [], stats: {}, playtime: playtimeOut(null) });
   for (const r of rows.results || []) of(r.game).earned.push({ id: r.achievement_id, earnedAt: r.earned_at });
   for (const r of tand.results || []) of(TANDEMONIUM).earned.push({ id: r.achievement_id, earnedAt: r.earned_at });
-  for (const r of stats.results || []) {
-    try { of(r.game).stats = JSON.parse(r.stats_json || '{}'); } catch {}
-  }
+  const byGame = {};
+  for (const r of stats.results || []) (byGame[r.game] ||= []).push({ stats: parse(r.stats_json), ops: parse(r.ops_json) });
+  for (const [g, list] of Object.entries(byGame)) of(g).stats = combineStats(list);
   for (const r of play.results || []) of(r.game).playtime = playtimeOut(r);
   of(TANDEMONIUM).steamPlayed = await steamPlayed(env, userId);
   return deps.jsonResponse({ games }, 200, corsOrigin);
@@ -303,15 +342,15 @@ export async function handleGameSync(request, env, corsOrigin, game, deps) {
     body = text ? JSON.parse(text) : {};
   } catch { return deps.jsonResponse({ error: 'Invalid body' }, 400, corsOrigin); }
   if (!body || typeof body !== 'object') body = {};
-  let userId = await deps.getUserFromRequest(request, env);
-  if (!userId && typeof body.token === 'string' && body.token.length < 4096) userId = await deps.userFromToken(body.token, env);
-  if (!userId) return deps.jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
-  const user = await env.DB.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
-  if (!user) return deps.jsonResponse({ error: 'Account not found' }, 401, corsOrigin);
+  // #783 · the session's account and login (the login is who the write is recorded under).
+  let who = await deps.sessionFromRequest(request, env);
+  if (!who && typeof body.token === 'string' && body.token.length < 4096) who = await deps.sessionFromToken(body.token, env);
+  if (!who) return deps.jsonResponse({ error: 'Unauthorized' }, 401, corsOrigin);
+  const { userId, loginId } = who;
 
   const out = { game };
   if (body.seconds !== undefined) {
-    const p = await recordPlay(env, userId, game, Number(body.seconds));
+    const p = await recordPlay(env, userId, game, Number(body.seconds), Date.now(), loginId);
     out.playtime = p;
   } else {
     out.playtime = await getPlaytime(env, userId, game);
@@ -319,7 +358,7 @@ export async function handleGameSync(request, env, corsOrigin, game, deps) {
   if (game === TANDEMONIUM) {
     const delta = body.delta !== undefined ? cleanClientDelta(body.delta) : null;
     if (body.delta !== undefined && !delta) return deps.jsonResponse({ error: 'Invalid delta' }, 400, corsOrigin);
-    if (delta && Object.keys(delta).length) await recordGame(env, userId, game, delta, []);
+    if (delta && Object.keys(delta).length) await recordGame(env, userId, game, delta, [], loginId);
     out.stats = (await gameProfile(env, userId, game)).stats;
   }
   return deps.jsonResponse(out, 200, corsOrigin);

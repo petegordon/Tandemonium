@@ -64,7 +64,7 @@ function seeded() {
   add('player-b', null, null);
   add('player-c', '12.0', '2.2.2.2');
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (38, 'discord', 'd-pete', 'petegordon')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id) VALUES (38, 'discord', 'd-pete'), (38, 'steam', '7656-pete')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id) VALUES (38, 'discord', 'd-pete'), (38, 'steam', '7656-pete')").run();
   return db;
 }
 
@@ -132,10 +132,16 @@ async function putSession(db, id, body) {
   assert.equal(res.status, 200);
 }
 const SID2 = '22222222-3333-4444-8555-666666666666';
+/** #783 · an account with one login (a session token is a login of an account). */
+function acct(db, id, provider = 'steam') {
+  db.prepare("INSERT OR IGNORE INTO users (id, provider, provider_id, display_name) VALUES (?, 'account', ?, ?)").run(id, 'acct-' + id, 'acct' + id);
+  db.prepare('INSERT OR IGNORE INTO user_logins (user_id, provider, provider_id, display_name) VALUES (?, ?, ?, ?)').run(id, provider, 'login-' + id, 'acct' + id);
+}
 
 test('a sign-in after launch attaches the account to the guest session, once', async () => {
   const db = seeded();
   db.prepare('INSERT INTO sessions (id, started_at, platform) VALUES (?, ?, ?)').run(SID2, new Date().toISOString(), 'steam');
+  acct(db, 42); acct(db, 7);
   await putSession(db, SID2, { account_token: 'not-a-token' });
   assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID2).google_uid, null, 'a bad token attaches nothing');
   await putSession(db, SID2, { account_token: await token({ sub: 42 }) });
@@ -149,7 +155,7 @@ test('players: signed-in accounts by sign-in name, guests only if they rode, dev
   const now = Date.now();
   const iso = (m) => new Date(now + m * 60000).toISOString();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (28, 'steam', 's-wolf', 'wolfg4m3r')").run();
   db.prepare('UPDATE sessions SET started_at = ? ').run(iso(-60));
   db.prepare("INSERT INTO sessions (id, started_at, google_uid, platform) VALUES ('wolf-1', ?, '28.0', 'steam')").run(iso(-50));
   db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed)
@@ -169,6 +175,7 @@ test('players: signed-in accounts by sign-in name, guests only if they rode, dev
 test('the sign-in update can beat the create: the row is made, and the create keeps the account', async () => {
   const db = seeded();
   const SID3 = '33333333-4444-4555-8666-777777777777';
+  acct(db, 28);
   await putSession(db, SID3, { account_token: await token({ sub: 28 }) });
   assert.equal(db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(SID3).google_uid, '28');
   const res = await worker.fetch(new Request('https://api.test/api/analytics/session', {
@@ -181,9 +188,9 @@ test('the sign-in update can beat the create: the row is made, and the create ke
 });
 
 test('merging accounts moves the analytics sessions too', async () => {
-  const { mergeAccounts } = await import('../../worker/identity.js');
+  const { combineAccounts: mergeAccounts } = await import('../../worker/accounts/combine.js');
   const db = seeded();
-  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (26, 'steam', 's-old', 'pete')").run();
+  acct(db, 26);
   db.prepare("INSERT INTO sessions (id, started_at, google_uid) VALUES ('old-steam', ?, '26.0')").run(new Date().toISOString());
   await mergeAccounts({ DB: d1(db) }, 26, 38);
   assert.equal(db.prepare("SELECT google_uid FROM sessions WHERE id = 'old-steam'").get().google_uid, '38');
@@ -201,6 +208,7 @@ const RIDE = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 test('a ride records every seat; accounts only from each seat\'s own token', async () => {
   const db = seeded();
   db.prepare("INSERT INTO sessions (id, started_at) VALUES (?, ?)").run(SID2, new Date().toISOString());
+  acct(db, 12);
   await postRide(db, {
     id: RIDE, session_id: SID2, level: 'grandma', role: 'versus', input_method: 'gamepad_stick', started_at: new Date().toISOString(),
     seats: [
@@ -223,7 +231,7 @@ test('a ride records every seat; accounts only from each seat\'s own token', asy
 test('players: couch seat time counts for the seat\'s account, even on the developer\'s machine', async () => {
   const db = seeded();
   db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
-  db.prepare("INSERT INTO user_identities (user_id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
+  db.prepare("INSERT INTO user_logins (user_id, provider, provider_id, display_name) VALUES (50, 'discord', 'd-sam', 'sam')").run();
   const start = new Date(Date.now() - 30 * 60000).toISOString();
   // Pete's session (account 1), Sam rides as Player 2 for 12 minutes and finishes.
   db.prepare(`INSERT INTO rides (id, session_id, level, input_method, started_at, ended_at, completed, duration_ms)
@@ -240,9 +248,9 @@ test('players: couch seat time counts for the seat\'s account, even on the devel
 });
 
 test('merging accounts moves couch seats too', async () => {
-  const { mergeAccounts } = await import('../../worker/identity.js');
+  const { combineAccounts: mergeAccounts } = await import('../../worker/accounts/combine.js');
   const db = seeded();
-  db.prepare("INSERT INTO users (id, provider, provider_id, display_name) VALUES (51, 'steam', 's-x', 'x')").run();
+  acct(db, 51);
   db.prepare("INSERT INTO rides (id, session_id, level, input_method, started_at) VALUES (?, 'player-a', 'grandma', 'k', ?)").run(RIDE, new Date().toISOString());
   db.prepare("INSERT INTO ride_seats (ride_id, seat, user_id) VALUES (?, 2, 51)").run(RIDE);
   await mergeAccounts({ DB: d1(db) }, 51, 38);

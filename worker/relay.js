@@ -138,6 +138,7 @@ export class TandemRoom {
 
         // A relay token, when sent, must be genuine and for this room and seat.
         let sub = null;
+        let lid = null;
         const token = url.searchParams.get('token');
         if (token && this.env.RELAY_SECRET) {
             let payload;
@@ -148,6 +149,7 @@ export class TandemRoom {
                 return new Response('Token mismatch', { status: 403 });
             }
             sub = payload.sub != null ? String(payload.sub) : null;
+            lid = Number.isInteger(payload.lid) ? payload.lid : null;   // #783: the login in this seat
         }
         const device = cleanDevice(url.searchParams.get('device'));
         const gk = !sub && device && this.env.RELAY_SECRET ? await guestKey(this.env.RELAY_SECRET, device) : null;
@@ -177,6 +179,7 @@ export class TandemRoom {
         const newHolder = decision === 'free';
         seats[role] = {
             sub: sub || (newHolder ? null : prev.sub || null),
+            lid: sub ? lid : (newHolder ? null : prev.lid ?? null),
             device: device || (newHolder ? null : prev.device || null),
             gk: sub ? null : (gk || (newHolder ? null : prev.gk || null)),
             releasedAt: null,
@@ -212,7 +215,7 @@ export class TandemRoom {
             const cap = seats.captain || {};
             const sto = seats.stoker || {};
             const proof = this.env.RELAY_SECRET
-                ? await signPairProof(this.env.RELAY_SECRET, room, { u: cap.sub, g: cap.gk }, { u: sto.sub, g: sto.gk })
+                ? await signPairProof(this.env.RELAY_SECRET, room, { u: cap.sub, l: cap.lid, g: cap.gk }, { u: sto.sub, l: sto.lid, g: sto.gk })
                 : null;
             const extra = (r) => ({ pair: proof, p2p: seats.p2p, partnerGuest: (r === 'captain' ? cap : sto).gk || null });
             // Tell the new joiner their partner is here

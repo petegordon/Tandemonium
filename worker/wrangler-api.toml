@@ -65,3 +65,32 @@ namespace_id = "1008"
 simple = { limit = 6, period = 60 }
 # DISCORD_SHARE_WEBHOOK (the House Tandem server's #daily-ride webhook URL) is a
 # secret: wrangler secret put DISCORD_SHARE_WEBHOOK --config wrangler-api.toml
+
+# ── Staging (#783) ──────────────────────────────────────────────────────────
+# A second API on its own database, for rehearsing migrations on a copy of production
+# and for trying changes before they reach players:
+#   npx wrangler deploy --config wrangler-api.toml --env staging
+#   npx wrangler d1 execute tandemonium-leaderboard-staging --remote --file migrations/<file>.sql
+# It has its own secrets (wrangler secret put <NAME> --config wrangler-api.toml --env staging):
+# JWT_SECRET and RELAY_SECRET are different from production's, so a staging session is
+# never a production one. No Discord / Steam secrets are set: sign-in there is by test token.
+[env.staging]
+name = "tandemonium-api-staging"
+workers_dev = true
+routes = []
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "tandemonium-leaderboard-staging"
+database_id = "932bee20-d2c6-4161-b98b-950baf609bf0"
+
+[env.staging.vars]
+CORS_ORIGIN = "https://tandemonium.housetandem.com,http://localhost:8080,http://127.0.0.1:8080"
+DISCORD_CLIENT_ID = ""
+DISCORD_GUILD_ID = ""
+DISCORD_INVITE_URL = "https://housetandem.com/discord"
+DISCORD_HELLO_CHANNEL_IDS = ""
+
+[[env.staging.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "tandemonium_api_staging"
