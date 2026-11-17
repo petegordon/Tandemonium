@@ -56,6 +56,8 @@
     "smoke:share-card": "node scripts/smoke-share-card.mjs",
     "sync-ui": "node scripts/sync-ui.js",
     "check:ui": "node scripts/check-ui.js",
+    "sync-identity": "node scripts/sync-identity.js",
+    "check:identity": "node scripts/sync-identity.js --check",
     "docs:screen-flow": "node scripts/gen-screen-flow.mjs",
     "typecheck": "tsc -p jsconfig.json",
     "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs",

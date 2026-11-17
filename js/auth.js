@@ -7,6 +7,12 @@
 // Google is no longer offered (2026-11-06); a stored Google session keeps
 // working until it expires.
 //
+// #783 · the session and the sign-in flows are @usersfirst/identity's
+// IdentityClient (shared/identity/, vendored from the controller lab: the same
+// client every House Tandem game and housetandem.com use). This file is what
+// is Tandemonium's own: where the session is stored, the Steam ticket, the
+// shape the lobby expects of `user`, and the game's API calls.
+//
 // Discord sign-in:
 //   - same device (a browser with a mouse or touch): a full-page redirect to
 //     Discord and back; the session comes back in the URL fragment.
@@ -20,10 +26,11 @@
 
 import { API_BASE } from './config.js';
 import { getDeviceId, getSessionId, attachAccount } from './analytics.js';
+import { IdentityClient, takeRedirect, loginPictures } from '../shared/identity/client.js';
 
 /**
  * #678 · this device's id, sent with Player 1's sign-in so the rides it
- * logged as 'guest:<device id>' move to the account. Seat sign-ins
+ * logged as a guest move to the account. Seat sign-ins
  * (js/seat-accounts.js) never send it: that guest is Player 1, not them.
  */
 function deviceIdForSignIn() {
@@ -37,64 +44,72 @@ function sessionIdForSignIn() {
 
 const STORAGE_USER = 'tandemonium_auth_user';
 const STORAGE_TOKEN = 'tandemonium_auth_token';
-const POLL_MS = 2000;
 
 /** Pull `#ht_auth=<jwt>` off the URL (a Discord redirect coming back). */
 export function takeRedirectToken(loc = globalThis.location, hist = globalThis.history) {
-  if (!loc || !loc.hash || !loc.hash.includes('ht_auth=')) return null;
-  const params = new URLSearchParams(loc.hash.slice(1));
-  const token = params.get('ht_auth');
-  params.delete('ht_auth');
-  const rest = params.toString();
-  try { hist.replaceState(null, '', loc.pathname + loc.search + (rest ? '#' + rest : '')); } catch (e) {}
-  return token || null;
+  const back = takeRedirect(loc, hist);
+  return (back && back.token) || null;
 }
 
 /** The sign-ins to picture, left to right: Discord, then Steam (then anything else). */
-export function identityPictures(user) {
-  if (!user) return [];
-  const ids = user.identities || {};
-  const out = [];
-  for (const p of ['discord', 'steam']) {
-    if (ids[p] && ids[p].avatar) out.push({ provider: p, avatar: ids[p].avatar, name: ids[p].name });
-  }
-  if (!out.length && user.avatar) out.push({ provider: user.provider || 'account', avatar: user.avatar, name: user.name });
-  return out;
-}
+export const identityPictures = loginPictures;
 
-function decodeJwt(token) {
-  try {
-    return JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-  } catch { return null; }
+/**
+ * A server user as the lobby keeps it. Only a link or a fresh sign-in for the same player
+ * (`prev`) carries anything over; a new sign-in starts clean, so one player's id never
+ * sticks to the next. `id` is the Steam id in the Steam build (tuning and saves are keyed
+ * by it); `serverId` is always the House Tandem account.
+ */
+function shapeUser(serverUser, extra, prev) {
+  const p = prev || {};
+  const { displayName, ...rest } = extra;
+  const user = {
+    ...rest,
+    id: rest.id || p.id || (serverUser && serverUser.id),
+    name: displayName || (serverUser && serverUser.name) || p.name || 'Player',
+    avatar: (serverUser && serverUser.avatar) || p.avatar || null,
+    serverId: serverUser && serverUser.id,
+    identities: (serverUser && serverUser.identities) || p.identities || {},
+  };
+  if (rest.provider) user.provider = rest.provider;
+  else if (p.provider) user.provider = p.provider;
+  return user;
 }
 
 export class AuthManager {
   constructor() {
-    this.user = null;
-    this.token = null;
     this.lastAuthError = null;
     this._onLoginCallback = null;
-    this._device = null;   // the device-code sign-in in progress
-    this._load();
+    this.identity = new IdentityClient({
+      apiBase: API_BASE,
+      keys: { user: STORAGE_USER, token: STORAGE_TOKEN },
+      deviceId: deviceIdForSignIn,
+      sessionId: sessionIdForSignIn,
+      shapeUser,
+      // A link needs a sign-in from the last few minutes (#612): the Steam build gets one
+      // by signing in again with Steam, without asking the player.
+      reauth: async () => {
+        const steam = typeof window !== 'undefined' && window.steam;
+        return !!(steam && (await steam.isAvailable()) && (await this.loginWithSteam({ quiet: true })));
+      },
+    });
+    this.identity.onChange((user, reason) => {
+      if (!user || reason === 'signout' || reason === 'refresh' || reason === 'gone') return;
+      this.lastAuthError = null;
+      try { attachAccount(this.identity.token); } catch (e) { /* analytics only */ }
+    });
   }
 
-  _load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_USER);
-      if (raw) this.user = JSON.parse(raw);
-      this.token = localStorage.getItem(STORAGE_TOKEN) || null;
-    } catch (e) {}
-  }
-
-  _save() {
-    try {
-      if (this.user) localStorage.setItem(STORAGE_USER, JSON.stringify(this.user));
-      if (this.token) localStorage.setItem(STORAGE_TOKEN, this.token);
-    } catch (e) {}
-  }
+  // The session lives in the client. (Smokes and the lobby read and set these directly.)
+  get user() { return this.identity.user; }
+  set user(v) { this.identity.user = v; }
+  get token() { return this.identity.token; }
+  set token(v) { this.identity.token = v; }
+  /** The device-code sign-in in progress (the P1 seat panel shows its QR again). */
+  get _device() { return this.identity._device; }
 
   isLoggedIn() {
-    return !!(this.user && this.token);
+    return this.identity.isSignedIn();
   }
 
   getUser() {
@@ -109,7 +124,7 @@ export class AuthManager {
 
   /** Is this sign-in linked to the account? ('discord' | 'steam' | 'google') */
   hasIdentity(provider) {
-    return !!(this.user && this.user.identities && this.user.identities[provider]);
+    return this.identity.hasLogin(provider);
   }
 
   onLogin(callback) {
@@ -117,94 +132,25 @@ export class AuthManager {
   }
 
   /**
-   * Take a server answer ({ token, user }) as the signed-in state. Only a link
-   * (`extra.keep`) carries anything over from the previous user; a fresh
-   * sign-in starts clean, so one player's id never sticks to the next.
-   */
-  _applySession(token, serverUser, extra = {}) {
-    this.token = token;
-    const prev = (extra.keep && this.user) || {};
-    delete extra.keep;
-    this.user = {
-      ...extra,
-      id: extra.id || prev.id || (serverUser && serverUser.id),
-      name: (serverUser && serverUser.name) || prev.name || 'Player',
-      avatar: (serverUser && serverUser.avatar) || prev.avatar || null,
-      serverId: serverUser && serverUser.id,
-      identities: (serverUser && serverUser.identities) || prev.identities || {},
-    };
-    if (extra.provider) this.user.provider = extra.provider;
-    else if (prev.provider) this.user.provider = prev.provider;
-    this.lastAuthError = null;
-    this._save();
-    try { attachAccount(token); } catch (e) { /* analytics only */ }
-  }
-
-  /**
    * Back from a Discord redirect? Then sign in with the token it carried.
    * Called once the lobby has registered onLogin. Returns true when it did.
    */
   async resumeFromRedirect() {
-    const token = takeRedirectToken();
-    if (!token) return false;
-    const claims = decodeJwt(token);
-    if (!claims) return false;
-    this.token = token;
-    const me = await this.getMe().catch(() => null);
-    const u = me && me.user;
-    this._applySession(token, u ? { id: u.id, name: u.display_name, avatar: u.avatar_url, identities: u.identities } : { id: claims.sub, name: claims.name, avatar: claims.picture }, { provider: 'discord' });
+    const back = await this.identity.resume();
+    if (!back || !back.signedIn) return false;
     if (this._onLoginCallback) this._onLoginCallback(this.user);
     return true;
   }
 
   /** Re-read the account (its linked sign-ins) from the server. */
   async refreshProfile() {
-    const me = await this.getMe().catch(() => null);
-    if (!me || !me.user || !this.user) return null;
-    this.user.identities = me.user.identities || this.user.identities || {};
-    if (me.user.display_name) this.user.name = me.user.display_name;
-    if (me.user.avatar_url) this.user.avatar = me.user.avatar_url;
-    this._save();
-    return this.user;
-  }
-
-  /**
-   * Start a Discord sign-in. Signed in already (and not `signIn`), it links Discord
-   * to this account; the server wants a sign-in from the last few minutes for that
-   * (#612), which the Steam build gets by signing in again with Steam.
-   */
-  async _beginDiscord(body, { signIn = false } = {}) {
-    const send = () => {
-      const headers = { 'Content-Type': 'application/json' };
-      if (!signIn && this.token && !this.isTokenExpired()) headers.Authorization = `Bearer ${this.token}`;
-      return fetch(`${API_BASE}/auth/discord/begin`, {
-        method: 'POST', headers, body: JSON.stringify({ ...body, device_id: deviceIdForSignIn() }),
-      });
-    };
-    let res = await send();
-    if (res.status === 401) {
-      const data = await res.clone().json().catch(() => ({}));
-      if (data.code === 'fresh_signin') {
-        const steam = typeof window !== 'undefined' && window.steam;
-        let again = false;
-        try { again = !!(steam && (await steam.isAvailable()) && (await this.loginWithSteam({ quiet: true }))); } catch (e) {}
-        if (!again) throw new Error('For your safety, sign out and sign in again, then link Discord.');
-        res = await send();
-      }
-    }
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || ('Discord sign-in unavailable (' + res.status + ')'));
-    }
-    return res.json();
+    return this.identity.refresh();
   }
 
   /** Same device: go to Discord and come back here signed in. */
   async signInWithDiscordRedirect() {
     try {
-      const returnTo = location.origin + location.pathname + location.search;
-      const req = await this._beginDiscord({ mode: 'redirect', return_to: returnTo }, { signIn: true });
-      location.assign(req.url);
+      await this.identity.signInRedirect('discord');
       return true;
     } catch (e) {
       this.lastAuthError = e.message;
@@ -213,73 +159,36 @@ export class AuthManager {
   }
 
   /**
-   * Device code: start (or reuse) a sign-in finished in another browser.
+   * Device code: start (or reuse) a sign-in finished in another browser. Signed in
+   * already, it links Discord to this account instead.
    * Resolves { url, code, expiresAt } for the QR, then keeps polling; `onDone`
    * gets (user, { linked, merged }) or (null, { error }). One at a time.
    */
   async startDiscordDevice({ onDone, onStatus } = {}) {
-    if (this._device && this._device.expiresAt > Date.now() + 30000) {
-      this._device.onDone = onDone;
-      this._device.onStatus = onStatus;
-      return this._device;
+    const link = this.isLoggedIn() && !this.isTokenExpired();
+    try {
+      return await this.identity.startDevice({
+        link,
+        onStatus,
+        onDone: (user, info) => {
+          if (onDone) onDone(user, info);
+          if (user && this._onLoginCallback) this._onLoginCallback(user);
+        },
+      });
+    } catch (e) {
+      if (e && e.fresh) throw new Error('For your safety, sign out and sign in again, then link Discord.');
+      throw e;
     }
-    this.cancelDiscordDevice();
-    const req = await this._beginDiscord({ mode: 'device' });
-    const dev = {
-      id: req.id, secret: req.secret, url: req.url, code: req.code,
-      expiresAt: Date.now() + (req.expires_in || 600) * 1000,
-      onDone, onStatus, timer: null, stopped: false,
-    };
-    this._device = dev;
-    const tick = async () => {
-      if (dev.stopped) return;
-      if (Date.now() > dev.expiresAt) { this._finishDevice(dev, null, { error: 'expired' }); return; }
-      try {
-        const res = await fetch(`${API_BASE}/auth/poll`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: dev.id, secret: dev.secret }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (dev.stopped) return;
-        if (data.status === 'done') {
-          this._applySession(data.token, data.user, this.user && data.linked ? { keep: true } : { provider: 'discord' });
-          this._finishDevice(dev, this.user, { linked: !!data.linked, merged: !!data.merged });
-          if (this._onLoginCallback) this._onLoginCallback(this.user);
-          return;
-        }
-        if (data.status === 'error' || data.status === 'expired') {
-          this._finishDevice(dev, null, { error: data.error || data.status });
-          return;
-        }
-        if (dev.onStatus) dev.onStatus(data.status);
-      } catch (e) { /* offline for a moment: keep polling */ }
-      dev.timer = setTimeout(tick, POLL_MS);
-    };
-    dev.timer = setTimeout(tick, POLL_MS);
-    return dev;
-  }
-
-  _finishDevice(dev, user, info) {
-    dev.stopped = true;
-    if (dev.timer) clearTimeout(dev.timer);
-    if (this._device === dev) this._device = null;
-    if (dev.onDone) dev.onDone(user, info);
   }
 
   /** Stop polling (the popup closed). The browser side simply expires. */
   cancelDiscordDevice() {
-    const dev = this._device;
-    if (!dev) return;
-    dev.stopped = true;
-    if (dev.timer) clearTimeout(dev.timer);
-    this._device = null;
+    this.identity.cancelDevice();
   }
 
   /** Check if the stored server JWT is expired (or will expire within marginSec). */
   isTokenExpired(marginSec = 60) {
-    if (!this.token) return true;
-    const payload = decodeJwt(this.token);
-    return !payload || !payload.exp || payload.exp < Math.floor(Date.now() / 1000) + marginSec;
+    return this.identity.tokenExpired(marginSec);
   }
 
   /**
@@ -308,22 +217,14 @@ export class AuthManager {
         return false;
       }
 
-      const res = await fetch(`${API_BASE}/auth/steam`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ steamId, personaName, ticket, device_id: deviceIdForSignIn(), session_id: sessionIdForSignIn() }),
-      });
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => '');
-        this.lastAuthError = 'Steam auth failed (' + res.status + ')';
-        console.error('AUTH: Steam auth failed:', res.status, errBody);
+      // #612: the account's name and picture; the Steam picture comes along in identities.
+      const ok = await this.identity.signInWith('/auth/steam', { steamId, personaName, ticket },
+        { provider: 'steam', quiet, extra: { id: steamId, displayName: personaName || undefined } });
+      if (!ok) {
+        this.lastAuthError = this.identity.lastError || 'Steam auth failed';
+        console.error('AUTH: Steam auth failed:', this.lastAuthError);
         return false;
       }
-
-      const data = await res.json();
-      // #612: the account's name and picture; the Steam picture comes along in identities.
-      this._applySession(data.token, { ...data.user, name: personaName || data.user.name }, { id: steamId, provider: 'steam' });
-
       if (!quiet && this._onLoginCallback) this._onLoginCallback(this.user);
       return true;
     } catch (e) {
@@ -335,18 +236,11 @@ export class AuthManager {
 
   // Clear server JWT token only (keeps user profile for re-auth)
   clearToken() {
-    this.token = null;
-    try { localStorage.removeItem(STORAGE_TOKEN); } catch (e) {}
+    this.identity.clearToken();
   }
 
   logout() {
-    this.cancelDiscordDevice();
-    this.user = null;
-    this.token = null;
-    try {
-      localStorage.removeItem(STORAGE_USER);
-      localStorage.removeItem(STORAGE_TOKEN);
-    } catch (e) {}
+    this.identity.signOut();
   }
 
   /**
@@ -359,6 +253,23 @@ export class AuthManager {
     if (body.code !== 'account_gone') return false;
     this.clearToken();
     return this.ensureValidToken();
+  }
+
+  /**
+   * #612 · what was linked to or combined into this account lately:
+   * [{ id, kind: 'link'|'combine', provider, login_name, from_name, created_at, undo_until, seen }]
+   */
+  async fetchNotices() {
+    return this.identity.notices();
+  }
+
+  async markNoticeSeen(id) {
+    return this.identity.seen(id);
+  }
+
+  /** Remove a linked sign-in / separate a combined account. → { undone, signed_out } or { error } */
+  async undoNotice(id) {
+    return this.identity.undo(id);
   }
 
   async submitScore(data) {
@@ -388,41 +299,6 @@ export class AuthManager {
     if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
     const res = await fetch(`${API_BASE}/leaderboard?${params}`, { headers });
     return res.ok ? res.json() : { entries: [] };
-  }
-
-  /**
-   * #612 · what was linked to or combined into this account lately:
-   * [{ id, kind: 'link'|'combine', provider, login_name, from_name, created_at, undo_until, seen }]
-   */
-  async fetchNotices() {
-    if (!this.token) return [];
-    try {
-      const res = await fetch(`${API_BASE}/me/notices`, { headers: { 'Authorization': `Bearer ${this.token}` } });
-      return res.ok ? ((await res.json()).notices || []) : [];
-    } catch (e) { return []; }
-  }
-
-  async markNoticeSeen(id) {
-    if (!this.token) return;
-    try {
-      await fetch(`${API_BASE}/me/notices/seen`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-        body: JSON.stringify({ id }),
-      });
-    } catch (e) {}
-  }
-
-  /** Remove a linked sign-in / separate a combined account. → { undone, signed_out } or { error } */
-  async undoNotice(id) {
-    if (!this.token) return { error: 'Sign in first' };
-    try {
-      const res = await fetch(`${API_BASE}/me/notices/undo`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${this.token}` },
-        body: JSON.stringify({ id }),
-      });
-      const data = await res.json().catch(() => ({}));
-      return res.ok ? data : { error: data.error || 'That could not be undone.' };
-    } catch (e) { return { error: 'Offline. Try again in a moment.' }; }
   }
 
   async getMe() {
