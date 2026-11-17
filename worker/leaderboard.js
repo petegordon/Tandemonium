@@ -1067,38 +1067,38 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 
   if (rows.length === 0) return jsonResponse({ entries: [] }, 200, corsOrigin);
 
-  // Batch contributions (fixes N+1)
+  // Batch contributions (fixes N+1). D1 takes at most 100 bound values a query, and "my
+  // rides" asks for up to 200 rows: ask in chunks.
+  const chunks = (list, n = 90) => Array.from({ length: Math.ceil(list.length / n) }, (_, i) => list.slice(i * n, i * n + n));
   const scoreIds = rows.map(r => r.id);
-  const placeholders = scoreIds.map(() => '?').join(',');
-
-  const contribResults = await env.DB.prepare(
-    `SELECT sc.score_id, sc.role, sc.contribution_pct, sc.pedal_taps, sc.pedal_correct, sc.pedal_wrong,
-            sc.balance_safe_pct, sc.on_road_pct, sc.player_user_id,
-            u.display_name as partner_name, u.avatar_url as partner_avatar
-     FROM score_contributions sc
-     LEFT JOIN users u ON sc.player_user_id = u.id
-     WHERE sc.score_id IN (${placeholders})`
-  ).bind(...scoreIds).all();
-
   const contribMap = {};
-  for (const c of contribResults.results) {
-    if (!contribMap[c.score_id]) contribMap[c.score_id] = [];
-    contribMap[c.score_id].push(c);
+  for (const ids of chunks(scoreIds)) {
+    const contribResults = await env.DB.prepare(
+      `SELECT sc.score_id, sc.role, sc.contribution_pct, sc.pedal_taps, sc.pedal_correct, sc.pedal_wrong,
+              sc.balance_safe_pct, sc.on_road_pct, sc.player_user_id,
+              u.display_name as partner_name, u.avatar_url as partner_avatar
+       FROM score_contributions sc
+       LEFT JOIN users u ON sc.player_user_id = u.id
+       WHERE sc.score_id IN (${ids.map(() => '?').join(',')})`
+    ).bind(...ids).all();
+    for (const c of contribResults.results) {
+      if (!contribMap[c.score_id]) contribMap[c.score_id] = [];
+      contribMap[c.score_id].push(c);
+    }
   }
 
   // Batch achievements (fixes N+1)
   const userIds = [...new Set(rows.map(r => r.user_id))];
-  const userPlaceholders = userIds.map(() => '?').join(',');
-
-  const achResults = await env.DB.prepare(
-    `SELECT user_id, achievement_id, MIN(score_id) AS score_id FROM user_achievements
-     WHERE user_id IN (${userPlaceholders}) GROUP BY user_id, achievement_id`
-  ).bind(...userIds).all();
-
   const achMap = {};
-  for (const a of achResults.results) {
-    if (!achMap[a.user_id]) achMap[a.user_id] = [];
-    achMap[a.user_id].push(a);
+  for (const ids of chunks(userIds)) {
+    const achResults = await env.DB.prepare(
+      `SELECT user_id, achievement_id, MIN(score_id) AS score_id FROM user_achievements
+       WHERE user_id IN (${ids.map(() => '?').join(',')}) GROUP BY user_id, achievement_id`
+    ).bind(...ids).all();
+    for (const a of achResults.results) {
+      if (!achMap[a.user_id]) achMap[a.user_id] = [];
+      achMap[a.user_id].push(a);
+    }
   }
 
   // Assemble entries
