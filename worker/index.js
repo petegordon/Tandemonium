@@ -11,14 +11,15 @@ import worker, { houseTandemGames } from './leaderboard.js';
 export default worker;
 
 export class HouseTandemGames extends WorkerEntrypoint {
-  /** The House Tandem account for a verified Discord user, created if new. → { userId, name, avatar } */
+  /** The House Tandem account for a verified Discord user, created if new. → { userId, loginId, name, avatar } */
   resolveDiscord(profile) { return houseTandemGames.resolveDiscord(this.env, profile); }
   /** A House Tandem session token from a website sign-in. → { userId, name, avatar } | null */
   verifySession(token) { return houseTandemGames.verifySession(this.env, token); }
   /** → { earned: string[], stats } */
   gameProfile(userId, game) { return houseTandemGames.gameProfile(this.env, userId, game); }
   /** → { newlyEarned: string[] } */
-  recordGame(userId, game, delta, earned) { return houseTandemGames.recordGame(this.env, userId, game, delta, earned); }
+  /** loginId (from resolveDiscord / verifySession) records it under that login (#783); optional for now. */
+  recordGame(userId, game, delta, earned, loginId) { return houseTandemGames.recordGame(this.env, userId, game, delta, earned, loginId); }
   /** Active seconds played since the last report (a delta; capped to real time). → { seconds, sessions, firstPlayed, lastPlayed, added } */
-  recordPlay(userId, game, seconds) { return houseTandemGames.recordPlay(this.env, userId, game, seconds); }
+  recordPlay(userId, game, seconds, loginId) { return houseTandemGames.recordPlay(this.env, userId, game, seconds, loginId); }
 }

@@ -9,18 +9,18 @@ function db() {
   const d = new DatabaseSync(':memory:');
   d.exec(`CREATE TABLE daily_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL, day_key TEXT NOT NULL, mode TEXT NOT NULL,
+    login_id INTEGER NOT NULL, user_id INTEGER NOT NULL, day_key TEXT NOT NULL, mode TEXT NOT NULL,
     time_ms INTEGER, dnf INTEGER NOT NULL DEFAULT 0, distance REAL DEFAULT 0,
     collectibles INTEGER DEFAULT 0, crashes INTEGER DEFAULT 0, safety_used INTEGER DEFAULT 0,
-    sync_pct INTEGER, partner_user_id INTEGER, warp INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE (user_id, day_key, mode))`);
+    sync_pct INTEGER, partner_user_id INTEGER, partner_login_id INTEGER, warp INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE (login_id, day_key, mode))`);
   return d;
 }
 
-/** Submit like handleDailySubmit does; returns rows changed. */
+/** Submit like handleDailySubmit does; returns rows changed. (#783: the row is the login's; here login = user.) */
 function submit(d, { user = 1, day = "2026-11-07", mode = "solo", timeMs = null, dnf = false, crashes = 0, warp = false }) {
   const r = d.prepare(dailyUpsertSql(dnf)).run(
-    user, day, mode, dnf ? null : timeMs, dnf ? 1 : 0, 500, 0, crashes, 0, null, null, warp ? 1 : 0);
+    user, user, day, mode, dnf ? null : timeMs, dnf ? 1 : 0, 500, 0, crashes, 0, null, null, null, warp ? 1 : 0);
   return Number(r.changes);
 }
 const row = (d, user = 1, mode = 'solo') =>

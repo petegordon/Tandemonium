@@ -1,4 +1,4 @@
-import { discordMemberStatus } from './identity.js';
+import { discordMemberStatus } from './accounts/identity.js';
 // ============================================================
 // SHARE A RESULT (#657 parts 2 + 3)
 // ============================================================
@@ -115,6 +115,13 @@ async function hashIp(ip, salt) {
  * Route a /share request; null when the path is not one of ours.
  * deps: { jsonResponse, corsHeaders, getUserFromRequest, checkRateLimit, listIdentities, writeMetric }
  */
+/** The account's Discord login (posts are recorded under it). */
+async function discordLogin(env, userId) {
+  const row = await env.DB.prepare("SELECT login_id FROM user_logins WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC, login_id LIMIT 1")
+    .bind(userId).first();
+  return row ? row.login_id : 0;
+}
+
 export async function handleShareRoute(request, env, { path, url, clientIP, corsOrigin }, deps) {
   const { jsonResponse } = deps;
   if (path === '/share/config' && request.method === 'GET') {
@@ -243,8 +250,9 @@ async function postToDiscord(request, env, clientIP, corsOrigin, deps) {
   const posted = await env.DB.prepare('SELECT 1 AS ok FROM discord_posts WHERE user_id = ? AND day_key = ?').bind(user.id, share.day_key).first();
   if (posted) return jsonResponse({ error: 'Already posted today', code: 'already_posted' }, 409, corsOrigin);
   try {
-    await env.DB.prepare('INSERT INTO discord_posts (user_id, day_key, share_id, posted_at) VALUES (?, ?, ?, ?)')
-      .bind(user.id, share.day_key, share.id, Date.now()).run();
+    // #783 · recorded under the Discord login it is posted as (one a day per ACCOUNT: checked above).
+    await env.DB.prepare('INSERT INTO discord_posts (login_id, user_id, day_key, share_id, posted_at) VALUES (?, ?, ?, ?, ?)')
+      .bind(await discordLogin(env, user.id), user.id, share.day_key, share.id, Date.now()).run();
   } catch {
     return jsonResponse({ error: 'Already posted today', code: 'already_posted' }, 409, corsOrigin);
   }
@@ -315,7 +323,8 @@ async function postClipToDiscord(request, env, url, corsOrigin, deps) {
     .bind(user.id, now - 24 * 3600 * 1000).first();
   if (today && today.n >= CLIP_POSTS_PER_DAY) return jsonResponse({ error: 'That is ten clips today', code: 'clip_cap' }, 429, corsOrigin);
   const key = 'clip-' + now + '-' + newShareId().slice(0, 6);
-  await env.DB.prepare('INSERT INTO discord_posts (user_id, day_key, share_id, posted_at) VALUES (?, ?, NULL, ?)').bind(user.id, key, now).run();
+  await env.DB.prepare('INSERT INTO discord_posts (login_id, user_id, day_key, share_id, posted_at) VALUES (?, ?, ?, NULL, ?)')
+    .bind(await discordLogin(env, user.id), user.id, key, now).run();
 
   const caption = cleanText(url.searchParams.get('caption') || '', 120) || 'Tandemonium';
   const filename = 'tandemonium-clip.gif';
