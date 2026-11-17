@@ -1,8 +1,58 @@
 // Tandemonium WebSocket Relay — Cloudflare Worker + Durable Object
 // Primary relay transport
 // Deploy: wrangler deploy
+//
+// Who may sit in a room (2026-11-17): each seat (captain, stoker) belongs to the first
+// connection that takes it — known by its account (a valid relay token) or, for a guest,
+// the device it dialled from. While the seat is held, and for SEAT_HOLD_MS after it
+// leaves, only that account or device may take it again (its own reconnects and re-dials
+// replace the old socket as before). Anyone else is told the room is full and closed.
+// A relay token that is present must be genuine and for this room and seat.
+// With both seats taken the room hands both riders a pair proof (room-proof.js) for their
+// score posts, and a P2P key so only they can find each other's peer ids.
+// TURN credentials go only to a connection that holds a seat.
+
+import { guestKey, readToken, signPairProof, SEAT_HOLD_MS } from './room-proof.js';
 
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
+/** A relay token's signature is what matters; one that expired during a long ride still names its account. */
+const TOKEN_GRACE_S = 24 * 3600;
+/** TURN credentials last a long ride (a refresh needs them still valid). */
+const TURN_TTL_S = 3 * 3600;
+/** Close code + reason for "both seats are taken". */
+// (Not exported: a Worker's main module may export only handlers and classes.)
+const ROOM_FULL_CODE = 4009;
+const ROOM_FULL_REASON = 'room-full';
+
+/** A device id from the query: what the game's analytics id looks like, or null. */
+export function cleanDevice(raw) {
+    return typeof raw === 'string' && /^[A-Za-z0-9_.:-]{8,64}$/.test(raw) ? raw : null;
+}
+
+/**
+ * May this connection take `role`'s seat? `seat` is what the room stored for it (or null),
+ * `open` whether a socket holds it now. → 'owner' (it's theirs), 'free' (a new holder), 'full'.
+ */
+export function seatDecision(seat, open, who, now) {
+    if (seat) {
+        const mine = (who.sub && seat.sub && String(who.sub) === String(seat.sub))
+            || (who.device && seat.device && who.device === seat.device);
+        if (mine) return 'owner';
+        const held = open || (seat.releasedAt != null && now - seat.releasedAt < SEAT_HOLD_MS);
+        if (held) return 'full';
+    }
+    return 'free';
+}
+
+/** A room code as the game makes them: TNDM- and 4 letters/digits. */
+export function isRoomCode(v) {
+    return typeof v === 'string' && /^TNDM-[A-Z0-9]{4}$/.test(v);
+}
+
+function randomKey() {
+    const b = crypto.getRandomValues(new Uint8Array(12));
+    return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+}
 // #694 · the room remembers when it was last used and when each seat was last here (and the
 // name it gave), for a week, so a joiner or a rejoin can hear "Room ABCD hasn't been used for
 // 2 h" or "Pete was here 3 min ago" even on a device with no history. Only a few small fields;
@@ -41,27 +91,70 @@ export class TandemRoom {
         try { await this.state.storage.put('meta', this._meta); } catch (e) { /* the record is a nicety */ }
     }
 
+    /** Who holds each seat: { captain?: { sub, device, gk, releasedAt }, stoker?: …, p2p? } */
+    async _readSeats() {
+        if (this._seats === undefined) {
+            try { this._seats = (await this.state.storage.get('seats')) || {}; } catch (e) { this._seats = {}; }
+        }
+        return this._seats;
+    }
+
+    async _writeSeats() {
+        try { await this.state.storage.put('seats', this._seats); } catch (e) { /* kept in memory */ }
+    }
+
+    _seatOpen(role, except = null) {
+        return this.state.getWebSockets(role).some((s) => s !== except && s.readyState === 1);
+    }
+
+    /** GET /turn on the room: TURN credentials for a connection that holds a seat. */
+    async _turn(url) {
+        const role = url.searchParams.get('role');
+        const device = cleanDevice(url.searchParams.get('device'));
+        const seats = await this._readSeats();
+        const seat = (role === 'captain' || role === 'stoker') ? seats[role] : null;
+        if (!seat || !device || seat.device !== device || !this._seatOpen(role)) {
+            return new Response(JSON.stringify({ error: 'Not in this room' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
+        }
+        const resp = await fetch(
+            `https://rtc.live.cloudflare.com/v1/turn/keys/${this.env.TURN_KEY_ID}/credentials/generate-ice-servers`,
+            {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${this.env.TURN_KEY_API_TOKEN}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ttl: TURN_TTL_S }),
+            }
+        );
+        return new Response(await resp.text(), { status: resp.ok ? 200 : 502, headers: { 'Content-Type': 'application/json' } });
+    }
+
     async fetch(request) {
         const url = new URL(request.url);
+        if (url.pathname === '/turn-credentials') return this._turn(url);
         const role = url.searchParams.get('role');
         if (!role || !['captain', 'stoker'].includes(role)) {
             return new Response('Invalid role', { status: 400 });
         }
+        const room = url.searchParams.get('room') || this.state.id.toString();
 
-        // Verify relay token if provided (optional — unauthenticated connections allowed)
+        // A relay token, when sent, must be genuine and for this room and seat.
+        let sub = null;
         const token = url.searchParams.get('token');
         if (token && this.env.RELAY_SECRET) {
-            try {
-                const payload = await verifyJWT(token, this.env.RELAY_SECRET);
-                const room = url.searchParams.get('room') || this.state.id.toString();
-                if (payload.room !== room || payload.role !== role) {
-                    return new Response('Token mismatch', { status: 403 });
-                }
-            } catch (e) {
-                // Invalid token — allow connection anyway (don't block gameplay)
-                console.warn('Relay: invalid token, allowing unauthenticated connection');
+            let payload;
+            try { payload = await readToken(token, this.env.RELAY_SECRET, TOKEN_GRACE_S); } catch (e) {
+                return new Response('Invalid token', { status: 403 });
             }
+            if (payload.room !== room || payload.role !== role) {
+                return new Response('Token mismatch', { status: 403 });
+            }
+            sub = payload.sub != null ? String(payload.sub) : null;
         }
+        const device = cleanDevice(url.searchParams.get('device'));
+        const gk = !sub && device && this.env.RELAY_SECRET ? await guestKey(this.env.RELAY_SECRET, device) : null;
+
+        // Whose seat is it? (Decided before the stale sockets close; see below.)
+        const seats = await this._readSeats();
+        const decision = seatDecision(seats[role] || null, this._seatOpen(role), { sub, device }, Date.now());
 
         // #694: what the room knew BEFORE this connection (read first: touching it changes it).
         // Read before the stale sockets close: from there to acceptWebSocket must not await, or a
@@ -73,6 +166,24 @@ export class TandemRoom {
         const pair = new WebSocketPair();
         const [client, server] = Object.values(pair);
 
+        if (decision === 'full') {
+            // Someone else holds this seat: say so and close. Nothing of the room is sent.
+            server.accept();
+            try { server.send(JSON.stringify({ type: ROOM_FULL_REASON })); } catch (e) {}
+            server.close(ROOM_FULL_CODE, ROOM_FULL_REASON);
+            return new Response(null, { status: 101, webSocket: client });
+        }
+        const prev = seats[role];
+        const newHolder = decision === 'free';
+        seats[role] = {
+            sub: sub || (newHolder ? null : prev.sub || null),
+            device: device || (newHolder ? null : prev.device || null),
+            gk: sub ? null : (gk || (newHolder ? null : prev.gk || null)),
+            releasedAt: null,
+        };
+        // A new rider in a seat: a new P2P key, so an earlier holder can't find the peers.
+        if (newHolder || !seats.p2p) seats.p2p = randomKey();
+
         // Close stale sockets for same role (reconnection dedup)
         const existing = this.state.getWebSockets(role);
         for (const sock of existing) {
@@ -81,7 +192,8 @@ export class TandemRoom {
 
         this.state.acceptWebSocket(server, [role]);
         const myName = cleanName(url.searchParams.get('name'));
-        await this._touch(role, myName);   // after accept: safe to await
+        await this._writeSeats();          // after accept: safe to await
+        await this._touch(role, myName);
 
         // Reset room TTL on new connection
         await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
@@ -95,14 +207,22 @@ export class TandemRoom {
         }
 
         if (partnerReady.length > 0) {
+            // Both seats taken: a pair proof for their score posts, the P2P key, and each
+            // side's guest key (a guest partner's pair record is found by it, never by device id).
+            const cap = seats.captain || {};
+            const sto = seats.stoker || {};
+            const proof = this.env.RELAY_SECRET
+                ? await signPairProof(this.env.RELAY_SECRET, room, { u: cap.sub, g: cap.gk }, { u: sto.sub, g: sto.gk })
+                : null;
+            const extra = (r) => ({ pair: proof, p2p: seats.p2p, partnerGuest: (r === 'captain' ? cap : sto).gk || null });
             // Tell the new joiner their partner is here
             // #694: with the name each gave the relay (null when none), so both screens can say
             // "Sam (your Stoker) joined" at once instead of waiting for the profile message.
-            const joinMsg = JSON.stringify({ type: 'partner-ready', role: partnerRole, name: (partnerSeen && partnerSeen.name) || null });
+            const joinMsg = JSON.stringify({ type: 'partner-ready', role: partnerRole, name: (partnerSeen && partnerSeen.name) || null, ...extra(partnerRole) });
             try { server.send(joinMsg); } catch (e) { /* just connected, shouldn't fail */ }
 
             // Tell the existing partner the new player joined
-            const readyMsg = JSON.stringify({ type: 'partner-ready', role: role, name: myName });
+            const readyMsg = JSON.stringify({ type: 'partner-ready', role: role, name: myName, ...extra(role) });
             for (const sock of partnerReady) {
                 try { sock.send(readyMsg); } catch (e) { /* closed */ }
             }
@@ -149,6 +269,12 @@ export class TandemRoom {
         const stillHere = this.state.getWebSockets(senderRole).some((s) => s !== ws && s.readyState === 1);
         if (stillHere) return;
 
+        // The seat stays theirs for SEAT_HOLD_MS (a reload, a dropped connection).
+        const seats = await this._readSeats();
+        if (seats[senderRole]) {
+            seats[senderRole].releasedAt = Date.now();
+            await this._writeSeats();
+        }
 
         // Notify partner
         const closeMsg = JSON.stringify({ type: 'disconnect', role: senderRole });
@@ -174,36 +300,13 @@ export class TandemRoom {
             } else {
                 await this.state.storage.deleteAll();
                 this._meta = null;
+                this._seats = undefined;
             }
         } else {
             // Still active — reschedule
             await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
         }
     }
-}
-
-// JWT verification (shared HMAC-SHA256 with API worker)
-async function verifyJWT(token, secret) {
-    const parts = token.split('.');
-    if (parts.length !== 3) throw new Error('Invalid token');
-
-    const key = await crypto.subtle.importKey(
-        'raw', new TextEncoder().encode(secret),
-        { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
-    );
-
-    const data = `${parts[0]}.${parts[1]}`;
-    const sig = Uint8Array.from(
-        atob(parts[2].replace(/-/g, '+').replace(/_/g, '/')),
-        c => c.charCodeAt(0)
-    );
-    const valid = await crypto.subtle.verify('HMAC', key, sig, new TextEncoder().encode(data));
-    if (!valid) throw new Error('Invalid signature');
-
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) throw new Error('Token expired');
-
-    return payload;
 }
 
 function getCorsHeaders(request) {
@@ -237,45 +340,37 @@ export default {
             return new Response(null, { status: 204, headers: getCorsHeaders(request) });
         }
 
-        // TURN credential endpoint
-        if (url.pathname === '/turn-credentials') {
-            writeMetric(env, 'turn_credentials');
-            try {
-                const resp = await fetch(
-                    `https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${env.TURN_KEY_API_TOKEN}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ ttl: 86400 }),
-                    }
-                );
-                const data = await resp.json();
-                return new Response(JSON.stringify(data), {
-                    headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
-                });
-            } catch (e) {
-                writeMetric(env, 'turn_error', e.message);
-                return new Response(JSON.stringify({ error: 'Failed to generate TURN credentials' }), {
-                    status: 502,
-                    headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
-                });
-            }
-        }
-
         const room = url.searchParams.get('room');
-
-        if (!room) {
+        const isTurn = url.pathname === '/turn-credentials';
+        if (!room && !isTurn) {
             return new Response('Tandemonium Relay OK', { status: 200 });
         }
+        const json = (body, status) => new Response(JSON.stringify(body), {
+            status, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
+        });
+        if (!isRoomCode(room)) return isTurn ? json({ error: 'Not in this room' }, 403) : new Response('Bad room', { status: 400 });
 
-        writeMetric(env, 'relay_connect', room);
+        // Per IP: room codes are short, so guessing them has to be slow.
+        if (env.RELAY_IP_LIMITER) {
+            const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
+            try {
+                const { success } = await env.RELAY_IP_LIMITER.limit({ key: ip });
+                if (!success) return isTurn ? json({ error: 'Too many requests' }, 429) : new Response('Too many requests', { status: 429 });
+            } catch (e) { /* the limiter is a guard, not a gate */ }
+        }
 
-        // Route to Durable Object by room code
+        writeMetric(env, isTurn ? 'turn_credentials' : 'relay_connect', room);
+
+        // Route to Durable Object by room code (TURN credentials too: only a seat holder gets them)
         const id = env.TANDEM_ROOM.idFromName(room);
         const obj = env.TANDEM_ROOM.get(id);
-        return obj.fetch(request);
+        if (!isTurn) return obj.fetch(request);
+        try {
+            const res = await obj.fetch(request);
+            return new Response(await res.text(), { status: res.status, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } });
+        } catch (e) {
+            writeMetric(env, 'turn_error', e.message);
+            return json({ error: 'Failed to generate TURN credentials' }, 502);
+        }
     }
 };

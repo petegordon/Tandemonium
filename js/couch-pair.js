@@ -54,7 +54,8 @@ export function couchPair({ mode, seatAccount, p1ServerId = null, deviceId = nul
  */
 export function guestCaptainSubmit(data, contrib, pair, deviceId, seatAchievements) {
   /** @type {Record<string, any>} */
-  const out = { ...data, mode: 'stoker', newAchievements: (seatAchievements || []).slice() };
+  // couchGuest: the captain is THIS device's guest (the server keys the pair by its guest key).
+  const out = { ...data, mode: 'stoker', couchGuest: true, newAchievements: (seatAchievements || []).slice() };
   delete out.seats;
   const contributions = {};
   if (contrib.captain) contributions.captain = { ...contrib.captain, userId: null, guestDeviceId: deviceId };
