@@ -4,7 +4,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TouristOdometer, TELEPORT_M, OPEN_WORLD_PAY_CAP_M } from '../../js/tourist-odometer.js';
-import { headingForBearing, planRoute } from '../../js/tourist-route.js';
+import { headingForBearing, planRoute, rideLevelM } from '../../js/tourist-route.js';
+import { SCENIC_PLACES } from '../../js/tourist-places.js';
 
 const near = (a, b, eps = 1e-6) => Math.abs(a - b) < eps;
 
@@ -98,4 +99,33 @@ test('bad positions are ignored; the open-world pay cap is 10 km', () => {
   d = odo.update(NaN, 4, d);
   assert.equal(d, 0);
   assert.equal(OPEN_WORLD_PAY_CAP_M, 10000);
+});
+
+// Pete rode The Strip to the Bellagio and the ride never ended (2026-11-18): the finish distance was
+// the ride length rounded to the NEAREST metre, 3336 for 3335.85, and arriving counts exactly the length.
+test('every scenic ride with a destination ends when the bike gets there', () => {
+  const rides = SCENIC_PLACES.filter((p) => p.to);
+  assert.ok(rides.length >= 5);
+  for (const p of rides) {
+    const plan = planRoute(p.from, p.to);
+    assert.equal(plan.route.capped, false, p.id);
+    const len = plan.route.ridableM;
+    const h = headingForBearing(plan.bearing);
+    const at = { x: Math.sin(h) * len, z: Math.cos(h) * len };
+    const odo = new TouristOdometer({ target: at, lengthM: len });
+    let d = odo.update(0, 0, 0);
+    assert.ok(d < rideLevelM(len), p.id + " does not end at its start");
+    // 10 m to one side of the point: inside the arrival circle
+    d = odo.update(at.x + 10, at.z, d);   // (a jump: re-based, counts nothing)
+    d = odo.update(at.x + 9, at.z, d);
+    assert.ok(d >= rideLevelM(len), p.id + ": arrived at " + d + " of " + rideLevelM(len));
+  }
+});
+
+test('the finish distance of a ride is never more than the ride', () => {
+  for (const m of [50.4, 825.332, 1048.906, 3263.597, 3335.852, 4999.999, 5000]) {
+    assert.ok(rideLevelM(m) <= m, String(m));
+    assert.ok(rideLevelM(m) > m - 1, String(m));
+  }
+  assert.equal(rideLevelM(0), 1);
 });

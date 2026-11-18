@@ -86,7 +86,7 @@ import { World } from './world.js';
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
-import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M } from './tourist-route.js';
+import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M, rideLevelM } from './tourist-route.js';
 import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 import { EVT_TOURIST_SKIP } from './config.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
@@ -4235,7 +4235,7 @@ class Game {
     // wrong road. It is a pseudo-level: no timer, one checkpoint at the end,
     // and a distance that IS the destination.
     // Open world: a "finish" far past the free-roam radius, so it never comes.
-    const rideM = plan.explore ? 100000 : Math.max(50, Math.round(plan.route.ridableM));
+    const rideM = plan.explore ? 100000 : rideLevelM(plan.route.ridableM);
     this.lobby.selectedLevel = this._touristLevel = {
       id: 'tourist',
       name: plan.explore ? 'Map Tourist' : (plan.to.label || 'Their door'),

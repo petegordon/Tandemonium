@@ -150,6 +150,15 @@ export function shortPlace(label) {
 }
 
 /**
+ * The finish distance of a ride that is ridableM long, in whole metres. Rounded DOWN: arriving counts
+ * exactly ridableM (tourist-odometer), so a distance rounded up (3335.85 to 3336) was never reached,
+ * and the ride never ended at its destination.
+ */
+export function rideLevelM(ridableM) {
+  return Math.max(1, Math.floor(ridableM || 0));
+}
+
+/**
  * Bike heading (radians) that faces compass bearing `deg` in the tiles frame.
  * ReorientationPlugin anchors ENU with +Z north and +X WEST, and the bike's
  * forward is (sin h, cos h) in x/z — so east (90°) is h = -π/2.
