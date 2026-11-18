@@ -148,3 +148,22 @@ test('standing the bike up somewhere else (#801) counts nothing in any kind of r
   d = to.update(0, 70, d);
   assert.equal(d, before, 'a ride to a point keeps what it had');
 });
+
+test('a place that cannot be ridden into is reached from further off (arriveM)', () => {
+  // an arch 45 m across: the ride is to its middle, and 40 m from that is as close as a bike gets
+  const len = 1839.186;
+  const far = new TouristOdometer({ target: { x: 0, z: len }, lengthM: len, arriveM: 45 });
+  let d = far.update(0, 0, 0);
+  assert.equal(d, 0, 'starts at nothing');
+  d = far.update(0, 10, d);
+  for (let z = 20; z <= len - 40; z += 10) d = far.update(0, z, d);
+  d = far.update(0, len - 40, d);
+  assert.ok(d >= rideLevelM(len), `40 m short is there (${d.toFixed(1)} of ${rideLevelM(len)})`);
+
+  const near = new TouristOdometer({ target: { x: 0, z: len }, lengthM: len });
+  d = near.update(0, 0, 0);
+  for (let z = 10; z <= len - 40; z += 10) d = near.update(0, z, d);
+  d = near.update(0, len - 40, d);
+  assert.ok(d < rideLevelM(len), 'and without it, 40 m short is not');
+  assert.equal(new TouristOdometer({ target: { x: 0, z: 1 }, lengthM: 100, arriveM: NaN }).arriveM, 18);
+});

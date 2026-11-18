@@ -76,6 +76,7 @@ import { playerLooks, lookToWire, lookFromWire, versusSeatLooks } from './player
 import { applyPlayerLed } from './player-led.js';   // #548
 import { FpsMeter } from './fps-meter.js';
 import { FinishCameraAnimation } from './finish-camera-animation.js';
+import { ArrivalOrbit } from './tourist-arrival.js';
 import { World } from './world.js';
 // E-4 · Tourist Mode is NOT imported statically.
 //
@@ -85,8 +86,8 @@ import { World } from './world.js';
 // exists to prevent. It is loaded on demand instead, only when ?mode=tourist
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
-import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor, TOURIST_TUNE } from './tourist-config.js';
-import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M, rideLevelM } from './tourist-route.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
+import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M, rideLevelM, shortPlace } from './tourist-route.js';
 import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 import { EVT_TOURIST_SKIP } from './config.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
@@ -608,6 +609,7 @@ class Game {
     // Lobby / Room button
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
+      if (this._touristEndOnLeave()) return;   // #802: an open Map Tourist ride gets its end screen
       if (analytics.getCurrentRideId()) {
         analytics.endRide({
           completed: false,
@@ -845,6 +847,9 @@ class Game {
       analytics.setPage('lobby');
       this._returnToLobby();
     });
+    // #802 · Map Tourist's end screen
+    this._onTap('btn-tourist-another', () => this._touristAnotherPlace());
+    this._onTap('btn-tourist-explore', () => this._touristKeepExploring());
     // Victory: return to room (stay connected)
     this._onTap('btn-victory-room', () => {
       this._hideVictory();
@@ -2705,12 +2710,19 @@ class Game {
       this._dailyRideNo = (level.isDaily && level.key && this.mode !== 'versus')
         ? recordRideStart(browserStore(), level.key, { guest: guestPass }) : 0;
     }
-    this.raceManager = new RaceManager(level);
+    // #802 · Map Tourist, standing up after a crash: the same ride goes on, so its clock, its crash
+    // count and its pedalling numbers do too (the end screen shows them).
+    const sameTouristRide = !!this._touristStoodUp && !newRide && !!this._touristRoute && !!this.raceManager &&
+      !this.raceManager.finished && this.raceManager.level === level && !!this.contributionTracker;
+    this._touristStoodUp = false;
+    if (!sameTouristRide) this.raceManager = new RaceManager(level);
     this.hud.raceManager = this.raceManager;
     this._helpStartRide(keepHelp);   // #403: before the first budget is shown
-    this.balanceCtrl.resetSteerFrames();
-    if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
-    this.contributionTracker = new ContributionTracker(this.mode);
+    if (!sameTouristRide) {
+      this.balanceCtrl.resetSteerFrames();
+      if (this.balanceCtrlP2) this.balanceCtrlP2.resetSteerFrames();
+      this.contributionTracker = new ContributionTracker(this.mode);
+    }
     this._prefetchCouchPair();   // #609
     if (this.collectibleManager) this.collectibleManager.destroy();
     this.collectibleManager = new CollectibleManager(this.scene, this.world.roadPath, level, this.camera, difficultyName, this._placementSalt);
@@ -2748,7 +2760,7 @@ class Game {
     // Show initial segment budget during countdown
     const firstTarget = this.raceManager.checkpoints.length > 0 ? this.raceManager.checkpoints[0] : this.raceManager.raceDistance;
     const initialBudget = this.raceManager._segmentBudget(firstTarget) + FIRST_SEGMENT_BONUS_S;
-    this.hud.updateTimer(initialBudget, initialBudget);
+    if (level.timerEnabled !== false) this.hud.updateTimer(initialBudget, initialBudget);   // (no clock to beat on a ride without one)
     this.hud.showCollectibles(level, this.collectibleManager.getTotalItems());
     this.hud.showGeese();
     this.world.setRaceMarkers(level, this.camera);
@@ -4314,6 +4326,7 @@ class Game {
     this._touristSkipped = false;
     this._touristHold = false;
     this._touristCrash = null;
+    if (again && world.clearTrail) world.clearTrail();   // (the bike is back at the start: its trail is not)
     this._hideTouristSkip();
     if (plan.explore) {
       this.bike.startHeading = 0;                      // open world faces north
@@ -4328,7 +4341,7 @@ class Game {
       this.bike.startHeading = h;
       this._touristDest = at;
       // a long ride's first leg ends at a line across the way (anywhere along it skips ahead)
-      this._touristOdo = long ? new TouristOdometer({ heading: h }) : new TouristOdometer({ target: at, lengthM: len });
+      this._touristOdo = long ? new TouristOdometer({ heading: h }) : new TouristOdometer({ target: at, lengthM: len, arriveM: plan.arriveM });
       if (world.setDestination) world.setDestination(at, { color: long ? 0x9fd8ff : 0xffd36b });
     }
     this.bike.heading = this.bike.startHeading;        // in case the bike was reset already
@@ -4351,7 +4364,8 @@ class Game {
     const last = this._touristCrash;
     const again = last && Math.hypot(was.x - last.x, was.z - last.z) < G.recoverRepeatM;
     this._touristCrash = { x: was.x, z: was.z, n: again ? last.n + 1 : 1 };
-    const spot = world.crashSpot(was.x, was.z, this._touristCrash.n);
+    this._touristStoodUp = true;
+    const spot = world.crashSpot(was.x, was.z, this._touristCrash.n, was.h);
     b.position.x = spot ? spot.x : was.x;
     b.position.z = spot ? spot.z : was.z;
     b.heading = spot ? spot.heading : was.h;
@@ -4409,7 +4423,7 @@ class Game {
     this._touristDest = at;
     if (world.setDestination) world.setDestination(at);
     if (this.mode !== 'stoker') {
-      this._touristOdo = new TouristOdometer({ target: at, lengthM: CAP_HALF_M, startM: CAP_HALF_M });
+      this._touristOdo = new TouristOdometer({ target: at, lengthM: CAP_HALF_M, startM: CAP_HALF_M, arriveM: plan.arriveM });
       this._touristOdo.rebase(0, 0, CAP_HALF_M);
       b.distanceTraveled = CAP_HALF_M;
     }
@@ -4502,7 +4516,7 @@ class Game {
     const text = this._touristRoute.explore
       ? this._touristRoute.headline + ' · <span class="tourist-togo">' + formatDistance(ridden) + ' ridden</span>'
       : this._touristRoute.headline +
-        ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
+        ' · <span class="tourist-togo">' + (this.raceManager && this.raceManager.finished ? 'you are here!' : formatDistance(left) + ' to go') + '</span>';
     if (text !== this._prevTouristGoalText) {
       this._prevTouristGoalText = text;
       el.innerHTML = '<span class="tourist-arrow" aria-hidden="true">&#x27A4;</span> ' + text;
@@ -4542,21 +4556,25 @@ class Game {
 
     const title = document.getElementById('victory-title');
     const dest = document.getElementById('victory-destination');
-    // "to them" is for a ride between two people's places; a scenic ride just made it
-    const toThem = plan.kind !== 'scenic';
-    if (title) title.textContent = toThem ? 'YOU MADE IT TO THEM!' : 'YOU MADE IT!';
-    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = toThem ? 'You made it to them!' : 'You made it!'; }
-    if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
+    // "to them" is for a ride between two people's places; a scenic ride just made it;
+    // an open ride that was left (#802) arrived nowhere, and was a nice ride
+    const leaving = !!this._touristLeaving;
+    const toThem = plan.kind !== 'scenic' && !plan.explore;
+    const heading = leaving ? 'Nice ride!' : toThem ? 'You made it to them!' : 'You made it!';
+    const place = plan.explore ? (plan.exploreFrom || plan.from) : plan.to;
+    if (title) title.textContent = heading.toUpperCase();
+    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = heading; }
+    if (dest) dest.textContent = '📍 ' + ((place && place.label) || 'their door');
 
     this._dailyStripText = [
       `Tandemonium · ${plan.headline}`,
-      `📍 ${plan.from.label} → ${plan.to.label}`,
+      plan.to ? `📍 ${plan.from.label} → ${plan.to.label}` : `📍 ${plan.from.label}`,
       `🚴 ${formatDistance(riddenM)} ridden${plan.route.capped ? ' · ' + skipLabel(plan.route) : ''}`,
       (/^https?:/.test(location.origin) ? location.origin : SITE_URL) + '/'
     ].join('\n');
 
     try {
-      analytics.trackEvent('tourist_arrived', {
+      analytics.trackEvent(leaving ? 'tourist_left' : 'tourist_arrived', {
         km: Math.round(plan.realM / 1000),
         ridden_m: Math.round(riddenM),
         capped: plan.route.capped
@@ -5955,6 +5973,171 @@ class Game {
     // #478 · the ride's presents fly off the bike into the pile at Grandma's
     // (Grandma's and Today's Road only; World says no elsewhere).
     if (this.world && this.bike) this.world.startPresentStack(this._presentsForStack(fromRemote), this.bike.position);
+    if (this.isTourist && this._touristRoute && !this._touristRoute.explore) this._touristCelebrate();   // #802
+  }
+
+  /**
+   * #802 (Pete, 2026-11-18: "Need a celebration when you reach the destination"). Confetti from the foot
+   * of the beam and from the bike, the beam flaring, the geese honking, a fanfare.
+   */
+  _touristCelebrate() {
+    const world = /** @type {any} */ (this.world);
+    if (world && world.celebrate) world.celebrate(this.bike ? this.bike.position : null);
+    if (this.audioEngine) {
+      this.audioEngine.honkBurst(4);
+      setTimeout(() => { if (this.state === 'finishCinematic' && this.audioEngine) this.audioEngine.honkBurst(3); }, 1200);
+    }
+    const notes = [MOTIF.C5, MOTIF.E5, MOTIF.G5, MOTIF.C5 * 2, MOTIF.G5, MOTIF.C5 * 2];
+    notes.forEach((f, i) => setTimeout(() => this._playChime(f, i === notes.length - 1 ? 0.9 : 0.24), i * 130));
+    try { analytics.trackEvent('tourist_celebrate', {}); } catch {}
+  }
+
+  /**
+   * #802 (Pete: "the pan around the scenic landmark maybe as rising up in the sky from the pan in front
+   * of the completion"). When the finish swing has come round to the front of the bike, the camera goes
+   * on from there: up into the sky, panning round the place. Any key or a click moves on to the end screen.
+   * @returns {boolean} true when the rise has started (a ride with a destination, in a tiles world)
+   */
+  _startArrivalOrbit() {
+    const world = /** @type {any} */ (this.world);
+    const plan = this._touristRoute;
+    const place = this.isTourist && world ? world.destination : null;
+    if (!place || !plan || plan.explore || !this.bike) return false;
+    this._arrivalOrbit = new ArrivalOrbit(this.camera, place, this.bike.position, {
+      clear: world.viewOpen ? (a, b) => world.viewOpen(a, b) : null,
+    });
+    this._arrivalStill = null;
+    this._arrivalSkip = false;
+    const skip = () => { this._arrivalSkip = true; };
+    this._arrivalSkipOff = () => { window.removeEventListener('keydown', skip); window.removeEventListener('pointerdown', skip); };
+    window.addEventListener('keydown', skip);
+    window.addEventListener('pointerdown', skip);
+    return true;
+  }
+
+  _updateArrivalOrbit(dt) {
+    const orbit = this._arrivalOrbit;
+    const slowDt = dt * 0.18;
+    if (this.bike) {
+      const neutralPedal = { crankAngle: this.bike.crankAngle, braking: false, acceleration: 0, wobble: 0 };
+      this.bike.update(neutralPedal, { leanInput: 0, gyroActive: false }, slowDt, true, false);
+    }
+    if (this.world) {
+      this.world.update(this.bike.position, this.bike.roadD, slowDt, null, dt);
+      this.world.updateFinishFx(dt);
+    }
+    // (a controller's A moves on too)
+    if (orbit.elapsed > 1 && typeof navigator !== 'undefined' && navigator.getGamepads) {
+      for (const p of navigator.getGamepads()) if (p && p.buttons && p.buttons[0] && p.buttons[0].pressed) this._arrivalSkip = true;
+    }
+    const done = orbit.update(dt) || (this._arrivalSkip && orbit.elapsed > 1);
+    this.renderer.render(this.scene, this.camera);
+    if (!done) return;
+    this._arrivalStill = this._captureArrivalStill();
+    this._arrivalOrbit = null;
+    if (this._arrivalSkipOff) { this._arrivalSkipOff(); this._arrivalSkipOff = null; }
+    this._arrivalHold = true;          // the camera stays up there behind the end screen
+    if (this.chaseCamera) this.chaseCamera.initialized = false;
+    this._showVictory(this._finishFromRemote);
+  }
+
+  /** The picture on the end screen: the frame just drawn, from the top of the rise. */
+  _captureArrivalStill() {
+    try {
+      const src = this.renderer.domElement;
+      if (!src.width || !src.height) return null;
+      const w = Math.min(960, src.width), h = Math.max(1, Math.round(w * src.height / src.width));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      if (!ctx) return null;
+      ctx.drawImage(src, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.82);
+    } catch { return null; }
+  }
+
+  /** The picture of the place, on top of the end screen's numbers (with who the imagery is from). */
+  _touristPostcardHtml() {
+    const plan = this._touristRoute;
+    if (!plan || !this._arrivalStill || this._touristLeaving) return '';
+    const world = /** @type {any} */ (this.world);
+    const place = plan.to || plan.from;
+    return '<figure class="tourist-postcard"><img alt="" src="' + this._arrivalStill + '">' +
+      '<figcaption><b>' + this._escapeHtml(place.label || '') + '</b><span>' + this._escapeHtml((world && world.attribution) || 'Google') + '</span></figcaption></figure>';
+  }
+
+  /** The end screen's buttons on a Map Tourist ride: ride it again, another place, keep exploring. */
+  _touristEndButtons(playAgainBtn) {
+    const on = !!this._touristRoute && this.isTourist;
+    const leaving = !!this._touristLeaving;
+    if (playAgainBtn) {
+      playAgainBtn.textContent = on ? 'RIDE IT AGAIN' : 'PLAY AGAIN';
+      playAgainBtn.style.display = leaving ? 'none' : '';
+    }
+    const another = document.getElementById('btn-tourist-another');
+    const explore = document.getElementById('btn-tourist-explore');
+    if (another) another.style.display = on && this.mode === 'solo' && !this.net ? '' : 'none';
+    if (explore) {
+      explore.style.display = on && !this.net ? '' : 'none';
+      /** @type {any} */ (explore).variant = leaving ? 'accent' : 'primary';
+    }
+    return leaving ? explore : playAgainBtn;
+  }
+
+  /** ANOTHER PLACE: back to the Map Tourist start screen. */
+  _touristAnotherPlace() {
+    if (this.state !== 'victory' || !this._touristRoute) return;
+    this._hideVictory();
+    analytics.setPage('lobby');
+    this._returnToLobby();
+    try { this.lobby._pendingMode = 'solo'; this.lobby._openTouristStep(); } catch (e) { console.warn('[Tourist] another place', e); }
+  }
+
+  /**
+   * KEEP EXPLORING. After arriving: the ride to the place is done, and from here it is an open ride
+   * round it (no beam, no finish, distance ridden counts). From the end screen of an open ride: back
+   * on the bike where it was.
+   */
+  _touristKeepExploring() {
+    const plan = this._touristRoute;
+    const world = /** @type {any} */ (this.world);
+    const b = this.bike;
+    if (!plan || !this.isTourist || !world || !b || this.net || this.state !== 'victory') return;
+    const arrived = !this._touristLeaving;
+    this._hideVictory();
+    if (arrived && !plan.explore) {
+      this._touristRoute = { ...plan, explore: true, exploreFrom: plan.to, route: { ...plan.route, capped: false }, headline: 'Exploring ' + shortPlace(plan.to && plan.to.label) };
+      this._touristGoalM = Infinity;
+      this._touristDest = null;
+      if (world.setDestination) world.setDestination(null);
+      if (world.setMaxRadius) world.setMaxRadius(Math.hypot(b.position.x, b.position.z) + TOURIST_MAX_RADIUS_M);
+      this._touristOdo = new TouristOdometer({});
+      this._touristOdo.rebase(b.position.x, b.position.z, b.distanceTraveled);
+      if (this.raceManager) this.raceManager.finishTime = 0;   // (the clock runs on: the end screen of the exploring shows all of it)
+      // (no second finish: a restart from here is an open ride, and it pays like one)
+      if (this._touristLevel) Object.assign(this._touristLevel, { distance: 100000, checkpointInterval: 100000, payCapM: b.distanceTraveled + OPEN_WORLD_PAY_CAP_M });
+      try { analytics.trackEvent('tourist_keep_exploring', {}); } catch {}
+    }
+    b.speed = 0;
+    this.state = 'playing';
+    this.quickMenu.setVisible(true);
+    if (this.chaseCamera) this.chaseCamera.initialized = false;
+    this._prevTouristGoalText = null;
+    this._showTouristGoal();
+  }
+
+  /**
+   * Leaving an open ride (one place, nowhere to arrive) shows the end screen first: what was ridden,
+   * and the same ways on. Rides in a room, and rides that have not gone anywhere, just leave.
+   */
+  _touristEndOnLeave() {
+    const plan = this._touristRoute;
+    if (!plan || !plan.explore || !this.isTourist || this.net || this.state !== 'playing' || !this.raceManager || !this.bike) return false;
+    if (!(this.bike.distanceTraveled > 20) || this.bike.fallen) return false;
+    this._closePause();
+    this._touristLeaving = true;
+    this._showVictory(false);
+    return true;
   }
 
   /** #478 · the finish swing goes round the left where Grandma's house stands on the right. */
@@ -5978,6 +6161,7 @@ class Game {
    * camera move, then hand off to _showVictory when the sequence ends.
    */
   _updateFinishCinematic(dt) {
+    if (this._arrivalOrbit) { this._updateArrivalOrbit(dt); return; }   // #802
     const cinematic = this._finishCinematic;
     if (!cinematic) {
       this._showVictory(this._finishFromRemote);
@@ -6018,6 +6202,7 @@ class Game {
       // Reset chase cam so a future race doesn't snap from the
       // close-up pose.
       if (this.chaseCamera) this.chaseCamera.initialized = false;
+      if (this._startArrivalOrbit()) return;   // #802: Map Tourist goes up for a look at the place first
       this._showVictory(this._finishFromRemote);
     }
   }
@@ -6131,7 +6316,8 @@ class Game {
       // Escaped: the values can come from the captain's client (stoker side).
       const esc = (v) => this._escapeHtml(v);
       const stat = (x) => '<uf-stat icon="' + esc(x.icon) + '" value="' + esc(x.value) + '" label="' + esc(x.label) + '"' + (x.words ? ' data-words' : '') + '></uf-stat>';
-      const cells = [...left, ...right];
+      // (a Map Tourist ride has no difficulty and no checkpoints to report)
+      const cells = [...left, ...right].filter((x) => !this._touristRoute || (x.label !== 'Difficulty' && x.label !== 'Checkpoints'));
       // Geese scattered (#363). Only shown when some were actually startled,
       // so a rider who kept to the road doesn't get a "0" they can't read.
       const geeseScattered = this.geeseManager ? this.geeseManager.getDisruptedCount() : 0;
@@ -6155,7 +6341,7 @@ class Game {
       // #657 · what the result card will say, if this finish has something to share.
       this._shareCardData = this._dailyStripText ? this._resultCardData(summary, level) : null;
 
-      statsEl.innerHTML = html;
+      statsEl.innerHTML = this._touristPostcardHtml() + html;
 
       // Multiplayer contribution breakdown (online captain/stoker OR local co-op)
       if (soloStats && soloStats.mode === 'multiplayer') {
@@ -6219,7 +6405,7 @@ class Game {
         : {};
       const fpsStats = this._getFpsStats();
       analytics.endRide({
-        completed: true,
+        completed: !this._touristLeaving,
         duration_ms: summary.timeMs,
         distance: summary.distance,
         checkpoints_passed: summary.checkpointsPassed,
@@ -6287,14 +6473,18 @@ class Game {
       }
     }
 
-    // Check finish-specific achievements
-    this._checkFinishAchievements();
+    // (#802: the end screen of an open Map Tourist ride that was left is not a finish)
+    let submitted;
+    if (!this._touristLeaving) {
+      // Check finish-specific achievements
+      this._checkFinishAchievements();
 
-    // Auto-submit score if logged in
-    const submitted = this._submitScore();
-    // D-6 / D-8 · #641: a clean Daily finish goes to the board (the server keeps
-    // the day's best), and what the two of you have done.
-    this._submitDailyBest(summary, fromRemote);
+      // Auto-submit score if logged in
+      submitted = this._submitScore();
+      // D-6 / D-8 · #641: a clean Daily finish goes to the board (the server keeps
+      // the day's best), and what the two of you have done.
+      this._submitDailyBest(summary, fromRemote);
+    }
     this._renderPairPanel(summary, submitted);
 
     // Show NEXT LEVEL button if there's a next level. #400: in the demo, after
@@ -6325,16 +6515,17 @@ class Game {
     // Adjust lobby button text for solo vs multiplayer
     const victoryLobbyBtn = document.getElementById('btn-victory-lobby');
     if (victoryLobbyBtn) victoryLobbyBtn.textContent = this.net ? 'END RIDE TOGETHER' : 'END RIDE';
+    const touristPrimary = this._touristEndButtons(playAgainBtn);   // #802
 
     // B-5: wishlist + send-a-link, after the ride buttons.
     this._updateCtaButtons('victory');
     // #400 D4: the ride pays Tandem Tokens — the tally, and GARAGE → to spend them.
-    this._showRideCoins('victory', 'finish', { summary });
+    this._showRideCoins('victory', this._touristLeaving ? 'abandon' : 'finish', { summary });
     this._markSheetScroll('victory-sheet');   // #512
 
     // Gamepad navigation for victory buttons: the sheet's action row in its
     // own order (#459 item 15); NEXT LEVEL when there is one, else PLAY AGAIN.
-    focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: hasNext ? nextBtn : playAgainBtn });
+    focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: hasNext ? nextBtn : (touristPrimary || playAgainBtn) });
     this._celebrateNewBikes('victory');   // #736
     // #657 · Settings' Discord option: a Daily Ride finish posts its card (after this frame's unlocks).
     if (this._shareCardData && this._shareCardData.isDaily) setTimeout(() => { this._maybeAutoPostDiscord().catch(() => {}); }, 800);
@@ -6492,7 +6683,11 @@ class Game {
     this.lobby?.bikeCelebration?.close();   // #736
     document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
+    this._arrivalHold = false;      // #802
+    this._arrivalStill = null;
+    this._touristLeaving = false;
     for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby',
+                      'btn-tourist-another', 'btn-tourist-explore',
                       'btn-wishlist-victory', 'btn-invite-victory']) {
       const el = document.getElementById(id);
       if (el) el.style.pointerEvents = '';
@@ -8669,7 +8864,7 @@ class Game {
         this.world.update(this.bike.position, this.bike.roadD, dt);
         this.world.updateFinishFx(dt);   // #478 · a pile still landing when the victory screen opens
         if (this.state === 'slingAim') this._placeSlingCamera();
-        else this.chaseCamera.update(this.bike, dt, roadPath);
+        else if (!(this._arrivalHold && this.state === 'victory')) this.chaseCamera.update(this.bike, dt, roadPath);   // (#802: held over the place)
         if (this.archIndicator._visible) this.archIndicator.update(this.bike, 0, 0);
 
         if (this.state === 'lobby') this._renderStatic();

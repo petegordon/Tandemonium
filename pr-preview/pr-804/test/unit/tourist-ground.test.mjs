@@ -435,3 +435,25 @@ test('the spot goes further back when a wall is right in front of it; a short tr
   assert.ok(start && Math.abs(start.x) < 0.2, 'the start of the trail');
   assert.equal(new TouristGround({ tiles: fakeTiles([]), tune: TOURIST_TUNE, probeUp: 10, probeRay: 10 }).recoverySpot(0, 0, 5), null);
 });
+
+test('a trail the bike did not come here on is not followed (a restart puts the bike somewhere else)', () => {
+  const g = follower(fakeTiles([ground(0)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  ride(g, pos, 60, 6, null, EAST);
+  assert.ok(g.breadcrumbs.length > 10);
+  // the bike is now 150 m away from the end of that trail
+  assert.equal(g.recoverySpot(-90, 0, 5), null, 'no spot from a trail that ends somewhere else');
+  assert.equal(g.breadcrumbs.length, 0, 'and the stale trail is dropped');
+});
+
+test('a gap in the trail ends the way back at the gap', () => {
+  const g = follower(fakeTiles([ground(0, null, 1000)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  ride(g, pos, 12, 6, null, EAST);
+  pos.x = 300;                                   // put somewhere else, then ridden on
+  ride(g, pos, 12, 6, null, EAST);
+  const spot = g.recoverySpot(pos.x, pos.z, 30);
+  assert.ok(spot && spot.x > 299, `stays on this side of the gap (x=${spot && spot.x.toFixed(1)})`);
+});

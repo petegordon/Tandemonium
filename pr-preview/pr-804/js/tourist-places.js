@@ -74,6 +74,8 @@ export function planForPlace(place, kind = 'scenic') {
   const plan = place.to ? planRoute(place.from, place.to) : planExplore(place.from);
   if (Number.isFinite(place.height)) plan.anchor = { height: place.height, anchored: true };
   if (place.to && Number.isFinite(place.toHeight)) plan.toAnchor = { height: place.toHeight, anchored: true };
+  // a landmark that cannot be ridden into (an arch, a fountain behind railings) is reached from further off
+  if (place.to && Number.isFinite(place.arriveM)) plan.arriveM = place.arriveM;
   plan.kind = kind;
   if (kind === 'scenic') {
     plan.title = place.name;

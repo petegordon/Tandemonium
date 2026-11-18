@@ -411,9 +411,18 @@ export class TouristGround {
   recoverySpot(x, z, backM, g = this.tune.ground) {
     const trail = this.breadcrumbs;
     if (!trail.length) return null;
-    // the way back: the crash point, then the crumbs, newest first
+    // Is this trail the way the bike came here? After a restart (or anything else that puts the bike
+    // somewhere new) the crumbs are where it used to be, and "back along the trail" would be a jump there.
+    const reach = g.breadcrumbSpacing * 3 + g.bumpDist + g.bumpClearance;
+    const newest = trail[trail.length - 1];
+    if (Math.hypot(x - newest.x, z - newest.z) > reach) { trail.length = 0; return null; }
+    // the way back: the crash point, then the crumbs, newest first, for as long as they follow on
     const path = [{ x, y: this._refY, z }];
-    for (let i = trail.length - 1; i >= 0; i--) path.push(trail[i]);
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const prev = path[path.length - 1];
+      if (path.length > 1 && Math.hypot(prev.x - trail[i].x, prev.z - trail[i].z) > reach) break;
+      path.push(trail[i]);
+    }
     let want = backM, spot = null;
     for (let tries = 0; tries < 6 && !spot; tries++) {
       const at = this._alongPath(path, want);
