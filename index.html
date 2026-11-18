@@ -239,7 +239,7 @@
     flex-direction: column;
     gap: 8px;
     /* #400: keep clear of the side toggle columns on a phone, like the level cards */
-    width: min(340px, calc(100vw - 150px));
+    width: min(420px, calc(100vw - 150px));
     margin: 0 auto;
   }
   .tourist-input {
@@ -274,6 +274,57 @@
     text-align: center;
   }
   .tourist-preview strong { color: var(--uf-color-accent-2); }
+  /* Map Tourist's places: scenic rides, your own, and the week's new places. */
+  #tourist-places { display: flex; flex-direction: column; gap: 8px; width: min(560px, calc(100vw - 150px)); margin: 0 auto; }
+  .tourist-head { font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-top: 2px; }
+  .tourist-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tourist-place {
+    display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center;
+    padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #fff; text-align: left; cursor: pointer; font: inherit; min-width: 0;
+  }
+  .tourist-place:hover { border-color: var(--uf-color-accent-2); background: rgba(255,255,255,0.1); }
+  .tourist-place-icon { grid-row: 1 / 3; font-size: 22px; line-height: 1; }
+  .tourist-place-name { font-size: 13px; font-weight: 800; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tourist-place-sub { font-size: 10.5px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* a phone: two columns, no picture, and a name may take two lines (it was cut to one letter) */
+  @media (max-width: 1023px) {
+    .tourist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+    .tourist-place { grid-template-columns: minmax(0, 1fr); padding: 6px 8px; }
+    .tourist-place-icon { display: none; }
+    .tourist-place-name { font-size: 12px; white-space: normal; }
+  }
+  .tourist-yours { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+  .tourist-yours-place {
+    padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06);
+    color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tourist-yours-place:hover { border-color: var(--uf-color-accent-2); }
+  .tourist-yours-none { font-size: 12px; color: rgba(255,255,255,0.45); }
+  .tourist-new {
+    padding: 9px 12px; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.35); background: none; color: #fff;
+    font: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.6px; cursor: pointer;
+  }
+  .tourist-new:hover:not(:disabled) { border-style: solid; border-color: var(--uf-color-accent-2); }
+  .tourist-new:disabled { opacity: 0.5; cursor: default; }
+  .tourist-quota { display: flex; flex-direction: column; gap: 1px; text-align: center; font-size: 11.5px; line-height: 1.35; color: rgba(255,255,255,0.6); }
+  .tourist-quota b { font-size: 12.5px; color: var(--uf-color-accent-2); }
+  .tourist-quota.out b { color: #ffb454; }
+  /* the keyboard a controller types with */
+  .tourist-osk { display: flex; flex-direction: column; gap: 4px; }
+  .tourist-osk-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+  .tourist-osk-key {
+    padding: 7px 0; border-radius: 6px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.08);
+    color: #fff; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; min-width: 0;
+  }
+  .tourist-osk-key.wide { font-size: 11px; letter-spacing: 0.5px; }
+  .tourist-input.osk-target { border-color: var(--uf-color-accent-2); box-shadow: 0 0 0 2px color-mix(in srgb, var(--uf-color-accent-2) 35%, transparent); }
+  .tourist-place.gamepad-focus, .tourist-yours-place.gamepad-focus, .tourist-new.gamepad-focus, .tourist-osk-key.gamepad-focus,
+  .tourist-input.gamepad-focus, .tourist-add-to.gamepad-focus, .tourist-remove-to.gamepad-focus {
+    outline: 3px solid var(--uf-color-focus, #ffd36b); outline-offset: 2px;
+  }
+  #tourist-goal .tourist-arrow { display: inline-block; color: var(--uf-color-accent-2); transition: transform 0.12s linear; }
   /* E-7 · the distance, on screen for the whole ride. */
   #tourist-goal {
     position: fixed;
@@ -4851,6 +4902,32 @@
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
     .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
+    /* Map Tourist's places and address form, sized for a desk or a couch like the rest of this layout
+       (two columns of scenic rides here: their names have to be read from across a room). */
+    .lobby-card:has(#lobby-tourist[active]) .lobby-steps-col {
+      width: calc(270 * var(--ls)); min-width: calc(270 * var(--ls)); max-width: calc(270 * var(--ls));
+    }
+    #tourist-places, #tourist-form { width: 100%; gap: calc(3 * var(--ls)); }
+    .tourist-head { font-size: calc(5 * var(--ls)); letter-spacing: calc(0.5 * var(--ls)); margin-top: calc(1 * var(--ls)); }
+    .tourist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(2.5 * var(--ls)); }
+    .tourist-place { padding: calc(3 * var(--ls)) calc(5 * var(--ls)); border-radius: calc(4 * var(--ls)); column-gap: calc(4 * var(--ls)); }
+    .tourist-place-icon { font-size: calc(12 * var(--ls)); }
+    .tourist-place-name { font-size: calc(8.5 * var(--ls)); }
+    .tourist-place-sub { font-size: calc(5.6 * var(--ls)); }
+    .tourist-yours { gap: calc(2.5 * var(--ls)); min-height: calc(12 * var(--ls)); }
+    .tourist-yours-place { padding: calc(2.5 * var(--ls)) calc(5 * var(--ls)); font-size: calc(6 * var(--ls)); }
+    .tourist-yours-none { font-size: calc(5.6 * var(--ls)); }
+    .tourist-new { padding: calc(4 * var(--ls)); border-radius: calc(4 * var(--ls)); font-size: calc(6.5 * var(--ls)); }
+    .tourist-quota { font-size: calc(5.4 * var(--ls)); }
+    .tourist-quota b { font-size: calc(6.2 * var(--ls)); }
+    .tourist-input { padding: calc(4 * var(--ls)) calc(5 * var(--ls)); border-radius: calc(4 * var(--ls)); font-size: calc(8 * var(--ls)); }
+    .tourist-add-to { padding: calc(3.5 * var(--ls)); font-size: calc(6 * var(--ls)); }
+    .tourist-remove-to { width: calc(17 * var(--ls)); height: calc(17 * var(--ls)); font-size: calc(9 * var(--ls)); }
+    .tourist-osk, .tourist-osk-row { gap: calc(1.6 * var(--ls)); }
+    .tourist-osk-key { padding: calc(3 * var(--ls)) 0; border-radius: calc(3 * var(--ls)); font-size: calc(7.5 * var(--ls)); }
+    .tourist-osk-key.wide { font-size: calc(6 * var(--ls)); }
+    .tourist-error { font-size: calc(6 * var(--ls)); min-height: calc(8 * var(--ls)); }
+    .tourist-preview { font-size: calc(6.5 * var(--ls)); min-height: calc(16 * var(--ls)); }
     /* #611 · the warp day + row, readable from the couch */
     .level-card-warp-day { font-size: calc(10 * var(--ls)); }
     .daily-warp-row { gap: calc(5 * var(--ls)); }
@@ -5879,8 +5956,18 @@ ON</button>
              Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-tourist" class="lobby-step">
-          <p class="lobby-prompt">Where are you two?</p>
-          <div id="tourist-form">
+          <p class="lobby-prompt">Where will you ride?</p>
+          <!-- The places first: nothing to type. Scenic rides (js/tourist-places.js), the player's own
+               places, then a typed address (a few new ones a week: each is a paid lookup). -->
+          <div id="tourist-places">
+            <div class="tourist-head">Scenic rides</div>
+            <div id="tourist-scenic" class="tourist-grid"></div>
+            <div class="tourist-head">Your places</div>
+            <div id="tourist-yours" class="tourist-yours"></div>
+            <button type="button" class="tourist-new" id="btn-tourist-new">+ A NEW PLACE</button>
+            <div id="tourist-quota" class="tourist-quota" role="status"></div>
+          </div>
+          <div id="tourist-form" style="display:none;">
             <input id="tourist-from" class="tourist-input" type="text"
                    placeholder="Your address or city" autocomplete="off" spellcheck="false">
             <!-- #400: one address = open world; a second one makes it a route. -->
@@ -5889,10 +5976,13 @@ ON</button>
                      placeholder="Second address or city" autocomplete="off" spellcheck="false">
               <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
             </div>
+            <!-- A controller's way to type (shown when one is connected, and on a TV). -->
+            <div id="tourist-osk" class="tourist-osk" style="display:none;"></div>
             <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
-            <div id="tourist-error" class="tourist-error"></div>
+            <div id="tourist-error" class="tourist-error" role="alert"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>
+            <div id="tourist-quota-form" class="tourist-quota" role="status"></div>
           </div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-tourist">&larr; Back</uf-button>
         </uf-step>
@@ -6277,7 +6367,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.02199ec | 11-17-2026 21:33</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d6d087a | 11-17-2026 23:04</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">

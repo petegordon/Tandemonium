@@ -86,8 +86,9 @@ import { World } from './world.js';
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
 import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
-import { formatDistance, skipLabel, headingForBearing } from './tourist-route.js';
+import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M } from './tourist-route.js';
 import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
+import { EVT_TOURIST_SKIP } from './config.js';
 // #400 · how long a co-op Tourist pair waits for both tiles worlds before
 // going back to the room (never an indefinite hang on a loading screen).
 const TOURIST_READY_TIMEOUT_MS = 20000;
@@ -1653,6 +1654,8 @@ class Game {
         } else {
           this._startFinishCinematic(true);
         }
+      } else if (eventType === EVT_TOURIST_SKIP) {
+        this._touristSkip(true);   // (sent several times: the first one does it)
       } else if (eventType === EVT_RETURN_ROOM) {
         // Sent reliably (several copies 200 ms apart): act on the first only. The later copies
         // must not pull back a ride the captain has already started again.
@@ -2518,6 +2521,7 @@ class Game {
   }
 
   _startCountdown() {
+    this._touristHeld = false; this._touristWaitS = 0;
     // Versus has its own lean countdown path — no singleton HUD, DDA,
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
@@ -2645,6 +2649,10 @@ class Game {
     this._lastCountNum = 3;
 
     // Create race manager + contribution tracker + collectibles from selected level
+    // (a Tourist ride keeps ITS level: the level list is rebuilt when records or sign-in arrive, and its
+    // default pick, Grandma's, used to land on a ride that was still loading its streets: presents,
+    // pylons and Tandem Tokens piled up at the start of Paris)
+    if (this.isTourist && this._touristLevel) this.lobby.selectedLevel = this._touristLevel;
     const level = this.lobby.selectedLevel;
 
     // B-4 · the world this ride happens in.
@@ -2971,6 +2979,20 @@ class Game {
 
   _updateCountdown(dt) {
     if (this._warmGate) dt = 0;   // (the picture is held while the ride's models are warmed: its clock waits too)
+    // Map Tourist: the countdown waits for the street under the bike (the first geometry to arrive is
+    // coarse and can be far above or below it), for as long as 13 s. The stoker follows the captain's clock.
+    if (this.isTourist && !this._touristHeld && this.mode !== 'stoker' && this.world && /** @type {any} */ (this.world).hasGround) {
+      const w = /** @type {any} */ (this.world);
+      if (!w.hasGround() && (this._touristWaitS || 0) < (w.measuredGround ? 22 : 13)) {
+        this._touristWaitS = (this._touristWaitS || 0) + dt;
+        if (w.setStatus) w.setStatus('Loading the streets…');
+        dt = 0;
+      } else {
+        // once: a street that never settles does not hold the ride a second time
+        if (w.setStatus) w.setStatus('');
+        this._touristHeld = true;
+      }
+    }
     this.countdownTimer -= dt;
     this._updateBotRace(dt);   // #644 step 2 · the ghost team waits on the line beside you
     const flavorNum = document.getElementById('countdown-flavor-num');
@@ -3178,6 +3200,8 @@ class Game {
     } else {
       this.bike.fullReset();
     }
+    // Map Tourist: back to the start of the ride (after the skip, that is another place on the globe).
+    if (this._touristRoute && this.isTourist) this._startTouristLeg(true);
 
     // Refill the segment clock for whatever segment is about to be ridden.
     //
@@ -4212,7 +4236,7 @@ class Game {
     // and a distance that IS the destination.
     // Open world: a "finish" far past the free-roam radius, so it never comes.
     const rideM = plan.explore ? 100000 : Math.max(50, Math.round(plan.route.ridableM));
-    this.lobby.selectedLevel = {
+    this.lobby.selectedLevel = this._touristLevel = {
       id: 'tourist',
       name: plan.explore ? 'Map Tourist' : (plan.to.label || 'Their door'),
       distance: rideM,
@@ -4239,18 +4263,19 @@ class Game {
     // its own timeouts and falls back to a wide ground probe.
     let origin = null;
     // PR #397 m16: co-op — the captain looked the anchor up once and sent it.
-    if (plan.anchor) origin = originFromAnchor(plan.from, plan.anchor);
+    // (a scenic ride's height was measured on its own street, so the ground is known to the metre)
+    if (plan.anchor) origin = originFromAnchor(plan.from, plan.kind === 'scenic' ? { ...plan.anchor, measured: true } : plan.anchor);
     if (!origin) { try { origin = await resolveOriginAt(plan.from); } catch { origin = null; } }
     if (!isCurrent()) return false;
     const ready = await this._loadTouristWorld(apiKey, isCurrent, origin);
     if (!ready) return false;
-    // A route faces its destination; open world faces north.
-    this.bike.startHeading = plan.explore ? 0 : headingForBearing(plan.bearing);
-    this.bike.heading = this.bike.startHeading;   // in case the bike was reset already
-    // B3: no roadPath here, so this odometer is what moves bike.distanceTraveled
-    // (the finish, the goal readout, coins, achievements). Route: progress along
-    // the bearing; open world: distance ridden.
-    this._touristOdo = new TouristOdometer({ heading: plan.explore ? null : this.bike.startHeading });
+    this._touristOrigin = origin;     // where the ride starts (a restart after the skip comes back here)
+    this._touristWaitS = 0;
+    this._touristSkipped = false;
+    this._touristHold = false;
+    // B3: no roadPath here, so the leg's odometer is what moves bike.distanceTraveled
+    // (the finish, the goal readout, coins, achievements).
+    this._startTouristLeg(false);
 
     if (this.world && this.world.setRoute) {
       this.world.setRoute(plan);
@@ -4260,6 +4285,133 @@ class Game {
       this.world.setOrigin(plan.from);
     }
     return !!apiKey;
+  }
+
+  /**
+   * Set the ride up at its start: facing the way it goes, a beam of light where it is going, and the
+   * odometer that counts the way there.
+   *   a place to explore   no destination; distance ridden counts.
+   *   a ride with an end   the beam stands at the end and the ride arrives AT it.
+   *   a long ride (over 5 km: the first 2.5 km, a skip, the last 2.5 km)
+   *                        the beam marks the cut 2.5 km out; crossing it skips to the last stretch
+   *                        (_touristSkip), where the beam stands at the destination.
+   * again: a restart. After a skip the world is at the far end, so it comes back first.
+   */
+  _startTouristLeg(again) {
+    const plan = this._touristRoute;
+    const world = /** @type {any} */ (this.world);
+    if (!plan || !world) return;
+    if (again && this._touristSkipped && this._touristOrigin && world.reanchor) {
+      world.reanchor(this._touristOrigin);
+      this.bike.position.x = 0; this.bike.position.z = 0;
+    }
+    this._touristSkipped = false;
+    this._touristHold = false;
+    this._hideTouristSkip();
+    if (plan.explore) {
+      this.bike.startHeading = 0;                      // open world faces north
+      this._touristOdo = new TouristOdometer({});
+      this._touristDest = null;
+      if (world.setDestination) world.setDestination(null);
+    } else {
+      const h = headingForBearing(plan.bearing);
+      const long = !!plan.route.capped;
+      const len = long ? CAP_HALF_M : plan.route.ridableM;
+      const at = { x: Math.sin(h) * len, z: Math.cos(h) * len };
+      this.bike.startHeading = h;
+      this._touristDest = at;
+      // a long ride's first leg ends at a line across the way (anywhere along it skips ahead)
+      this._touristOdo = long ? new TouristOdometer({ heading: h }) : new TouristOdometer({ target: at, lengthM: len });
+      if (world.setDestination) world.setDestination(at, { color: long ? 0x9fd8ff : 0xffd36b });
+    }
+    this.bike.heading = this.bike.startHeading;        // in case the bike was reset already
+    this._prevTouristGoalText = null;
+    this._updateTouristGoal();                         // (a restart after the skip: the whole ride is ahead again)
+  }
+
+  /**
+   * A long ride reached its cut: skip the middle. The picture goes to a card ("✂️ 6,120 km skipped"),
+   * the same tiles are pointed at the place 2.5 km short of the destination, and the ride carries on
+   * from there to the door. In a room the captain's side decides when, and tells the partner.
+   * @param {boolean} [fromPartner]
+   */
+  async _touristSkip(fromPartner = false) {
+    const plan = this._touristRoute;
+    const world = /** @type {any} */ (this.world);
+    if (!plan || !plan.route || !plan.route.capped || this._touristSkipped || !this.isTourist || !world || !world.reanchor) return;
+    this._touristSkipped = true;
+    this._touristHold = true;
+    if (this.bike) this.bike.speed = 0;
+    this._showTouristSkip(plan);
+    if (!fromPartner && this.mode === 'captain' && this.net) this.net.sendEventReliable(EVT_TOURIST_SKIP);
+    try { analytics.trackEvent('tourist_skip', { km: Math.round(plan.realM / 1000) }); } catch {}
+
+    // the place 2.5 km before the destination, on the line between the two
+    const p2 = interpolate(plan.from, plan.to, 1 - CAP_HALF_M / plan.realM);
+    const point = { lat: p2.lat, lon: p2.lon, label: plan.to.label };
+    let origin = plan.toAnchor ? originFromAnchor(point, plan.toAnchor) : null;
+    if (!origin) { try { origin = await resolveOriginAt(point); } catch { origin = null; } }
+    if (this._touristRoute !== plan || !this.isTourist || this.world !== world || !this._touristSkipped) return;   // the ride ended meanwhile
+    if (!origin) origin = { name: point.label, lat: point.lat, lon: point.lon, heading: 0, custom: true, height: 1500, anchored: false };
+
+    world.reanchor(origin);
+    const h = headingForBearing(bearingBetween(p2, plan.to));
+    const at = { x: Math.sin(h) * CAP_HALF_M, z: Math.cos(h) * CAP_HALF_M };
+    const b = this.bike;
+    b.position.x = 0; b.position.z = 0;
+    b.startHeading = h; b.heading = h; b.speed = 0;
+    if ('lean' in b) b.lean = 0;
+    this._touristDest = at;
+    if (world.setDestination) world.setDestination(at);
+    if (this.mode !== 'stoker') {
+      this._touristOdo = new TouristOdometer({ target: at, lengthM: CAP_HALF_M, startM: CAP_HALF_M });
+      this._touristOdo.rebase(0, 0, CAP_HALF_M);
+      b.distanceTraveled = CAP_HALF_M;
+    }
+    // ride on when there is ground under the bike (or after a while, whatever has loaded)
+    const t0 = performance.now();
+    await new Promise((resolve) => {
+      const check = () => {
+        if (this._touristRoute !== plan || !this._touristHold) return resolve(null);
+        // (the card stays long enough to be read, however fast the place arrives)
+        const waited = performance.now() - t0;
+        if ((waited > 2600 && world.hasGround && world.hasGround()) || waited > 15000) return resolve(null);
+        setTimeout(check, 120);
+      };
+      setTimeout(check, 600);
+    });
+    if (this._touristRoute !== plan) return;
+    this._touristHold = false;
+    this._hideTouristSkip();
+    this._updateTouristGoal();
+  }
+
+  /** The skip's card: what was skipped, and what is left. */
+  _showTouristSkip(plan) {
+    let el = document.getElementById('tourist-skip');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tourist-skip';
+      el.setAttribute('role', 'status');
+      el.style.cssText = [
+        'position:fixed', 'inset:0', 'z-index:70', 'display:flex', 'flex-direction:column', 'align-items:center', 'justify-content:center',
+        'gap:10px', 'padding:24px', 'box-sizing:border-box', 'background:#101522', 'color:#fff', 'text-align:center',
+        'font:600 clamp(16px,2.4vw,26px)/1.35 system-ui,sans-serif', 'transition:opacity .45s ease', 'pointer-events:none',
+      ].join(';');
+      document.body.appendChild(el);
+    }
+    const big = 'font:800 clamp(28px,5.5vw,64px)/1.1 system-ui,sans-serif;color:#ffd36b';
+    el.innerHTML = '<div style="' + big + '">' + this._escapeHtml(skipLabel(plan.route)) + '</div>' +
+      '<div>Now the last ' + this._escapeHtml(formatDistance(CAP_HALF_M)) + ' to <b>' + this._escapeHtml(plan.to.label || 'their door') + '</b></div>';
+    el.style.display = 'flex';
+    el.style.opacity = '1';
+  }
+
+  _hideTouristSkip() {
+    const el = document.getElementById('tourist-skip');
+    if (!el || el.style.display === 'none') return;
+    el.style.opacity = '0';
+    setTimeout(() => { if (el.style.opacity === '0') el.style.display = 'none'; }, 500);
   }
 
   /** E-7 · the sentence, and how much of it is left. */
@@ -4275,12 +4427,21 @@ class Game {
     const odo = this._touristOdo;
     const b = this.bike;
     if (!odo || !b || !this.isTourist) return;
+    if (this._touristHold) { b.speed = 0; return; }   // the skip's card is up: nobody rides
     b.distanceTraveled = odo.update(b.position.x, b.position.z, b.distanceTraveled);
+    const plan = this._touristRoute;
+    if (plan && plan.route && plan.route.capped && !this._touristSkipped && b.distanceTraveled >= CAP_HALF_M) {
+      b.distanceTraveled = CAP_HALF_M;
+      this._touristSkip(false);
+    }
   }
 
   _hideTouristGoal() {
     const el = document.getElementById('tourist-goal');
     if (el) el.classList.remove('visible');
+    // the ride is over: nothing of its skip stays up
+    this._touristHold = false;
+    this._hideTouristSkip();
   }
 
   /**
@@ -4299,7 +4460,22 @@ class Game {
         ' · <span class="tourist-togo">' + formatDistance(left) + ' to go</span>';
     if (text !== this._prevTouristGoalText) {
       this._prevTouristGoalText = text;
-      el.innerHTML = text;
+      el.innerHTML = '<span class="tourist-arrow" aria-hidden="true">&#x27A4;</span> ' + text;
+      this._touristArrowEl = el.querySelector('.tourist-arrow');
+    }
+    // which way the beam is from where the bike points (no road to follow here)
+    const arrow = this._touristArrowEl;
+    if (arrow) {
+      const d = this._touristDest, b = this.bike;
+      if (!d || !b) { arrow.style.display = 'none'; }
+      else {
+        const dx = d.x - b.position.x, dz = d.z - b.position.z;
+        const fwd = dx * Math.sin(b.heading) + dz * Math.cos(b.heading);
+        const right = -dx * Math.cos(b.heading) + dz * Math.sin(b.heading);   // (+X is west in the tiles' frame)
+        const deg = Math.round(Math.atan2(right, fwd) * 180 / Math.PI - 90);  // the glyph points right at 0
+        if (deg !== this._touristArrowDeg) { this._touristArrowDeg = deg; arrow.style.transform = 'rotate(' + deg + 'deg)'; }
+        arrow.style.display = '';
+      }
     }
 
     // Arrival is the ordinary finish: the pseudo-level's distance IS the
@@ -4321,8 +4497,10 @@ class Game {
 
     const title = document.getElementById('victory-title');
     const dest = document.getElementById('victory-destination');
-    if (title) title.textContent = 'YOU MADE IT TO THEM!';
-    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = 'You made it to them!'; }
+    // "to them" is for a ride between two people's places; a scenic ride just made it
+    const toThem = plan.kind !== 'scenic';
+    if (title) title.textContent = toThem ? 'YOU MADE IT TO THEM!' : 'YOU MADE IT!';
+    { const sh = /** @type {any} */ (document.getElementById('victory-sheet')); if (sh) sh.heading = toThem ? 'You made it to them!' : 'You made it!'; }
     if (dest) dest.textContent = '📍 ' + (plan.to.label || 'their door');
 
     this._dailyStripText = [

@@ -98,7 +98,7 @@ export const RoomProtocol = {
    * the stoker rebuilds the identical plan with the pure planRoute(). Sent
    * immediately before a startRide(…, tourist = true).
    */
-  touristPlan: (from, to, anchor = null) => {
+  touristPlan: (from, to, anchor = null, extra = null) => {
     const m = {
       type: ROOM_MSG.TOURIST_PLAN,
       from: { lat: from.lat, lon: from.lon, label: String(from.label || '') },
@@ -108,6 +108,10 @@ export const RoomProtocol = {
     // PR #397 m16: the captain looked the anchor's ground height up once; the
     // stoker uses it instead of a second lookup inside the shared deadline.
     if (anchor && Number.isFinite(anchor.height)) m.anchor = { height: anchor.height, anchored: !!anchor.anchored };
+    // a long ride's far end (where it picks up after the skip), and what kind of ride it is (the wording)
+    if (extra && extra.toAnchor && Number.isFinite(extra.toAnchor.height)) m.toAnchor = { height: extra.toAnchor.height, anchored: !!extra.toAnchor.anchored };
+    if (extra && (extra.kind === 'scenic' || extra.kind === 'yours')) m.kind = extra.kind;
+    if (extra && typeof extra.title === 'string') m.title = extra.title.slice(0, 80);
     return m;
   },
 
