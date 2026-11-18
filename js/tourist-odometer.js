@@ -9,6 +9,10 @@
 //   route (two addresses): progress along the route bearing — the furthest
 //     projection reached, never negative — so arrival fires at ridableM and
 //     riding sideways or back again counts nothing.
+//   toward a point (a ride with a destination): how much closer the bike has come to that point,
+//     the closest it has been. Arrival is being within ARRIVE_M of the point itself, so the ride
+//     ends AT the place. Along a bearing it ended on a line across the map, which a rider who
+//     drifted sideways crossed a long way from the door.
 //   open world (one address): the distance ridden, frame by frame.
 //
 // Either way a single-frame jump over TELEPORT_M (a reset, the edge pull) is a
@@ -20,16 +24,25 @@
 /** A per-frame move longer than this is a teleport, not riding. */
 export const TELEPORT_M = 20;
 
+/** A ride toward a point arrives when the bike is this close to it, in metres. */
+export const ARRIVE_M = 18;
+
 /** Open-world rides pay coins for at most this much distance per ride. */
 export const OPEN_WORLD_PAY_CAP_M = 10000;
 
 export class TouristOdometer {
   /**
-   * @param {{ heading?: number|null }} [opts]  heading: the route's forward
-   *   heading (bike frame: forward = (sin h, cos h)); null/undefined = open world.
+   * @param {{ heading?: number|null, target?: {x: number, z: number}|null, lengthM?: number, startM?: number }} [opts]
+   *   heading: the route's forward heading (bike frame: forward = (sin h, cos h));
+   *   target + lengthM: a point to reach, and how long the ride to it is (the bike is lengthM from it
+   *     at the start); startM: the distance already counted when this leg begins (a ride's second leg);
+   *   none of these = open world.
    */
-  constructor({ heading = null } = {}) {
-    this.route = typeof heading === 'number' && isFinite(heading);
+  constructor({ heading = null, target = null, lengthM = 0, startM = 0 } = {}) {
+    this.target = target && isFinite(target.x) && isFinite(target.z) ? { x: target.x, z: target.z } : null;
+    this.lengthM = Math.max(0, lengthM || 0);
+    this.startM = Math.max(0, startM || 0);
+    this.route = !this.target && typeof heading === 'number' && isFinite(heading);
     this.fx = this.route ? Math.sin(heading) : 0;
     this.fz = this.route ? Math.cos(heading) : 0;
     this.distance = 0;
@@ -57,6 +70,8 @@ export class TouristOdometer {
     if (!isFinite(x) || !isFinite(z)) return this.distance;
     if (this._last === null || (current !== undefined && current !== this._written)) {
       this.rebase(x, z, current !== undefined ? current : 0);
+      // toward a point, a reset to nothing starts the leg again; anything else carries on from it
+      if (this.target && this.distance < this.startM) { this.distance = this.startM; this._written = this.distance; }
       return this.distance;
     }
     const dx = x - this._last.x;
@@ -69,7 +84,12 @@ export class TouristOdometer {
     }
     this._last.x = x;
     this._last.z = z;
-    if (this.route) {
+    if (this.target) {
+      // closer than ever before counts; within ARRIVE_M is the whole leg
+      const away = Math.max(0, Math.hypot(this.target.x - x, this.target.z - z) - ARRIVE_M);
+      const done = this.startM + Math.max(0, this.lengthM - away);
+      if (done > this.distance) this.distance = done;
+    } else if (this.route) {
       const along = this._base + (x - this._origin.x) * this.fx + (z - this._origin.z) * this.fz;
       if (along > this.distance) this.distance = along;
     } else {

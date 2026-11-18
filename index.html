@@ -239,7 +239,7 @@
     flex-direction: column;
     gap: 8px;
     /* #400: keep clear of the side toggle columns on a phone, like the level cards */
-    width: min(340px, calc(100vw - 150px));
+    width: min(420px, calc(100vw - 150px));
     margin: 0 auto;
   }
   .tourist-input {
@@ -274,6 +274,50 @@
     text-align: center;
   }
   .tourist-preview strong { color: var(--uf-color-accent-2); }
+  /* Map Tourist's places: scenic rides, your own, and the week's new places. */
+  #tourist-places { display: flex; flex-direction: column; gap: 8px; width: min(560px, calc(100vw - 150px)); margin: 0 auto; }
+  .tourist-head { font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-top: 2px; }
+  .tourist-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .tourist-place {
+    display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; align-items: center;
+    padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.16); background: rgba(255,255,255,0.06);
+    color: #fff; text-align: left; cursor: pointer; font: inherit; min-width: 0;
+  }
+  .tourist-place:hover { border-color: var(--uf-color-accent-2); background: rgba(255,255,255,0.1); }
+  .tourist-place-icon { grid-row: 1 / 3; font-size: 22px; line-height: 1; }
+  .tourist-place-name { font-size: 13px; font-weight: 800; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tourist-place-sub { font-size: 10.5px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tourist-yours { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+  .tourist-yours-place {
+    padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06);
+    color: #fff; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; max-width: 100%;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .tourist-yours-place:hover { border-color: var(--uf-color-accent-2); }
+  .tourist-yours-none { font-size: 12px; color: rgba(255,255,255,0.45); }
+  .tourist-new {
+    padding: 9px 12px; border-radius: 8px; border: 1px dashed rgba(255,255,255,0.35); background: none; color: #fff;
+    font: inherit; font-size: 12px; font-weight: 800; letter-spacing: 0.6px; cursor: pointer;
+  }
+  .tourist-new:hover:not(:disabled) { border-style: solid; border-color: var(--uf-color-accent-2); }
+  .tourist-new:disabled { opacity: 0.5; cursor: default; }
+  .tourist-quota { display: flex; flex-direction: column; gap: 1px; text-align: center; font-size: 11.5px; line-height: 1.35; color: rgba(255,255,255,0.6); }
+  .tourist-quota b { font-size: 12.5px; color: var(--uf-color-accent-2); }
+  .tourist-quota.out b { color: #ffb454; }
+  /* the keyboard a controller types with */
+  .tourist-osk { display: flex; flex-direction: column; gap: 4px; }
+  .tourist-osk-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+  .tourist-osk-key {
+    padding: 7px 0; border-radius: 6px; border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.08);
+    color: #fff; font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; min-width: 0;
+  }
+  .tourist-osk-key.wide { font-size: 11px; letter-spacing: 0.5px; }
+  .tourist-input.osk-target { border-color: var(--uf-color-accent-2); box-shadow: 0 0 0 2px color-mix(in srgb, var(--uf-color-accent-2) 35%, transparent); }
+  .tourist-place.gamepad-focus, .tourist-yours-place.gamepad-focus, .tourist-new.gamepad-focus, .tourist-osk-key.gamepad-focus,
+  .tourist-input.gamepad-focus, .tourist-add-to.gamepad-focus, .tourist-remove-to.gamepad-focus {
+    outline: 3px solid var(--uf-color-focus, #ffd36b); outline-offset: 2px;
+  }
+  #tourist-goal .tourist-arrow { display: inline-block; color: var(--uf-color-accent-2); transition: transform 0.12s linear; }
   /* E-7 · the distance, on screen for the whole ride. */
   #tourist-goal {
     position: fixed;
@@ -5879,8 +5923,18 @@ ON</button>
              Back: #lobby-level (opened from the SOLO list's Tourist card)
              ════════════════════════════════════════════════════ -->
         <uf-step id="lobby-tourist" class="lobby-step">
-          <p class="lobby-prompt">Where are you two?</p>
-          <div id="tourist-form">
+          <p class="lobby-prompt">Where will you ride?</p>
+          <!-- The places first: nothing to type. Scenic rides (js/tourist-places.js), the player's own
+               places, then a typed address (a few new ones a week: each is a paid lookup). -->
+          <div id="tourist-places">
+            <div class="tourist-head">Scenic rides</div>
+            <div id="tourist-scenic" class="tourist-grid"></div>
+            <div class="tourist-head">Your places</div>
+            <div id="tourist-yours" class="tourist-yours"></div>
+            <button type="button" class="tourist-new" id="btn-tourist-new">+ A NEW PLACE</button>
+            <div id="tourist-quota" class="tourist-quota" role="status"></div>
+          </div>
+          <div id="tourist-form" style="display:none;">
             <input id="tourist-from" class="tourist-input" type="text"
                    placeholder="Your address or city" autocomplete="off" spellcheck="false">
             <!-- #400: one address = open world; a second one makes it a route. -->
@@ -5890,9 +5944,12 @@ ON</button>
               <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
             </div>
             <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
-            <div id="tourist-error" class="tourist-error"></div>
+            <!-- A controller's way to type (shown when one is connected, and on a TV). -->
+            <div id="tourist-osk" class="tourist-osk" style="display:none;"></div>
+            <div id="tourist-error" class="tourist-error" role="alert"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>
+            <div id="tourist-quota-form" class="tourist-quota" role="status"></div>
           </div>
           <uf-button variant="ghost" size="sm" class="lobby-back" id="btn-back-tourist">&larr; Back</uf-button>
         </uf-step>

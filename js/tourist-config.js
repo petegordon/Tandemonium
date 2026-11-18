@@ -135,6 +135,82 @@ function mapsCall(promise) {
   return Promise.race([promise, _mapsAuthFailed]);
 }
 
+// --- The desktop build's lookups ----------------------------------------------
+// Google's Maps JavaScript API authorises a key by the address of the PAGE that loads it. The desktop
+// build's page is tandemonium://app, which the key (restricted to the game's web address) does not
+// cover, so in the Steam build every address lookup failed with "Maps JS auth failed" and ground
+// heights fell back to another service (seen 2026-11-17). The 3D tiles were never affected: they are
+// plain requests, and the desktop app sends the web address as their Referer.
+//
+// So off the web, lookups are done by a small page of the game's own website, loaded in a hidden
+// frame: tourist-lookup.html. There the key is at home. It answers two questions and nothing else,
+// and only to the desktop game (it checks who is asking).
+const LOOKUP_PAGE = 'https://tandemonium.housetandem.com/tourist-lookup.html';
+const LOOKUP_ORIGIN = 'https://tandemonium.housetandem.com';
+const LOOKUP_LOAD_MS = 12000;
+
+/** Is this page somewhere the Maps key does not cover (the desktop build)? */
+export function needsLookupPage(loc = (typeof location !== 'undefined' ? location : null)) {
+  return !!loc && !/^https?:$/.test(loc.protocol);
+}
+
+let _lookupFrame = null;   // Promise<Window>
+let _lookupSeq = 0;
+const _lookupWaiting = new Map();
+
+let _lookupFailedAt = 0;
+
+function lookupFrame() {
+  if (_lookupFrame) return _lookupFrame;
+  // it did not load a moment ago (offline, or the site is down): do not make every lookup wait again
+  if (_lookupFailedAt && Date.now() - _lookupFailedAt < 60000) return Promise.reject(new Error('lookup page did not load'));
+  _lookupFrame = new Promise((resolve, reject) => {
+    const frame = document.createElement('iframe');
+    frame.title = 'Map Tourist lookups';
+    frame.setAttribute('aria-hidden', 'true');
+    frame.tabIndex = -1;
+    frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10px;top:-10px;border:0;opacity:0;pointer-events:none';
+    const timer = setTimeout(() => { _lookupFrame = null; _lookupFailedAt = Date.now(); frame.remove(); reject(new Error('lookup page did not load')); }, LOOKUP_LOAD_MS);
+    window.addEventListener('message', (e) => {
+      if (e.origin !== LOOKUP_ORIGIN || e.source !== frame.contentWindow || !e.data || typeof e.data !== 'object') return;
+      if (e.data.tt === 'lookup-ready') { clearTimeout(timer); resolve(frame.contentWindow); return; }
+      if (e.data.tt !== 'lookup-result') return;
+      const w = _lookupWaiting.get(e.data.id);
+      if (!w) return;
+      _lookupWaiting.delete(e.data.id);
+      if (e.data.ok) w.resolve(e.data.value); else w.reject(new Error(String(e.data.error || 'lookup failed')));
+    });
+    frame.src = (typeof window !== 'undefined' && window.__TOURIST_LOOKUP_PAGE__) || LOOKUP_PAGE;
+    document.body.appendChild(frame);
+  });
+  return _lookupFrame;
+}
+
+/** Ask the lookup page one question. */
+async function lookupCall(kind, payload, label) {
+  const win = await lookupFrame();
+  return withTimeout(new Promise((resolve, reject) => {
+    const id = ++_lookupSeq;
+    _lookupWaiting.set(id, { resolve, reject });
+    win.postMessage({ tt: 'lookup', id, kind, ...payload }, LOOKUP_ORIGIN);
+  }), label);
+}
+
+/**
+ * What to tell the player when a typed place could not be found. Never the raw error: "Maps JS auth
+ * failed" means nothing to someone holding a controller.
+ */
+export function touristLookupMessage(err) {
+  const m = String((err && err.message) || err || '');
+  if (/could not find|could not place|ZERO_RESULTS/i.test(m)) {
+    const q = m.match(/"([^"]{1,60})"/);
+    return (q ? `Could not find “${q[1]}”.` : 'Could not find that place.') + ' Try a city, or a full address.';
+  }
+  if (/empty address/i.test(m)) return 'Type a city or an address first.';
+  if (/timed out|did not load|failed to load|network|fetch/i.test(m)) return 'That took too long. Check the connection and try again.';
+  return 'Looking up addresses is not working right now. Scenic rides and your own places still are.';
+}
+
 /** Inject the Maps JavaScript API once; resolves when its callback fires. */
 function loadMapsJs(apiKey) {
   if (_mapsJsPromise) return _mapsJsPromise;
@@ -175,6 +251,8 @@ export async function geocodeAddress(address, apiKey = getMapsApiKey()) {
   const query = String(address || '').trim();
   if (!query) throw new Error('empty address');
   if (!apiKey) throw new Error('no Maps API key available');
+  // the desktop build asks the game's own web page (see needsLookupPage)
+  if (needsLookupPage()) return lookupCall('geocode', { address: query }, 'address lookup');
 
   // #366: fail fast on auth failure, with the same timeout backstop as elevation.
   const { results } = await withTimeout(mapsCall((async () => {
@@ -319,7 +397,23 @@ export function originFromAnchor(point, anchor) {
 }
 
 /** Ground elevation for an anchor: Google first, open-meteo second, else null. */
-async function lookupElevation(lat, lon) {
+/** Ground elevation at a point: { elevation, source } or null. (tourist-lookup.html answers with this.) */
+export async function lookupElevation(lat, lon) {
+  if (needsLookupPage()) {
+    try {
+      const found = await lookupCall('elevation', { lat, lon }, 'elevation lookup');
+      if (found && Number.isFinite(found.elevation)) return found;
+    } catch (err) {
+      console.warn(`[Tourist] the lookup page did not answer (${err.message}); trying the fallback elevation source.`);
+    }
+    try {
+      const e = await withTimeout(elevationFromOpenMeteo(lat, lon), 'fallback elevation lookup');
+      if (Number.isFinite(e)) return { elevation: e, source: 'open-meteo fallback' };
+    } catch (err2) {
+      console.warn(`[Tourist] elevation lookup failed (${err2.message}); falling back to a ${TOURIST_CUSTOM_HEIGHT}m anchor and a wide ground probe.`);
+    }
+    return null;
+  }
   let elevation = NaN;
   let source = null;
   try {
@@ -422,6 +516,13 @@ export const TOURIST_TUNE = {
     // the HIGHEST hit, take the lowest — the street under a tree crown or an
     // awning — while a coarse root tile kilometres below is outside the cluster.
     spawnClusterDepth: 80,
+    // Settling (TouristGround.settling): the ground counts as found once the chosen height has held
+    // within settleTolerance metres for settleStableS seconds. Settling ends when the bike has ridden
+    // settleLeaveM metres from where it spawned, or after settleMaxS seconds whatever happened.
+    settleTolerance: 1.5,
+    settleStableS: 1.0,
+    settleLeaveM: 4,
+    settleMaxS: 18,
     // Breadcrumb trail of accepted ground points: one every few metres, capped.
     breadcrumbSpacing: 3,
     breadcrumbMax: 64,

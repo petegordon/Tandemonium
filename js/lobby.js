@@ -64,8 +64,12 @@ import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
-import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
-import { getMapsApiKey, geocodeAddress, resolveOriginAt } from './tourist-config.js';
+import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M } from './tourist-route.js';
+import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage } from './tourist-config.js';
+/** Map Tourist: the player's own places and the week's count of new ones (this device). */
+const TOURIST_STORE_KEY = 'tandemonium_tourist_places';
+import { SCENIC_PLACES, planForPlace, rideKind, emptyStore, readStore, newPlaceGate, countNewPlaces, limitText,
+  knownPoint, rememberPlace, placeLabel } from './tourist-places.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
   ridesStarted, formatDayLabel
@@ -1684,7 +1688,7 @@ export class Lobby {
   // form, the geocoding calls, and remembering the pair's last route so the
   // second ride is one button (E-8).
 
-  /** E-8 · the last route this browser rode, or null. */
+  /** E-8 · the last route this browser rode, or null (from before "your places"; read once to carry it over). */
   _loadSavedRoute() {
     try {
       const raw = localStorage.getItem('tandemonium_tourist_route');
@@ -1732,6 +1736,31 @@ export class Lobby {
     if (name) name.textContent = this._touristLabel();
   }
 
+  // ── Map Tourist: where to ride (Pete, 2026-11-17) ──────────────────────────
+  //
+  // The screen leads with places that need no typing: a dozen scenic rides, and the places this
+  // player has ridden before. Typing an address is the third way in, limited to a few new places a
+  // week because each one is a paid lookup, and the screen says how many are left and what never
+  // counts (js/tourist-places.js). Everything here works with a controller: the places are buttons,
+  // and a typed address has an on-screen keyboard.
+
+  /** The player's places and this week's count (kept on this device). */
+  _touristStoreLoad() {
+    let store = emptyStore();
+    try { store = readStore(localStorage.getItem(TOURIST_STORE_KEY)); } catch { /* storage off */ }
+    // the one route the old screen remembered becomes the first of "your places"
+    if (!store.places.length) {
+      const old = this._loadSavedRoute();
+      if (old) store = rememberPlace(store, { from: old.from, to: old.to });
+    }
+    return store;
+  }
+
+  _touristStoreSave(store) {
+    this._touristStore = store;
+    try { localStorage.setItem(TOURIST_STORE_KEY, JSON.stringify(store)); } catch { /* private mode: this ride still works */ }
+  }
+
   _openTouristStep() {
     // Who rides it: alone, two on this screen, or the room (captain plans).
     this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
@@ -1745,8 +1774,11 @@ export class Lobby {
     if (toIn) toIn.placeholder = together ? "Your partner's address or city" : 'Second address or city';
     if (this._touristFor === 'solo') this._pendingMode = 'tourist';
     this._forceWizard = false;
+    this._touristStore = this._touristStoreLoad();
+    this._showTouristForm(false);
+    this._renderTouristPlaces();
     this._showStep(this.touristStep);
-    this._prefillTouristForm();
+    this._refreshTouristFocus(true);
     analytics.trackEvent('tourist_open');
   }
 
@@ -1755,6 +1787,8 @@ export class Lobby {
 
     const back = document.getElementById('btn-back-tourist');
     if (back) back.addEventListener('click', () => {
+      // from the address form, Back is back to the places
+      if (this._touristFormShown()) { this._showTouristForm(false); this._renderTouristPlaces(); this._refreshTouristFocus(true); return; }
       if (this._touristFor === 'multiplayer') { this._showRoomLevelsStep(); return; }
       this._pendingMode = this._touristFor === 'local' ? 'local' : 'solo';
       this._showStep(this.levelStep);
@@ -1771,17 +1805,37 @@ export class Lobby {
       this._touristPlan = null;
       const preview = document.getElementById('tourist-preview');
       if (preview) preview.textContent = '';
+      const err = document.getElementById('tourist-error');
+      if (err) err.textContent = '';
+      this._refreshTouristFocus(false);
     };
     this._onTouristEdit = onEdit;
     from.addEventListener('input', onEdit);
     to.addEventListener('input', onEdit);
+    // Enter in a field does what the button does
+    for (const el of [from, to]) {
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) { e.preventDefault(); this._planTouristRide(); } });
+      el.addEventListener('focus', () => this._setTouristOskTarget(el));
+    }
     go.addEventListener('click', () => this._planTouristRide());
 
     // #400: one address explores around it; a second one plans a route.
     const add = document.getElementById('btn-tourist-add-to');
     const remove = document.getElementById('btn-tourist-remove-to');
-    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); to.focus(); onEdit(); });
-    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); onEdit(); });
+    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); this._setTouristOskTarget(to); if (!this._touristOskOn()) to.focus(); onEdit(); });
+    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); this._setTouristOskTarget(from); onEdit(); });
+
+    const fresh = document.getElementById('btn-tourist-new');
+    if (fresh) fresh.addEventListener('click', () => {
+      if (!newPlaceGate(this._touristStore).allowed) return;
+      from.value = ''; to.value = '';
+      this._setTouristTwoAddresses(false);
+      this._showTouristForm(true);
+      onEdit();
+      if (!this._touristOskOn()) from.focus();
+      this._refreshTouristFocus(true);
+    });
+    this._buildTouristOsk();
   }
 
   /** #400 · is the second-address field showing? */
@@ -1797,36 +1851,189 @@ export class Lobby {
     if (add) add.style.display = on ? 'none' : '';
   }
 
-  /** E-8 · offer the last route back, so a repeat ride is one button. */
-  _prefillTouristForm() {
-    const saved = this._loadSavedRoute();
-    const preview = document.getElementById('tourist-preview');
-    const go = document.getElementById('btn-tourist-ride');
-    if (!saved) {
-      if (preview) preview.textContent = '';
-      this._setTouristTwoAddresses(false);
-      if (this._onTouristEdit) this._onTouristEdit();
-      return;
+  _touristFormShown() {
+    const form = document.getElementById('tourist-form');
+    return !!form && form.style.display !== 'none';
+  }
+
+  /** The places (scenic, yours) or the address form: one at a time. */
+  _showTouristForm(on) {
+    const form = document.getElementById('tourist-form');
+    const places = document.getElementById('tourist-places');
+    if (form) form.style.display = on ? '' : 'none';
+    if (places) places.style.display = on ? 'none' : '';
+    this._touristPlan = null;
+    if (on) {
+      this._setTouristOskTarget(document.getElementById('tourist-from'));
+      this._syncTouristOsk();
+      this._renderTouristQuota();
     }
-    document.getElementById('tourist-from').value = saved.from.label || '';
-    document.getElementById('tourist-to').value = saved.to ? (saved.to.label || '') : '';
-    this._setTouristTwoAddresses(!!saved.to);
-    if (go) go.disabled = false;
-    const plan = saved.to ? planRoute(saved.from, saved.to) : planExplore(saved.from);
-    if (preview) {
-      preview.innerHTML = saved.to
-        ? 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
-          this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline)
-        : 'Again? <strong>' + this._escape(saved.from.label) + '</strong><br>Open world · ride anywhere nearby';
+  }
+
+  /** The scenic rides, the player's places, and where they stand against the week's new places. */
+  _renderTouristPlaces() {
+    const grid = document.getElementById('tourist-scenic');
+    if (grid && !grid.childElementCount) {
+      for (const p of SCENIC_PLACES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tourist-place';
+        b.dataset.place = p.id;
+        b.innerHTML = '<span class="tourist-place-icon" aria-hidden="true">' + p.icon + '</span>' +
+          '<span class="tourist-place-name">' + this._escape(p.name) + '</span>' +
+          '<span class="tourist-place-sub">' + this._escape(p.where + ' · ' + rideKind(p)) + '</span>';
+        b.addEventListener('click', () => {
+          analytics.trackEvent('tourist_scenic_pick', { place: p.id });
+          this._startTouristRide(planForPlace(p, 'scenic'));
+        });
+        grid.appendChild(b);
+      }
     }
-    this._touristPlan = plan;
-    if (go) go.textContent = 'RIDE IT AGAIN';
+    const store = this._touristStore || emptyStore();
+    const yours = document.getElementById('tourist-yours');
+    if (yours) {
+      yours.replaceChildren();
+      for (const place of store.places) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tourist-yours-place';
+        b.textContent = '📍 ' + placeLabel(place);
+        b.title = place.to ? `${place.from.label} to ${place.to.label}` : place.from.label;
+        b.addEventListener('click', () => {
+          analytics.trackEvent('tourist_yours_pick', { route: !!place.to });
+          // newest first next time; nothing is looked up
+          this._touristStoreSave(rememberPlace(this._touristStore, place));
+          this._startTouristRide(planForPlace(place, 'yours'));
+        });
+        yours.appendChild(b);
+      }
+      if (!store.places.length) {
+        const none = document.createElement('span');
+        none.className = 'tourist-yours-none';
+        none.textContent = 'Places you look up are kept here to ride again.';
+        yours.appendChild(none);
+      }
+    }
+    this._renderTouristQuota();
+  }
+
+  /** "New places this week: 4 of 6 left", on the places and on the form. */
+  _renderTouristQuota() {
+    const gate = newPlaceGate(this._touristStore);
+    const text = limitText(gate);
+    for (const id of ['tourist-quota', 'tourist-quota-form']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.innerHTML = '<b>' + this._escape(text.headline) + '</b><span>' + this._escape(text.detail) + '</span>';
+      el.classList.toggle('out', !gate.allowed);
+    }
+    const fresh = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-tourist-new'));
+    if (fresh) {
+      fresh.disabled = !gate.allowed;
+      fresh.textContent = gate.allowed ? '+ A NEW PLACE' : 'NO NEW PLACES LEFT THIS WEEK';
+    }
+  }
+
+  // ── the on-screen keyboard (a controller on a TV has no other way to type) ──
+
+  _touristOskOn() {
+    return !!(this.input && this.input.gamepadConnected) || document.documentElement.classList.contains('tv');
+  }
+
+  _buildTouristOsk() {
+    const osk = document.getElementById('tourist-osk');
+    if (!osk || osk.childElementCount) return;
+    const rows = ['1234567890', 'QWERTYUIOP', "ASDFGHJKL'", 'ZXCVBNM,.-'];
+    for (const row of rows) {
+      const r = document.createElement('div');
+      r.className = 'tourist-osk-row';
+      for (const ch of row) r.appendChild(this._touristOskKey(ch, ch));
+      osk.appendChild(r);
+    }
+    const last = document.createElement('div');
+    last.className = 'tourist-osk-row';
+    last.appendChild(this._touristOskKey('SPACE', ' ', 'wide'));
+    last.appendChild(this._touristOskKey('⌫ DELETE', 'Backspace', 'wide'));
+    last.appendChild(this._touristOskKey('CLEAR', 'Clear', 'wide'));
+    osk.appendChild(last);
+  }
+
+  _touristOskKey(label, key, cls = '') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tourist-osk-key' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.dataset.key = key;
+    b.addEventListener('click', () => this._touristOskPress(key));
+    return b;
+  }
+
+  _touristOskPress(key) {
+    const el = this._touristOskTarget || document.getElementById('tourist-from');
+    if (!el) return;
+    if (key === 'Backspace') el.value = el.value.slice(0, -1);
+    else if (key === 'Clear') el.value = '';
+    else if (el.value.length < 120) {
+      // Sentence case as it is typed: capitals only after a space or at the start
+      const start = !el.value || /[\s,.-]$/.test(el.value);
+      el.value += /[A-Z]/.test(key) && !start ? key.toLowerCase() : key;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /** Which field the keyboard types into (shown with a ring). */
+  _setTouristOskTarget(el) {
+    this._touristOskTarget = el;
+    for (const id of ['tourist-from', 'tourist-to']) {
+      const f = document.getElementById(id);
+      if (f) f.classList.toggle('osk-target', f === el && this._touristOskOn());
+    }
+  }
+
+  _syncTouristOsk() {
+    const osk = document.getElementById('tourist-osk');
+    if (osk) osk.style.display = this._touristOskOn() ? '' : 'none';
+    this._setTouristOskTarget(this._touristOskTarget || document.getElementById('tourist-from'));
+  }
+
+  /** What a controller can reach on this step right now, in reading order. */
+  _touristFocusables() {
+    const shown = (el) => !!el && el.getBoundingClientRect().width > 0 && !el.disabled;
+    const q = (sel) => [...this.touristStep.querySelectorAll(sel)].filter(shown);
+    if (!this._touristFormShown()) {
+      return [...q('#tourist-scenic .tourist-place'), ...q('#tourist-yours .tourist-yours-place'), ...q('#btn-tourist-new')];
+    }
+    // the fields come first (confirm on one makes it the keyboard's target), then the keys, then the actions
+    return [...q('#tourist-from'), ...q('#tourist-to'), ...q('#btn-tourist-remove-to'), ...q('#tourist-osk .tourist-osk-key'),
+      ...q('#btn-tourist-add-to'), ...q('#btn-tourist-ride')];
+  }
+
+  /** Hand the step's current controls to the controller focus (after the screen changes). */
+  _refreshTouristFocus(reset) {
+    if (this._currentStep !== this.touristStep) return;
+    this._syncTouristOsk();
+    if (!this.input || !this.input.gamepadConnected) return;
+    const items = this._touristFocusables();
+    this._modeColumns[1] = items;
+    const nav = this._stepNavItems();
+    const cur = this._stepFocus.focused;
+    if (reset || !cur || nav.indexOf(cur) < 0) {
+      const first = this._touristFormShown()
+        ? (items.find((el) => el.classList.contains('tourist-osk-key')) || items[0])
+        : items[0];
+      this._stepFocus.setSpatial(nav, first || null);
+    } else {
+      this._stepFocus.refreshSpatial(nav);
+    }
   }
 
   /**
-   * Geocode both ends, show what the ride will be, and — on the second press —
-   * start it. Two presses on purpose: the distance is the reveal, and riding
-   * straight past it would throw away the best moment this mode has.
+   * Find the typed places, show what the ride will be, and — on the second press — start it. Two
+   * presses for a route on purpose: the distance is the reveal, and riding straight past it would
+   * throw away the best moment this mode has.
+   *
+   * A place the player already has costs nothing and does not count. Each address that has to be
+   * looked up counts as one of the week's new places.
    */
   async _planTouristRide() {
     const go = document.getElementById('btn-tourist-ride');
@@ -1842,38 +2049,66 @@ export class Lobby {
       return;
     }
 
-    errorEl.textContent = '';
-    go.disabled = true;
-    go.textContent = 'FINDING…';
+    const label = two ? 'PLAN THE RIDE' : 'EXPLORE HERE';
+    const fail = (message) => {
+      errorEl.textContent = message;
+      go.disabled = false;
+      go.textContent = label;
+      this._refreshTouristFocus(false);
+    };
 
-    // #400 · one address: find it and ride straight in (open world). No
-    // two-press reveal — there is no distance to show.
-    if (!two) {
-      try {
-        const from = await geocodeAddress(fromText);
-        if (!isValidPoint(from)) throw new Error('could not place that address');
-        this._saveRoute(from, null);
-        analytics.trackEvent('tourist_explore_planned');
-        go.disabled = false;
-        go.textContent = 'EXPLORE HERE';
-        this._startTouristRide(planExplore(from));
-      } catch (err) {
-        errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
-        go.disabled = false;
-        go.textContent = 'EXPLORE HERE';
-        analytics.trackEvent('tourist_route_failed');
-      }
+    // which of them need looking up, and is there room in the week for that many
+    const texts = two ? [fromText, toText] : [fromText];
+    const known = texts.map((t) => knownPoint(this._touristStore, t));
+    const need = known.filter((k) => !k).length;
+    const gate = newPlaceGate(this._touristStore);
+    if (need > gate.left) {
+      const t = limitText(gate);
+      fail(gate.left === 0 ? `${t.headline}. ${t.detail}`
+        : `That is ${need} new places and you have ${gate.left} left this week. Try one address, or a place you have ridden.`);
       return;
     }
 
+    errorEl.textContent = '';
+    go.disabled = true;
+    go.textContent = 'FINDING…';
     try {
-      const [from, to] = await Promise.all([
-        geocodeAddress(fromText),
-        geocodeAddress(toText)
-      ]);
-      if (!isValidPoint(from) || !isValidPoint(to)) throw new Error('could not place one of those');
+      const points = await Promise.all(texts.map(async (t, i) => {
+        if (known[i]) return known[i];
+        const p = await geocodeAddress(t);
+        if (!isValidPoint(p)) throw new Error('could not place that address');
+        return { ...p, typed: String(t).trim() };
+      }));
+      // the lookups happened: they count, whatever comes next
+      if (need) this._touristStoreSave(countNewPlaces(this._touristStore, need));
+      const [from, to] = points;
+      const plan = two ? planRoute(from, to) : planExplore(from);
+      plan.kind = 'yours';
 
-      const plan = planRoute(from, to);
+      // ground heights, once, kept with the place so riding it again looks nothing up
+      const place = { from, to: two ? to : null };
+      try {
+        const o = await resolveOriginAt(from);
+        if (o && Number.isFinite(o.height) && o.anchored) { plan.anchor = { height: o.height, anchored: true }; place.height = o.height; }
+      } catch { /* the ride looks it up */ }
+      if (two && plan.route.capped) {
+        try {
+          const p2 = interpolate(from, to, 1 - CAP_HALF_M / plan.realM);
+          const o2 = await resolveOriginAt({ lat: p2.lat, lon: p2.lon, label: to.label });
+          if (o2 && Number.isFinite(o2.height) && o2.anchored) { plan.toAnchor = { height: o2.height, anchored: true }; place.toHeight = o2.height; }
+        } catch { /* looked up at the skip */ }
+      }
+      this._touristStoreSave(rememberPlace(this._touristStore, place));
+      this._saveRoute(from, two ? to : null);
+      this._renderTouristQuota();
+
+      if (!two) {
+        analytics.trackEvent('tourist_explore_planned', { looked_up: need });
+        go.disabled = false;
+        go.textContent = label;
+        this._startTouristRide(plan);
+        return;
+      }
       this._touristPlan = plan;
       preview.innerHTML = '<strong>' + this._escape(from.label) + '</strong><br>to <strong>' +
         this._escape(to.label) + '</strong><br>' + this._escape(plan.headline) +
@@ -1883,16 +2118,14 @@ export class Lobby {
           : '');
       go.disabled = false;
       go.textContent = 'RIDE IT';
-      this._saveRoute(from, to);
       analytics.trackEvent('tourist_route_planned', {
-        km: Math.round(plan.realM / 1000), capped: plan.route.capped
+        km: Math.round(plan.realM / 1000), capped: plan.route.capped, looked_up: need
       });
+      this._refreshTouristFocus(false);
     } catch (err) {
       // Inline, never a console exception: a mistyped address is the most
       // ordinary thing that can happen on this screen.
-      errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
-      go.disabled = false;
-      go.textContent = 'PLAN THE RIDE';
+      fail(touristLookupMessage(err));
       analytics.trackEvent('tourist_route_failed');
     }
   }
@@ -1925,7 +2158,7 @@ export class Lobby {
       }
       this._roomTouristPlan = plan;
       this._placementSalt = makePlacementSalt();
-      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor));
+      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor, { toAnchor: plan.toAnchor, kind: plan.kind, title: plan.title }));
       this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true, this.selectedDifficulty));
       analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
       this._transitionToGame();
@@ -6170,6 +6403,18 @@ export class Lobby {
       if (this._stokerTouristPlan && profile.anchor && Number.isFinite(profile.anchor.height)) {
         this._stokerTouristPlan.anchor = { height: profile.anchor.height, anchored: !!profile.anchor.anchored };
       }
+      // a long ride's far end (after its skip), and the kind of ride (a scenic one words its finish differently)
+      if (this._stokerTouristPlan && profile.toAnchor && Number.isFinite(profile.toAnchor.height)) {
+        this._stokerTouristPlan.toAnchor = { height: profile.toAnchor.height, anchored: !!profile.toAnchor.anchored };
+      }
+      if (this._stokerTouristPlan && (profile.kind === 'scenic' || profile.kind === 'yours')) {
+        this._stokerTouristPlan.kind = profile.kind;
+        if (profile.kind === 'scenic' && typeof profile.title === 'string' && profile.title) {
+          this._stokerTouristPlan.title = profile.title.slice(0, 80);
+          this._stokerTouristPlan.headline = this._stokerTouristPlan.to
+            ? profile.title.slice(0, 80) + ' · ' + formatDistance(this._stokerTouristPlan.route.ridableM) : profile.title.slice(0, 80);
+        }
+      }
     } else if (profile.type === ROOM_MSG.START_RIDE) {
       // PR #397 m17: never ride a level this edition refused — stay on the list
       // and say so again (an old captain ignores it and rides alone).
@@ -8885,6 +9130,8 @@ export class Lobby {
     const tvJoin = step === this.joinStep && document.getElementById('join-tv');
     const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
     let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+    // Map Tourist: its places, or its address form and on-screen keyboard, whichever is showing
+    if (step === this.touristStep) centerItems = this._touristFocusables();
     // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
     if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
     // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).

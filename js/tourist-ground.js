@@ -60,6 +60,19 @@ export class TouristGround {
     this.groundY = tune.wheelOffset;
     /** True once a hit has ever been accepted. */
     this.hasGround = false;
+    /**
+     * Settling: from the first hit until the bike rides off. The first geometry to arrive at a place
+     * is coarse, and can sit hundreds of metres above or below the street (London came in 340 m high,
+     * Tokyo 350 m low, measured 2026-11-17). Taking that first hit as the ground left the bike in the
+     * sky or under the city, because the steady-state window then held it there. While settling, every
+     * frame chooses again as a spawn would, so the bike follows the ground down (or up) to the street
+     * as the detail streams in.
+     */
+    this.settling = true;
+    /** Seconds the chosen height has held still (within settleTolerance) while settling. */
+    this.stableFor = 0;
+    this._settleX = 0; this._settleZ = 0;
+    this._settleFor = 0;
     /** World-space normal of the last accepted face (upward-facing). */
     this.normal = new THREE.Vector3(0, 1, 0);
     /** Seconds since the probe last hit ANYTHING (coverage notice). */
@@ -137,7 +150,14 @@ export class TouristGround {
     const ease = Math.min(1, tune.groundLerp * dt);
     let chosen = null;
 
-    if (candidates.length && !this.hasGround) {
+    // riding off ends the settling (and so does a long wait: something is better than nothing)
+    if (this.settling && this.hasGround) {
+      this._settleFor += dt;
+      const moved = Math.hypot(bikePos.x - this._settleX, bikePos.z - this._settleZ);
+      if (moved > (g.settleLeaveM || 4) || this._settleFor > (g.settleMaxS || 30)) this.settling = false;
+    }
+
+    if (candidates.length && (!this.hasGround || this.settling)) {
       chosen = this._pickSpawn(candidates, g);
     } else if (candidates.length) {
       chosen = this._pickStep(candidates, bikePos, g);
@@ -151,8 +171,16 @@ export class TouristGround {
       // height becomes known, and for a custom location it can be a kilometre
       // from the guessed anchor — easing that would be a long visible fall.
       // It also means the anchor height never has to be looked up or tuned.
-      if (!this.hasGround) this.groundY = targetY;
-      else this.groundY += (targetY - this.groundY) * ease;
+      if (!this.hasGround) {
+        this.groundY = targetY;
+        this._settleX = bikePos.x; this._settleZ = bikePos.z;
+        this.stableFor = 0;
+      } else if (this.settling) {
+        // still arriving: go where the ground is now, and count how long it has held still
+        const moved = Math.abs(targetY - this.groundY);
+        this.stableFor = moved > (g.settleTolerance || 1.5) ? 0 : this.stableFor + dt;
+        this.groundY = targetY;
+      } else this.groundY += (targetY - this.groundY) * ease;
       this.hasGround = true;
       if (chosen.face) { this._worldNormal(chosen); this.normal.copy(this._tmpNormal); }
       this._refX = bikePos.x; this._refY = chosen.point.y; this._refZ = bikePos.z;
@@ -186,6 +214,11 @@ export class TouristGround {
       if (hits.length) result.blocked = true;
     }
     return result;
+  }
+
+  /** Has the ground under the bike been found and stopped moving (detail has streamed in)? */
+  get ready() {
+    return this.hasGround && (!this.settling || this.stableFor >= (this.tune.ground.settleStableS || 1.0));
   }
 
   /**

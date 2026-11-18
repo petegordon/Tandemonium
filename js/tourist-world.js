@@ -26,6 +26,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { dracoDecoderPath } from './draco-path.js';
 import { getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
 import { TouristGround } from './tourist-ground.js';
+import { TilesSessionPlugin } from './tourist-tiles-session.js';
 import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
@@ -85,11 +86,16 @@ export class TouristWorld {
 
     // Anchor the chosen lat/lon/height at the three.js origin with +Y up so
     // the bike's abstract X/Z world maps to local east/north metres.
-    tiles.registerPlugin(new ReorientationPlugin({
+    this._reorient = new ReorientationPlugin({
       lat: origin.lat * DEG2RAD,
       lon: origin.lon * DEG2RAD,
       height: origin.height,
-    }));
+    });
+    tiles.registerPlugin(this._reorient);
+    // Registered last, with a lower priority than the rest, so the library asks it first: it hands
+    // this ride the root (and session) an earlier ride already paid for (js/tourist-tiles-session.js).
+    this._session = new TilesSessionPlugin();
+    tiles.registerPlugin(this._session);
 
     // Probe width follows how much we trust the anchor. An anchored origin (real
     // elevation, or an explicit ?h) keeps the TIGHT default window, which is what
@@ -148,7 +154,8 @@ export class TouristWorld {
     });
     // Ground-follow telemetry only when ?ttdebug is present (keeps console clean).
     this._dbg = new URLSearchParams(window.location.search).has('ttdebug');
-    this._groundY = TOURIST_TUNE.wheelOffset; // best guess until first hit
+    this._groundY = 0;          // the anchor height, until the street is found (see _groundFollow)
+    this._landing = true;
     this._tiltQ = new THREE.Quaternion();     // smoothed ground tilt
     this._smoothNormal = new THREE.Vector3(0, 1, 0);
     this._tmpUpQ = new THREE.Quaternion();
@@ -201,16 +208,125 @@ export class TouristWorld {
     if (this._bike.speed > 4) this._bike.speed = 4;
   }
 
+  /**
+   * The edge message, in a line of its own near the top. It used to be written into the attribution
+   * line, which is rewritten three times a second, so nobody saw why the bike had turned round.
+   */
   _setEdgeMessage(text) {
-    const el = document.getElementById('tourist-credits');
-    if (el && (text || this._edgeMessageShown)) {
-      el.textContent = text || '';
-      this._edgeMessageShown = !!text;
+    if (!text) { if (this._edgeEl) this._edgeEl.style.display = 'none'; return; }
+    if (!this._edgeEl) {
+      const el = document.createElement('div');
+      el.id = 'tourist-edge';
+      el.setAttribute('role', 'status');
+      el.style.cssText = [
+        'position:fixed', 'left:50%', 'top:16%', 'transform:translateX(-50%)', 'z-index:60',
+        'max-width:min(86vw,560px)', 'padding:10px 18px', 'background:rgba(0,0,0,.72)', 'border-radius:10px',
+        'color:#fff', 'font:600 15px/1.4 system-ui,sans-serif', 'text-align:center', 'pointer-events:none',
+      ].join(';');
+      document.body.appendChild(el);
+      this._edgeEl = el;
     }
+    this._edgeEl.textContent = text;
+    this._edgeEl.style.display = '';
+  }
+
+  /** A line of status near the top ("Loading the streets…"); '' clears it. Shares the edge message's place. */
+  setStatus(text) { this._setEdgeMessage(text || (this._atEdge ? 'You have reached the edge of the streamed area — turning around.' : '')); }
+
+  /** Has the ground under the bike been found (tiles streamed in enough to ride)? */
+  hasGround() {
+    return !!this._ground && this._ground.ready && !this._landing;
+  }
+
+  /**
+   * Move the whole ride to another place on the globe, keeping the tiles, their session and
+   * everything already loaded: the same renderer is pointed at a new anchor, and the bike starts
+   * again at its origin. Used for the skip in the middle of a long ride (the first 2.5 km from one
+   * address, then the last 2.5 km to the other). The caller places the bike and waits for hasGround().
+   * @param {{lat: number, lon: number, height: number, anchored?: boolean, custom?: boolean, name?: string}} origin
+   */
+  reanchor(origin) {
+    this._origin = origin;
+    const r = this._reorient;
+    r.lat = origin.lat * DEG2RAD;
+    r.lon = origin.lon * DEG2RAD;
+    r.height = origin.height;
+    try { r.transformLatLonHeightToOrigin(r.lat, r.lon, r.height); } catch (e) { /* root not in yet: the plugin applies it on load */ }
+    this.tiles.group.updateMatrixWorld(true);
+    const probe = (origin.custom && origin.anchored === false) ? TOURIST_TUNE.customProbe : TOURIST_TUNE;
+    this._probeUp = probe.spawnProbeHeight;
+    this._probeRay = probe.rayLength;
+    this._ground = new TouristGround({ tiles: this.tiles, probeUp: this._probeUp, probeRay: this._probeRay, tune: TOURIST_TUNE });
+    this._zeroBikeHeight();
+    this._groundFound = false;
+    this._groundY = 0;
+    this._landing = true;
+    this._smoothNormal.set(0, 1, 0);
+    this._tiltQ.identity();
+    this._atEdge = false;
+    this._setEdgeMessage('');
+    this._setCoverageNotice(false);
+  }
+
+  /**
+   * Mark where the ride is going: a tall beam of light at a point in the ride's own frame (metres from
+   * the anchor), seen over the rooftops from the start. There is no road to follow here, so without it
+   * the only guide was a number counting down. null takes it away.
+   * @param {{x: number, z: number}|null} at
+   * @param {{color?: number}} [opts]
+   */
+  setDestination(at, { color = 0xffd36b } = {}) {
+    if (this._beacon) {
+      this.scene.remove(this._beacon);
+      this._beacon.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+      this._beacon = null;
+    }
+    if (!at) return;
+    const group = new THREE.Group();
+    group.name = 'tourist-destination';
+    const beamMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, depthWrite: false, fog: false, toneMapped: false });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 1400, 16, 1, true), beamMat);
+    beam.position.y = 500;
+    const glowMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.18, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide });
+    const glow = new THREE.Mesh(new THREE.CylinderGeometry(11, 11, 1400, 20, 1, true), glowMat);
+    glow.position.y = 500;
+    const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false, fog: false, toneMapped: false, side: THREE.DoubleSide });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(9, 12, 40), ringMat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.name = 'tourist-destination-ring';
+    group.add(glow, beam, ring);
+    group.position.set(at.x, this._groundY || 0, at.z);
+    group.renderOrder = 5;
+    this.scene.add(group);
+    this._beacon = group;
+    this._beaconT = 0;
+  }
+
+  /** The beam stands on whatever ground is under the bike's height, and breathes a little. */
+  _updateBeacon(dt) {
+    const b = this._beacon;
+    if (!b) return;
+    this._beaconT += dt;
+    b.position.y += (this._groundY - b.position.y) * Math.min(1, dt * 2);
+    const ring = b.getObjectByName('tourist-destination-ring');
+    if (ring) { const k = 1 + 0.25 * Math.sin(this._beaconT * 2.2); ring.scale.set(k, k, 1); }
   }
 
   setBike(bike) {
     this._bike = bike;
+    this._zeroBikeHeight();
+  }
+
+  /**
+   * The bike starts each ride at the anchor plane. Its height from the last ride (say 1,400 m under
+   * the anchor, after a guessed one) moved the ground probe's start and reach with it, so the next
+   * place's probe caught coarse geometry far from the street.
+   */
+  _zeroBikeHeight() {
+    const b = this._bike;
+    if (!b) return;
+    if (b.position) b.position.y = 0;
+    if (b.group && b.group.position) b.group.position.y = 0;
   }
 
   /**
@@ -336,6 +452,7 @@ export class TouristWorld {
     }
 
     this._groundFollow(bikePos, dt);
+    this._updateBeacon(dt);
 
     // Refresh Google attribution ~3x/sec (it changes as tiles stream in).
     this._creditTimer += dt;
@@ -357,7 +474,19 @@ export class TouristWorld {
   _groundFollow(bikePos, dt) {
     const ground = this._ground;
     const r = ground.step(bikePos, dt, this._tilesStarted, this._bike ? this._bike.heading : undefined);
-    this._groundY = ground.groundY;
+    // Until the street has been found and has stopped moving, the bike waits at the anchor height, above
+    // the place. Dropping it onto the first (coarse) hit took the camera down with it, sometimes kilometres
+    // under the city, and from there the detailed tiles were never asked for. From above they are. Then it
+    // comes down onto the street over a moment.
+    if (!ground.ready) {
+      this._groundY = 0;
+      this._landing = true;
+    } else if (this._landing) {
+      this._groundY += (ground.groundY - this._groundY) * Math.min(1, dt * 4);
+      if (Math.abs(ground.groundY - this._groundY) < 0.3) { this._groundY = ground.groundY; this._landing = false; }
+    } else {
+      this._groundY = ground.groundY;
+    }
 
     // Throttled ground-follow telemetry (~2/sec), only with ?ttdebug.
     this._dbgTimer = (this._dbgTimer || 0) + dt;
@@ -374,6 +503,7 @@ export class TouristWorld {
     const ease = Math.min(1, TOURIST_TUNE.groundLerp * dt);
 
     if (r.hit) {
+      this._groundFound = true;
       // Ground normal (already world space, upward), smoothed, for pitch/roll.
       if (r.hit.face) this._smoothNormal.lerp(ground.normal, ease).normalize();
       this._setCoverageNotice(false);
@@ -444,6 +574,8 @@ export class TouristWorld {
     if (this._sun) this.scene.remove(this._sun);
     // #400: nothing of this ride may outlive it on the next (procedural) one.
     if (this._noticeEl) { this._noticeEl.remove(); this._noticeEl = null; }
+    if (this._edgeEl) { this._edgeEl.remove(); this._edgeEl = null; }
+    this.setDestination(null);
     if (this._creditsEl) this._creditsEl.textContent = '';
   }
 }
