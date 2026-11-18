@@ -28,7 +28,72 @@ export const ARRIVAL = {
   /** Never closer to the place than this, and this far in front of whatever blocks the view. */
   minRadius: 9,
   clearMargin: 4,
+  /**
+   * Pete, 2026-11-18: "If the camera is too close need to modify its positioning relative to the end."
+   * Where the rise ends is chosen before it starts: of these pans (either way round) and these heights,
+   * the one whose end has the most open view of the place. The first of each is the usual one, and is
+   * kept unless another is better by more than preferBy.
+   */
+  sweeps: [Math.PI * 1.1, Math.PI * 0.8, Math.PI * 1.4, Math.PI * 0.5, Math.PI * 1.7],
+  heights: [80, 125],
+  preferBy: 0.12,
+  /** The camera wants this much clear air round it where it ends (cables, a tower, a wall beside it). */
+  elbowRoom: 30,
 };
+
+/**
+ * How much of the way out to an end pose the view is open: 1 = all of it, 0 = blocked at the place.
+ * @param {{x:number,y:number,z:number}} place
+ * @param {{angle:number, radius:number, height:number}} end
+ * @param {(from:{x:number,y:number,z:number}, to:{x:number,y:number,z:number}) => number|null} clear
+ */
+export function openFraction(place, end, clear, tune = ARRIVAL) {
+  const from = { x: place.x, y: place.y + tune.lookHeight, z: place.z };
+  const to = { x: place.x + Math.sin(end.angle) * end.radius, y: place.y + end.height, z: place.z + Math.cos(end.angle) * end.radius };
+  const open = clear(from, to);
+  if (open == null) return 1;
+  const full = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z) || 1;
+  return Math.max(0, Math.min(1, (open - tune.clearMargin) / full));
+}
+
+/**
+ * Choose the pan and the height the rise ends at: the most open view of the place.
+ * @returns {{dir:number, sweep:number, endHeight:number, open:number}}
+ */
+export function chooseArrivalEnd(place, start, clear, tune = ARRIVAL) {
+  const usual = { dir: start.dir < 0 ? -1 : 1, sweep: tune.sweeps[0], endHeight: tune.heights[0], open: 1 };
+  if (!clear) return usual;
+  // an end is as good as its view of the place, marked down for anything close beside the camera there
+  const score = (c) => {
+    const end = { angle: start.angle + c.dir * c.sweep, radius: Math.max(start.radius, tune.endRadius), height: Math.max(start.height, c.endHeight) };
+    const view = openFraction(place, end, clear, tune);
+    if (view <= 0) return 0;
+    const at = { x: place.x + Math.sin(end.angle) * end.radius, y: place.y + end.height, z: place.z + Math.cos(end.angle) * end.radius };
+    let room = 0;
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      const hit = clear(at, { x: at.x + Math.sin(a) * tune.elbowRoom, y: at.y, z: at.z + Math.cos(a) * tune.elbowRoom });
+      room += hit == null ? 1 : Math.max(0, Math.min(1, hit / tune.elbowRoom));
+    }
+    return view * (0.35 + 0.65 * room / 8);
+  };
+  usual.open = score(usual);
+  let best = usual;
+  usual.tried = [[usual.dir, usual.sweep, usual.endHeight, usual.open]];
+  if (usual.open >= 0.98) return usual;
+  for (const endHeight of tune.heights) {
+    for (const sweep of tune.sweeps) {
+      for (const dir of [usual.dir, -usual.dir]) {
+        const c = { dir, sweep, endHeight, open: 0 };
+        c.open = score(c);
+        usual.tried.push([dir, sweep, endHeight, c.open]);
+        if (c.open > best.open + (best === usual ? tune.preferBy : 0.02)) best = c;
+      }
+    }
+  }
+  best.tried = usual.tried;
+  return best;
+}
 
 const clamp01 = (t) => Math.max(0, Math.min(1, t));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -54,6 +119,27 @@ export function arrivalPose(t, start, tune = ARRIVAL) {
   };
 }
 
+/**
+ * A place's own view (the scenic rides: set by hand where the usual end is a poor one, such as among a
+ * bridge's cables, which no ray finds). bearing: where the camera ends, in degrees clockwise from north
+ * as seen from the place; radius and height in metres; look: how far above the ground it looks.
+ * @returns {{dir:number, sweep:number, endHeight:number, endRadius:number, lookHeight:number, open:number}|null}
+ */
+export function arrivalEndFromView(view, start, tune = ARRIVAL) {
+  if (!view || !Number.isFinite(view.bearing)) return null;
+  // the local frame: +z north, +x WEST, and angles here run from +z toward +x
+  const want = -view.bearing * Math.PI / 180;
+  let diff = Math.atan2(Math.sin(want - start.angle), Math.cos(want - start.angle));
+  // too short a pan is no pan: go the long way round
+  if (Math.abs(diff) < Math.PI * 0.3) diff -= Math.sign(diff || 1) * Math.PI * 2;
+  return {
+    dir: diff < 0 ? -1 : 1, sweep: Math.abs(diff), open: 1,
+    endHeight: Number.isFinite(view.height) ? view.height : tune.endHeight,
+    endRadius: Number.isFinite(view.radius) ? view.radius : tune.endRadius,
+    lookHeight: Number.isFinite(view.look) ? view.look : tune.lookHeight,
+  };
+}
+
 export class ArrivalOrbit {
   /**
    * @param {import('three').PerspectiveCamera} camera  starts from wherever it is now
@@ -61,8 +147,9 @@ export class ArrivalOrbit {
    * @param {{x:number, y:number, z:number}} bikePos  what the camera is looking at now
    * @param {{ clear?: (from:{x:number,y:number,z:number}, to:{x:number,y:number,z:number}) => number|null, tune?: typeof ARRIVAL }} [opts]
    *   clear: the distance from `from` toward `to` at which something blocks the view (null = nothing does)
+   *   view: the place's own end for the rise (arrivalEndFromView), when it has one
    */
-  constructor(camera, place, bikePos, { clear = null, tune = ARRIVAL } = {}) {
+  constructor(camera, place, bikePos, { clear = null, tune = ARRIVAL, view = null } = {}) {
     this.camera = camera;
     this.place = { x: place.x, y: place.y, z: place.z };
     this.tune = tune;
@@ -81,6 +168,14 @@ export class ArrivalOrbit {
     };
     this.startLook = { x: bikePos.x, y: bikePos.y + 1.3, z: bikePos.z };
     this._radius = this.start.radius;
+    // where it ends: the usual pan and height, unless something stands in that view
+    // (a place with a view of its own goes there, and is trusted: nothing is asked of the rays)
+    const own = arrivalEndFromView(view, this.start, tune);
+    if (own) this.clear = null;
+    const end = own || chooseArrivalEnd(this.place, this.start, clear, tune);
+    this.end = end;
+    this.start.dir = end.dir;
+    this.tune = tune = { ...tune, sweep: end.sweep, endHeight: end.endHeight, endRadius: end.endRadius || tune.endRadius, lookHeight: end.lookHeight || tune.lookHeight };
   }
 
   /** One frame. @returns {boolean} true once the camera is at the top */

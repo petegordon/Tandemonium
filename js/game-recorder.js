@@ -966,6 +966,13 @@ export class GameRecorder {
     // Draw game canvas
     ctx.drawImage(this.gameCanvas, 0, 0, w, h);
 
+    // #802 · a plain frame (Map Tourist's arrival): the picture and the marks, none of the ride's HUD
+    if (state && state.plain) {
+      this._drawClipMarks(ctx, w, h, s, state);
+      if (this._useWebCodecs) this._feedWebCodecsFrame();
+      return;
+    }
+
     // Feed frame to WebCodecs encoder (iOS) — done AFTER full composite below
     // (scheduled via _wcNeedsFeed flag, actual feed at end of this method)
     const feedWC = this._useWebCodecs;
@@ -1017,6 +1024,29 @@ export class GameRecorder {
       this._drawCheckpointFlash(ctx, w, h, s, state.checkpointFlash);
     }
 
+    this._drawClipMarks(ctx, w, h, s, state);
+
+    // Feed composited frame to WebCodecs encoder (iOS path)
+    if (feedWC) this._feedWebCodecsFrame();
+  }
+
+  /** The lines every frame of a clip carries: whose imagery it is (Map Tourist), and the game's name. */
+  _drawClipMarks(ctx, w, h, s, state) {
+    // ── Whose imagery this is (Map Tourist: Google's attribution travels with the clip) ──
+    if (state && state.credit) {
+      ctx.save();
+      ctx.font = Math.round(6.5 * s) + 'px Helvetica Neue, Arial, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 2 * s;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      let credit = String(state.credit);
+      while (credit.length > 8 && ctx.measureText(credit).width > w * 0.66) credit = credit.slice(0, -2);
+      if (credit !== String(state.credit)) credit += '…';
+      ctx.fillText(credit, 8 * s, h - 8 * s);
+      ctx.restore();
+    }
+
     // ── Watermark ──
     ctx.save();
     ctx.font = Math.round(9 * s) + 'px Helvetica Neue, Arial, sans-serif';
@@ -1025,9 +1055,6 @@ export class GameRecorder {
     ctx.textBaseline = 'bottom';
     ctx.fillText('TANDEMONIUM', w - 12 * s, h - 8 * s);
     ctx.restore();
-
-    // Feed composited frame to WebCodecs encoder (iOS path)
-    if (feedWC) this._feedWebCodecsFrame();
   }
 
   // ── Speed dashboard — replicates #hud-dashboard ──
@@ -1566,7 +1593,53 @@ export class GameRecorder {
 
   // ── Save clip ──
 
-  saveClip() {
+  /**
+   * #802 · start the clip again from here (the arrival: what came before is not part of it).
+   * On the MediaRecorder path this also keeps the clip playable: its buffer drops the chunks older
+   * than bufferDuration, and the first of those holds the file's header.
+   */
+  restartBuffer() {
+    if (!this.buffering || this._saving || this._useWebCodecs) return;
+    const rec = this.recorder;
+    if (!rec || rec.state !== 'recording') return;
+    rec.addEventListener('stop', () => { this._chunks = []; this._startRecorder(); }, { once: true });
+    try { rec.stop(); } catch { this._chunks = []; this._startRecorder(); }
+  }
+
+  /**
+   * #802 · take the clip NOW and keep it, without opening the preview (the arrival: the celebration and
+   * the camera's rise, cut where the end screen comes up). showHeldClip() opens it later.
+   */
+  holdClip() {
+    if (!this.buffering || this._saving) return false;
+    this.dropHeldClip();
+    this._quietClip = true;
+    this.saveClip({ delayMs: 250 });
+    return true;
+  }
+
+  /** Is a clip from holdClip() ready? */
+  get hasHeldClip() { return !!this._heldClip && !!this._clipUrl; }
+
+  /** Open the preview (save, share, post the GIF to Discord) on the clip holdClip() took. */
+  showHeldClip() {
+    if (!this.hasHeldClip) return false;
+    this._showPreview();
+    return true;
+  }
+
+  /** The held clip was never asked for: let it go. (One that is open in the preview is the player's now.) */
+  dropHeldClip() {
+    this._quietClip = false;
+    if (!this._heldClip) return;
+    this._heldClip = false;
+    if (this.previewModal && this.previewModal.classList.contains('visible')) return;
+    if (this._clipUrl) { URL.revokeObjectURL(this._clipUrl); this._clipUrl = null; }
+    this._clipBlob = null; this._clipChunks = null; this._clipDecoderConfig = null; this._clipDims = null; this._shortClipBlob = null;
+  }
+
+  saveClip(opts = {}) {
+    const delayMs = opts && Number.isFinite(opts.delayMs) ? opts.delayMs : 2000;
     _dbg(`saveClip buf=${this.buffering} saving=${this._saving} useWC=${this._useWebCodecs} enc=${this._wcEncoder ? this._wcEncoder.state : 'null'} chunks=${this._wcEncodedChunks.length} rec=${this.recorder ? this.recorder.state : 'null'}`);
     if (!this.buffering) { _dbg('BAIL: not buffering'); return; }
     if (this._saving) { _dbg('BAIL: already saving'); return; }
@@ -1599,7 +1672,7 @@ export class GameRecorder {
           this.shareBtn.textContent = '\uD83C\uDFAC'; // 🎬
           this.shareBtn.style.background = 'rgba(0,0,0,0.4)';
         }
-      }, 2000);
+      }, delayMs);
       return;
     }
 
@@ -1632,7 +1705,7 @@ export class GameRecorder {
         this._chunks = [];
         this._startRecorder();
       }
-    }, 2000);
+    }, delayMs);
   }
 
   _assembleClip() {
@@ -1647,6 +1720,8 @@ export class GameRecorder {
 
   _showPreview() {
     if (!this.previewModal || !this.previewVideo || !this._clipUrl) return;
+    // (taken to be held: kept until it is asked for)
+    if (this._quietClip) { this._quietClip = false; this._heldClip = true; if (this.onHeldClip) this.onHeldClip(); return; }
 
     this.previewVideo.src = this._clipUrl;
     this.previewVideo.play().catch(() => {});

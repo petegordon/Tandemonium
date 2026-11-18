@@ -2,7 +2,7 @@
 // camera rises into the sky while it pans round the place (Pete, 2026-11-18).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ARRIVAL, arrivalPose, ArrivalOrbit } from '../../js/tourist-arrival.js';
+import { ARRIVAL, arrivalPose, ArrivalOrbit, chooseArrivalEnd, openFraction, arrivalEndFromView } from '../../js/tourist-arrival.js';
 
 /** A camera stand-in: a position, and where it was last told to look. */
 function camera(x, y, z) {
@@ -92,4 +92,78 @@ test('a building in the way keeps the camera on the near side of it', () => {
   assert.ok(far <= 40, `never past the wall (furthest ${far.toFixed(1)} m)`);
   assert.ok(far > 25, 'but it did move out toward it');
   assert.ok(Math.abs(cam.position.y - ARRIVAL.endHeight) < 0.01, 'and it still rose');
+});
+
+// Pete, 2026-11-18: "If the camera is too close need to modify its positioning relative to the end."
+test('with nothing in the way the rise ends where it always did', () => {
+  const end = chooseArrivalEnd({ x: 0, y: 0, z: 0 }, { angle: 0.3, radius: 8, height: 2, dir: 1 }, () => null);
+  assert.deepEqual([end.dir, end.sweep, end.endHeight, end.open], [1, ARRIVAL.sweeps[0], ARRIVAL.heights[0], 1]);
+  assert.equal(chooseArrivalEnd({ x: 0, y: 0, z: 0 }, { angle: 0, radius: 8, height: 2, dir: -1 }, null).dir, -1);
+});
+
+test('a tower where the rise would end sends the camera to an open side instead', () => {
+  const place = { x: 0, y: 0, z: 0 };
+  const start = { angle: 0, radius: 8, height: 2, dir: 1 };
+  // a tall wall across the usual end: everything at angles within 0.9 rad of it is blocked 15 m out
+  const usual = start.angle + ARRIVAL.sweeps[0];
+  const clear = (from, to) => {
+    const a = Math.atan2(to.x - from.x, to.z - from.z);
+    const off = Math.abs(Math.atan2(Math.sin(a - usual), Math.cos(a - usual)));
+    return off < 0.9 ? 15 : null;
+  };
+  assert.ok(openFraction(place, { angle: usual, radius: ARRIVAL.endRadius, height: 80 }, clear) < 0.15, "the usual end is too close");
+  const end = chooseArrivalEnd(place, start, clear);
+  assert.ok(end.open > 0.9, "an open end was found (" + end.open.toFixed(2) + ")");
+  const cam = camera(0, 2, 8);
+  const orbit = new ArrivalOrbit(cam, place, { x: 0, y: 0.4, z: 4 }, { clear });
+  for (let i = 0; i < 600; i++) orbit.update(1 / 60);
+  assert.ok(Math.hypot(cam.position.x, cam.position.z) > ARRIVAL.endRadius - 1, "and the camera ends at its full distance (" + Math.hypot(cam.position.x, cam.position.z).toFixed(0) + " m)");
+});
+
+test('when every side is blocked low down, it ends higher', () => {
+  const place = { x: 0, y: 0, z: 0 };
+  // a canyon: the view is blocked 20 m out unless the camera is over 100 m up
+  const clear = (from, to) => (to.y - place.y > 100 ? null : 20);
+  const end = chooseArrivalEnd(place, { angle: 0, radius: 8, height: 2, dir: 1 }, clear);
+  assert.equal(end.endHeight, ARRIVAL.heights[1]);
+  assert.equal(end.open, 1);
+});
+
+test('a slightly better view is not worth leaving the usual end for', () => {
+  const usualAngle = ARRIVAL.sweeps[0];
+  const clear = (from, to) => { const a = Math.atan2(to.x - from.x, to.z - from.z); const full = Math.hypot(to.x - from.x, to.y - from.y, to.z - from.z); return Math.abs(Math.atan2(Math.sin(a - usualAngle), Math.cos(a - usualAngle))) < 0.2 ? full * 0.95 : null; };
+  const end = chooseArrivalEnd({ x: 0, y: 0, z: 0 }, { angle: 0, radius: 8, height: 2, dir: 1 }, clear);
+  assert.equal(end.sweep, ARRIVAL.sweeps[0]);
+});
+
+test('an end with cables right beside the camera loses to one in clear air', () => {
+  const place = { x: 0, y: 0, z: 0 };
+  const start = { angle: 0, radius: 8, height: 2, dir: 1 };
+  const usual = start.angle + ARRIVAL.sweeps[0];
+  const usualAt = { x: Math.sin(usual) * ARRIVAL.endRadius, z: Math.cos(usual) * ARRIVAL.endRadius };
+  // the place can be seen from everywhere, but near the usual end there is something 3 m from the camera
+  const clear = (from) => (Math.hypot(from.x - usualAt.x, from.z - usualAt.z) < 40 ? 3 : null);
+  const end = chooseArrivalEnd(place, start, clear);
+  const at = { x: Math.sin(start.angle + end.dir * end.sweep) * ARRIVAL.endRadius, z: Math.cos(start.angle + end.dir * end.sweep) * ARRIVAL.endRadius };
+  assert.ok(Math.hypot(at.x - usualAt.x, at.z - usualAt.z) >= 40, "it ends somewhere else");
+  assert.equal(end.open, 1);
+});
+
+test('a place with a view of its own sends the camera there, whatever is in the way', () => {
+  const place = { x: 0, y: 0, z: 0 };
+  const view = { bearing: 90, radius: 260, height: 70, look: 40 };       // due east of the place
+  const cam = camera(1, 2, 8);
+  const orbit = new ArrivalOrbit(cam, place, { x: 0, y: 0.4, z: 4 }, { clear: () => 5, view });
+  for (let i = 0; i < 600; i++) orbit.update(1 / 60);
+  // +x is WEST in the tiles' frame, so east of the place is -x
+  assert.ok(Math.abs(cam.position.x + 260) < 1 && Math.abs(cam.position.z) < 1, "due east, 260 m out (" + cam.position.x.toFixed(0) + ", " + cam.position.z.toFixed(0) + ")");
+  assert.ok(Math.abs(cam.position.y - 70) < 0.01);
+  assert.deepEqual(cam.looked, { x: 0, y: 40, z: 0 });
+});
+
+test('a view right beside where the camera starts is reached the long way round, not with no pan at all', () => {
+  const end = arrivalEndFromView({ bearing: -10 }, { angle: 0, radius: 8, height: 2, dir: 1 });
+  assert.ok(end.sweep > Math.PI * 1.5, "sweep " + end.sweep.toFixed(2));
+  assert.equal(arrivalEndFromView(null, { angle: 0 }), null);
+  assert.equal(arrivalEndFromView({ radius: 5 }, { angle: 0 }), null);
 });

@@ -850,6 +850,7 @@ class Game {
     // #802 · Map Tourist's end screen
     this._onTap('btn-tourist-another', () => this._touristAnotherPlace());
     this._onTap('btn-tourist-explore', () => this._touristKeepExploring());
+    this._onTap('btn-tourist-clip', () => this._touristShareClip());
     // Victory: return to room (stay connected)
     this._onTap('btn-victory-room', () => {
       this._hideVictory();
@@ -4486,6 +4487,7 @@ class Game {
     const odo = this._touristOdo;
     const b = this.bike;
     if (!odo || !b || !this.isTourist) return;
+    this._keepTouristLevel();
     if (this._touristHold) { b.speed = 0; return; }   // the skip's card is up: nobody rides
     b.distanceTraveled = odo.update(b.position.x, b.position.z, b.distanceTraveled);
     const plan = this._touristRoute;
@@ -4493,6 +4495,15 @@ class Game {
       b.distanceTraveled = CAP_HALF_M;
       this._touristSkip(false);
     }
+  }
+
+  /**
+   * A Map Tourist ride keeps its own level. The lobby's level list is rebuilt now and then (an unlock,
+   * a sign-in), and a rebuild puts its default pick back: the end screen then paid and reported the ride
+   * as Grandma's House (seen live 2026-11-18: "NEXT LEVEL", a gold medal, 250 m).
+   */
+  _keepTouristLevel() {
+    if (this.isTourist && this._touristLevel && this.lobby && this.lobby.selectedLevel !== this._touristLevel) this.lobby.selectedLevel = this._touristLevel;
   }
 
   _hideTouristGoal() {
@@ -5983,6 +5994,7 @@ class Game {
   _touristCelebrate() {
     const world = /** @type {any} */ (this.world);
     if (world && world.celebrate) world.celebrate(this.bike ? this.bike.position : null);
+    if (this.recorder && this.recorder.restartBuffer) this.recorder.restartBuffer();   // the clip of the arrival starts here
     if (this.audioEngine) {
       this.audioEngine.honkBurst(4);
       setTimeout(() => { if (this.state === 'finishCinematic' && this.audioEngine) this.audioEngine.honkBurst(3); }, 1200);
@@ -6005,9 +6017,11 @@ class Game {
     if (!place || !plan || plan.explore || !this.bike) return false;
     this._arrivalOrbit = new ArrivalOrbit(this.camera, place, this.bike.position, {
       clear: world.viewOpen ? (a, b) => world.viewOpen(a, b) : null,
+      view: plan.view || null,
     });
     this._arrivalStill = null;
     this._arrivalSkip = false;
+    this._arrivalEnd = this._arrivalOrbit.end;   // (where the rise was sent, and why: read by the live checks)
     const skip = () => { this._arrivalSkip = true; };
     this._arrivalSkipOff = () => { window.removeEventListener('keydown', skip); window.removeEventListener('pointerdown', skip); };
     window.addEventListener('keydown', skip);
@@ -6032,13 +6046,28 @@ class Game {
     }
     const done = orbit.update(dt) || (this._arrivalSkip && orbit.elapsed > 1);
     this.renderer.render(this.scene, this.camera);
+    this._recordArrivalFrame();
     if (!done) return;
     this._arrivalStill = this._captureArrivalStill();
+    // (the clip is cut here, at the top of the rise: the end screen offers it)
+    if (this.recorder && this.recorder.holdClip) this.recorder.holdClip();
     this._arrivalOrbit = null;
     if (this._arrivalSkipOff) { this._arrivalSkipOff(); this._arrivalSkipOff = null; }
     this._arrivalHold = true;          // the camera stays up there behind the end screen
     if (this.chaseCamera) this.chaseCamera.initialized = false;
     this._showVictory(this._finishFromRemote);
+  }
+
+  /** #802 · the clip recorder gets the arrival's frames too (it only ever saw the ride). */
+  _recordArrivalFrame() {
+    if (!this.recorder || !this.recorder.buffering) return;
+    try { this.recorder.composite({ ...this._buildRecordState(this.sharedPedal || this.pedalCtrl), plain: true }); } catch { /* a clip is a nicety */ }
+  }
+
+  /** SHARE CLIP on the end screen: the arrival's clip, in the same preview as a clip taken mid-ride. */
+  _touristShareClip() {
+    if (this.state !== 'victory' || !this.recorder || !this.recorder.showHeldClip) return;
+    this.recorder.showHeldClip();
   }
 
   /** The picture on the end screen: the frame just drawn, from the top of the rise. */
@@ -6077,6 +6106,13 @@ class Game {
     const another = document.getElementById('btn-tourist-another');
     const explore = document.getElementById('btn-tourist-explore');
     if (another) another.style.display = on && this.mode === 'solo' && !this.net ? '' : 'none';
+    const clip = document.getElementById('btn-tourist-clip');
+    if (clip) {
+      // (it is ready a moment after the end screen opens: the recorder says when)
+      const ready = () => { clip.style.display = on && !leaving && this.state === 'victory' && this.recorder && this.recorder.hasHeldClip ? '' : 'none'; };
+      ready();
+      if (this.recorder) this.recorder.onHeldClip = () => { ready(); if (this._overlayFocus && clip.style.display === '') { try { focusResult(this._overlayFocus, document.getElementById('victory-sheet'), { primary: this._overlayFocus.current || playAgainBtn }); } catch { /* the mouse still reaches it */ } } };
+    }
     if (explore) {
       explore.style.display = on && !this.net ? '' : 'none';
       /** @type {any} */ (explore).variant = leaving ? 'accent' : 'primary';
@@ -6195,6 +6231,7 @@ class Game {
     if (this.world) this.world.updateFinishFx(dt);
 
     this.renderer.render(this.scene, this.camera);
+    if (this.isTourist) this._recordArrivalFrame();   // #802: the arrival is in the clip
 
     if (done) {
       cinematic.cleanup();
@@ -6210,6 +6247,7 @@ class Game {
   _showVictory(fromRemote = false) {
     // Slingshot: reaching the stage goal pays out on its own results screen.
     if (this.isSlingshot) { this._endSlingRun('goal'); return; }
+    this._keepTouristLevel();
     this._closePause();   // #459
     this.state = 'victory';
     this.hud.hideTimer();
@@ -6684,10 +6722,12 @@ class Game {
     document.getElementById('victory-overlay').classList.remove('visible');
     // Clear stale pointer-events cooldown on victory buttons
     this._arrivalHold = false;      // #802
+    if (this.recorder && this.recorder.dropHeldClip) { this.recorder.onHeldClip = null; this.recorder.dropHeldClip(); }
+    { const c = document.getElementById('btn-tourist-clip'); if (c) c.style.display = 'none'; }
     this._arrivalStill = null;
     this._touristLeaving = false;
     for (const id of ['btn-play-again', 'btn-next-level', 'btn-victory-room', 'btn-victory-lobby',
-                      'btn-tourist-another', 'btn-tourist-explore',
+                      'btn-tourist-another', 'btn-tourist-explore', 'btn-tourist-clip',
                       'btn-wishlist-victory', 'btn-invite-victory']) {
       const el = document.getElementById(id);
       if (el) el.style.pointerEvents = '';
@@ -7150,6 +7190,7 @@ class Game {
     const levelIcon = this.lobby.selectedLevel ? this.lobby.selectedLevel.icon : '';
 
     return {
+      credit: this.isTourist && this.world && /** @type {any} */ (this.world).attribution ? /** @type {any} */ (this.world).attribution : undefined,   // #802
       speed: this.bike.speed,
       distance: this.bike.distanceTraveled,
       timerRemaining,
