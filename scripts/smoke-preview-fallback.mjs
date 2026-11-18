@@ -131,6 +131,27 @@ try {
     && !fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes(SW_FILE), 'the live page and the repo\'s index.html have no registration script');
   check(fs.existsSync(path.join(previewDir, 'tandem-3d', 'index.html')), 'a page inside a heavy folder is still published (it must register the worker)');
 
+  // deploy.yml carries previews forward into the tree it publishes, except
+  // ones staged the old way (a full copy, no worker at the root), and then
+  // measures the tree. Run those two scripts on this tree with an old-style
+  // preview added beside the new-style one.
+  console.log('\nWhat a production deploy carries forward');
+  const oldStyle = path.join(site, 'pr-preview', 'pr-2');
+  fs.mkdirSync(path.join(oldStyle, 'assets'), { recursive: true });
+  fs.writeFileSync(path.join(oldStyle, 'index.html'), '<!doctype html><title>old-style preview</title>');
+  fs.writeFileSync(path.join(oldStyle, 'assets', 'big.bin'), Buffer.alloc(3 * 1048576));
+  const bash = (script, ...args) => {
+    try { return { code: 0, out: execFileSync('bash', [path.join(ROOT, '.github/scripts', script), ...args.map((x) => String(x).replace(/\\/g, '/'))], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }) }; }
+    catch (e) { return { code: e.status, out: String(e.stdout || '') + String(e.stderr || '') }; }
+  };
+  const dropped = bash('drop-full-previews.sh', path.join(site, 'pr-preview'));
+  check(dropped.code === 0 && !fs.existsSync(oldStyle), 'a preview with no worker at its root (staged the old way) is dropped');
+  check(/Dropped the preview of PR #2 \(3\.0 MB\).*next push or reopen/.test(dropped.out), '  …with a line in the log naming the PR and its size', dropped.out.trim().split('\n')[0]);
+  check(fs.existsSync(path.join(previewDir, SW_FILE)) && fs.existsSync(path.join(previewDir, 'index.html')) && /kept[^\n]*: 1\b/.test(dropped.out), 'a preview staged the new way is kept');
+  const measured = bash('check-publish-size.sh', site, 900);
+  check(measured.code === 0 && /preview pr-1: /.test(measured.out) && !/pr-2/.test(measured.out), 'the size check then passes and lists only the kept preview', (measured.out.match(/total: [^\n]*/) || [''])[0]);
+  check(bash('check-publish-size.sh', site, 100).code === 1, 'the size check fails a tree over its limit');
+
   // ── 3 · Serve it the way Pages does ──
   // Range support (media seeks with it), a 404 for anything missing, and the
   // ten-minute Cache-Control Pages puts on everything. Every request is logged
