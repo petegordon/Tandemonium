@@ -215,6 +215,8 @@ export const EVT_RESET_QUICK = 0x09;
 // The captain opened / closed the pause menu: the stoker's ride stops with it and says so.
 // An older build ignores event types it does not know.
 export const EVT_PAUSE  = 0x0A;
+// Map Tourists: the captain crossed the half-way cut of a long ride; both sides skip to its last stretch.
+export const EVT_TOURIST_SKIP = 0x0C;
 export const EVT_RESUME = 0x0B;
 
 export const MSG_COLLECT     = 0x06;

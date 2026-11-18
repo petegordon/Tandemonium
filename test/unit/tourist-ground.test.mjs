@@ -318,3 +318,25 @@ test('the forward probe sees nothing on open street and does not fire on a kerb'
   assert.equal(bumps, 0);
   assert.ok(Math.abs(g.groundY - (0.15 + WHEEL)) < 0.05, `up the kerb (${g.groundY.toFixed(2)})`);
 });
+
+test('a measured place stands on the measured surface: a bridge deck, not the water under it', () => {
+  // water at -217, a deck at -141 (the Golden Gate from its anchor, 2026-11-17)
+  const tiles = fakeTiles([ground(-217)]);
+  const g = new TouristGround({ tiles, probeUp: 300, probeRay: 600, tune: TOURIST_TUNE });
+  g.expectY = -141;
+  const bike = new THREE.Vector3(0, 0, 0);
+  // only the water has loaded: it is stood on, but not trusted
+  for (let i = 0; i < 180; i++) g.step(bike, DT);
+  assert.ok(Math.abs(g.groundY - (-217 + WHEEL)) < 0.01);
+  assert.equal(g.ready, false, 'the water is not the place that was measured');
+  // the deck arrives
+  tiles.meshes = [ground(-217), ground(-141)];
+  for (let i = 0; i < 90; i++) g.step(bike, DT);
+  assert.ok(Math.abs(g.groundY - (-141 + WHEEL)) < 0.01, 'on the deck');
+  assert.equal(g.ready, true);
+
+  // a place that was not measured keeps the ordinary rule (the lowest of the top cluster)
+  const plain = new TouristGround({ tiles: fakeTiles([ground(-217)]), probeUp: 300, probeRay: 600, tune: TOURIST_TUNE });
+  for (let i = 0; i < 90; i++) plain.step(bike, DT);
+  assert.equal(plain.ready, true);
+});
