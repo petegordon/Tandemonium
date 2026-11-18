@@ -36,6 +36,30 @@ export const CLIP_SECONDS = 20;
 export const SHORT_CLIP_SECONDS = 10;
 
 /**
+ * #805 · the MediaRecorder path (desktop, Android) keeps its clip playable by running recordings in
+ * turn. A recording's first chunk holds the file's header, so chunks cannot simply be dropped off the
+ * front of one that runs for ever (that was the bug: any clip saved more than 20 s in could not be
+ * opened). Instead a recording runs for at most ROLL_MAX_SECONDS; ROLL_OVERLAP_SECONDS before that, the
+ * next one starts beside it; at the end the old one is dropped and the next, already ROLL_OVERLAP_SECONDS
+ * long, takes over. A clip is the whole of the current recording: never less than the overlap (once the
+ * ride is that old), never more than the maximum.
+ */
+export const ROLL_MAX_SECONDS = 40;
+export const ROLL_OVERLAP_SECONDS = 10;
+
+/**
+ * What the rolling recordings should do now.
+ * @param {number} ageS  how long the current recording has run
+ * @param {boolean} hasNext  is the next one already running beside it?
+ * @returns {'start-next'|'promote'|null}
+ */
+export function rollStep(ageS, hasNext, { max = ROLL_MAX_SECONDS, overlap = ROLL_OVERLAP_SECONDS } = {}) {
+  if (!(ageS >= 0)) return null;
+  if (hasNext) return ageS >= max ? 'promote' : null;
+  return ageS >= max - overlap ? 'start-next' : null;
+}
+
+/**
  * #408 · the last `seconds` of a WebCodecs chunk buffer, cut at the muxing
  * step rather than re-encoded. H.264 can only start on a keyframe, so the
  * window opens on the first keyframe at or after (end - seconds): it is never
@@ -784,6 +808,7 @@ export class GameRecorder {
 
   // ── Rolling buffer ──
   // Strategy: single continuous MediaRecorder with 1s timeslice.
+  // (MediaRecorder path: the recordings take turns, see ROLL_MAX_SECONDS. What follows is the old note.)
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
@@ -866,36 +891,58 @@ export class GameRecorder {
     }
   }
 
-  _startRecorder() {
-    if (!this._stream || !this._mimeType) return;
-
+  /** A MediaRecorder on the clip stream, its chunks going into `chunks`. null when one cannot be made. */
+  _newRecorder(chunks) {
+    if (!this._stream || !this._mimeType) return null;
+    let rec = null;
     try {
-      this.recorder = new MediaRecorder(this._stream, {
-        mimeType: this._mimeType,
-        videoBitsPerSecond: 2500000
-      });
+      rec = new MediaRecorder(this._stream, { mimeType: this._mimeType, videoBitsPerSecond: 2500000 });
     } catch (e) {
-      try {
-        this.recorder = new MediaRecorder(this._stream, { mimeType: this._mimeType });
-      } catch (e2) {
-        return;
-      }
+      try { rec = new MediaRecorder(this._stream, { mimeType: this._mimeType }); } catch (e2) { return null; }
     }
-
-    this.recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this._chunks.push({ data: e.data, time: performance.now() });
-        // Prune chunks older than bufferDuration
-        const cutoff = performance.now() - this.bufferDuration * 1000;
-        while (this._chunks.length > 1 && this._chunks[0].time < cutoff) {
-          this._chunks.shift();
-        }
-      }
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push({ data: e.data, time: performance.now() });
+      // (the current recording keeps the turn-taking going: #805)
+      if (rec === this.recorder) this._roll();
     };
-
     // 1-second timeslice: each chunk fires ondataavailable every ~1s
-    this.recorder.start(1000);
+    try { rec.start(1000); } catch (e) { return null; }
+    return rec;
+  }
+
+  /** Start the clip's recording afresh (anything recorded so far is let go). */
+  _startRecorder() {
+    this._dropNextRecorder();
+    this._chunks = [];
+    this.recorder = this._newRecorder(this._chunks);
     this._recordStartTime = performance.now();
+  }
+
+  _dropNextRecorder() {
+    const next = this._nextRecorder;
+    this._nextRecorder = null;
+    this._nextChunks = null;
+    if (next) { next.ondataavailable = null; if (next.state !== 'inactive') { try { next.stop(); } catch (e) {} } }
+  }
+
+  /** #805 · the recordings take turns (see ROLL_MAX_SECONDS). Not while a clip is being cut. */
+  _roll() {
+    if (this._saving || !this.buffering || !this.recorder) return;
+    const step = rollStep((performance.now() - this._recordStartTime) / 1000, !!this._nextRecorder);
+    if (step === 'start-next') {
+      const chunks = [];
+      const next = this._newRecorder(chunks);
+      if (next) { this._nextRecorder = next; this._nextChunks = chunks; this._nextStartTime = performance.now(); }
+    } else if (step === 'promote') {
+      const old = this.recorder;
+      this.recorder = this._nextRecorder;
+      this._chunks = this._nextChunks;
+      this._recordStartTime = this._nextStartTime;
+      this._nextRecorder = null;
+      this._nextChunks = null;
+      old.ondataavailable = null;
+      if (old.state !== 'inactive') { try { old.stop(); } catch (e) {} }
+    }
   }
 
   stopBuffer() {
@@ -906,7 +953,9 @@ export class GameRecorder {
     }
     this._wcEncodedChunks = [];
 
+    this._dropNextRecorder();
     if (this.recorder && this.recorder.state !== 'inactive') {
+      this.recorder.ondataavailable = null;
       try { this.recorder.stop(); } catch (e) {}
     }
     this.recorder = null;
