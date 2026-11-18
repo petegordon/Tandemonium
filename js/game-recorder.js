@@ -933,6 +933,8 @@ export class GameRecorder {
       const chunks = [];
       const next = this._newRecorder(chunks);
       if (next) { this._nextRecorder = next; this._nextChunks = chunks; this._nextStartTime = performance.now(); }
+      // (a device that will not run two at once: start over when this one is full, so it never grows without end)
+      else if ((performance.now() - this._recordStartTime) / 1000 >= ROLL_MAX_SECONDS) this._startRecorder();
     } else if (step === 'promote') {
       const old = this.recorder;
       this.recorder = this._nextRecorder;
