@@ -315,7 +315,7 @@ export class GrandmaGoose {
   }
 
   /** Load and attach the model; resolves when she's in the scene graph. */
-  async load(loader) {
+  async load(loader, warm = null) {
     const { scene, clips } = await loadGrandmaAssets(loader);
     if (this.disposed) return;
     const model = /** @type {THREE.Object3D} */ (cloneSkinned(scene));
@@ -326,6 +326,8 @@ export class GrandmaGoose {
     model.scale.setScalar(GRANDMA_HEIGHT / h);
     model.position.y = -box.min.y * (GRANDMA_HEIGHT / h);
     model.traverse((o) => { if (/** @type {any} */ (o).isMesh) /** @type {any} */ (o).frustumCulled = false; });
+    // her shaders ready before she is shown: her first frame used to freeze the countdown ~450 ms
+    if (warm) { try { await warm(model); } catch (e) { /* shown anyway */ } if (this.disposed) return; }
     this.group.add(model);
     const bones = new Set();
     /** @type {Record<string, THREE.Bone>} */

@@ -1279,6 +1279,10 @@
     height: 100%;
     width: 0%;
     border-radius: 3px;
+    /* Never zero wide: an empty fill is not painted at all, so its first paint (a rounded gradient the
+       browser had not drawn yet) came half a second into the first ride and stalled the GPU process
+       80 to 180 ms. With a dot to paint, that happens when the bar appears, in the countdown. */
+    min-width: 6px;
     background: linear-gradient(90deg, var(--uf-color-accent), #66ffaa);
     transition: width 0.3s;
   }

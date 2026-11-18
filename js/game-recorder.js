@@ -929,6 +929,26 @@ export class GameRecorder {
     }
   }
 
+  /**
+   * Draw one frame's worth of everything the clip's HUD can show, then the true frame over it, before the
+   * ride starts. The browser builds a drawing pipeline the first time each kind of shape is painted on this
+   * canvas (the game picture copied in, the gradient bar, rounded buttons, text), and that took 110 to 150 ms
+   * of the GPU process at GO, in the first frames of every first ride (traced 2026-11-17). Done in the
+   * countdown instead, nobody is steering yet. Both draws happen in one task, so the recording only ever
+   * sees the true frame. → true once done (false: not recording yet, ask again)
+   */
+  prime(state) {
+    if (!this.buffering || !state) return false;
+    if (this._useWebCodecs) return true;   // (iOS feeds frames by hand: nothing to gain, and a frame to lose)
+    const race = state.raceDistance > 0 ? state.raceDistance : 250;
+    try {
+      this.composite({ ...state, raceDistance: race, distance: race * 0.5, speed: Math.max(Number(state.speed) || 0, 6),
+        leftPressed: true, rightPressed: true, checkpointFlash: 0.5, checkpointPositions: state.checkpointPositions || [0.5] });
+    } catch (e) { /* the real frame below still draws */ }
+    try { this.composite(state); } catch (e) { /* drawn at GO as before */ }
+    return true;
+  }
+
   // ── Compositing (called every frame) ──
 
   composite(state) {
