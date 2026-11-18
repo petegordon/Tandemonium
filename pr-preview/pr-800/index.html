@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'dade323',pr:800,time:'11-17-2026 22:56'}</script><base href="/pr-preview/pr-800/">
+<head><script>window.__BUILD={sha:'827bafc',pr:800,time:'11-17-2026 23:02'}</script><base href="/pr-preview/pr-800/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -287,6 +287,13 @@
   .tourist-place-icon { grid-row: 1 / 3; font-size: 22px; line-height: 1; }
   .tourist-place-name { font-size: 13px; font-weight: 800; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tourist-place-sub { font-size: 10.5px; color: rgba(255,255,255,0.6); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* a phone: two columns, no picture, and a name may take two lines (it was cut to one letter) */
+  @media (max-width: 1023px) {
+    .tourist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+    .tourist-place { grid-template-columns: minmax(0, 1fr); padding: 6px 8px; }
+    .tourist-place-icon { display: none; }
+    .tourist-place-name { font-size: 12px; white-space: normal; }
+  }
   .tourist-yours { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
   .tourist-yours-place {
     padding: 6px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06);
@@ -5757,7 +5764,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'dade323',pr:800,time:'11-17-2026 22:56'}</script><base href="/pr-preview/pr-800/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'827bafc',pr:800,time:'11-17-2026 23:02'}</script><base href="/pr-preview/pr-800/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -6360,7 +6367,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.dade323 | 11-17-2026 22:56 (PR #800)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.827bafc | 11-17-2026 23:02 (PR #800)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
