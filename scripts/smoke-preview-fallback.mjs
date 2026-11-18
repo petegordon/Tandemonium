@@ -136,8 +136,9 @@ try {
   // ten-minute Cache-Control Pages puts on everything. Every request is logged
   // so the checks can see which path was really asked for.
   //
-  // One unkind habit of the real thing is copied too: Pages was measured
-  // answering 503, not 404, for about four in ten requests for a missing file.
+  // One unkind habit of the real thing is copied too: Pages has been seen
+  // answering 503, not 404, for about four in ten requests for a missing file
+  // (for some minutes, not always).
   // Here a missing file in the preview's heavy folders always answers 503, so
   // the test fails if the worker ever depends on a 404 to know a file was left
   // out. (One check below turns it back to 404 on purpose.)

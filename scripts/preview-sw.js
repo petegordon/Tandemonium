@@ -21,10 +21,10 @@
 //
 // The worker knows which is which from the list stage-preview.mjs writes into
 // it (OWN_FILES). It does not find out by asking the preview and waiting for a
-// 404: GitHub Pages was measured answering "503" instead of "404" for about
-// four in ten requests for a file that is not there (this site, Nov 2026), and
-// a 503 cannot be told from a real outage. Knowing also saves a wasted request
-// for every shared file.
+// 404: GitHub Pages does not always give one. For some minutes on 18 Nov 2026
+// this site answered "503" instead of "404" for about four in ten requests for
+// a file that is not there, and a 503 cannot be told from a real outage.
+// Knowing also saves a wasted request for every shared file.
 //
 // Rules it keeps:
 //   - Only GETs for a heavy folder inside THIS preview are handled. Everything
