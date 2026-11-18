@@ -4495,6 +4495,15 @@
     background: #000;
     margin-bottom: 20px;
   }
+  /* choosing the GIF's 8 seconds */
+  #clip-window-row { width: min(92vw, 760px); margin: -6px 0 16px; display: grid; gap: 6px; justify-items: center; }
+  #clip-window-label { color: #fff; font: 700 13px/1.2 var(--uf-font-ui); letter-spacing: .02em; }
+  #clip-window-line { display: flex; align-items: center; gap: 10px; width: 100%; }
+  #clip-window-bar { position: relative; flex: 1 1 auto; height: 34px; border-radius: 10px; background: rgba(255,255,255,.14); border: 1.5px solid rgba(255,255,255,.3); touch-action: none; cursor: pointer; overflow: hidden; }
+  #clip-window { position: absolute; top: 0; bottom: 0; left: 0; width: 20%; background: rgba(88,101,242,.75); border-left: 3px solid #fff; border-right: 3px solid #fff; box-sizing: border-box; border-radius: 6px; pointer-events: none; }
+  .clip-window-step { flex: 0 0 auto; padding: 8px 12px; }
+  .clip-window-step[disabled] { opacity: .35; }
+  @media (max-width: 520px) { .clip-window-step { padding: 8px 9px; font-size: 12px; } #clip-window-bar { height: 40px; } }
   .clip-actions {
     display: flex;
     gap: 10px;
@@ -6367,7 +6376,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b6e6d4c | 11-18-2026 17:06</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.52e4aeb | 11-18-2026 17:27</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6614,6 +6623,15 @@ ON</button>
 <!-- Clip preview modal -->
 <div id="clip-preview-modal">
   <video id="clip-preview" playsinline loop></video>
+  <!-- the 8 seconds of the clip that become the GIF: drag the window, tap the bar, or EARLIER / LATER -->
+  <div id="clip-window-row" style="display:none;">
+    <div id="clip-window-label">GIF</div>
+    <div id="clip-window-line">
+      <button class="clip-btn clip-window-step" id="clip-earlier-btn" aria-label="Earlier">&#9664; EARLIER</button>
+      <div id="clip-window-bar" role="slider" aria-label="The part of the clip that becomes the GIF"><div id="clip-window"></div></div>
+      <button class="clip-btn clip-window-step" id="clip-later-btn" aria-label="Later">LATER &#9654;</button>
+    </div>
+  </div>
   <div class="clip-actions" id="clip-actions">
     <button class="clip-btn clip-btn-share" id="clip-share-btn">SHARE</button>
     <button class="clip-btn" id="clip-save-btn">SAVE</button>

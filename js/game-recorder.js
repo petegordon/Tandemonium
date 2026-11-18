@@ -6,7 +6,10 @@
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
-import { clipToGif } from './clip-gif.js';
+import { clipToGif, GIF_SECONDS, windowStart } from './clip-gif.js';
+
+/** EARLIER / LATER move the GIF's window by this many seconds. */
+const CLIP_WINDOW_STEP_S = 2;
 import { clipDiscordLabel, discordMemberState, postClipGifToDiscord, HOUSE_TANDEM_DISCORD_URL } from './share-result.js';
 import { isMediaEnabled } from './edition.js';
 import { CLIP_SLOW_KEY } from './quality.js';
@@ -26,6 +29,8 @@ export function canRecordClips() {
 }
 
 // iOS clip resolution cap (long side, px) for the composite + H.264 encode.
+/** A phone: fewer recordings at once (#805). */
+const _isPhone = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const WC_MAX_LONG_SIDE = 1280;
 
 // Clip lengths, in seconds. The rolling buffer keeps the last CLIP_SECONDS;
@@ -39,24 +44,31 @@ export const SHORT_CLIP_SECONDS = 10;
  * #805 · the MediaRecorder path (desktop, Android) keeps its clip playable by running recordings in
  * turn. A recording's first chunk holds the file's header, so chunks cannot simply be dropped off the
  * front of one that runs for ever (that was the bug: any clip saved more than 20 s in could not be
- * opened). Instead a recording runs for at most ROLL_MAX_SECONDS; ROLL_OVERLAP_SECONDS before that, the
- * next one starts beside it; at the end the old one is dropped and the next, already ROLL_OVERLAP_SECONDS
- * long, takes over. A clip is the whole of the current recording: never less than the overlap (once the
- * ride is that old), never more than the maximum.
+ * opened). Instead recordings are started ROLL_STAGGER_SECONDS apart and each runs for at most
+ * ROLL_MAX_SECONDS; the clip is the whole of the oldest. So once a ride is ROLL_MAX_SECONDS old there is
+ * always between ROLL_MAX_SECONDS - ROLL_STAGGER_SECONDS and ROLL_MAX_SECONDS of it on hand.
+ *
+ * Pete, 2026-11-18: "Can we do the 30-40 seconds and they choose the 8 seconds?" 40 and 10 give that,
+ * with four recordings running. Measured in the desktop build the same day: 56 frames a second with
+ * none, one, two, three or four. A phone gets two (20 to 40 s): it has less to spare.
  */
 export const ROLL_MAX_SECONDS = 40;
-export const ROLL_OVERLAP_SECONDS = 10;
+export const ROLL_STAGGER_SECONDS = 10;
+export const ROLL_STAGGER_SECONDS_PHONE = 20;
 
 /**
- * What the rolling recordings should do now.
- * @param {number} ageS  how long the current recording has run
- * @param {boolean} hasNext  is the next one already running beside it?
- * @returns {'start-next'|'promote'|null}
+ * What the staggered recordings should do now.
+ * @param {number[]} ages  how long each recording has run, oldest first
+ * @returns {{ start: boolean, drop: boolean }}  start another; drop the oldest
  */
-export function rollStep(ageS, hasNext, { max = ROLL_MAX_SECONDS, overlap = ROLL_OVERLAP_SECONDS } = {}) {
-  if (!(ageS >= 0)) return null;
-  if (hasNext) return ageS >= max ? 'promote' : null;
-  return ageS >= max - overlap ? 'start-next' : null;
+export function rollPlan(ages, { max = ROLL_MAX_SECONDS, stagger = ROLL_STAGGER_SECONDS } = {}) {
+  if (!ages.length) return { start: true, drop: false };
+  const newest = ages[ages.length - 1], oldest = ages[0];
+  return {
+    start: newest >= stagger && ages.length < Math.ceil(max / stagger) + 1,
+    // (the oldest goes when it is full, as long as something is left to be the clip)
+    drop: oldest >= max && ages.length > 1,
+  };
 }
 
 /**
@@ -351,6 +363,17 @@ export class GameRecorder {
     this._discordClipState = 'idle';
     this._discordClipBusy = false;
     this.previewDiscardBtn = document.getElementById('clip-discard-btn');
+    // Pete, 2026-11-18 · choosing the 8 seconds of the clip that become the GIF: a bar the length of the
+    // clip with the window on it (drag it, or tap the bar), and EARLIER / LATER for a controller.
+    this.clipWindowRow = document.getElementById('clip-window-row');
+    this.clipWindowBar = document.getElementById('clip-window-bar');
+    this.clipWindowEl = document.getElementById('clip-window');
+    this.clipWindowLabel = document.getElementById('clip-window-label');
+    this.clipEarlierBtn = document.getElementById('clip-earlier-btn');
+    this.clipLaterBtn = document.getElementById('clip-later-btn');
+    this._clipDuration = 0;
+    this._clipWindowStart = 0;
+    this._clipWindowOn = false;
     // #408 · the share choice: full clip or a short cut for messaging apps.
     this.previewActions = document.getElementById('clip-actions');
     this.previewShareOptions = document.getElementById('clip-share-options');
@@ -387,6 +410,31 @@ export class GameRecorder {
     if (this.previewSaveBtn) onTap(this.previewSaveBtn, () => this._downloadClip());
     if (this.previewDiscordBtn) onTap(this.previewDiscordBtn, () => this._postClipToDiscord());
     if (this.previewDiscardBtn) onTap(this.previewDiscardBtn, () => this._discardClip());
+    if (this.clipEarlierBtn) onTap(this.clipEarlierBtn, () => this._moveClipWindow(-CLIP_WINDOW_STEP_S));
+    if (this.clipLaterBtn) onTap(this.clipLaterBtn, () => this._moveClipWindow(CLIP_WINDOW_STEP_S));
+    if (this.clipWindowBar) {
+      // one finger, a mouse or a pen: the window goes where the pointer is (its middle under it)
+      const at = (e) => {
+        const r = this.clipWindowBar.getBoundingClientRect();
+        if (!(r.width > 0) || !(this._clipDuration > 0)) return;
+        const t = (e.clientX - r.left) / r.width * this._clipDuration;
+        this._setClipWindow(t - GIF_SECONDS / 2);
+      };
+      let held = false;
+      this.clipWindowBar.addEventListener('pointerdown', (e) => { held = true; try { this.clipWindowBar.setPointerCapture(e.pointerId); } catch (_) {} at(e); e.preventDefault(); });
+      this.clipWindowBar.addEventListener('pointermove', (e) => { if (held) at(e); });
+      const up = () => { held = false; };
+      this.clipWindowBar.addEventListener('pointerup', up);
+      this.clipWindowBar.addEventListener('pointercancel', up);
+    }
+    if (this.previewVideo) {
+      // the preview plays the chosen seconds round and round
+      this.previewVideo.addEventListener('timeupdate', () => {
+        if (!this._clipWindowOn) return;
+        const t = this.previewVideo.currentTime, a = this._clipWindowStart;
+        if (t < a - 0.4 || t >= a + GIF_SECONDS) { try { this.previewVideo.currentTime = a; } catch (_) {} }
+      });
+    }
 
     // Hide share button if not supported
     if (!this.supported && this.shareBtn) {
@@ -912,38 +960,46 @@ export class GameRecorder {
 
   /** Start the clip's recording afresh (anything recorded so far is let go). */
   _startRecorder() {
-    this._dropNextRecorder();
+    this._dropYoungerRecorders();
     this._chunks = [];
     this.recorder = this._newRecorder(this._chunks);
     this._recordStartTime = performance.now();
+    /** The recordings running, oldest first. The oldest is the clip (this.recorder, this._chunks). */
+    this._gens = this.recorder ? [{ rec: this.recorder, chunks: this._chunks, start: this._recordStartTime }] : [];
   }
 
-  _dropNextRecorder() {
-    const next = this._nextRecorder;
-    this._nextRecorder = null;
-    this._nextChunks = null;
-    if (next) { next.ondataavailable = null; if (next.state !== 'inactive') { try { next.stop(); } catch (e) {} } }
+  _dropYoungerRecorders() {
+    for (const g of this._gens || []) {
+      if (g.rec === this.recorder) continue;
+      g.rec.ondataavailable = null;
+      if (g.rec.state !== 'inactive') { try { g.rec.stop(); } catch (e) {} }
+    }
+    this._gens = (this._gens || []).filter((g) => g.rec === this.recorder);
   }
 
   /** #805 · the recordings take turns (see ROLL_MAX_SECONDS). Not while a clip is being cut. */
   _roll() {
-    if (this._saving || !this.buffering || !this.recorder) return;
-    const step = rollStep((performance.now() - this._recordStartTime) / 1000, !!this._nextRecorder);
-    if (step === 'start-next') {
+    if (this._saving || !this.buffering || !this.recorder || !this._gens || !this._gens.length) return;
+    const now = performance.now();
+    const stagger = _isPhone ? ROLL_STAGGER_SECONDS_PHONE : ROLL_STAGGER_SECONDS;
+    const plan = rollPlan(this._gens.map((g) => (now - g.start) / 1000), { stagger });
+    if (plan.start && !this._rollNoMore) {
       const chunks = [];
-      const next = this._newRecorder(chunks);
-      if (next) { this._nextRecorder = next; this._nextChunks = chunks; this._nextStartTime = performance.now(); }
-      // (a device that will not run two at once: start over when this one is full, so it never grows without end)
-      else if ((performance.now() - this._recordStartTime) / 1000 >= ROLL_MAX_SECONDS) this._startRecorder();
-    } else if (step === 'promote') {
-      const old = this.recorder;
-      this.recorder = this._nextRecorder;
-      this._chunks = this._nextChunks;
-      this._recordStartTime = this._nextStartTime;
-      this._nextRecorder = null;
-      this._nextChunks = null;
-      old.ondataavailable = null;
-      if (old.state !== 'inactive') { try { old.stop(); } catch (e) {} }
+      const rec = this._newRecorder(chunks);
+      if (rec) this._gens.push({ rec, chunks, start: now });
+      else this._rollNoMore = this._gens.length;   // this device will not run another: make do with these
+    }
+    if (plan.drop) {
+      const old = this._gens.shift();
+      const next = this._gens[0];
+      this.recorder = next.rec;
+      this._chunks = next.chunks;
+      this._recordStartTime = next.start;
+      old.rec.ondataavailable = null;
+      if (old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
+    } else if (this._gens.length === 1 && (now - this._gens[0].start) / 1000 >= ROLL_MAX_SECONDS) {
+      // (only one will run here: start over when it is full, so it never grows without end)
+      this._startRecorder();
     }
   }
 
@@ -955,7 +1011,8 @@ export class GameRecorder {
     }
     this._wcEncodedChunks = [];
 
-    this._dropNextRecorder();
+    this._dropYoungerRecorders();
+    this._gens = [];
     if (this.recorder && this.recorder.state !== 'inactive') {
       this.recorder.ondataavailable = null;
       try { this.recorder.stop(); } catch (e) {}
@@ -1532,10 +1589,15 @@ export class GameRecorder {
     // Visible items only (SHARE may be hidden on desktop). The controller
     // primes edge-state so a button held when the modal opens doesn't fire.
     // With the share choice open (#408) the pad walks that row instead.
+    const choosing = this._clipWindowOn && this.clipWindowRow && this.clipWindowRow.style.display !== 'none';
     const row = this._shareOptionsOpen
       ? [this.previewShareFullBtn, this.previewShareShortBtn, this.previewShareBackBtn]
-      : [this.previewShareBtn, this.previewSaveBtn, this.previewDiscordBtn, this.previewDiscardBtn];
-    this._previewFocus.setItems(row.filter(el => el && el.style.display !== 'none'));
+      : [...(choosing ? [this.clipEarlierBtn, this.clipLaterBtn] : []), this.previewShareBtn, this.previewSaveBtn, this.previewDiscordBtn, this.previewDiscardBtn];
+    // (the pad starts on the first action, not on EARLIER: the choice is there for whoever wants it)
+    const items = row.filter(el => el && el.style.display !== 'none');
+    const first = items.find((el) => el !== this.clipEarlierBtn && el !== this.clipLaterBtn);
+    const keep = this._previewFocusKeep && items.includes(this._previewFocusKeep) ? this._previewFocusKeep : first;
+    this._previewFocus.setItems(items, Math.max(0, items.indexOf(keep)));
     // Singleton RAF loop: cancel any prior poll before starting a new one so
     // re-showing the preview can't stack loops that double-process input. (#318)
     if (this._previewPollId) cancelAnimationFrame(this._previewPollId);
@@ -1665,6 +1727,7 @@ export class GameRecorder {
     if (!this.buffering || this._saving) return false;
     this.dropHeldClip();
     this._quietClip = true;
+    this._heldWindowFrom = 'start';   // (Pete: "Start on the confetti")
     this.saveClip({ delayMs: 250 });
     return true;
   }
@@ -1675,6 +1738,7 @@ export class GameRecorder {
   /** Open the preview (save, share, post the GIF to Discord) on the clip holdClip() took. */
   showHeldClip() {
     if (!this.hasHeldClip) return false;
+    this._clipWindowFrom = this._heldWindowFrom || 'end';
     this._showPreview();
     return true;
   }
@@ -1777,6 +1841,7 @@ export class GameRecorder {
     this.previewVideo.src = this._clipUrl;
     this.previewVideo.play().catch(() => {});
     this.previewModal.classList.add('visible');
+    this._openClipWindow();
 
     // Only show SHARE on actual mobile/tablet where the native share sheet
     // is useful; on desktop it just falls back to download (same as SAVE).
@@ -1806,6 +1871,7 @@ export class GameRecorder {
     Promise.resolve(this.discordClip.configured()).then((on) => {
       if (!on || this._clipUrl !== url) return;
       b.style.display = '';
+      this._showClipWindow();
       if (this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
     }).catch(() => {});
   }
@@ -1835,7 +1901,7 @@ export class GameRecorder {
       const member = await discordMemberState(token, { apiBase: this.discordClip.apiBase });
       if (member === 'signin' || member === 'join') { this._setDiscordClipState(member); return; }
       this._setDiscordClipState('making');
-      const gif = await clipToGif(url, { onProgress: (p) => { if (this._clipUrl === url) this._setDiscordClipState('making', p); } });
+      const gif = await clipToGif(url, { start: this._clipWindowOn ? this._clipWindowStart : undefined, onProgress: (p) => { if (this._clipUrl === url) this._setDiscordClipState('making', p); } });
       if (this._clipUrl !== url) return;   // discarded meanwhile
       this._setDiscordClipState('posting');
       const res = await postClipGifToDiscord({ blob: gif, token, caption: this.discordClip.caption() }, { apiBase: this.discordClip.apiBase });
@@ -1939,7 +2005,74 @@ export class GameRecorder {
     analytics.trackEvent('clip_save', { method: 'download' });
   }
 
+  /**
+   * The chooser for a clip that has just opened in the preview: find how long the clip is (a
+   * MediaRecorder WebM does not say until it is asked for its end), then put the window at the end of
+   * it, or at the start for a clip that asked for that (Map Tourist's arrival: the confetti).
+   */
+  _openClipWindow() {
+    this._clipWindowOn = false;
+    this._clipDuration = 0;
+    if (this.clipWindowRow) this.clipWindowRow.style.display = 'none';
+    const v = this.previewVideo, url = this._clipUrl;
+    const from = this._clipWindowFrom || 'end';
+    this._clipWindowFrom = null;
+    if (!v || !this.clipWindowRow) return;
+    const ready = () => {
+      if (this._clipUrl !== url) return;
+      const d = v.duration;
+      if (!Number.isFinite(d) || d <= GIF_SECONDS + 0.5) return;   // nothing to choose in a clip this short
+      this._clipDuration = d;
+      this._clipWindowOn = true;
+      this._setClipWindow(from === 'start' ? 0 : d - GIF_SECONDS);
+      this._showClipWindow();
+      if (this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
+    };
+    const find = () => {
+      if (this._clipUrl !== url) return;
+      if (Number.isFinite(v.duration)) { ready(); return; }
+      const got = () => { v.removeEventListener('durationchange', got); if (Number.isFinite(v.duration)) ready(); };
+      v.addEventListener('durationchange', got);
+      try { v.currentTime = 1e7; } catch (_) {}
+    };
+    if (v.readyState >= 1) find(); else v.addEventListener('loadedmetadata', find, { once: true });
+  }
+
+  /** The chooser shows when there is something to choose and a GIF to be made of it. */
+  _showClipWindow() {
+    if (!this.clipWindowRow) return;
+    const on = this._clipWindowOn && !!this.previewDiscordBtn && this.previewDiscordBtn.style.display !== 'none' && !this._shareOptionsOpen;
+    this.clipWindowRow.style.display = on ? '' : 'none';
+  }
+
+  _moveClipWindow(byS) {
+    if (!this._clipWindowOn) return;
+    this._previewFocusKeep = byS < 0 ? this.clipEarlierBtn : this.clipLaterBtn;
+    this._setClipWindow(this._clipWindowStart + byS);
+  }
+
+  /** Put the window at `startS` (held inside the clip), and play from there. */
+  _setClipWindow(startS) {
+    if (!(this._clipDuration > 0)) return;
+    const a = windowStart(this._clipDuration, GIF_SECONDS, startS);
+    this._clipWindowStart = a;
+    if (this.clipWindowEl) {
+      this.clipWindowEl.style.left = (a / this._clipDuration * 100) + '%';
+      this.clipWindowEl.style.width = (Math.min(GIF_SECONDS, this._clipDuration) / this._clipDuration * 100) + '%';
+    }
+    const mmss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+    if (this.clipWindowLabel) this.clipWindowLabel.textContent = `GIF: ${mmss(a)} to ${mmss(a + GIF_SECONDS)} of ${mmss(this._clipDuration)}`;
+    if (this.clipEarlierBtn) this.clipEarlierBtn.toggleAttribute('disabled', a <= 0.01);
+    if (this.clipLaterBtn) this.clipLaterBtn.toggleAttribute('disabled', a >= this._clipDuration - GIF_SECONDS - 0.01);
+    if (this.previewVideo) { try { this.previewVideo.currentTime = a; } catch (_) {} this.previewVideo.play().catch(() => {}); }
+    // a posted GIF was of other seconds: it can be posted again for these
+    if (this._discordClipState === 'posted' || this._discordClipState === 'error') this._setDiscordClipState('idle');
+  }
+
   _discardClip() {
+    this._clipWindowOn = false;
+    this._previewFocusKeep = null;
+    if (this.clipWindowRow) this.clipWindowRow.style.display = 'none';
     this._stopPreviewGamepadNav();
     analytics.trackEvent('clip_discard', {});
     if (this._clipUrl) {
