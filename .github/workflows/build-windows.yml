@@ -54,6 +54,15 @@ jobs:
       - name: Build desktop HTML
         run: npm run build-desktop
 
+      # World Tourist (#560) reads its Google Map Tiles key from js/tourist-key.local.js, which is
+      # gitignored, so the packaged game had none. The same key the website publishes is used: it is
+      # restricted to the game's web address, and the desktop app sends that address as the Referer on
+      # map requests (electron/main.js), so Google accepts it there too (checked 2026-11-17).
+      - name: Write the World Tourist key
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: node scripts/write-tourist-key.js
+
       - name: Package with Electron Forge
         run: npx electron-forge package --platform win32 --arch x64
 
@@ -90,6 +99,15 @@ jobs:
 
       - name: Build desktop HTML
         run: npm run build-desktop
+
+      # World Tourist (#560) reads its Google Map Tiles key from js/tourist-key.local.js, which is
+      # gitignored, so the packaged game had none. The same key the website publishes is used: it is
+      # restricted to the game's web address, and the desktop app sends that address as the Referer on
+      # map requests (electron/main.js), so Google accepts it there too (checked 2026-11-17).
+      - name: Write the World Tourist key
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: node scripts/write-tourist-key.js
 
       - name: Make the macOS icon
         run: bash scripts/make-icns.sh
