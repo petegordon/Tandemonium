@@ -151,7 +151,7 @@ const LOOKUP_LOAD_MS = 12000;
 
 /** Is this page somewhere the Maps key does not cover (the desktop build)? */
 export function needsLookupPage(loc = (typeof location !== 'undefined' ? location : null)) {
-  return !!loc && !/^https?:$/.test(loc.protocol);
+  return !!loc && typeof loc.protocol === 'string' && !/^https?:$/.test(loc.protocol);
 }
 
 let _lookupFrame = null;   // Promise<Window>

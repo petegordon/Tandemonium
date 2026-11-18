@@ -293,6 +293,28 @@ it cannot be reached, heights fall back to open-meteo as before (free for non-co
 replacing before the game is sold), and typed addresses say they are unavailable; scenic rides
 and the player's own places need neither.
 
+## The scenic rides, and how a ride finds its street (2026-11-17)
+
+The twelve scenic rides in `js/tourist-places.js` were each ridden in the desktop build and their
+start points moved until the bike starts on open ground facing something worth seeing. Each keeps the
+anchor height measured on its own street, so:
+
+- nothing is looked up (no geocode, no elevation request);
+- the ground is known to the metre. While the ride arrives, a surface more than 25 m from the measured
+  height is not trusted, and the surface nearest the measured height is the one stood on. Without this
+  the Golden Gate ride started on the water 76 m under the deck.
+
+For every place, measured or typed:
+
+- the bike waits at the anchor height until the ground under it has held still for a second, then
+  comes down once. It does not go back up: near the street the detailed tiles can show a roof where the
+  coarser ones showed the street under it, and going back up made a loop that ended under the city;
+- the countdown holds until the street is there (13 s at most, 22 s for a measured place), once;
+- a typed address can start on a roof, because that is where the address is. Riding off it works.
+
+To measure a new scenic place: ride it once from a typed start, read `world._origin.height +
+world._ground.groundY + 150`, and store that as its `height`.
+
 ## Where the entry points are
 
 | Entry | Where | Notes |

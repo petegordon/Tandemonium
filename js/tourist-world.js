@@ -157,6 +157,7 @@ export class TouristWorld {
     this._dbg = new URLSearchParams(window.location.search).has('ttdebug');
     this._groundY = 0;          // the anchor height, until the street is found (see _groundFollow)
     this._landing = true;
+    this._descended = false;
     this._tiltQ = new THREE.Quaternion();     // smoothed ground tilt
     this._smoothNormal = new THREE.Vector3(0, 1, 0);
     this._tmpUpQ = new THREE.Quaternion();
@@ -266,6 +267,7 @@ export class TouristWorld {
     this._groundFound = false;
     this._groundY = 0;
     this._landing = true;
+    this._descended = false;
     this._smoothNormal.set(0, 1, 0);
     this._tiltQ.identity();
     this._atEdge = false;
@@ -483,12 +485,18 @@ export class TouristWorld {
     // the place. Dropping it onto the first (coarse) hit took the camera down with it, sometimes kilometres
     // under the city, and from there the detailed tiles were never asked for. From above they are. Then it
     // comes down onto the street over a moment.
-    if (!ground.ready) {
+    // It comes down ONCE. Going back up whenever the ground moved again made a loop downtown: near the
+    // street the detailed tiles show a roof, from the anchor height the coarser ones show the street under
+    // it, so the bike went up and down between the two for as long as the settling lasted (Columbus,
+    // 2026-11-17: 10 s of it, then the street was lost).
+    if (!ground.ready && !this._descended) {
       this._groundY = 0;
       this._landing = true;
-    } else if (this._landing) {
+    } else if (this._landing || !ground.ready) {
+      this._descended = true;
+      this._landing = true;
       this._groundY += (ground.groundY - this._groundY) * Math.min(1, dt * 4);
-      if (Math.abs(ground.groundY - this._groundY) < 0.3) { this._groundY = ground.groundY; this._landing = false; }
+      if (ground.ready && Math.abs(ground.groundY - this._groundY) < 0.3) { this._groundY = ground.groundY; this._landing = false; }
     } else {
       this._groundY = ground.groundY;
     }

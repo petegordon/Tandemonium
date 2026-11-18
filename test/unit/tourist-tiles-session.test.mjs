@@ -57,7 +57,9 @@ test('a ride toward a point arrives at the point, not at a line across the map',
   odo.rebase(0, 0, 0);
   const ride = (x, z) => { let d = odo.distance; const steps = 40; const lx = odo._last.x, lz = odo._last.z;
     for (let i = 1; i <= steps; i++) d = odo.update(lx + (x - lx) * i / steps, lz + (z - lz) * i / steps, d); return d; };
-  assert.ok(Math.abs(ride(0, 500) - (500 + ARRIVE_M)) < 1, 'half way there (the last metres are the arrival circle)');
+  assert.equal(odo.update(0, 0, 0), 0, 'nothing ridden, nothing counted');
+  assert.ok(Math.abs(ride(0, 20) - 20) < 1, '20 m toward it is 20 m');
+  assert.ok(Math.abs(ride(0, 500) - 1000 * (1 - (500 - ARRIVE_M) / (1000 - ARRIVE_M))) < 0.01, 'half way there (the leg is spread over what can be ridden)');
   // riding sideways gains nothing, and riding away loses nothing
   const half = odo.distance;
   assert.equal(ride(300, 500), half);
@@ -71,7 +73,7 @@ test('a ride toward a point arrives at the point, not at a line across the map',
 test('a ride\'s second leg carries on from what was already counted', () => {
   const odo = new TouristOdometer({ target: { x: 0, z: 2500 }, lengthM: 2500, startM: 2500 });
   odo.rebase(0, 0, 2500);
-  assert.equal(odo.update(0, 1, 2500), 2500 + ARRIVE_M + 1);
+  assert.ok(Math.abs(odo.update(0, 1, 2500) - 2501) < 0.05, 'a metre into the second leg');
   let d = odo.distance;
   for (let z = 10; z <= 2500; z += 10) d = odo.update(0, z, d);
   assert.equal(d, 5000);

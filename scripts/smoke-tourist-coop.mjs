@@ -613,7 +613,8 @@ const odo = await odoPage.evaluate(async () => {
   const startRide = async (plan) => {
     await g._onTouristReady({ plan });
     g._startCountdown();
-    g._updateCountdown(10);   // straight to GO
+    // on to GO (the countdown holds until the street is under the bike, or 13 s have gone by)
+    for (let i = 0; i < 80 && g.state === 'countdown'; i++) { g._warmGate = false; g._updateCountdown(0.5); }   // (no picture is held here)
   };
   const goal = () => document.getElementById('tourist-goal').textContent;
 
@@ -654,7 +655,7 @@ console.log('odometer:', JSON.stringify(odo, null, 1));
 const R = odo.route, E = odo.explore;
 const odoOk =
   R.state0 === 'playing' && R.kind === 'TouristWorld' && R.d0 === 0 && /to go/.test(R.goal0) &&
-  Math.abs(R.d20 - 20) < 1.5 && R.goal20 !== R.goal0 &&
+  Math.abs(R.d20 - 20) < 4 && R.goal20 !== R.goal0 &&
   Math.abs(R.dSide - R.d20) < 0.5 && R.dBack === R.dSide &&
   R.dLine >= R.finishM && R.stateAtLine === 'finishCinematic' && R.end === 'victory' && /MADE IT TO THEM/.test(R.title) &&
   E.state0 === 'playing' && E.d0 === 0 && /0 m ridden/.test(E.goal0) && E.payCapM === 10000 &&

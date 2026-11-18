@@ -2521,6 +2521,7 @@ class Game {
   }
 
   _startCountdown() {
+    this._touristHeld = false; this._touristWaitS = 0;
     // Versus has its own lean countdown path — no singleton HUD, DDA,
     // recorder, or contribution tracking.
     if (this.mode === 'versus') { this._startVersusCountdown(); return; }
@@ -2980,13 +2981,17 @@ class Game {
     if (this._warmGate) dt = 0;   // (the picture is held while the ride's models are warmed: its clock waits too)
     // Map Tourist: the countdown waits for the street under the bike (the first geometry to arrive is
     // coarse and can be far above or below it), for as long as 13 s. The stoker follows the captain's clock.
-    if (this.isTourist && this.mode !== 'stoker' && this.world && /** @type {any} */ (this.world).hasGround) {
+    if (this.isTourist && !this._touristHeld && this.mode !== 'stoker' && this.world && /** @type {any} */ (this.world).hasGround) {
       const w = /** @type {any} */ (this.world);
       if (!w.hasGround() && (this._touristWaitS || 0) < (w.measuredGround ? 22 : 13)) {
         this._touristWaitS = (this._touristWaitS || 0) + dt;
         if (w.setStatus) w.setStatus('Loading the streets…');
         dt = 0;
-      } else if (w.setStatus && this._touristWaitS != null) { w.setStatus(''); this._touristWaitS = null; }
+      } else {
+        // once: a street that never settles does not hold the ride a second time
+        if (w.setStatus) w.setStatus('');
+        this._touristHeld = true;
+      }
     }
     this.countdownTimer -= dt;
     this._updateBotRace(dt);   // #644 step 2 · the ghost team waits on the line beside you
@@ -4320,6 +4325,8 @@ class Game {
       if (world.setDestination) world.setDestination(at, { color: long ? 0x9fd8ff : 0xffd36b });
     }
     this.bike.heading = this.bike.startHeading;        // in case the bike was reset already
+    this._prevTouristGoalText = null;
+    this._updateTouristGoal();                         // (a restart after the skip: the whole ride is ahead again)
   }
 
   /**
@@ -4366,7 +4373,9 @@ class Game {
     await new Promise((resolve) => {
       const check = () => {
         if (this._touristRoute !== plan || !this._touristHold) return resolve(null);
-        if ((world.hasGround && world.hasGround()) || performance.now() - t0 > 15000) return resolve(null);
+        // (the card stays long enough to be read, however fast the place arrives)
+        const waited = performance.now() - t0;
+        if ((waited > 2600 && world.hasGround && world.hasGround()) || waited > 15000) return resolve(null);
         setTimeout(check, 120);
       };
       setTimeout(check, 600);
@@ -4374,6 +4383,7 @@ class Game {
     if (this._touristRoute !== plan) return;
     this._touristHold = false;
     this._hideTouristSkip();
+    this._updateTouristGoal();
   }
 
   /** The skip's card: what was skipped, and what is left. */

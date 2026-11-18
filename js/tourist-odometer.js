@@ -85,9 +85,11 @@ export class TouristOdometer {
     this._last.x = x;
     this._last.z = z;
     if (this.target) {
-      // closer than ever before counts; within ARRIVE_M is the whole leg
+      // closer than ever before counts; within ARRIVE_M is the whole leg. The leg is spread over the
+      // metres that can actually be ridden (its length less the arrival circle), so it starts at nothing.
       const away = Math.max(0, Math.hypot(this.target.x - x, this.target.z - z) - ARRIVE_M);
-      const done = this.startM + Math.max(0, this.lengthM - away);
+      const span = Math.max(1, this.lengthM - ARRIVE_M);
+      const done = this.startM + this.lengthM * Math.max(0, 1 - away / span);
       if (done > this.distance) this.distance = done;
     } else if (this.route) {
       const along = this._base + (x - this._origin.x) * this.fx + (z - this._origin.z) * this.fz;
