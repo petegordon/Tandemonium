@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
-<head><script>window.__BUILD={sha:'b0a62ee',pr:804,time:'11-18-2026 13:01'}</script><base href="/pr-preview/pr-804/">
+<head><script>window.__BUILD={sha:'d9ad162',pr:804,time:'11-18-2026 13:35'}</script><base href="/pr-preview/pr-804/">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -5764,7 +5764,7 @@ ON</button>
   var isDesktop = ua.includes('Electron') || ua.includes('electron');
   // #578: the desktop (Steam) app hides web-only Help (playing on the phone itself).
   if (isDesktop) document.documentElement.classList.add('desktop-app');
-  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'b0a62ee',pr:804,time:'11-18-2026 13:01'}</script><base href="/pr-preview/pr-804/">) boots like the desktop app:
+  // A TV browser (marked at the top of <head><script>window.__BUILD={sha:'d9ad162',pr:804,time:'11-18-2026 13:35'}</script><base href="/pr-preview/pr-804/">) boots like the desktop app:
   // "Press any button to start", dismissed by a remote key or a pad button.
   var isTV = !isDesktop && !!window.__tandemoniumTV;
   // Mirror config.js isMobile so the boot veil label agrees with the app.
@@ -6367,7 +6367,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.b0a62ee | 11-18-2026 13:01 (PR #804)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.d9ad162 | 11-18-2026 13:35 (PR #804)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6783,6 +6783,7 @@ ON</button>
       <uf-button variant="accent" id="btn-play-again">PLAY AGAIN</uf-button>
       <uf-button id="btn-tourist-explore" style="display:none;">KEEP EXPLORING</uf-button>
       <uf-button id="btn-tourist-another" style="display:none;">ANOTHER PLACE</uf-button>
+      <uf-button class="cta-btn" id="btn-tourist-clip" style="display:none;">&#x1F3AC; SHARE CLIP</uf-button>
       <uf-button id="btn-victory-room" style="display:none;">RETURN TO ROOM</uf-button>
       <uf-button id="btn-victory-lobby">END RIDE TOGETHER</uf-button>
       <uf-button id="btn-victory-garage" style="display:none;">GARAGE &rarr;</uf-button>

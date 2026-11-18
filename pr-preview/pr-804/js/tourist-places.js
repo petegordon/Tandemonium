@@ -38,8 +38,12 @@ export const MAX_YOUR_PLACES = 8;
  * @type {ReadonlyArray<{id: string, icon: string, name: string, where: string, from: {lat: number, lon: number, label: string}, to?: {lat: number, lon: number, label: string}, height: number}>}
  */
 export const SCENIC_PLACES = Object.freeze([
-  { id: 'paris', icon: '🗼', name: 'Champs-Élysées', where: 'Paris', from: { lat: 48.86629, lon: 2.31914, label: 'Place de la Concorde, Paris' }, to: { lat: 48.87335, lon: 2.2964, label: 'Arc de Triomphe' }, height: 228 },
-  { id: 'goldengate', icon: '🌉', name: 'Golden Gate Bridge', where: 'San Francisco', from: { lat: 37.815, lon: -122.478064, label: 'Golden Gate Bridge, San Francisco' }, to: { lat: 37.824403, lon: -122.479016, label: 'the north tower' }, height: 194 },
+  { id: 'paris', icon: '🗼', name: 'Champs-Élysées', where: 'Paris', from: { lat: 48.86629, lon: 2.31914, label: 'Place de la Concorde, Paris' }, to: { lat: 48.87335, lon: 2.2964, label: 'Arc de Triomphe' }, height: 228,
+    // (the ride ends on the avenue a little short of the arch: the camera stands back down the avenue, looking at it)
+    view: { bearing: 115, radius: 170, height: 70, look: 30 } },
+  { id: 'goldengate', icon: '🌉', name: 'Golden Gate Bridge', where: 'San Francisco', from: { lat: 37.815, lon: -122.478064, label: 'Golden Gate Bridge, San Francisco' }, to: { lat: 37.824403, lon: -122.479016, label: 'the north tower' }, height: 194,
+    // (the usual rise ends in among the suspender cables: this one stands off to the east, over the bay)
+    view: { bearing: 110, radius: 260, height: 70, look: 40 } },
   { id: 'dcmall', icon: '🏛️', name: 'National Mall', where: 'Washington, DC', from: { lat: 38.8899, lon: -77.0105, label: 'US Capitol, Washington' }, to: { lat: 38.8893, lon: -77.0482, label: 'Lincoln Memorial' }, height: 128 },
   { id: 'nyc5th', icon: '🗽', name: 'Fifth Avenue', where: 'New York', from: { lat: 40.7312, lon: -73.9971, label: 'Washington Square Arch, New York' }, to: { lat: 40.74845, lon: -73.98455, label: 'Empire State Building' }, height: 127 },
   { id: 'london', icon: '👑', name: 'The Mall', where: 'London', from: { lat: 51.5063, lon: -0.12966, label: 'Admiralty Arch, London' }, to: { lat: 51.5022, lon: -0.1396, label: 'Buckingham Palace' }, height: 204 },
@@ -76,6 +80,8 @@ export function planForPlace(place, kind = 'scenic') {
   if (place.to && Number.isFinite(place.toHeight)) plan.toAnchor = { height: place.toHeight, anchored: true };
   // a landmark that cannot be ridden into (an arch, a fountain behind railings) is reached from further off
   if (place.to && Number.isFinite(place.arriveM)) plan.arriveM = place.arriveM;
+  // where the arrival's camera ends, for a place whose usual view is a poor one (js/tourist-arrival.js)
+  if (place.to && place.view) plan.view = place.view;
   plan.kind = kind;
   if (kind === 'scenic') {
     plan.title = place.name;
