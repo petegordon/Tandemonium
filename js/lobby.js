@@ -50,7 +50,7 @@ import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, earnedLine, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
-import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
+import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor, prefetchOutfitGeese } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
@@ -9703,10 +9703,14 @@ export class Lobby {
   _loadSpecialPreview(key, onReady) {
     this._specialPreviews = this._specialPreviews || {};
     const have = this._specialPreviews[key];
-    if (have) { if (have.model) onReady(have); return; }
+    // still loading: this caller is told too when it is ready (only the first one was)
+    if (have) { if (have.model) onReady(have); else have.waiting.push(onReady); return; }
     const def = SPECIAL_BIKES[key];
     const name = def ? def.name : (BIKE_NAMES[key] || key);
-    const sp = this._specialPreviews[key] = { model: null };
+    const sp = this._specialPreviews[key] = { model: null, waiting: [onReady] };
+    // its outfit geese start loading now, beside the bike (they used to start once the bike was up)
+    const giftNow = giftOutfit(key);
+    if (giftNow) prefetchOutfitGeese(giftNow, this._chooserGeeseLooks(true), getChooserGeese() === 'stand');
     showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then(async (gltf) => {
       const model = gltf.scene;
       if (!def) {
@@ -9769,16 +9773,9 @@ export class Lobby {
       // its textures and shaders ready before it shows (the first draw used to freeze the chooser)
       await warmUp(this._previewRenderer, model, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
       Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0, geeseMode, gen: 0 });
-      onReady(sp);
+      for (const fn of sp.waiting.splice(0)) { try { fn(sp); } catch (e) { console.warn(e); } }
       if (!outfit) return;
-      let looks = null;
-      try {
-        // the outfit's pair: a gander and a goose, the captain in the player's body and the stoker in the other
-        // (solo's mirrored stoker is always the goose, so a player who rides as a goose got two; Pete, 2026-11-11)
-        const solo = getSeatLooks('solo');
-        const cap = solo.Captain.body === 'f' ? 'f' : 'm';
-        looks = { Captain: { ...solo.Captain, body: cap }, Stoker: { ...solo.Stoker, body: cap === 'f' ? 'm' : 'f' } };
-      } catch (e) { /* the outfit's own bodies */ }
+      const looks = this._chooserGeeseLooks();
       sp.geeseBodies = looks ? { Captain: looks.Captain.body, Stoker: looks.Stoker.body } : null;   // (smokes)
       if (geeseMode === 'stand') { this._standOutfitGeese(sp, looks, track, Math.max(size.x, size.z) * model.scale.x / 2); return; }
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
@@ -9794,6 +9791,20 @@ export class Lobby {
         sp.riders = riders;
       }).catch((err) => console.warn(name + ' outfit geese failed to load:', err));
     }).catch((err) => console.warn(name + ' preview failed to load:', err));
+  }
+
+  /**
+   * The chooser's outfit pair: a gander and a goose, the captain in the player's body and the stoker in the
+   * other (solo's mirrored stoker is always the goose, so a player who rides as a goose got two; Pete,
+   * 2026-11-11). bodiesOnly: just { Captain, Stoker } as 'm' | 'f'. null: the outfit's own bodies.
+   */
+  _chooserGeeseLooks(bodiesOnly = false) {
+    try {
+      const solo = getSeatLooks('solo');
+      const cap = solo.Captain.body === 'f' ? 'f' : 'm';
+      const other = cap === 'f' ? 'm' : 'f';
+      return bodiesOnly ? { Captain: cap, Stoker: other } : { Captain: { ...solo.Captain, body: cap }, Stoker: { ...solo.Stoker, body: other } };
+    } catch (e) { return null; }
   }
 
   /**

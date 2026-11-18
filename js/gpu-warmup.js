@@ -6,16 +6,23 @@
 // graphics driver finish each shader, all at once on the main thread. Measured on an RTX 5070 Ti
 // (2026-11-10): the chooser froze 146 ms for a bike and 397 ms for its two outfit geese, a visible hitch on
 // any machine. warmUp does that work before the model is shown, a slice per frame:
-//   1. textures, a couple per frame (initTexture)
+//   1. textures (initTexture), as many as fit in a few milliseconds of each frame
 //   2. shaders, compiled in the background (compileAsync with KHR_parallel_shader_compile)
-//   3. one first draw per mesh, one mesh per frame (with a WarmQueue): the driver finishes a shader only
-//      when it is first drawn (the ~115 ms left after 1 and 2 were all in that first draw). The caller's
-//      own loop runs queue.step() just before its normal render, which then paints over the warm draw.
+//   3. a first draw per mesh (with a WarmQueue): the driver finishes a shader only when it is first
+//      drawn (the ~115 ms left after 1 and 2 were all in that first draw). The caller's own loop runs
+//      queue.step() just before its normal render, which then paints over the warm draws.
+// Steps 1 and 3 work to a time budget per frame (FRAME_BUDGET_MS), not a count. One texture or one mesh
+// a frame kept every frame short but made a bike take 80 frames to show and its geese 140 more
+// (2026-11-17): most meshes share a shader that is already finished, and their first draw costs almost
+// nothing. A slow one still gets a frame to itself, because the budget is checked after each.
 // Hidden objects are fine: the warm draw shows each mesh on a render layer of its own for that one call.
 
 import * as THREE from 'three';
 
 const WARM_LAYER = 31;
+/** Warm-up work per frame, in ms: more is started only while less than this has been spent. */
+export const FRAME_BUDGET_MS = 5;
+const clock = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 const nextFrame = () => new Promise((r) => {
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => r());
@@ -35,20 +42,29 @@ export function texturesOf(object) {
 }
 
 /**
- * First draws, one per frame, run by the loop that owns the renderer: call step() right before that loop's
- * own render (so the render paints over it). Jobs wait in order; each resolves its promise when drawn.
+ * First draws, run by the loop that owns the renderer: call step() right before that loop's own render
+ * (so the render paints over them). Jobs wait in order; each resolves its promise when drawn.
  */
 export class WarmQueue {
   constructor() { this._jobs = []; }
   get size() { return this._jobs.length; }
   /** @param {() => void} draw @returns {Promise<void>} */
   add(draw) { return new Promise((resolve) => this._jobs.push({ draw, resolve })); }
-  /** Run the next first draw (call right before the loop's own render). */
-  step() {
-    const job = this._jobs.shift();
-    if (!job) return;
-    try { job.draw(); } catch (e) { /* drawn for real later, as before */ }
-    job.resolve();
+  /**
+   * Run first draws until budgetMs of this frame is spent: always one, then more only while there is
+   * budget left (call right before the loop's own render). → how many ran
+   */
+  step(budgetMs = FRAME_BUDGET_MS) {
+    const t0 = clock();
+    let ran = 0;
+    while (this._jobs.length) {
+      const job = this._jobs.shift();
+      try { job.draw(); } catch (e) { /* drawn for real later, as before */ }
+      job.resolve();
+      ran++;
+      if (clock() - t0 >= budgetMs) break;
+    }
+    return ran;
   }
   /** Let every waiting job go (its loop has stopped). */
   flush() { for (const j of this._jobs.splice(0)) j.resolve(); }
@@ -96,13 +112,17 @@ function drawAlone(renderer, mesh, root, camera, scene) {
  * @param {THREE.Object3D} object the new model (in the scene hidden, or not added yet)
  * @param {THREE.Camera} camera
  * @param {THREE.Scene} scene the scene it will be drawn in (its lights pick the shaders)
- * @param {{perFrame?: number, queue?: WarmQueue}} [opts]
+ * @param {{budgetMs?: number, queue?: WarmQueue}} [opts]
  */
-export async function warmUp(renderer, object, camera, scene, { perFrame = 2, queue = null } = {}) {
+export async function warmUp(renderer, object, camera, scene, { budgetMs = FRAME_BUDGET_MS, queue = null } = {}) {
   if (!renderer || !object) return;
   const list = texturesOf(object);
-  for (let i = 0; i < list.length; i += perFrame) {
-    for (const t of list.slice(i, i + perFrame)) { try { renderer.initTexture(t); } catch (e) { /* drawn later as before */ } }
+  for (let i = 0; i < list.length;) {
+    const t0 = clock();
+    do {
+      try { renderer.initTexture(list[i]); } catch (e) { /* drawn later as before */ }
+      i++;
+    } while (i < list.length && clock() - t0 < budgetMs);
     await nextFrame();
   }
   try {
@@ -119,5 +139,6 @@ export async function warmUp(renderer, object, camera, scene, { perFrame = 2, qu
     seen.add(key);
     meshes.push(o);
   });
-  for (const m of meshes) await queue.add(() => drawAlone(renderer, m, object, camera, scene));
+  // all queued at once, so a frame can take several (queued one by one, each waited a frame for the last)
+  await Promise.all(meshes.map((m) => queue.add(() => drawAlone(renderer, m, object, camera, scene))));
 }
