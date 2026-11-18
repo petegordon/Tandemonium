@@ -13,8 +13,18 @@
 // same address as the live game, so this worker fetches a left-out file from
 // the live game instead:
 //
-//   GET /pr-preview/pr-7/assets/music.mp3      the preview's own copy, if any
-//     └ 404 → GET /assets/music.mp3            otherwise the live game's
+//   GET /pr-preview/pr-7/assets/music.mp3
+//     the preview published it (the PR changed it) → the preview's own copy;
+//                                                    only if that is a 404,
+//                                                    the live game's
+//     the preview left it out                      → GET /assets/music.mp3
+//
+// The worker knows which is which from the list stage-preview.mjs writes into
+// it (OWN_FILES). It does not find out by asking the preview and waiting for a
+// 404: GitHub Pages was measured answering "503" instead of "404" for about
+// four in ten requests for a file that is not there (this site, Nov 2026), and
+// a 503 cannot be told from a real outage. Knowing also saves a wasted request
+// for every shared file.
 //
 // Rules it keeps:
 //   - Only GETs for a heavy folder inside THIS preview are handled. Everything
@@ -33,18 +43,27 @@
 // copies this file, so the worker and the staging can never disagree.
 const HEAVY_DIRS = ["tandem-3d","assets","images","goose-stage/reels"];
 
+// The files in those folders that this preview did publish: the ones the pull
+// request added or changed, plus any pages (.html). Also rewritten at staging.
+// Each new build of a preview therefore has a different worker file, which is
+// what makes the browser replace the old worker with the new one.
+const OWN_FILES = new Set(["tandem-3d/index.html"]);
+
 // "/pr-preview/pr-7/": taken from where this worker was registered, so the
 // same file works for every preview.
 const SCOPE_PATH = new URL(self.registration.scope).pathname;
 
 // Take over at once. Without these a new worker waits until every tab of the
 // preview has closed, and a first visit stays uncontrolled until the next
-// navigation; the page (see the script stage-preview.mjs puts in <head>)
-// reloads itself once as soon as a worker is active.
+// navigation. The page (see the script stage-preview.mjs puts in <head>)
+// reloads itself once when a worker first takes charge or a newer one does.
 self.addEventListener('install', () => { self.skipWaiting(); });
 self.addEventListener('activate', (event) => { event.waitUntil(self.clients.claim()); });
 
-/** The path inside the preview ("assets/a b.mp3") if this request is ours to handle, else null. */
+/**
+ * The path inside the preview, still percent-encoded as it arrived
+ * ("assets/a%20b.mp3"), if this request is ours to handle. Otherwise null.
+ */
 function heavyPath(request) {
   if (request.method !== 'GET') return null;
   const url = new URL(request.url);
@@ -54,19 +73,21 @@ function heavyPath(request) {
   return HEAVY_DIRS.some((dir) => rel.startsWith(dir + '/')) ? rel : null;
 }
 
-async function previewThenLive(request, rel) {
-  // The preview's own copy first: a file the pull request changed must win.
-  const own = await fetch(request);
-  // Only "not there" falls through. A server error or anything else goes back
-  // as it is, so a real problem is not hidden behind the live game's file.
-  if (own.status !== 404) return own;
+/** Did the preview publish this path? ("tandem-3d/" means its index.html, as on the server.) */
+function isOwn(rel) {
+  let file;
+  try { file = decodeURIComponent(rel); } catch { return false; }
+  return OWN_FILES.has(file.endsWith('/') ? file + 'index.html' : file);
+}
 
+/** The same request, for the same path in the live game at the site root. */
+function liveRequest(request, rel) {
   const live = new URL(request.url);
-  live.pathname = '/' + rel;   // rel is still percent-encoded, as it arrived
-  // A new request for the live path that keeps the original's headers (Range
-  // above all). 'same-origin' because it is our own origin by construction and
-  // because the original's mode can be 'navigate', which a script may not use.
-  return fetch(new Request(live.href, {
+  live.pathname = '/' + rel;
+  // The original's headers go along (Range above all). 'same-origin' because
+  // it is our own origin by construction and because the original's mode can
+  // be 'navigate', which a script may not use.
+  return new Request(live.href, {
     method: 'GET',
     headers: request.headers,
     mode: 'same-origin',
@@ -75,12 +96,22 @@ async function previewThenLive(request, rel) {
     redirect: 'follow',
     referrer: request.referrer,
     signal: request.signal,
-  }));
+  });
+}
+
+async function previewThenLive(request, rel) {
+  // The preview's own copy: a file the pull request changed must win.
+  const own = await fetch(request);
+  // 404 here means this worker is older than the preview (a newer build no
+  // longer changes the file). Anything else, a server error included, goes
+  // back as it is: the live game's copy would be the wrong bytes.
+  if (own.status !== 404) return own;
+  return fetch(liveRequest(request, rel));
 }
 
 self.addEventListener('fetch', (event) => {
   const rel = heavyPath(event.request);
   // Not calling respondWith() hands the request back to the browser untouched.
   if (rel === null) return;
-  event.respondWith(previewThenLive(event.request, rel));
+  event.respondWith(isOwn(rel) ? previewThenLive(event.request, rel) : fetch(liveRequest(event.request, rel)));
 });
