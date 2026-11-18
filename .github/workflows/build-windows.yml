@@ -1,4 +1,6 @@
 name: Build & Deploy (Windows + macOS)
+# Third-party actions are pinned to a commit (the tag is in the comment): a tag can be moved
+# to different code, a commit cannot. To update one, change both.
 
 on:
   push:
@@ -20,13 +22,17 @@ on:
         default: true
         type: boolean
 
+# This workflow only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -52,7 +58,7 @@ jobs:
         run: npx electron-forge package --platform win32 --arch x64
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tandemonium-win32-x64
           path: out/Tandemonium-win32-x64/
@@ -64,9 +70,9 @@ jobs:
     runs-on: macos-15
     if: (github.event_name == 'workflow_dispatch' && inputs.macos) || github.ref == 'refs/heads/steam-publishing'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
           cache: npm
@@ -108,7 +114,7 @@ jobs:
         run: tar -C out/Tandemonium-darwin-universal -czf tandemonium-macos.tgz Tandemonium.app
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tandemonium-macos
           path: tandemonium-macos.tgz
@@ -122,17 +128,17 @@ jobs:
       (needs.build-macos.result == 'success' || needs.build-macos.result == 'skipped') &&
       (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/steam-publishing')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Download Windows build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tandemonium-win32-x64
           path: builds/windows/
 
       - name: Download macOS build artifact
         if: needs.build-macos.result == 'success'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: tandemonium-macos
           path: macos-artifact/

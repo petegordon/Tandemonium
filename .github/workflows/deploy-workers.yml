@@ -1,4 +1,6 @@
 name: Deploy Workers
+# Third-party actions are pinned to a commit (the tag is in the comment): a tag can be moved
+# to different code, a commit cannot. To update one, change both.
 
 on:
   push:
@@ -7,28 +9,32 @@ on:
     paths: ['worker/**', 'js/remote/pad-protocol.js']
   workflow_dispatch:
 
+# This workflow only reads the repository.
+permissions:
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Deploy API Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker
           command: deploy --config wrangler-api.toml
 
       - name: Deploy Relay Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker
           command: deploy --config wrangler.toml
 
       - name: Deploy Store Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker
@@ -38,7 +44,7 @@ jobs:
       # relay is untouched. A deploy drops the open pad rooms' sockets; games
       # and phones redial by themselves.
       - name: Deploy Pad Relay Worker
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           workingDirectory: worker

@@ -1,8 +1,14 @@
 name: PR Preview Deploy
+# Third-party actions are pinned to a commit (the tag is in the comment): a tag can be moved
+# to different code, a commit cannot. To update one, change both.
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, closed]
+
+# This workflow only reads the repository.
+permissions:
+  contents: read
 
 jobs:
   # Tests report on the PR as the `tests` check, but they don't gate the
@@ -19,10 +25,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
 
@@ -30,7 +36,7 @@ jobs:
       # exercises js/road-path.js), so dependencies have to be installed before
       # the first gate runs — not midway through, as they used to be.
       - name: Install dependencies
-        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
 
       - name: Unit tests
         run: npm test
@@ -87,6 +93,9 @@ jobs:
           exit $fail
 
   preview:
+    # Previews are served from the game's own address, next to the live game, so they are
+    # built only from branches of this repository: never from a fork's pull request.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     # Previews serialize among themselves. deploy.yml has its own group
     # (gh-pages-main) so a burst of preview runs can't evict a pending main deploy;
@@ -101,7 +110,7 @@ jobs:
       - name: Checkout
         # Always check out — the cleanup path (PR closed/merged) also needs a
         # git repo, or pr-preview-action fails with "not in a git directory".
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Stage deploy files
         if: github.event.action != 'closed'
@@ -150,7 +159,7 @@ jobs:
           node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
 
       - name: Deploy PR Preview
-        uses: rossjrw/pr-preview-action@v1
+        uses: rossjrw/pr-preview-action@873417d2df72380da1f3978378fb58560bcde976 # v1.8.2
         with:
           source-dir: ./_site/
           preview-branch: gh-pages

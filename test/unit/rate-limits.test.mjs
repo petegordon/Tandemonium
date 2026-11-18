@@ -72,7 +72,7 @@ test('one player: 30 a minute per kind of write; other kinds and other players a
 test('starting a sign-in: 30 a minute per IP', async () => {
   const env = envFor();
   const statuses = [];
-  for (let i = 0; i < 31; i++) statuses.push(await send(env, '/auth/steam', { body: { steamId: 'x', ticket: 't' } }));
+  for (let i = 0; i < 31; i++) statuses.push(await send(env, '/auth/steam', { body: { steamId: 'x', ticket: 'a1b2c3d4e5f60718' } }));
   assert.equal(statuses.filter((s) => s === 429).length, 1);
   assert.notEqual(await send(env, '/auth/steam', { ip: '5.6.7.8', body: {} }), 429);
 });

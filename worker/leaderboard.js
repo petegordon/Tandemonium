@@ -332,6 +332,9 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
+/** A Steam web-API auth ticket as the game sends it: hex (a few hundred characters). */
+const STEAM_TICKET_RE = /^[0-9a-fA-F]{16,8192}$/;
+
 async function handleSteamAuth(request, env, corsOrigin) {
   if (!env.STEAM_WEB_API_KEY) {
     return jsonResponse({ error: 'Steam authentication not configured' }, 503, corsOrigin);
@@ -340,6 +343,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
   const body = await request.json();
   const { steamId, personaName, ticket } = body;
   if (!steamId || !ticket) return jsonResponse({ error: 'Missing steamId or ticket' }, 400, corsOrigin);
+  // A ticket is hex. Anything else is refused here, so nothing but a ticket is ever put
+  // into the address we ask Steam with.
+  if (typeof ticket !== 'string' || !STEAM_TICKET_RE.test(ticket)) return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
 
   // Verify the auth ticket via Steam Web API
   // Try both the playtest app ID and the main game app ID
@@ -350,7 +356,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   for (const appId of appIds) {
     try {
-      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${ticket}`;
+      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}`;
       const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
       if (!steamRes.ok) {
         lastError = `Steam API returned ${steamRes.status} for appId ${appId}`;

@@ -2,6 +2,7 @@ const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net, nat
 const path = require('path');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
+const { isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl } = require('./trust');
 
 // Local diagnostic log: %USERPROFILE%\tandemonium-diag.log. Steam-launched
 // runs swallow stdout, so the main process, the renderer (errors, warnings,
@@ -308,8 +309,8 @@ ipcMain.handle('steam:isAchievementActivated', async (_event, apiName) => {
   try { return await steam.achievements.isAchievementUnlocked(apiName); }
   catch (e) { return false; }
 });
-ipcMain.handle('steam:getAuthTicket', async () => {
-  if (!steam) return null;
+ipcMain.handle('steam:getAuthTicket', async (event) => {
+  if (!steam || !fromGame(event)) return null;
   try {
     // The ffi-node binding returns ticketHex already (no Buffer→hex needed).
     const ticket = await steam.user.getAuthTicketForWebApi({ identity: 'tandemonium' });
@@ -541,11 +542,11 @@ ipcMain.on('renderer:diag', (_event, msg) => {
 // #612: "Sign in with Discord" / "Link Discord" finishes in the system browser
 // (where the player is already signed in to Discord). Only our API's sign-in
 // pages, never an arbitrary URL from the page.
-ipcMain.handle('app:openSignIn', async (_event, url) => {
+ipcMain.handle('app:openSignIn', async (event, url) => {
+  if (!fromGame(event)) return false;
   try {
-    const u = new URL(String(url));
-    if (u.protocol !== 'https:' || !/(^|\.)workers\.dev$|(^|\.)housetandem\.com$/.test(u.hostname) || !u.pathname.startsWith('/auth/')) return false;
-    await require('electron').shell.openExternal(u.toString());
+    if (!isSignInUrl(url)) return false;
+    await require('electron').shell.openExternal(new URL(String(url)).toString());
     return true;
   } catch (e) {
     return false;
@@ -561,6 +562,12 @@ ipcMain.handle('app:toggleDevTools', () => {
 });
 
 let mainWindow;
+
+// What is ours (the game's page, House Tandem's servers) is decided in ./trust.js.
+/** Did this message come from the game's own page (not a frame or a window showing another site)? */
+function fromGame(event) {
+  try { return isGameUrl(event.senderFrame && event.senderFrame.url); } catch (e) { return false; }
+}
 
 // ── Custom protocol (replaces local HTTP server) ─────────────────
 // Serve game files via a custom 'tandemonium://' protocol instead of
@@ -608,6 +615,26 @@ function createWindow() {
   const _query = _params.toString() ? '?' + _params.toString() : '';
   mainWindow.loadURL('tandemonium://app/index.html' + _query);
   _watchWindow(mainWindow);
+
+  // A link that opens a new window (credits, the Steam page, Discord) is a plain web page:
+  // its window has no preload, so none of the game's bridge (Steam, devices, files), and is
+  // sandboxed. Only http(s); anything else is refused.
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (!isWebLink(url)) return { action: 'deny' };
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        fullscreen: false,
+        autoHideMenuBar: true,
+        webPreferences: { preload: undefined, nodeIntegration: false, contextIsolation: true, sandbox: true },
+      },
+    };
+  });
+  // The game's window only ever shows the game.
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (!isGameUrl(url)) { event.preventDefault(); _diagLog('[app] blocked navigation away from the game'); }
+  });
+  mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -662,16 +689,22 @@ app.whenReady().then(async () => {
   }
 
   // WebHID permissions (required for PlayStation gyro via WebHID)
-  session.defaultSession.setPermissionCheckHandler(() => true);
+  // The game's own page keeps every permission it had. A web page in a frame or a link's
+  // window (the Steam store widget, a credits link) gets none.
+  session.defaultSession.setPermissionCheckHandler((_wc, _permission, requestingOrigin) => !isWebOrigin(requestingOrigin));
+  session.defaultSession.setPermissionRequestHandler((wc, _permission, callback, details) => {
+    const from = (details && details.requestingUrl) || (wc && wc.getURL()) || '';
+    callback(!isWebOrigin(from));
+  });
   session.defaultSession.setDevicePermissionHandler((details) => {
-    return details.deviceType === 'hid';
+    return details.deviceType === 'hid' && !isWebOrigin(details.origin);
   });
 
   // Fix CORS for custom protocol: the tandemonium:// origin isn't whitelisted by
   // API workers. Rewrite outgoing Origin to production URL, and rewrite incoming
   // Access-Control-Allow-Origin back to match the actual page origin so the
   // browser's CORS check passes.
-  const API_MATCH = /workers\.dev|jimandi\.love/;
+  // Which addresses these are is decided by host name (./trust.js).
   // Tourist Mode (#333): the Google Map Tiles API key is restricted to the
   // tandemonium.housetandem.com referrer, but Electron's page origin is tandemonium://app.
   // Send a matching Referer on tile requests so the restricted key is accepted
@@ -680,12 +713,12 @@ app.whenReady().then(async () => {
   // Mode loads to reach ElevationService when anchoring a ?lat/?lon ride. Same
   // restricted key, so it needs the same Referer or the lookup is rejected and
   // the anchor silently degrades to the blind-guess fallback.
-  const TILES_MATCH = /(?:tile|maps)\.googleapis\.com/;
+
   session.defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
-    if (API_MATCH.test(details.url)) {
+    if (isApiUrl(details.url)) {
       details.requestHeaders['Origin'] = 'https://tandemonium.housetandem.com';
     }
-    if (TILES_MATCH.test(details.url)) {
+    if (isTilesUrl(details.url)) {
       // Use the game's own subdomain so it matches the key's referrer restriction
       // (an apex domain does NOT satisfy a `*.` wildcard).
       details.requestHeaders['Referer'] = 'https://tandemonium.housetandem.com/';
@@ -693,7 +726,7 @@ app.whenReady().then(async () => {
     callback({ requestHeaders: details.requestHeaders });
   });
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    if (API_MATCH.test(details.url)) {
+    if (isApiUrl(details.url)) {
       const headers = details.responseHeaders || {};
       // Remove any existing ACAO header (case-insensitive) before setting ours,
       // otherwise Electron keeps both and the browser rejects "multiple values".
@@ -717,7 +750,7 @@ app.whenReady().then(async () => {
     if (filePath === '/' || filePath === '') filePath = '/index.html';
     const fullPath = path.join(rootDir, filePath);
     // Security: prevent path traversal
-    if (!fullPath.startsWith(rootDir)) {
+    if (fullPath !== rootDir && !fullPath.startsWith(rootDir + path.sep)) {
       return new Response('Forbidden', { status: 403 });
     }
     // #353: the root page's importmap pulls three from jsdelivr. Point it at
