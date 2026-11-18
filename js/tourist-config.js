@@ -556,6 +556,24 @@ export const TOURIST_TUNE = {
     rideOverHeight: 1.6,
     bumpDist: 1.5,
     bumpClearance: 0.6,
+    // #801 (Pete, 2026-11-18) · crashing that can be read.
+    // A warning: the forward ray reaches warnSeconds of riding ahead (at most warnMaxDist metres), and
+    // anything too tall to ride over in that reach is marked and sounded before it is a crash.
+    warnSeconds: 1.6,
+    warnMaxDist: 16,
+    // Thin things are ridden through: a pole or a sign that rays thinHalfWidth to each side both miss
+    // (by thinDepth past its face). thinPassM: how far round it the "inside geometry" resnap stays off.
+    thinHalfWidth: 0.45,
+    thinDepth: 1.0,
+    thinPassM: 2.5,
+    // After a crash the bike stands up recoverBackM back along its own trail ("take them back 5 m before
+    // the crash"), further each time it crashes again within recoverRepeatM of the last crash, and never
+    // with a wall inside recoverClearM in front of it. For crashGraceS of riding after that, nothing
+    // counts as a crash (a wall still stops the bike).
+    recoverBackM: [5, 15, 30],
+    recoverRepeatM: 12,
+    recoverClearM: 4,
+    crashGraceS: 2,
   },
 
   // Seconds of sustained "no ground found" (after tiles start streaming) before

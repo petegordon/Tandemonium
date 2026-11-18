@@ -340,3 +340,120 @@ test('a measured place stands on the measured surface: a bridge deck, not the wa
   for (let i = 0; i < 90; i++) plain.step(bike, DT);
   assert.equal(plain.ready, true);
 });
+
+// --- #801 · Pete, 2026-11-18: crashing that can be read, and no crashing twice on the same wall ---
+
+test('a pole is ridden through: no bump, no resnap, and the bike comes out the far side', () => {
+  // 0.3 m wide, 5 m tall, standing in the street (the mesh has no floor under it)
+  const hole = { x0: 19.85, x1: 20.15, z0: -0.15, z1: 0.15 };
+  const g = follower(fakeTiles([ground(0, hole), trunk(20, 0.15, 5)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  let bumps = 0, warns = 0, resnaps = 0;
+  ride(g, pos, 40, 6, (r) => { if (g.bump) bumps++; if (g.warn) warns++; if (r.resnapped) resnaps++; }, EAST);
+  assert.equal(bumps, 0, 'a pole is not a wall');
+  assert.equal(warns, 0, 'and is not warned about');
+  assert.equal(resnaps, 0, 'and riding through it is not being inside a building');
+  assert.ok(pos.x > 39, `rode on past it (x=${pos.x.toFixed(1)})`);
+  assert.ok(Math.abs(g.groundY - WHEEL) < 0.05, 'still on the street');
+});
+
+test('a wall is announced before it is a crash, further ahead the faster the bike goes', () => {
+  const G = TOURIST_TUNE.ground;
+  const hole = { x0: 40, x1: 50, z0: -5, z1: 5 };
+  const firstWarnAt = (speed) => {
+    const g = follower(fakeTiles([ground(0, hole), building(40, 50, 6)]));
+    const pos = new THREE.Vector3(0, WHEEL, 0);
+    g.step(pos, DT, true, EAST, speed);
+    let warnedAt = null, bumpedAt = null;
+    const steps = Math.ceil(45 / (speed * DT));
+    for (let i = 0; i < steps && bumpedAt === null; i++) {
+      pos.x += speed * DT;
+      g.step(pos, DT, true, EAST, speed);
+      pos.y = g.groundY;
+      if (g.warn && warnedAt === null) warnedAt = 40 - pos.x;
+      if (g.bump) bumpedAt = 40 - pos.x;
+    }
+    return { warnedAt, bumpedAt };
+  };
+  const slow = firstWarnAt(2), fast = firstWarnAt(9);
+  assert.ok(slow.warnedAt !== null && fast.warnedAt !== null, 'both were warned');
+  assert.ok(slow.bumpedAt !== null && slow.warnedAt > slow.bumpedAt, 'the warning comes before the bump');
+  assert.ok(Math.abs(slow.warnedAt - G.aheadDist) < 0.2, `slowly: from ${G.aheadDist} m (${slow.warnedAt.toFixed(1)})`);
+  assert.ok(Math.abs(fast.warnedAt - 9 * G.warnSeconds) < 0.3, `fast: ${G.warnSeconds} s ahead (${fast.warnedAt.toFixed(1)} m)`);
+});
+
+test('a low car far ahead is not warned about', () => {
+  const hole = { x0: 30, x1: 34, z0: -1, z1: 1 };
+  const g = follower(fakeTiles([ground(0, hole), building(30, 34, 1.0)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 9);
+  let warns = 0;
+  ride(g, pos, 25, 9, () => { if (g.warn) warns++; }, EAST);
+  assert.equal(warns, 0);
+});
+
+test('after a crash the bike stands up 5 m back along its trail, facing the way it was going', () => {
+  const hole = { x0: 40, x1: 50, z0: -5, z1: 5 };
+  const g = follower(fakeTiles([ground(0, hole), building(40, 50, 6)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  let hit = null;
+  ride(g, pos, 45, 6, (_, p) => { if (g.bump && !hit) hit = { x: p.x, z: p.z }; }, EAST);
+  assert.ok(hit, 'rode into the wall');
+  const crumbsBefore = g.breadcrumbs.length;
+  const spot = g.recoverySpot(hit.x, hit.z, 5);
+  assert.ok(spot);
+  assert.ok(Math.abs((hit.x - spot.x) - 5) < 0.05, `5 m back (${(hit.x - spot.x).toFixed(2)})`);
+  assert.ok(Math.abs(spot.z) < 0.01);
+  assert.ok(Math.abs(spot.heading - EAST) < 0.01, 'facing the way it was going');
+  assert.ok(g.breadcrumbs.length < crumbsBefore, 'the trail past the spot is gone');
+  assert.ok(g.breadcrumbs.every((c) => c.x <= spot.x + 0.01), 'no crumb is nearer the wall than the bike');
+  assert.ok(Math.abs(g.groundY - WHEEL) < 0.01);
+  // 15 m, for a second crash in the same place
+  const again = g.recoverySpot(hit.x, hit.z, 15);
+  assert.ok(Math.abs((hit.x - again.x) - 15) < 0.05, `15 m back (${(hit.x - again.x).toFixed(2)})`);
+});
+
+test('the spot goes further back when a wall is right in front of it; a short trail gives its start', () => {
+  const G = TOURIST_TUNE.ground;
+  // rode east along z = 0 with a wall across the way at x = 40..41; "crashed" well past it (as if
+  // the wall had streamed in behind the bike), so 5 m back is right behind the wall
+  const g = follower(fakeTiles([ground(0)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  ride(g, pos, 46, 6, null, EAST);
+  g.tiles.meshes = [ground(0, { x0: 40, x1: 41, z0: -5, z1: 5 }), building(40, 41, 6)];
+  const spot = g.recoverySpot(pos.x, pos.z, 7.5);     // 7.5 m back = 1.5 m short of the wall, facing it
+  assert.ok(40 - spot.x > G.recoverClearM - 0.01, `clear of the wall (${(40 - spot.x).toFixed(1)} m short of it)`);
+
+  const h = follower(fakeTiles([ground(0)]));
+  const p2 = new THREE.Vector3(0, WHEEL, 0);
+  h.step(p2, DT, true, EAST, 6);
+  ride(h, p2, 2, 6, null, EAST);
+  const start = h.recoverySpot(p2.x, p2.z, 30);
+  assert.ok(start && Math.abs(start.x) < 0.2, 'the start of the trail');
+  assert.equal(new TouristGround({ tiles: fakeTiles([]), tune: TOURIST_TUNE, probeUp: 10, probeRay: 10 }).recoverySpot(0, 0, 5), null);
+});
+
+test('a trail the bike did not come here on is not followed (a restart puts the bike somewhere else)', () => {
+  const g = follower(fakeTiles([ground(0)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  ride(g, pos, 60, 6, null, EAST);
+  assert.ok(g.breadcrumbs.length > 10);
+  // the bike is now 150 m away from the end of that trail
+  assert.equal(g.recoverySpot(-90, 0, 5), null, 'no spot from a trail that ends somewhere else');
+  assert.equal(g.breadcrumbs.length, 0, 'and the stale trail is dropped');
+});
+
+test('a gap in the trail ends the way back at the gap', () => {
+  const g = follower(fakeTiles([ground(0, null, 1000)]));
+  const pos = new THREE.Vector3(0, WHEEL, 0);
+  g.step(pos, DT, true, EAST, 6);
+  ride(g, pos, 12, 6, null, EAST);
+  pos.x = 300;                                   // put somewhere else, then ridden on
+  ride(g, pos, 12, 6, null, EAST);
+  const spot = g.recoverySpot(pos.x, pos.z, 30);
+  assert.ok(spot && spot.x > 299, `stays on this side of the gap (x=${spot && spot.x.toFixed(1)})`);
+});

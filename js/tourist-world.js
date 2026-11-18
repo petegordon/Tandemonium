@@ -283,6 +283,7 @@ export class TouristWorld {
    * @param {{color?: number}} [opts]
    */
   setDestination(at, { color = 0xffd36b } = {}) {
+    this.clearCelebration();
     if (this._beacon) {
       this.scene.remove(this._beacon);
       this._beacon.traverse((o) => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
@@ -317,6 +318,179 @@ export class TouristWorld {
     b.position.y += (this._groundY - b.position.y) * Math.min(1, dt * 2);
     const ring = b.getObjectByName('tourist-destination-ring');
     if (ring) { const k = 1 + 0.25 * Math.sin(this._beaconT * 2.2); ring.scale.set(k, k, 1); }
+    // #802 · arrived: the beam flares and the ring runs out across the ground
+    if (this._celebT != null && ring) {
+      const t = this._celebT;
+      const out = 1 + 7 * (1 - Math.exp(-t * 1.6));
+      ring.scale.set(out, out, 1);
+      ring.material.opacity = 0.8 * Math.max(0.15, 1 - t / 5);
+      const flare = 1 + 1.6 * Math.exp(-t * 1.2) * (0.75 + 0.25 * Math.sin(t * 18));
+      for (const o of b.children) if (o !== ring) o.scale.set(flare, 1, flare);
+    }
+  }
+
+  /** Where the ride is to, on its ground (null without a destination). */
+  get destination() {
+    const b = this._beacon;
+    return b ? { x: b.position.x, y: this._ground.groundY - TOURIST_TUNE.wheelOffset, z: b.position.z } : null;
+  }
+
+  /** The line under the picture: who the imagery is from (Google's attribution, as on screen). */
+  get attribution() {
+    return (this._creditsEl && this._creditsEl.textContent) || 'Google';
+  }
+
+  /**
+   * #802 · how far the view is open from one point toward another: the distance at which the tiles
+   * block it, or null when nothing does. The arrival camera uses it to stay out of buildings.
+   */
+  viewOpen(from, to) {
+    if (!this.tiles) return null;
+    if (!this._viewRay) { this._viewRay = new THREE.Raycaster(); this._viewRay.firstHitOnly = true; this._viewDir = new THREE.Vector3(); this._viewFrom = new THREE.Vector3(); }
+    this._viewFrom.set(from.x, from.y, from.z);
+    this._viewDir.set(to.x - from.x, to.y - from.y, to.z - from.z);
+    const far = this._viewDir.length();
+    if (!(far > 0)) return null;
+    this._viewDir.multiplyScalar(1 / far);
+    this._viewRay.set(this._viewFrom, this._viewDir);
+    this._viewRay.far = far;
+    const hits = [];
+    this.tiles.raycast(this._viewRay, hits);
+    let near = null;
+    for (const h of hits) if (near === null || h.distance < near) near = h.distance;
+    return near;
+  }
+
+  /**
+   * #802 (Pete, 2026-11-18: "Need a celebration when you reach the destination"). Confetti goes up from
+   * the foot of the beam and from the bike, the beam flares, the ring runs out. updateFinishFx moves it.
+   * @param {{x:number, y:number, z:number}} [bikePos]
+   */
+  celebrate(bikePos) {
+    this.clearCelebration();
+    const at = this.destination;
+    if (!at) return false;
+    this._celebT = 0;
+    // Paper: small rectangles that are thrown up fast, stop quickly in the air, then tumble down
+    // slowly, swaying, catching the light on one side and then the other. A few are long streamers.
+    const N = 1800;
+    const geo = new THREE.PlaneGeometry(1, 1);
+    const mat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, fog: false, toneMapped: false, transparent: true, opacity: 1 });
+    const mesh = new THREE.InstancedMesh(geo, mat, N);
+    mesh.name = 'tourist-confetti';
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 6;
+    const palette = [0xffd23f, 0xff5d8f, 0x4cc9f0, 0x70e000, 0xffffff, 0xb388ff, 0xff8c42, 0xe63946, 0xc0c0c8];
+    const c = new THREE.Color();
+    const pieces = new Array(N);
+    // cannons: four round the foot of the beam, firing in turn, and a popper each side of the bike
+    // Cannons: four round the foot of the beam firing in turn, three salvos of them so there is still
+    // paper going up when the camera is high over the place; one straight up the beam; and poppers
+    // just ahead of the bike on each side, three times, so paper is falling round the riders while
+    // the camera is in front of them.
+    const cannons = [];
+    for (let salvo = 0; salvo < 3; salvo++) {
+      for (let i = 0; i < 4; i++) {
+        const a0 = i * Math.PI / 2 + 0.6 + salvo * 0.5;
+        cannons.push({ x: at.x + Math.cos(a0) * 8, y: at.y + 0.3, z: at.z + Math.sin(a0) * 8, ax: -Math.cos(a0) * 0.3, az: -Math.sin(a0) * 0.3, t: 0.15 + i * 0.5 + salvo * 3.6, power: 30 + salvo * 5, share: 0.065, cone: 0.5 });
+      }
+    }
+    cannons.push({ x: at.x, y: at.y + 0.3, z: at.z, ax: 0, az: 0, t: 2.4, power: 40, share: 0.08, cone: 0.35 });
+    if (bikePos) {
+      const h = this._bike ? this._bike.heading : 0, fx = Math.sin(h), fz = Math.cos(h);
+      for (let shot = 0; shot < 3; shot++) {
+        for (const side of [1, -1]) {
+          cannons.push({ x: bikePos.x + fx * 1.5 + fz * side * 1.7, y: bikePos.y + 0.2, z: bikePos.z + fz * 1.5 - fx * side * 1.7,
+            ax: -fz * side * 0.16, az: fx * side * 0.16, t: 0.05 + shot * 1.5, power: 17, share: 0.03, cone: 0.4 });
+        }
+      }
+    }
+    const total = cannons.reduce((n, k) => n + k.share, 0);
+    let i = 0;
+    for (const k of cannons) {
+      const count = Math.round(N * k.share / total);
+      for (let j = 0; j < count && i < N; j++, i++) {
+        // a cone round the cannon's aim, most of the paper near the middle of it
+        const spread = Math.pow(Math.random(), 0.7) * (k.cone || 0.42), round = Math.random() * Math.PI * 2;
+        let dx = k.ax + Math.cos(round) * spread, dz = k.az + Math.sin(round) * spread, dy = 1;
+        const len = Math.hypot(dx, dy, dz); dx /= len; dy /= len; dz /= len;
+        const speed = k.power * (0.45 + Math.random() * 0.75);
+        const streamer = Math.random() < 0.07;
+        const axis = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+        pieces[i] = {
+          born: k.t + Math.random() * 0.12, x: k.x, y: k.y, z: k.z,
+          vx: dx * speed, vy: dy * speed, vz: dz * speed,
+          w: streamer ? 0.035 : 0.06 + Math.random() * 0.05, h: streamer ? 0.55 + Math.random() * 0.5 : 0.09 + Math.random() * 0.08,
+          q: new THREE.Quaternion().setFromAxisAngle(axis, Math.random() * Math.PI * 2),
+          axis, spin: (streamer ? 3 : 7) + Math.random() * 9,
+          sway: 0.5 + Math.random() * 1.1, phase: Math.random() * Math.PI * 2, swayRate: 2.2 + Math.random() * 2.6,
+          fall: 0.55 + Math.random() * 0.85,         // how fast this piece comes down once the air has it
+          landed: false,
+        };
+        c.setHex(palette[(Math.random() * palette.length) | 0]);
+        mesh.setColorAt(i, c);
+      }
+    }
+    for (; i < N; i++) { pieces[i] = null; }
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    mesh.count = N;
+    this.scene.add(mesh);
+    this._confetti = { mesh, pieces, floor: at.y, at, m: new THREE.Matrix4(), dq: new THREE.Quaternion(), sc: new THREE.Vector3(), p: new THREE.Vector3(), flat: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2) };
+    this.updateFinishFx(0);
+    return true;
+  }
+
+  /** The celebration, one frame (real time, whatever the bike's slow motion is doing). */
+  updateFinishFx(dt) {
+    if (this._celebT == null) return;
+    this._celebT += dt;
+    const k = this._confetti;
+    if (!k) return;
+    const t = this._celebT;
+    const LIFE = 24;
+    // paper the size of paper beside the bike, and still to be seen from high over the place
+    const camD = this.camera ? Math.hypot(this.camera.position.x - k.at.x, this.camera.position.y - k.at.y, this.camera.position.z - k.at.z) : 10;
+    const grow = Math.max(1, Math.min(9, camD * 0.075));
+    const drag = Math.exp(-dt * 2.4);            // paper stops quickly in the air
+    for (let i = 0, n = k.pieces.length; i < n; i++) {
+      const p = k.pieces[i];
+      if (!p || t < p.born) { k.sc.set(0, 0, 0); k.p.set(k.at.x, k.at.y, k.at.z); k.m.compose(k.p, k.flat, k.sc); k.mesh.setMatrixAt(i, k.m); continue; }
+      if (!p.landed) {
+        p.vx *= drag; p.vz *= drag;
+        // rising: thrown, slowed by the air. Falling: it settles to its own slow speed.
+        p.vy -= 9.8 * dt;
+        if (p.vy > 0) p.vy *= drag; else p.vy = Math.max(p.vy, -p.fall);
+        const flutter = p.vy <= 0.5 ? 1 : 0.25;  // it only sways once it is drifting
+        const sw = Math.sin(t * p.swayRate + p.phase) * p.sway * flutter;
+        const sw2 = Math.cos(t * p.swayRate * 0.83 + p.phase * 1.7) * p.sway * flutter;
+        p.x += (p.vx + sw) * dt; p.y += (p.vy + Math.abs(sw) * 0.18 * flutter) * dt; p.z += (p.vz + sw2) * dt;
+        k.dq.setFromAxisAngle(p.axis, p.spin * dt * (0.55 + 0.45 * Math.sin(t * p.swayRate + p.phase)));
+        p.q.premultiply(k.dq);
+        if (p.y <= k.floor + 0.02) { p.y = k.floor + 0.02 + (i % 7) * 0.002; p.landed = true; p.q.copy(k.flat); k.dq.setFromAxisAngle(UP, p.phase); p.q.premultiply(k.dq); }
+      }
+      k.p.set(p.x, p.y, p.z);
+      k.sc.set(p.w * grow, p.h * grow, 1);
+      k.m.compose(k.p, p.q, k.sc);
+      k.mesh.setMatrixAt(i, k.m);
+    }
+    k.mesh.instanceMatrix.needsUpdate = true;
+    k.mesh.material.opacity = Math.max(0, Math.min(1, (LIFE - t) / 2.5));
+    if (t > LIFE) this._removeConfetti();
+  }
+
+  _removeConfetti() {
+    const k = this._confetti;
+    if (!k) return;
+    this.scene.remove(k.mesh);
+    k.mesh.geometry.dispose();
+    k.mesh.material.dispose();
+    if (k.mesh.dispose) k.mesh.dispose();
+    this._confetti = null;
+  }
+
+  clearCelebration() {
+    this._removeConfetti();
+    this._celebT = null;
   }
 
   setBike(bike) {
@@ -480,7 +654,11 @@ export class TouristWorld {
    */
   _groundFollow(bikePos, dt) {
     const ground = this._ground;
-    const r = ground.step(bikePos, dt, this._tilesStarted, this._bike ? this._bike.heading : undefined);
+    const bike = this._bike;
+    const r = ground.step(bikePos, dt, this._tilesStarted, bike ? bike.heading : undefined, bike && !bike.fallen ? bike.speed : 0);
+    // #801: the grace after standing up runs while the bike is being ridden, not through the countdown
+    if (this._crashGraceS > 0 && bike && !bike.fallen && bike.speed > 0.3) this._crashGraceS = Math.max(0, this._crashGraceS - dt);
+    this._updateWarning(dt);
     // Until the street has been found and has stopped moving, the bike waits at the anchor height, above
     // the place. Dropping it onto the first (coarse) hit took the camera down with it, sometimes kilometres
     // under the city, and from there the detailed tiles were never asked for. From above they are. Then it
@@ -543,9 +721,16 @@ export class TouristWorld {
     // quaternion to yaw*lean (no pitch, since bike.roadPath is null); we
     // pre-multiply a world-space tilt that rotates +Y to the ground normal.
     if (this._bike && this._bike.group) {
+      // (While nothing drives the bike, a countdown, its quaternion is still the one tilted here last
+      // frame. Tilting that again every frame turned the bike over on any slope: take our tilt off first.)
+      const q = this._bike.group.quaternion;
+      if (!this._wroteQ) { this._wroteQ = new THREE.Quaternion(); this._tiltInv = new THREE.Quaternion(); this._wroteQ.set(NaN, 0, 0, 1); }
+      if (q.equals(this._wroteQ)) q.premultiply(this._tiltInv);
       this._tmpUpQ.setFromUnitVectors(UP, this._smoothNormal);
       this._tiltQ.slerp(this._tmpUpQ, ease);
-      this._bike.group.quaternion.premultiply(this._tiltQ);
+      q.premultiply(this._tiltQ);
+      this._wroteQ.copy(q);
+      this._tiltInv.copy(this._tiltQ).invert();
       this._bike.group.position.y = this._groundY;
     }
   }
@@ -562,7 +747,6 @@ export class TouristWorld {
   // #478/#484 · no Grandma's house or present pile on real streets (the
   // victory path calls both every tourist ride; without them it threw).
   startPresentStack() { return false; }
-  updateFinishFx() {}
   /**
    * #402 §3 · a wall, trunk or crown right ahead (TouristGround._probeAhead)
    * is reported as a tree hit, so game.js gives it the same crash beat as a
@@ -570,7 +754,85 @@ export class TouristWorld {
    * of the face. Low things (cars, kerbs, hedges) are ridden over instead and
    * never reach here.
    */
-  checkTreeCollision() { return { hit: !!this._ground.bump, tree: null }; }
+  checkTreeCollision() { return { hit: !!this._ground.bump && !(this._crashGraceS > 0), tree: null }; }
+
+  /**
+   * #801 · where the bike stands up after a crash at (x, z): back along its own trail (5 m; further when
+   * it is `repeat` crashes into the same spot), facing the way it was going, with a clear way ahead.
+   * Starts the grace during which nothing counts as a crash.
+   * @returns {{x:number, z:number, heading:number}|null}
+   */
+  crashSpot(x, z, repeat = 1, heading = 0) {
+    const g = TOURIST_TUNE.ground;
+    const steps = g.recoverBackM;
+    const backM = steps[Math.min(steps.length, Math.max(1, repeat)) - 1];
+    const spot = this._ground.recoverySpot(x, z, backM);
+    this._crashGraceS = g.crashGraceS;
+    // no trail to follow (the bike has only just been put here): straight back the way it was facing
+    if (!spot) return { x: x - Math.sin(heading) * backM, z: z - Math.cos(heading) * backM, heading };
+    this._groundY = this._ground.groundY;
+    return { x: spot.x, z: spot.z, heading: spot.heading };
+  }
+
+  /** The bike has been put somewhere else (a restart): the trail it left is not the way it came. */
+  clearTrail() {
+    this._ground.breadcrumbs.length = 0;
+    this._crashGraceS = 0;
+  }
+
+  /** Seconds of riding left in which nothing counts as a crash. */
+  get crashGraceS() { return this._crashGraceS || 0; }
+
+  /** #801 · a wall the bike is heading for: how far off it is, in metres (null = the way is clear). */
+  get wallAhead() {
+    const g = this._ground;
+    if (this._crashGraceS > 0 || !this._bike || this._bike.fallen) return null;
+    return g.warn ? g.warn.distance : null;
+  }
+
+  /**
+   * #801 · the mark on the thing ahead: a red "!" on the wall the bike is heading for, so the crash reads
+   * as coming. It stays on what was hit while the bike is down.
+   */
+  _updateWarning(dt) {
+    const g = this._ground;
+    const at = g.bump ? g.bump.point : (g.warn ? g.warn.point : null);
+    const bike = this._bike;
+    if (at && !(bike && bike.fallen)) {
+      if (!this._warnMark) this._warnMark = this._makeWarnMark();
+      this._warnMark.position.set(at.x, at.y + 2.4, at.z);   // above the riders' heads, not over them
+      this._warnMark.visible = true;
+      this._warnHold = 0.35;
+    } else if (this._warnMark && this._warnMark.visible && !(bike && bike.fallen)) {
+      this._warnHold -= dt;
+      if (this._warnHold <= 0) this._warnMark.visible = false;
+    }
+    if (this._warnMark && this._warnMark.visible) {
+      this._warnT = (this._warnT || 0) + dt;
+      const k = 1.5 * (1 + 0.18 * Math.sin(this._warnT * 14));
+      this._warnMark.scale.set(k, k, 1);
+    }
+  }
+
+  _makeWarnMark() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const x = c.getContext('2d');
+    if (x) {
+      x.fillStyle = 'rgba(214,40,40,.92)';
+      x.beginPath(); x.arc(64, 64, 58, 0, Math.PI * 2); x.fill();
+      x.lineWidth = 8; x.strokeStyle = '#fff'; x.stroke();
+      x.fillStyle = '#fff'; x.font = '900 92px system-ui,sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText('!', 64, 70);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false }));
+    mark.name = 'tourist-wall-warning';
+    mark.renderOrder = 20;
+    mark.visible = false;
+    this.scene.add(mark);
+    return mark;
+  }
   // _startCountdown reseeds the world from the level; real streets have no seed.
   // (Without this _startCountdown threw before it built the RaceManager, so a
   // tourist ride rolled but never had a finish.)
@@ -589,6 +851,12 @@ export class TouristWorld {
     if (this._noticeEl) { this._noticeEl.remove(); this._noticeEl = null; }
     if (this._edgeEl) { this._edgeEl.remove(); this._edgeEl = null; }
     this.setDestination(null);
+    if (this._warnMark) {
+      this.scene.remove(this._warnMark);
+      if (this._warnMark.material.map) this._warnMark.material.map.dispose();
+      this._warnMark.material.dispose();
+      this._warnMark = null;
+    }
     if (this._creditsEl) this._creditsEl.textContent = '';
   }
 }

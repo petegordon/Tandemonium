@@ -36,6 +36,30 @@ export const CLIP_SECONDS = 20;
 export const SHORT_CLIP_SECONDS = 10;
 
 /**
+ * #805 · the MediaRecorder path (desktop, Android) keeps its clip playable by running recordings in
+ * turn. A recording's first chunk holds the file's header, so chunks cannot simply be dropped off the
+ * front of one that runs for ever (that was the bug: any clip saved more than 20 s in could not be
+ * opened). Instead a recording runs for at most ROLL_MAX_SECONDS; ROLL_OVERLAP_SECONDS before that, the
+ * next one starts beside it; at the end the old one is dropped and the next, already ROLL_OVERLAP_SECONDS
+ * long, takes over. A clip is the whole of the current recording: never less than the overlap (once the
+ * ride is that old), never more than the maximum.
+ */
+export const ROLL_MAX_SECONDS = 40;
+export const ROLL_OVERLAP_SECONDS = 10;
+
+/**
+ * What the rolling recordings should do now.
+ * @param {number} ageS  how long the current recording has run
+ * @param {boolean} hasNext  is the next one already running beside it?
+ * @returns {'start-next'|'promote'|null}
+ */
+export function rollStep(ageS, hasNext, { max = ROLL_MAX_SECONDS, overlap = ROLL_OVERLAP_SECONDS } = {}) {
+  if (!(ageS >= 0)) return null;
+  if (hasNext) return ageS >= max ? 'promote' : null;
+  return ageS >= max - overlap ? 'start-next' : null;
+}
+
+/**
  * #408 · the last `seconds` of a WebCodecs chunk buffer, cut at the muxing
  * step rather than re-encoded. H.264 can only start on a keyframe, so the
  * window opens on the first keyframe at or after (end - seconds): it is never
@@ -784,6 +808,7 @@ export class GameRecorder {
 
   // ── Rolling buffer ──
   // Strategy: single continuous MediaRecorder with 1s timeslice.
+  // (MediaRecorder path: the recordings take turns, see ROLL_MAX_SECONDS. What follows is the old note.)
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
@@ -866,36 +891,60 @@ export class GameRecorder {
     }
   }
 
-  _startRecorder() {
-    if (!this._stream || !this._mimeType) return;
-
+  /** A MediaRecorder on the clip stream, its chunks going into `chunks`. null when one cannot be made. */
+  _newRecorder(chunks) {
+    if (!this._stream || !this._mimeType) return null;
+    let rec = null;
     try {
-      this.recorder = new MediaRecorder(this._stream, {
-        mimeType: this._mimeType,
-        videoBitsPerSecond: 2500000
-      });
+      rec = new MediaRecorder(this._stream, { mimeType: this._mimeType, videoBitsPerSecond: 2500000 });
     } catch (e) {
-      try {
-        this.recorder = new MediaRecorder(this._stream, { mimeType: this._mimeType });
-      } catch (e2) {
-        return;
-      }
+      try { rec = new MediaRecorder(this._stream, { mimeType: this._mimeType }); } catch (e2) { return null; }
     }
-
-    this.recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this._chunks.push({ data: e.data, time: performance.now() });
-        // Prune chunks older than bufferDuration
-        const cutoff = performance.now() - this.bufferDuration * 1000;
-        while (this._chunks.length > 1 && this._chunks[0].time < cutoff) {
-          this._chunks.shift();
-        }
-      }
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push({ data: e.data, time: performance.now() });
+      // (the current recording keeps the turn-taking going: #805)
+      if (rec === this.recorder) this._roll();
     };
-
     // 1-second timeslice: each chunk fires ondataavailable every ~1s
-    this.recorder.start(1000);
+    try { rec.start(1000); } catch (e) { return null; }
+    return rec;
+  }
+
+  /** Start the clip's recording afresh (anything recorded so far is let go). */
+  _startRecorder() {
+    this._dropNextRecorder();
+    this._chunks = [];
+    this.recorder = this._newRecorder(this._chunks);
     this._recordStartTime = performance.now();
+  }
+
+  _dropNextRecorder() {
+    const next = this._nextRecorder;
+    this._nextRecorder = null;
+    this._nextChunks = null;
+    if (next) { next.ondataavailable = null; if (next.state !== 'inactive') { try { next.stop(); } catch (e) {} } }
+  }
+
+  /** #805 · the recordings take turns (see ROLL_MAX_SECONDS). Not while a clip is being cut. */
+  _roll() {
+    if (this._saving || !this.buffering || !this.recorder) return;
+    const step = rollStep((performance.now() - this._recordStartTime) / 1000, !!this._nextRecorder);
+    if (step === 'start-next') {
+      const chunks = [];
+      const next = this._newRecorder(chunks);
+      if (next) { this._nextRecorder = next; this._nextChunks = chunks; this._nextStartTime = performance.now(); }
+      // (a device that will not run two at once: start over when this one is full, so it never grows without end)
+      else if ((performance.now() - this._recordStartTime) / 1000 >= ROLL_MAX_SECONDS) this._startRecorder();
+    } else if (step === 'promote') {
+      const old = this.recorder;
+      this.recorder = this._nextRecorder;
+      this._chunks = this._nextChunks;
+      this._recordStartTime = this._nextStartTime;
+      this._nextRecorder = null;
+      this._nextChunks = null;
+      old.ondataavailable = null;
+      if (old.state !== 'inactive') { try { old.stop(); } catch (e) {} }
+    }
   }
 
   stopBuffer() {
@@ -906,7 +955,9 @@ export class GameRecorder {
     }
     this._wcEncodedChunks = [];
 
+    this._dropNextRecorder();
     if (this.recorder && this.recorder.state !== 'inactive') {
+      this.recorder.ondataavailable = null;
       try { this.recorder.stop(); } catch (e) {}
     }
     this.recorder = null;
@@ -966,6 +1017,13 @@ export class GameRecorder {
     // Draw game canvas
     ctx.drawImage(this.gameCanvas, 0, 0, w, h);
 
+    // #802 · a plain frame (Map Tourist's arrival): the picture and the marks, none of the ride's HUD
+    if (state && state.plain) {
+      this._drawClipMarks(ctx, w, h, s, state);
+      if (this._useWebCodecs) this._feedWebCodecsFrame();
+      return;
+    }
+
     // Feed frame to WebCodecs encoder (iOS) — done AFTER full composite below
     // (scheduled via _wcNeedsFeed flag, actual feed at end of this method)
     const feedWC = this._useWebCodecs;
@@ -1017,6 +1075,29 @@ export class GameRecorder {
       this._drawCheckpointFlash(ctx, w, h, s, state.checkpointFlash);
     }
 
+    this._drawClipMarks(ctx, w, h, s, state);
+
+    // Feed composited frame to WebCodecs encoder (iOS path)
+    if (feedWC) this._feedWebCodecsFrame();
+  }
+
+  /** The lines every frame of a clip carries: whose imagery it is (Map Tourist), and the game's name. */
+  _drawClipMarks(ctx, w, h, s, state) {
+    // ── Whose imagery this is (Map Tourist: Google's attribution travels with the clip) ──
+    if (state && state.credit) {
+      ctx.save();
+      ctx.font = Math.round(6.5 * s) + 'px Helvetica Neue, Arial, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 2 * s;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      let credit = String(state.credit);
+      while (credit.length > 8 && ctx.measureText(credit).width > w * 0.66) credit = credit.slice(0, -2);
+      if (credit !== String(state.credit)) credit += '…';
+      ctx.fillText(credit, 8 * s, h - 8 * s);
+      ctx.restore();
+    }
+
     // ── Watermark ──
     ctx.save();
     ctx.font = Math.round(9 * s) + 'px Helvetica Neue, Arial, sans-serif';
@@ -1025,9 +1106,6 @@ export class GameRecorder {
     ctx.textBaseline = 'bottom';
     ctx.fillText('TANDEMONIUM', w - 12 * s, h - 8 * s);
     ctx.restore();
-
-    // Feed composited frame to WebCodecs encoder (iOS path)
-    if (feedWC) this._feedWebCodecsFrame();
   }
 
   // ── Speed dashboard — replicates #hud-dashboard ──
@@ -1566,7 +1644,53 @@ export class GameRecorder {
 
   // ── Save clip ──
 
-  saveClip() {
+  /**
+   * #802 · start the clip again from here (the arrival: what came before is not part of it).
+   * On the MediaRecorder path this also keeps the clip playable: its buffer drops the chunks older
+   * than bufferDuration, and the first of those holds the file's header.
+   */
+  restartBuffer() {
+    if (!this.buffering || this._saving || this._useWebCodecs) return;
+    const rec = this.recorder;
+    if (!rec || rec.state !== 'recording') return;
+    rec.addEventListener('stop', () => { this._chunks = []; this._startRecorder(); }, { once: true });
+    try { rec.stop(); } catch { this._chunks = []; this._startRecorder(); }
+  }
+
+  /**
+   * #802 · take the clip NOW and keep it, without opening the preview (the arrival: the celebration and
+   * the camera's rise, cut where the end screen comes up). showHeldClip() opens it later.
+   */
+  holdClip() {
+    if (!this.buffering || this._saving) return false;
+    this.dropHeldClip();
+    this._quietClip = true;
+    this.saveClip({ delayMs: 250 });
+    return true;
+  }
+
+  /** Is a clip from holdClip() ready? */
+  get hasHeldClip() { return !!this._heldClip && !!this._clipUrl; }
+
+  /** Open the preview (save, share, post the GIF to Discord) on the clip holdClip() took. */
+  showHeldClip() {
+    if (!this.hasHeldClip) return false;
+    this._showPreview();
+    return true;
+  }
+
+  /** The held clip was never asked for: let it go. (One that is open in the preview is the player's now.) */
+  dropHeldClip() {
+    this._quietClip = false;
+    if (!this._heldClip) return;
+    this._heldClip = false;
+    if (this.previewModal && this.previewModal.classList.contains('visible')) return;
+    if (this._clipUrl) { URL.revokeObjectURL(this._clipUrl); this._clipUrl = null; }
+    this._clipBlob = null; this._clipChunks = null; this._clipDecoderConfig = null; this._clipDims = null; this._shortClipBlob = null;
+  }
+
+  saveClip(opts = {}) {
+    const delayMs = opts && Number.isFinite(opts.delayMs) ? opts.delayMs : 2000;
     _dbg(`saveClip buf=${this.buffering} saving=${this._saving} useWC=${this._useWebCodecs} enc=${this._wcEncoder ? this._wcEncoder.state : 'null'} chunks=${this._wcEncodedChunks.length} rec=${this.recorder ? this.recorder.state : 'null'}`);
     if (!this.buffering) { _dbg('BAIL: not buffering'); return; }
     if (this._saving) { _dbg('BAIL: already saving'); return; }
@@ -1599,7 +1723,7 @@ export class GameRecorder {
           this.shareBtn.textContent = '\uD83C\uDFAC'; // 🎬
           this.shareBtn.style.background = 'rgba(0,0,0,0.4)';
         }
-      }, 2000);
+      }, delayMs);
       return;
     }
 
@@ -1632,7 +1756,7 @@ export class GameRecorder {
         this._chunks = [];
         this._startRecorder();
       }
-    }, 2000);
+    }, delayMs);
   }
 
   _assembleClip() {
@@ -1647,6 +1771,8 @@ export class GameRecorder {
 
   _showPreview() {
     if (!this.previewModal || !this.previewVideo || !this._clipUrl) return;
+    // (taken to be held: kept until it is asked for)
+    if (this._quietClip) { this._quietClip = false; this._heldClip = true; if (this.onHeldClip) this.onHeldClip(); return; }
 
     this.previewVideo.src = this._clipUrl;
     this.previewVideo.play().catch(() => {});
