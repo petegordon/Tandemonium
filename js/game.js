@@ -3,6 +3,7 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { WarmQueue, warmScene, warmUp } from './gpu-warmup.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
@@ -234,6 +235,7 @@ class Game {
     this.renderer = new THREE.WebGLRenderer({ antialias: _aa, preserveDrawingBuffer: this._preserveBuffer });
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(this._pixelRatio());
+    this._initRideWarm();
     this.renderer.shadowMap.enabled = !isLowPower && !this._lowQuality;
     if (!isLowPower && !this._lowQuality) this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     if (this._showRiders) {
@@ -415,6 +417,7 @@ class Game {
       this.bike = new BikeModel(this.scene, bikeModelPath);
       this.bike.roadPath = this.world.roadPath;
     }
+    this.world.warm = (object) => this._warmModel(object);   // late models (Grandma) are warmed before they show
     this._applyTierView();
     this._applyRidersEnv();
     this.chaseCamera = new ChaseCamera(this.camera);
@@ -2533,6 +2536,7 @@ class Game {
 
     this.state = 'countdown';
     this.countdownTimer = 3.0;
+    this._beginRideWarm();
     this._recenterPhonesForRide();
     this._hideGameOver();
     this._hideVictory();
@@ -2966,6 +2970,7 @@ class Game {
   }
 
   _updateCountdown(dt) {
+    if (this._warmGate) dt = 0;   // (the picture is held while the ride's models are warmed: its clock waits too)
     this.countdownTimer -= dt;
     this._updateBotRace(dt);   // #644 step 2 · the ghost team waits on the line beside you
     const flavorNum = document.getElementById('countdown-flavor-num');
@@ -8159,6 +8164,81 @@ class Game {
   }
 
   // ============================================================
+  // RIDE WARM-UP (js/gpu-warmup.js)
+  // ============================================================
+  //
+  // Measured 2026-11-17 on a first solo ride: the countdown's first frame took ~400 ms and Grandma's
+  // arrival another ~450 ms, and the ride's first second had five frames of 40 to 90 ms. All of it was the
+  // graphics driver linking shaders at the first draw of things built for the ride (its bike, presents,
+  // cones, tokens and their effects, then Grandma, her house, the woodpile). So:
+  //   - as the countdown starts, the picture holds for a moment (no render) while everything not yet
+  //     drawn is compiled in the background and given its first draw off-screen; the countdown's clock
+  //     waits with it. Then the ride shows, whole.
+  //   - during the ride, the scene is checked a few times a second for things built since and not yet in
+  //     view, and they get the same treatment before they come into view.
+  //   - a model loaded later (Grandma) is warmed before it joins the scene (world.warm).
+
+  _initRideWarm() {
+    this._rideWarm = new WarmQueue();
+    this._warmGate = false;        // true: the game's own renders of the scene are skipped (the picture holds)
+    this._warmGateUntil = 0;
+    this._warmDrawing = false;
+    this._rideWarming = false;
+    this._rideWarmStart = 0;
+    this._rideWarmFrame = 0;
+    const draw = this.renderer.render.bind(this.renderer);
+    this.renderer.render = (scene, camera) => {
+      if (this._warmGate && !this._warmDrawing && scene === this.scene) {
+        if (performance.now() < this._warmGateUntil) return;
+        this._warmGate = false;    // (it never holds longer than its limit, whatever the warm-up is doing)
+      }
+      draw(scene, camera);
+    };
+  }
+
+  /** A ride's countdown is starting: hold the picture while what was built for it is warmed. */
+  _beginRideWarm() {
+    if (!this._rideWarm) return;
+    this._warmGate = true;
+    this._warmGateUntil = performance.now() + 1500;
+    this._rideWarmStart = 2;       // (the countdown's first update builds the road's props: start after it)
+    this._recorderPrimed = false;
+  }
+
+  /** Each frame of a countdown or a ride: start or repeat the scan, and run the queued first draws. */
+  _tickRideWarm() {
+    if (this._rideWarmStart) {
+      if (--this._rideWarmStart === 0) this._warmRideScene(true);
+    } else if (!this._rideWarming && (++this._rideWarmFrame % 20) === 0) {
+      this._warmRideScene(false);
+    }
+    this._warmDrawing = true;
+    try { this._rideWarm.step(); } finally { this._warmDrawing = false; }
+    // the clip recorder's own first paints, in the countdown too (asked again until it is recording)
+    if (!this._recorderPrimed && this.state === 'countdown' && this.recorder && this.recorder.prime) {
+      try { this._recorderPrimed = this.recorder.prime(this._buildRecordState(this.sharedPedal || this.pedalCtrl)); }
+      catch (e) { this._recorderPrimed = true; }
+    }
+  }
+
+  async _warmRideScene(held) {
+    if (this._rideWarming) return;
+    this._rideWarming = true;
+    try { await warmScene(this.renderer, this.scene, this.camera, { queue: this._rideWarm }); }
+    catch (e) { /* drawn for real as before */ }
+    finally {
+      this._rideWarming = false;
+      if (held) this._warmGate = false;
+    }
+  }
+
+  /** A model loaded mid-ride (Grandma): warmed off-screen before it joins the scene. */
+  _warmModel(object) {
+    if (!this._rideWarm || !(this.state === 'countdown' || this.state === 'playing')) return Promise.resolve();
+    return warmUp(this.renderer, object, this.camera, this.scene, { queue: this._rideWarm, offscreen: true }).catch(() => {});
+  }
+
+  // ============================================================
   // MAIN LOOP
   // ============================================================
 
@@ -8175,6 +8255,9 @@ class Game {
 
     this.fpsMeter.tick(timestamp);
     if (this.perfReadout) this.perfReadout.tick(timestamp);
+    // new models' first draws, before this frame's own render (js/gpu-warmup.js)
+    if (this.state === 'countdown' || this.state === 'playing') this._tickRideWarm();
+    else if (this._rideWarm && (this._rideWarm.size || this._warmGate)) { this._rideWarm.flush(); this._warmGate = false; }
     // Each ride starts the Auto watcher's grace period afresh (closing
     // Options or the input choice does too, see _closeOptions).
     if (this.state !== 'playing') this._autoWatching = false;
