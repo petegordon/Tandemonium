@@ -24,7 +24,7 @@ import {
 } from '3d-tiles-renderer/plugins';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { dracoDecoderPath } from './draco-path.js';
-import { getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
+import { ANCHOR_MARGIN, getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
 import { TouristGround } from './tourist-ground.js';
 import { TilesSessionPlugin } from './tourist-tiles-session.js';
 import { isMobile } from './config.js';
@@ -152,6 +152,7 @@ export class TouristWorld {
     this._ground = new TouristGround({
       tiles, probeUp: this._probeUp, probeRay: this._probeRay, tune: TOURIST_TUNE,
     });
+    this._ground.expectY = origin.measured ? -ANCHOR_MARGIN : null;
     // Ground-follow telemetry only when ?ttdebug is present (keeps console clean).
     this._dbg = new URLSearchParams(window.location.search).has('ttdebug');
     this._groundY = 0;          // the anchor height, until the street is found (see _groundFollow)
@@ -234,6 +235,9 @@ export class TouristWorld {
   setStatus(text) { this._setEdgeMessage(text || (this._atEdge ? 'You have reached the edge of the streamed area — turning around.' : '')); }
 
   /** Has the ground under the bike been found (tiles streamed in enough to ride)? */
+  /** true for a place whose ground height was measured (the scenic rides): worth a longer wait. */
+  get measuredGround() { return !!(this._ground && this._ground.expectY != null); }
+
   hasGround() {
     return !!this._ground && this._ground.ready && !this._landing;
   }
@@ -257,6 +261,7 @@ export class TouristWorld {
     this._probeUp = probe.spawnProbeHeight;
     this._probeRay = probe.rayLength;
     this._ground = new TouristGround({ tiles: this.tiles, probeUp: this._probeUp, probeRay: this._probeRay, tune: TOURIST_TUNE });
+    this._ground.expectY = origin.measured ? -ANCHOR_MARGIN : null;
     this._zeroBikeHeight();
     this._groundFound = false;
     this._groundY = 0;

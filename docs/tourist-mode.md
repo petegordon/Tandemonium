@@ -221,6 +221,78 @@ Google Cloud for the Map Tiles / Maps JavaScript / Geocoding APIs. The code
 bounds how much *one ride* can request; only a budget alert bounds how much
 *everyone* can.
 
+## What it costs, and what limits it (2026-11-17)
+
+Google's prices as checked on 2026-10-16 (check them again before relying on a figure here):
+
+| What | When the game asks for it | Free each month | Then |
+|---|---|---|---|
+| Photorealistic 3D Tiles, **root request** | once per run of the game, per device (`js/tourist-tiles-session.js`) | 1,000 | $6 per 1,000 |
+| Geocoding | once per NEW typed address | 10,000 | $5 per 1,000 |
+| Elevation | once per NEW typed address (twice for a route over 5 km) | 5,000 | $5 per 1,000 |
+
+The tiles themselves are not billed one by one: a root request opens a session of about three
+hours, and every tile fetched in it is covered, anywhere in the world. Each ride used to open a
+new session (one paid root request per ride, per device). The game now keeps one for the whole run.
+
+What each kind of ride costs beyond that session:
+
+| Ride | Lookups | Cost |
+|---|---|---|
+| A scenic place (`SCENIC_PLACES` in `js/tourist-places.js`) | none: position and height are stored | nothing |
+| One of the player's own places (kept on the device) | none | nothing |
+| A new typed address | 1 geocode + 1 elevation | about 1¢ |
+| A new typed route (two addresses, over 5 km) | 2 geocodes + 2 elevations | about 2¢ |
+
+### The limit
+
+New typed places are limited to **6 a week** per player (`NEW_PLACE_LIMIT`), counted from Monday
+on the player's own calendar. Scenic places and places already ridden never count. The start
+screen says how many are left and what does not count.
+
+### What a buyer costs
+
+Per run of the game with Tourist used: 0.6¢ at most (the session), nothing while the month's
+first 1,000 sessions are free.
+
+| Player | In a year | At Google's prices |
+|---|---|---|
+| Tries it a few times | 5 sessions, 3 new places | 6¢ |
+| Likes it | 40 sessions, 30 new places | 54¢ |
+| Uses every new place, every week, and plays daily | 365 sessions, 312 new places | about $5.30 |
+
+For comparison, 3 new places a day would allow 1,095 a year: about $11 for the same player
+before sessions.
+
+Across all players, the free tiers cover the first 1,000 Tourist sessions, 10,000 address lookups
+and 5,000 height lookups every month, so a small player base costs nothing.
+
+### What the limit does not do
+
+- It is kept on the player's device. Clearing the game's data resets it. It bounds an ordinary
+  player, not a determined one.
+- It does not cap sessions.
+
+The backstop for both is on Google's side, and only Pete can set it: a **daily quota** on each
+API in the Cloud console (say 2,000 root requests, 2,000 geocodes and 2,000 elevations a day),
+alongside the budget alert. A hard quota is the only thing that bounds everyone at once.
+
+Later, if it is ever needed: do the lookups through the game's own API with a server-side key, so
+the limit is counted per account on the server and looked-up places are shared between players.
+
+### The desktop build
+
+Google's Maps JavaScript API authorises the key by the address of the page that loads it. The
+desktop build's page is `tandemonium://app`, which the key does not cover, so in the Steam build
+address lookups failed ("Maps JS auth failed") and heights came from the fallback service. The
+tiles were never affected: the desktop app sends the web address as their Referer.
+
+The desktop build now does its lookups through `tourist-lookup.html`, a page of the game's own
+website loaded in a hidden frame, where the key is at home. It answers only the desktop game. If
+it cannot be reached, heights fall back to open-meteo as before (free for non-commercial use: worth
+replacing before the game is sold), and typed addresses say they are unavailable; scenic rides
+and the player's own places need neither.
+
 ## Where the entry points are
 
 | Entry | Where | Notes |

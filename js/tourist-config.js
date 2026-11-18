@@ -392,7 +392,7 @@ export function originFromAnchor(point, anchor) {
   return {
     name: point.label || `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}`,
     lat: point.lat, lon: point.lon, heading: 0, custom: true,
-    height: anchor.height, anchored: !!anchor.anchored
+    height: anchor.height, anchored: !!anchor.anchored, measured: !!anchor.measured
   };
 }
 
@@ -519,10 +519,14 @@ export const TOURIST_TUNE = {
     // Settling (TouristGround.settling): the ground counts as found once the chosen height has held
     // within settleTolerance metres for settleStableS seconds. Settling ends when the bike has ridden
     // settleLeaveM metres from where it spawned, or after settleMaxS seconds whatever happened.
-    settleTolerance: 1.5,
+    settleTolerance: 2.5,
     settleStableS: 1.0,
     settleLeaveM: 4,
-    settleMaxS: 18,
+    settleMaxS: 10,
+    // a measured place (the scenic rides): the ground is trusted only within expectTolerance metres of
+    // where it was measured, for as long as settleExpectMaxS
+    expectTolerance: 25,
+    settleExpectMaxS: 20,
     // Breadcrumb trail of accepted ground points: one every few metres, capped.
     breadcrumbSpacing: 3,
     breadcrumbMax: 64,

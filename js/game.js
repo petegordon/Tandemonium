@@ -2648,6 +2648,10 @@ class Game {
     this._lastCountNum = 3;
 
     // Create race manager + contribution tracker + collectibles from selected level
+    // (a Tourist ride keeps ITS level: the level list is rebuilt when records or sign-in arrive, and its
+    // default pick, Grandma's, used to land on a ride that was still loading its streets: presents,
+    // pylons and Tandem Tokens piled up at the start of Paris)
+    if (this.isTourist && this._touristLevel) this.lobby.selectedLevel = this._touristLevel;
     const level = this.lobby.selectedLevel;
 
     // B-4 · the world this ride happens in.
@@ -2975,10 +2979,10 @@ class Game {
   _updateCountdown(dt) {
     if (this._warmGate) dt = 0;   // (the picture is held while the ride's models are warmed: its clock waits too)
     // Map Tourist: the countdown waits for the street under the bike (the first geometry to arrive is
-    // coarse and can be far above or below it), for as long as 20 s. The stoker follows the captain's clock.
+    // coarse and can be far above or below it), for as long as 13 s. The stoker follows the captain's clock.
     if (this.isTourist && this.mode !== 'stoker' && this.world && /** @type {any} */ (this.world).hasGround) {
       const w = /** @type {any} */ (this.world);
-      if (!w.hasGround() && (this._touristWaitS || 0) < 24) {
+      if (!w.hasGround() && (this._touristWaitS || 0) < (w.measuredGround ? 22 : 13)) {
         this._touristWaitS = (this._touristWaitS || 0) + dt;
         if (w.setStatus) w.setStatus('Loading the streets…');
         dt = 0;
@@ -4227,7 +4231,7 @@ class Game {
     // and a distance that IS the destination.
     // Open world: a "finish" far past the free-roam radius, so it never comes.
     const rideM = plan.explore ? 100000 : Math.max(50, Math.round(plan.route.ridableM));
-    this.lobby.selectedLevel = {
+    this.lobby.selectedLevel = this._touristLevel = {
       id: 'tourist',
       name: plan.explore ? 'Map Tourist' : (plan.to.label || 'Their door'),
       distance: rideM,
@@ -4254,7 +4258,8 @@ class Game {
     // its own timeouts and falls back to a wide ground probe.
     let origin = null;
     // PR #397 m16: co-op — the captain looked the anchor up once and sent it.
-    if (plan.anchor) origin = originFromAnchor(plan.from, plan.anchor);
+    // (a scenic ride's height was measured on its own street, so the ground is known to the metre)
+    if (plan.anchor) origin = originFromAnchor(plan.from, plan.kind === 'scenic' ? { ...plan.anchor, measured: true } : plan.anchor);
     if (!origin) { try { origin = await resolveOriginAt(plan.from); } catch { origin = null; } }
     if (!isCurrent()) return false;
     const ready = await this._loadTouristWorld(apiKey, isCurrent, origin);

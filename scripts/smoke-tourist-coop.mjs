@@ -49,7 +49,9 @@ const errors=[];
 const STUB_TILES = `import * as THREE from 'three';
 export class TilesRenderer {
   constructor() { this.group = new THREE.Group(); this.group.name = 'stub-tiles'; this.downloadQueue = {}; this.lruCache = {}; }
-  registerPlugin() {} addEventListener() {} setCamera() {} setResolutionFromRenderer() {} update() {} raycast() {}
+  registerPlugin() {} addEventListener() {} setCamera() {} setResolutionFromRenderer() {} update() {}
+  // flat ground at y = 0 under any downward ray, so the ride finds its street at once
+  raycast(rc, hits) { const o = rc.ray.origin, d = rc.ray.direction; if (d.y < -0.5 && o.y >= 0) { const t = o.y / -d.y; hits.push({ distance: t, point: o.clone().addScaledVector(d, t), face: { normal: new THREE.Vector3(0, 1, 0) }, object: this.group }); } }
   getAttributions() { return []; }
   dispose() { window.__tilesDisposed = (window.__tilesDisposed || 0) + 1; }
 }`;

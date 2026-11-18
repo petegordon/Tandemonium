@@ -1779,10 +1779,14 @@ export class Lobby {
     this._renderTouristPlaces();
     this._showStep(this.touristStep);
     this._refreshTouristFocus(true);
+    // the step slides in and its fonts settle: the neighbours are worked out again from where things ended up
+    for (const ms of [200, 600, 1400]) setTimeout(() => this._refreshTouristFocus(false), ms);
     analytics.trackEvent('tourist_open');
   }
 
   _initTouristEntry() {
+    // the two lookups a typed place needs (a seam: the smoke stands a table in for Google)
+    this._touristLookups = { geocode: geocodeAddress, origin: resolveOriginAt };
     if (!this._touristAvailable()) return;     // no card is built either
 
     const back = document.getElementById('btn-back-tourist');
@@ -1878,6 +1882,7 @@ export class Lobby {
         const b = document.createElement('button');
         b.type = 'button';
         b.className = 'tourist-place';
+        b.id = 'tourist-place-' + p.id;
         b.dataset.place = p.id;
         b.innerHTML = '<span class="tourist-place-icon" aria-hidden="true">' + p.icon + '</span>' +
           '<span class="tourist-place-name">' + this._escape(p.name) + '</span>' +
@@ -1944,17 +1949,19 @@ export class Lobby {
     const osk = document.getElementById('tourist-osk');
     if (!osk || osk.childElementCount) return;
     const rows = ['1234567890', 'QWERTYUIOP', "ASDFGHJKL'", 'ZXCVBNM,.-'];
-    for (const row of rows) {
+    rows.forEach((row, ri) => {
       const r = document.createElement('div');
       r.className = 'tourist-osk-row';
-      for (const ch of row) r.appendChild(this._touristOskKey(ch, ch));
+      [...row].forEach((ch, ci) => { const k = this._touristOskKey(ch, ch); k.id = 'tourist-key-' + ri + '-' + ci; r.appendChild(k); });
       osk.appendChild(r);
-    }
+    });
     const last = document.createElement('div');
     last.className = 'tourist-osk-row';
-    last.appendChild(this._touristOskKey('SPACE', ' ', 'wide'));
-    last.appendChild(this._touristOskKey('⌫ DELETE', 'Backspace', 'wide'));
-    last.appendChild(this._touristOskKey('CLEAR', 'Clear', 'wide'));
+    [['SPACE', ' '], ['⌫ DELETE', 'Backspace'], ['CLEAR', 'Clear']].forEach(([label, key], i) => {
+      const k = this._touristOskKey(label, key, 'wide');
+      k.id = 'tourist-key-4-' + i;
+      last.appendChild(k);
+    });
     osk.appendChild(last);
   }
 
@@ -2008,12 +2015,51 @@ export class Lobby {
       ...q('#btn-tourist-add-to'), ...q('#btn-tourist-ride')];
   }
 
+  /**
+   * Which control each direction leads to, where plain geometry would get it wrong: the focus moves by
+   * the nearest centre, and from a card at the grid's edge the nearest centre below is the bottom bar,
+   * not the full-width button under the grid; from a letter key it is not the wide key under it.
+   */
+  _wireTouristNav() {
+    const shown = (el) => !!el && el.getBoundingClientRect().width > 0 && !el.disabled;
+    const nav = (el, dir, to) => { if (!el) return; if (to && shown(to)) el.dataset['nav' + dir] = to.id; else delete el.dataset['nav' + dir]; };
+    const $ = (id) => document.getElementById(id);
+    if (!this._touristFormShown()) {
+      const cards = [...document.querySelectorAll('#tourist-scenic .tourist-place')].filter(shown);
+      const yours = [...document.querySelectorAll('#tourist-yours .tourist-yours-place')].filter(shown);
+      const fresh = $('btn-tourist-new');
+      yours.forEach((b, i) => { b.id = 'tourist-yours-' + i; });
+      // the grid's last row is the cards sharing the lowest top edge
+      const lastTop = Math.max(0, ...cards.map((c) => Math.round(c.getBoundingClientRect().top)));
+      const lastRow = cards.filter((c) => Math.round(c.getBoundingClientRect().top) === lastTop);
+      const below = yours[0] || fresh;
+      for (const c of cards) nav(c, 'Down', lastRow.includes(c) ? below : null);
+      for (const y of yours) { nav(y, 'Up', lastRow[0] || null); nav(y, 'Down', fresh); }
+      nav(fresh, 'Up', yours[0] || lastRow[Math.floor(lastRow.length / 2)] || null);
+      return;
+    }
+    const from = $('tourist-from'), to = $('tourist-to'), add = $('btn-tourist-add-to'), go = $('btn-tourist-ride');
+    const key = (r, c) => $('tourist-key-' + r + '-' + c);
+    const field = shown(to) ? to : from;
+    nav(from, 'Down', shown(to) ? to : key(0, 4));
+    nav(to, 'Up', from); nav(to, 'Down', key(0, 4));
+    for (let c = 0; c < 10; c++) {
+      nav(key(0, c), 'Up', field);
+      nav(key(3, c), 'Down', key(4, c < 4 ? 0 : c < 7 ? 1 : 2));
+    }
+    const after = shown(add) ? add : go;
+    [[0, 1], [1, 5], [2, 8]].forEach(([w, c]) => { nav(key(4, w), 'Up', key(3, c)); nav(key(4, w), 'Down', after); });
+    nav(add, 'Up', key(4, 1)); nav(add, 'Down', go);
+    nav(go, 'Up', shown(add) ? add : key(4, 1));
+  }
+
   /** Hand the step's current controls to the controller focus (after the screen changes). */
   _refreshTouristFocus(reset) {
     if (this._currentStep !== this.touristStep) return;
     this._syncTouristOsk();
     if (!this.input || !this.input.gamepadConnected) return;
     const items = this._touristFocusables();
+    this._wireTouristNav();
     this._modeColumns[1] = items;
     const nav = this._stepNavItems();
     const cur = this._stepFocus.focused;
@@ -2075,7 +2121,7 @@ export class Lobby {
     try {
       const points = await Promise.all(texts.map(async (t, i) => {
         if (known[i]) return known[i];
-        const p = await geocodeAddress(t);
+        const p = await this._touristLookups.geocode(t);
         if (!isValidPoint(p)) throw new Error('could not place that address');
         return { ...p, typed: String(t).trim() };
       }));
@@ -2088,13 +2134,13 @@ export class Lobby {
       // ground heights, once, kept with the place so riding it again looks nothing up
       const place = { from, to: two ? to : null };
       try {
-        const o = await resolveOriginAt(from);
+        const o = await this._touristLookups.origin(from);
         if (o && Number.isFinite(o.height) && o.anchored) { plan.anchor = { height: o.height, anchored: true }; place.height = o.height; }
       } catch { /* the ride looks it up */ }
       if (two && plan.route.capped) {
         try {
           const p2 = interpolate(from, to, 1 - CAP_HALF_M / plan.realM);
-          const o2 = await resolveOriginAt({ lat: p2.lat, lon: p2.lon, label: to.label });
+          const o2 = await this._touristLookups.origin({ lat: p2.lat, lon: p2.lon, label: to.label });
           if (o2 && Number.isFinite(o2.height) && o2.anchored) { plan.toAnchor = { height: o2.height, anchored: true }; place.toHeight = o2.height; }
         } catch { /* looked up at the skip */ }
       }
@@ -9131,7 +9177,7 @@ export class Lobby {
     const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
     let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
     // Map Tourist: its places, or its address form and on-screen keyboard, whichever is showing
-    if (step === this.touristStep) centerItems = this._touristFocusables();
+    if (step === this.touristStep) { this._syncTouristOsk(); this._wireTouristNav(); centerItems = this._touristFocusables(); }
     // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
     if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
     // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).

@@ -4895,6 +4895,32 @@
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
     .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
+    /* Map Tourist's places and address form, sized for a desk or a couch like the rest of this layout
+       (two columns of scenic rides here: their names have to be read from across a room). */
+    .lobby-card:has(#lobby-tourist[active]) .lobby-steps-col {
+      width: calc(270 * var(--ls)); min-width: calc(270 * var(--ls)); max-width: calc(270 * var(--ls));
+    }
+    #tourist-places, #tourist-form { width: 100%; gap: calc(3 * var(--ls)); }
+    .tourist-head { font-size: calc(5 * var(--ls)); letter-spacing: calc(0.5 * var(--ls)); margin-top: calc(1 * var(--ls)); }
+    .tourist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: calc(2.5 * var(--ls)); }
+    .tourist-place { padding: calc(3 * var(--ls)) calc(5 * var(--ls)); border-radius: calc(4 * var(--ls)); column-gap: calc(4 * var(--ls)); }
+    .tourist-place-icon { font-size: calc(12 * var(--ls)); }
+    .tourist-place-name { font-size: calc(8.5 * var(--ls)); }
+    .tourist-place-sub { font-size: calc(5.6 * var(--ls)); }
+    .tourist-yours { gap: calc(2.5 * var(--ls)); min-height: calc(12 * var(--ls)); }
+    .tourist-yours-place { padding: calc(2.5 * var(--ls)) calc(5 * var(--ls)); font-size: calc(6 * var(--ls)); }
+    .tourist-yours-none { font-size: calc(5.6 * var(--ls)); }
+    .tourist-new { padding: calc(4 * var(--ls)); border-radius: calc(4 * var(--ls)); font-size: calc(6.5 * var(--ls)); }
+    .tourist-quota { font-size: calc(5.4 * var(--ls)); }
+    .tourist-quota b { font-size: calc(6.2 * var(--ls)); }
+    .tourist-input { padding: calc(4 * var(--ls)) calc(5 * var(--ls)); border-radius: calc(4 * var(--ls)); font-size: calc(8 * var(--ls)); }
+    .tourist-add-to { padding: calc(3.5 * var(--ls)); font-size: calc(6 * var(--ls)); }
+    .tourist-remove-to { width: calc(17 * var(--ls)); height: calc(17 * var(--ls)); font-size: calc(9 * var(--ls)); }
+    .tourist-osk, .tourist-osk-row { gap: calc(1.6 * var(--ls)); }
+    .tourist-osk-key { padding: calc(3 * var(--ls)) 0; border-radius: calc(3 * var(--ls)); font-size: calc(7.5 * var(--ls)); }
+    .tourist-osk-key.wide { font-size: calc(6 * var(--ls)); }
+    .tourist-error { font-size: calc(6 * var(--ls)); min-height: calc(8 * var(--ls)); }
+    .tourist-preview { font-size: calc(6.5 * var(--ls)); min-height: calc(16 * var(--ls)); }
     /* #611 · the warp day + row, readable from the couch */
     .level-card-warp-day { font-size: calc(10 * var(--ls)); }
     .daily-warp-row { gap: calc(5 * var(--ls)); }
@@ -5943,9 +5969,9 @@ ON</button>
                      placeholder="Second address or city" autocomplete="off" spellcheck="false">
               <button type="button" class="tourist-remove-to" id="btn-tourist-remove-to" title="Remove the second address">&times;</button>
             </div>
-            <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <!-- A controller's way to type (shown when one is connected, and on a TV). -->
             <div id="tourist-osk" class="tourist-osk" style="display:none;"></div>
+            <button type="button" class="tourist-add-to" id="btn-tourist-add-to">+ ADD A SECOND ADDRESS</button>
             <div id="tourist-error" class="tourist-error" role="alert"></div>
             <div id="tourist-preview" class="tourist-preview"></div>
             <uf-button variant="accent" id="btn-tourist-ride" disabled>PLAN THE RIDE</uf-button>

@@ -71,6 +71,9 @@ export class TouristGround {
     this.settling = true;
     /** Seconds the chosen height has held still (within settleTolerance) while settling. */
     this.stableFor = 0;
+    /** Where the ground is KNOWN to be (a measured place), as a local height: while arriving, a surface
+     *  far from it (the water under a bridge whose deck has not loaded yet) is stood on but not trusted. */
+    this.expectY = null;
     this._settleX = 0; this._settleZ = 0;
     this._settleFor = 0;
     /** World-space normal of the last accepted face (upward-facing). */
@@ -154,11 +157,12 @@ export class TouristGround {
     if (this.settling && this.hasGround) {
       this._settleFor += dt;
       const moved = Math.hypot(bikePos.x - this._settleX, bikePos.z - this._settleZ);
-      if (moved > (g.settleLeaveM || 4) || this._settleFor > (g.settleMaxS || 30)) this.settling = false;
+      const maxS = this.expectY != null ? (g.settleExpectMaxS || 20) : (g.settleMaxS || 30);
+      if (moved > (g.settleLeaveM || 4) || this._settleFor > maxS) this.settling = false;
     }
 
     if (candidates.length && (!this.hasGround || this.settling)) {
-      chosen = this._pickSpawn(candidates, g);
+      chosen = this._pickExpected(candidates, g) || this._pickSpawn(candidates, g);
     } else if (candidates.length) {
       chosen = this._pickStep(candidates, bikePos, g);
       result.rejected += candidates.length - (chosen ? 1 : 0);
@@ -178,7 +182,8 @@ export class TouristGround {
       } else if (this.settling) {
         // still arriving: go where the ground is now, and count how long it has held still
         const moved = Math.abs(targetY - this.groundY);
-        this.stableFor = moved > (g.settleTolerance || 1.5) ? 0 : this.stableFor + dt;
+        const off = this.expectY != null && this._settleFor < (g.settleExpectMaxS || 20) && Math.abs(targetY - this.expectY) > (g.expectTolerance || 25);
+        this.stableFor = (moved > (g.settleTolerance || 1.5) || off) ? 0 : this.stableFor + dt;
         this.groundY = targetY;
       } else this.groundY += (targetY - this.groundY) * ease;
       this.hasGround = true;
@@ -219,6 +224,18 @@ export class TouristGround {
   /** Has the ground under the bike been found and stopped moving (detail has streamed in)? */
   get ready() {
     return this.hasGround && (!this.settling || this.stableFor >= (this.tune.ground.settleStableS || 1.0));
+  }
+
+  /**
+   * A measured place: the surface nearest the height that was measured there, if one is within
+   * expectTolerance of it. (On a bridge the usual spawn rule, the lowest of the top cluster, is the water.)
+   */
+  _pickExpected(candidates, g) {
+    if (this.expectY == null) return null;
+    const want = this.expectY - this.tune.wheelOffset, tol = g.expectTolerance || 25;
+    let chosen = null, best = tol;
+    for (const h of candidates) { const d = Math.abs(h.point.y - want); if (d <= best) { best = d; chosen = h; } }
+    return chosen;
   }
 
   /**

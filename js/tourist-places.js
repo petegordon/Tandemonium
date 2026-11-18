@@ -37,7 +37,20 @@ export const MAX_YOUR_PLACES = 8;
  * around the place. Every one of these was ridden in the desktop build before it was listed.
  * @type {ReadonlyArray<{id: string, icon: string, name: string, where: string, from: {lat: number, lon: number, label: string}, to?: {lat: number, lon: number, label: string}, height: number}>}
  */
-export const SCENIC_PLACES = Object.freeze([]);
+export const SCENIC_PLACES = Object.freeze([
+  { id: 'paris', icon: '🗼', name: 'Champs-Élysées', where: 'Paris', from: { lat: 48.86629, lon: 2.31914, label: 'Place de la Concorde, Paris' }, to: { lat: 48.87335, lon: 2.2964, label: 'Arc de Triomphe' }, height: 228 },
+  { id: 'goldengate', icon: '🌉', name: 'Golden Gate Bridge', where: 'San Francisco', from: { lat: 37.815, lon: -122.478064, label: 'Golden Gate Bridge, San Francisco' }, to: { lat: 37.824403, lon: -122.479016, label: 'the north tower' }, height: 194 },
+  { id: 'dcmall', icon: '🏛️', name: 'National Mall', where: 'Washington, DC', from: { lat: 38.8899, lon: -77.0105, label: 'US Capitol, Washington' }, to: { lat: 38.8893, lon: -77.0482, label: 'Lincoln Memorial' }, height: 128 },
+  { id: 'nyc5th', icon: '🗽', name: 'Fifth Avenue', where: 'New York', from: { lat: 40.7312, lon: -73.9971, label: 'Washington Square Arch, New York' }, to: { lat: 40.74845, lon: -73.98455, label: 'Empire State Building' }, height: 127 },
+  { id: 'london', icon: '👑', name: 'The Mall', where: 'London', from: { lat: 51.5067, lon: -0.1287, label: 'Admiralty Arch, London' }, to: { lat: 51.5022, lon: -0.1396, label: 'Buckingham Palace' }, height: 204 },
+  { id: 'rome', icon: '🏟️', name: 'Via dei Fori Imperiali', where: 'Rome', from: { lat: 41.891, lon: 12.4903, label: 'Colosseum, Rome' }, to: { lat: 41.8958, lon: 12.4826, label: 'Piazza Venezia' }, height: 229 },
+  { id: 'vegas', icon: '🎰', name: 'The Strip', where: 'Las Vegas', from: { lat: 36.0826, lon: -115.1728, label: 'Welcome to Las Vegas sign' }, to: { lat: 36.1126, lon: -115.1728, label: 'Bellagio Fountains' }, height: 784 },
+  { id: 'sydney', icon: '🎭', name: 'Sydney Opera House', where: 'Sydney', from: { lat: -33.859, lon: 151.2138, label: 'Sydney Opera House' }, height: 185 },
+  { id: 'tokyo', icon: '🏙️', name: 'Shibuya Crossing', where: 'Tokyo', from: { lat: 35.6595, lon: 139.7005, label: 'Shibuya Crossing, Tokyo' }, height: 202 },
+  { id: 'columbus', icon: '🌳', name: 'Scioto Mile', where: 'Columbus, Ohio', from: { lat: 39.9575, lon: -83.004, label: 'Scioto Mile, Columbus' }, height: 333 },
+  { id: 'chicago', icon: '🫘', name: 'Cloud Gate', where: 'Chicago', from: { lat: 41.88235, lon: -87.6233, label: 'Cloud Gate, Chicago' }, height: 303 },
+  { id: 'everest', icon: '🏔️', name: 'Mount Everest', where: 'The Himalaya', from: { lat: 27.9881, lon: 86.925, label: 'Mount Everest summit' }, height: 8857 },
+]);
 
 /** A scenic place by id, or null. */
 export function scenicPlace(id) {
@@ -151,9 +164,11 @@ export function limitText(gate, now = Date.now(), locale = undefined) {
       detail: 'Scenic rides and places you have ridden before never count.',
     };
   }
+  const day = resetDayName(gate.resetsAt, now, locale);
+  const when = day === 'today' || day === 'tomorrow' ? day : 'on ' + day;
   return {
     headline: `You have looked up this week’s ${n} new places`,
-    detail: `More ${resetDayName(gate.resetsAt, now, locale) === 'today' ? 'today' : 'on ' + resetDayName(gate.resetsAt, now, locale)}. Scenic rides and your own places are still open.`.replace('on tomorrow', 'tomorrow'),
+    detail: `More ${when}. Scenic rides and your own places are still open.`,
   };
 }
 
