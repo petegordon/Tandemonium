@@ -129,3 +129,41 @@ test('the finish distance of a ride is never more than the ride', () => {
   }
   assert.equal(rideLevelM(0), 1);
 });
+
+test('standing the bike up somewhere else (#801) counts nothing in any kind of ride', () => {
+  const open = new TouristOdometer();
+  let d = open.update(0, 0, 0);
+  for (let z = 1; z <= 30; z++) d = open.update(0, z, d);
+  open.moved(0, 25);                       // 5 m back along the trail
+  d = open.update(0, 25, d);
+  assert.ok(near(d, 30), `open world keeps 30 m, got ${d}`);
+  d = open.update(0, 26, d);
+  assert.ok(near(d, 31));
+
+  const to = new TouristOdometer({ target: { x: 0, z: 500 }, lengthM: 500 });
+  d = to.update(0, 0, 0);
+  for (let z = 1; z <= 100; z++) d = to.update(0, z, d);
+  const before = d;
+  to.moved(0, 70);                         // 30 m back: further than a teleport
+  d = to.update(0, 70, d);
+  assert.equal(d, before, 'a ride to a point keeps what it had');
+});
+
+test('a place that cannot be ridden into is reached from further off (arriveM)', () => {
+  // an arch 45 m across: the ride is to its middle, and 40 m from that is as close as a bike gets
+  const len = 1839.186;
+  const far = new TouristOdometer({ target: { x: 0, z: len }, lengthM: len, arriveM: 45 });
+  let d = far.update(0, 0, 0);
+  assert.equal(d, 0, 'starts at nothing');
+  d = far.update(0, 10, d);
+  for (let z = 20; z <= len - 40; z += 10) d = far.update(0, z, d);
+  d = far.update(0, len - 40, d);
+  assert.ok(d >= rideLevelM(len), `40 m short is there (${d.toFixed(1)} of ${rideLevelM(len)})`);
+
+  const near = new TouristOdometer({ target: { x: 0, z: len }, lengthM: len });
+  d = near.update(0, 0, 0);
+  for (let z = 10; z <= len - 40; z += 10) d = near.update(0, z, d);
+  d = near.update(0, len - 40, d);
+  assert.ok(d < rideLevelM(len), 'and without it, 40 m short is not');
+  assert.equal(new TouristOdometer({ target: { x: 0, z: 1 }, lengthM: 100, arriveM: NaN }).arriveM, 18);
+});

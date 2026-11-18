@@ -38,7 +38,9 @@ export class TouristOdometer {
    *     at the start); startM: the distance already counted when this leg begins (a ride's second leg);
    *   none of these = open world.
    */
-  constructor({ heading = null, target = null, lengthM = 0, startM = 0 } = {}) {
+  constructor({ heading = null, target = null, lengthM = 0, startM = 0, arriveM = ARRIVE_M } = {}) {
+    /** How close to the point counts as there: ARRIVE_M, or more for a place that cannot be ridden into. */
+    this.arriveM = Math.max(1, Number.isFinite(arriveM) ? arriveM : ARRIVE_M);
     this.target = target && isFinite(target.x) && isFinite(target.z) ? { x: target.x, z: target.z } : null;
     this.lengthM = Math.max(0, lengthM || 0);
     this.startM = Math.max(0, startM || 0);
@@ -59,6 +61,11 @@ export class TouristOdometer {
     this._origin = { x, z };
     this._base = this.distance;
     this._written = this.distance;
+  }
+
+  /** The bike was put somewhere else (stood up after a crash): nothing was ridden getting there. */
+  moved(x, z) {
+    if (this._last && isFinite(x) && isFinite(z)) { this._last.x = x; this._last.z = z; }
   }
 
   /**
@@ -87,8 +94,8 @@ export class TouristOdometer {
     if (this.target) {
       // closer than ever before counts; within ARRIVE_M is the whole leg. The leg is spread over the
       // metres that can actually be ridden (its length less the arrival circle), so it starts at nothing.
-      const away = Math.max(0, Math.hypot(this.target.x - x, this.target.z - z) - ARRIVE_M);
-      const span = Math.max(1, this.lengthM - ARRIVE_M);
+      const away = Math.max(0, Math.hypot(this.target.x - x, this.target.z - z) - this.arriveM);
+      const span = Math.max(1, this.lengthM - this.arriveM);
       const done = this.startM + this.lengthM * Math.max(0, 1 - away / span);
       if (done > this.distance) this.distance = done;
     } else if (this.route) {
