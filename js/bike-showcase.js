@@ -153,6 +153,11 @@ const cachedLoader = {
       .catch((e) => { _cache.delete(path); throw e; }));
     return _cache.get(path).then((g) => ({ ...g, scene: cloneSkinned(g.scene), animations: g.animations }));
   },
+  /** Start fetching and reading a GLB now, for a loadAsync that will ask for it soon (no clone made). */
+  prefetch(path) {
+    if (_cache.has(path)) return;
+    this.loadAsync(path).catch(() => { /* the real load reports it */ });
+  },
 };
 
 /** The shared GLB loader (fetched once per page, skinned clones), for the bike chooser's reward bikes too. */
@@ -179,6 +184,26 @@ export async function seatOutfitRiders(model, animations, outfit, looks = null) 
   riders.setLeans(0, 0);
   riders.update();
   return riders;
+}
+
+/**
+ * Start loading an outfit's geese while their bike is still loading (the chooser asked for them only once
+ * the bike was up, so they arrived a second behind it). standing: the Goose Studio geese that stand beside
+ * the bike; otherwise the riders seated on it. bodies: { Captain, Stoker } as 'm' | 'f', or none.
+ */
+export function prefetchOutfitGeese(outfit, bodies = null, standing = false) {
+  for (const seat of ['Captain', 'Stoker']) {
+    try {
+      const body = bodies && bodies[seat];
+      if (standing) {
+        const name = studioGooseFor({ outfit, body: body || (seat === 'Captain' ? 'm' : 'f') });
+        cachedLoader.prefetch(GOOSE_DIR + name + '.glb');
+        cachedLoader.prefetch(GOOSE_DIR + 'show/' + name + '_clips.glb');
+      } else {
+        cachedLoader.prefetch(resolveRider(seat, outfit, body || undefined).path);
+      }
+    } catch (e) { /* loaded when asked for, as before */ }
+  }
 }
 
 /** A Goose Studio goose for the bike chooser's "beside the bike" geese (the same cache and retry as these cards). */
