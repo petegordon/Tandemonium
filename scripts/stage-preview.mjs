@@ -25,7 +25,8 @@
 //     changed it (git diff against the base). Unchanged ones are left out.
 //   - A left-out file is fetched from the live game by a small service worker
 //     that only previews have (scripts/preview-sw.js, copied to the preview
-//     root here). Every page of the preview gets a short script at the top of
+//     root here, with the list of heavy files this preview did publish written
+//     into it). Every page of the preview gets a short script at the top of
 //     <head> that registers the worker and reloads once when it is in charge.
 //
 // None of this touches the live site (deploy.yml stages that itself), the
@@ -98,29 +99,41 @@ export function changedHeavyFiles(src, base) {
  * loads a heavy file, because only a page the worker controls gets the
  * fallback, and a first visit is not controlled yet.
  *
- *   controlled already        → nothing to do (and forget the reload mark)
- *   not controlled            → wait for an active worker, then reload once;
- *                               the reloaded page is controlled from its first
- *                               request. This also covers a forced reload
- *                               (Shift+Reload), which skips the worker.
- *   still not controlled after that reload → stop. The mark in sessionStorage
- *                               is what prevents a reload loop.
- *   no service workers at all → the page loads as it is; files the preview
- *                               left out will be missing. (Pages is https, so
- *                               this is only very old or locked-down browsers.)
+ *   not controlled at the start → wait for an active worker, then reload once;
+ *                                 the reloaded page is controlled from its
+ *                                 first request. This also covers a forced
+ *                                 reload (Shift+Reload), which skips the worker.
+ *   controlled, and a newer worker takes over (a new build of the preview was
+ *   published)                  → reload once, so nothing on the page was
+ *                                 fetched by the old build's worker. The page
+ *                                 asks for that check itself (update()): left
+ *                                 to the browser it can come much later, and
+ *                                 register() alone does not look for a new file.
+ *                                 Only in the page's first 20 seconds: on a
+ *                                 slow device the check can take longer, and
+ *                                 reloading a ride in progress is worse than
+ *                                 one session with an old worker.
+ *   no service workers at all   → the page loads as it is; files the preview
+ *                                 left out will be missing. (Pages is https, so
+ *                                 this is only very old or locked-down browsers.)
+ *
+ * The guard against a reload loop: the time of the last reload is kept in
+ * sessionStorage, and there is no second one within ten seconds. So a browser
+ * where the worker never takes control reloads once and then stays put.
  */
 export function registrationScript(scope) {
-  // sessionStorage can throw (blocked storage). Then act as if the one reload
-  // has been spent: never reloading is safe, reloading forever is not.
+  // sessionStorage can throw (blocked storage). Then never reload: that is
+  // safe, and reloading forever is not.
   const js = `(function(){
 var S=${JSON.stringify(scope)},K='preview-sw-reloaded:'+S,sw=navigator.serviceWorker;
 if(!sw){console.warn('[preview] no service worker support: files this preview shares with the live game will be missing');return;}
-function reloaded(){try{return !!sessionStorage.getItem(K);}catch(e){return true;}}
-function setReloaded(on){try{if(on)sessionStorage.setItem(K,'1');else sessionStorage.removeItem(K);}catch(e){}}
-sw.register(S+${JSON.stringify(SW_FILE)},{scope:S}).catch(function(e){console.warn('[preview] service worker failed to register',e);});
-if(sw.controller){setReloaded(false);return;}
-if(reloaded()){console.warn('[preview] reloaded once and the service worker is still not in control; not reloading again');return;}
-sw.ready.then(function(){if(sw.controller)return;setReloaded(true);location.reload();});
+function reloadOnce(why){
+try{if(Date.now()-Number(sessionStorage.getItem(K)||0)<10000){console.warn('[preview] not reloading again ('+why+')');return;}sessionStorage.setItem(K,String(Date.now()));}catch(e){return;}
+location.reload();}
+var controlled=!!sw.controller;
+sw.register(S+${JSON.stringify(SW_FILE)},{scope:S,updateViaCache:'none'}).then(function(r){if(controlled)return r.update();}).catch(function(e){console.warn('[preview] service worker failed to register or update',e);});
+if(controlled)sw.addEventListener('controllerchange',function(){if(performance.now()<20000)reloadOnce('a newer build took over');else console.warn('[preview] a newer build took over; reload to be sure every file is from it');});
+else sw.ready.then(function(){reloadOnce('the service worker is still not in control');});
 })();`;
   // <meta charset> leads: a browser only looks for it in the first 1024 bytes,
   // and this script would otherwise push the page's own one past that.
@@ -170,11 +183,15 @@ export function stagePreview({ src = process.cwd(), out, pr, sha, base = 'origin
   const heavyKept = [];
   let heavyLeftOut = 0;
   const pages = [];
+  // Everything published under a heavy folder (changed files, and pages): the
+  // worker serves these from the preview and everything else there from live.
+  const own = [];
   for (const file of all) {
     if (isHeavy(file)) {
       if (!changed.has(file)) { heavyLeftOut++; continue; }
       heavyKept.push(file);
     }
+    if (inHeavyDir(file)) own.push(file);
     const to = path.join(out, file);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     fs.copyFileSync(path.join(src, file), to);
@@ -183,11 +200,17 @@ export function stagePreview({ src = process.cwd(), out, pr, sha, base = 'origin
 
   // 2 · The service worker, at the preview root so its scope is the whole
   // preview. Taken from beside this script (scripts/ itself is not published),
-  // with the list of heavy folders written in so there is one list, not two.
-  const worker = fs.readFileSync(path.join(HERE, 'preview-sw.js'), 'utf8');
-  const stamped = worker.replace(/^const HEAVY_DIRS = .*%%HEAVY_DIRS%%.*$/m, `const HEAVY_DIRS = ${JSON.stringify(HEAVY_DIRS)};`);
-  if (stamped === worker) throw new Error('scripts/preview-sw.js has no %%HEAVY_DIRS%% line to fill in');
-  fs.writeFileSync(path.join(out, SW_FILE), stamped);
+  // with two lines filled in: the heavy folders (one list, not two) and the
+  // files this preview published in them.
+  const fill = (text, marker, value) => {
+    const line = new RegExp(`^(const \\w+ = ).*%%${marker}%%.*$`, 'm');
+    if (!line.test(text)) throw new Error(`scripts/preview-sw.js has no %%${marker}%% line to fill in`);
+    return text.replace(line, (_, start) => `${start}${value};`);
+  };
+  let worker = fs.readFileSync(path.join(HERE, 'preview-sw.js'), 'utf8');
+  worker = fill(worker, 'HEAVY_DIRS', JSON.stringify(HEAVY_DIRS));
+  worker = fill(worker, 'OWN_FILES', `new Set(${JSON.stringify(own)})`);
+  fs.writeFileSync(path.join(out, SW_FILE), worker);
 
   // 3 · Every page registers the worker before anything else in <head>.
   // (index.html is the game, but remote/, goose-stage/ and the rest are opened

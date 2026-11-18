@@ -18,8 +18,9 @@
 // workers are allowed there). It checks that the page ends up controlled after
 // one reload and no more, that a left-out heavy file comes from the live game,
 // that a changed one comes from the preview, that Range requests work, that
-// nothing outside the preview's heavy folders is touched, and that the lobby
-// loads.
+// nothing outside the preview's heavy folders is touched, that the lobby
+// loads, and that a second build of the preview replaces the first one's
+// worker.
 //
 //   node scripts/smoke-preview-fallback.mjs
 //
@@ -123,6 +124,8 @@ try {
   check(staged.unregistered.length === 0, 'every page of the preview registers the worker', staged.unregistered);
   const sw = fs.readFileSync(path.join(previewDir, SW_FILE), 'utf8');
   check(HEAVY_DIRS.every((d) => sw.includes(JSON.stringify(d))) && !sw.includes('%%HEAVY_DIRS%%'), 'the worker carries the staging\'s list of heavy folders');
+  check([CHANGED, RENAMED_TO, ADDED, 'tandem-3d/index.html'].every((x) => sw.includes(JSON.stringify(x))) && !sw.includes(JSON.stringify(UNCHANGED)) && !sw.includes('%%OWN_FILES%%'),
+    'the worker carries the list of heavy files this preview published');
   check(!/\bcaches\b/.test(sw.replace(/^\s*\/\/.*$/gm, '')), 'the worker never uses the Cache API');
   check(!fs.readFileSync(path.join(site, 'index.html'), 'utf8').includes(SW_FILE)
     && !fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8').includes(SW_FILE), 'the live page and the repo\'s index.html have no registration script');
@@ -132,6 +135,13 @@ try {
   // Range support (media seeks with it), a 404 for anything missing, and the
   // ten-minute Cache-Control Pages puts on everything. Every request is logged
   // so the checks can see which path was really asked for.
+  //
+  // One unkind habit of the real thing is copied too: Pages was measured
+  // answering 503, not 404, for about four in ten requests for a missing file.
+  // Here a missing file in the preview's heavy folders always answers 503, so
+  // the test fails if the worker ever depends on a 404 to know a file was left
+  // out. (One check below turns it back to 404 on purpose.)
+  let missingInPreviewHeavy = 503;
   const MIME = {
     '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
     '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml',
@@ -149,7 +159,10 @@ try {
     if (!file.startsWith(site)) return done(403);
     if (urlPath.endsWith('/')) file = path.join(file, 'index.html');
     fs.stat(file, (err, st) => {
-      if (err || st.isDirectory() || req.method !== 'GET') return done(404, { 'Content-Type': 'text/html; charset=utf-8' }, 'not found');
+      if (err || st.isDirectory() || req.method !== 'GET') {
+        const heavyHere = HEAVY_DIRS.some((d) => urlPath.startsWith(PREVIEW + d + '/'));
+        return done(heavyHere ? missingInPreviewHeavy : 404, { 'Content-Type': 'text/html; charset=utf-8' }, 'not found');
+      }
       const type = { 'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream', 'Accept-Ranges': 'bytes' };
       const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
       if (!m) { entry.status = 200; res.writeHead(200, { 'Cache-Control': 'max-age=600', ...type, 'Content-Length': st.size }); return fs.createReadStream(file).pipe(res); }
@@ -186,6 +199,8 @@ try {
     });
     page.pageErrors = [];
     page.on('pageerror', (e) => { page.pageErrors.push(e.message); });
+    // The registration script explains itself on the console when it declines to reload.
+    page.on('console', (m) => { if (m.text().includes('[preview]')) console.log('       page: ' + m.text()); });
     return page;
   }
   /** Poll the page; the page reloads itself once, which destroys whatever was being evaluated. */
@@ -221,8 +236,6 @@ try {
   check(hits(PREVIEW).length === 2, 'the page loaded twice: the first visit, then one reload once the worker was active', hits(PREVIEW).length);
   await sleep(3000);
   check(hits(PREVIEW).length === 2, 'no further reloads (no loop)', hits(PREVIEW).length);
-  check(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith('preview-sw-reloaded')).length) === 0,
-    'the reload mark is cleared once the page is controlled');
 
   console.log('\nA controlled load');
   responses.length = 0;
@@ -239,8 +252,8 @@ try {
   console.log('\nHeavy files');
   let r = await get(page, enc(UNCHANGED));
   check(r.status === 200 && r.sha256 === sha256(liveBytes(UNCHANGED)), 'a file the preview left out arrives with the live game\'s bytes', UNCHANGED);
-  check(hits(PREVIEW + UNCHANGED).some((e) => e.status === 404) && hits('/' + UNCHANGED).some((e) => e.status === 200),
-    '  …by asking the preview first (404), then the site root');
+  check(hits(PREVIEW + UNCHANGED).length === 0 && hits('/' + UNCHANGED).some((e) => e.status === 200),
+    '  …straight from the site root: the preview was never asked for it');
   r = await get(page, enc(CHANGED));
   check(r.status === 200 && r.sha256 === sha256(Buffer.concat([liveBytes(CHANGED), MARK])) && r.tail.includes('belongs to the pull request'),
     'a file the PR changed arrives with the PR\'s bytes', CHANGED);
@@ -277,6 +290,19 @@ try {
   check(hits('/' + UNCHANGED).slice(seen).some((e) => e.range && e.status === 206), '  …with the element\'s own Range request answered by the live file (206)',
     hits('/' + UNCHANGED).slice(seen).map((e) => e.range));
 
+  // The worker is older than the preview it runs in for a moment after every
+  // new build. If a file it believes the preview has is gone, a real 404 falls
+  // back to the live game; a server error is passed back, not papered over
+  // with the live game's (wrong) copy.
+  console.log('\nA file the worker expects in the preview');
+  fs.rmSync(path.join(previewDir, CHANGED));
+  r = await get(page, enc(CHANGED) + '?gone=1');
+  check(r.status === 503, 'a server error for it goes back to the page as it is', r.status);
+  missingInPreviewHeavy = 404;
+  r = await get(page, enc(CHANGED) + '?gone=2');
+  check(r.status === 200 && r.sha256 === sha256(liveBytes(CHANGED)), 'a 404 for it falls back to the live game\'s copy');
+  missingInPreviewHeavy = 503;
+
   console.log('\nEverything else is left alone');
   r = await get(page, 'js/preview-smoke-nowhere.js');
   check(r.status === 404 && hits('/js/preview-smoke-nowhere.js').length === 0, 'a missing file outside the heavy folders stays a 404, with no second request');
@@ -297,6 +323,7 @@ try {
   const sub = await newPage(browser.defaultBrowserContext());
   await sub.goto(ORIGIN + PREVIEW + 'tandem-3d/', { waitUntil: 'domcontentloaded' });
   check(await sub.evaluate(() => !!navigator.serviceWorker.controller && location.pathname) === PREVIEW + 'tandem-3d/', 'a page inside a heavy folder opens and is controlled');
+  check(await sub.evaluate((n) => document.head.innerHTML.includes(n), SW_FILE) && hits('/tandem-3d/').length === 0, '  …and it is the preview\'s own copy of the page, not the live game\'s');
   await sub.close();
   const live = await newPage(browser.defaultBrowserContext());
   await live.goto(ORIGIN + '/', { waitUntil: 'domcontentloaded' });
@@ -304,6 +331,40 @@ try {
   check(await live.evaluate(async () => !navigator.serviceWorker.controller && (await navigator.serviceWorker.getRegistrations()).every((x) => !location.pathname.startsWith(new URL(x.scope).pathname))),
     'the live game\'s page is not controlled by any worker');
   await live.close();
+
+  // A second push to the pull request: UNCHANGED is now changed too, so the
+  // new build's worker lists it. An open page still has the old worker, which
+  // fetches that file from the live game. The page must notice the new worker
+  // taking over and reload itself, once.
+  //
+  // Tried on a plain page of the preview (the test-pages index) with the game
+  // tab closed: under software WebGL the game keeps Chrome so busy that its
+  // check for a new worker file can take most of a minute, and a page only
+  // reloads itself for a takeover in its first 20 seconds.
+  console.log('\nA newer build of the preview');
+  await page.close();
+  const LIGHT = PREVIEW + 'test/';
+  const light = await newPage(browser.defaultBrowserContext());
+  await light.goto(ORIGIN + LIGHT, { waitUntil: 'domcontentloaded' });
+  await sleep(2000);
+  r = await get(light, '../' + enc(UNCHANGED) + '?build=1');
+  check(await light.evaluate(() => !!navigator.serviceWorker.controller) && r.status === 200 && r.sha256 === sha256(liveBytes(UNCHANGED)),
+    'first build: a controlled page gets the file from the live game');
+  fs.appendFileSync(path.join(prDir, UNCHANGED), MARK);
+  git(prDir, ['add', '-A']);
+  const prHead2 = git(prDir, ['commit-tree', git(prDir, ['write-tree']), '-p', prHead, '-m', 'smoke: second push'], who);
+  git(prDir, ['reset', '--quiet', '--soft', prHead2]);
+  fs.rmSync(previewDir, { recursive: true, force: true });
+  const staged2 = stagePreview({ src: prDir, out: previewDir, pr: 1, sha: prHead2, base });
+  check(staged2.heavyKept.includes(UNCHANGED) && staged2.heavyKept.includes(CHANGED), 'the second build publishes both changed files', staged2.heavyKept);
+  const loadsBefore = hits(LIGHT).length;
+  await light.reload({ waitUntil: 'domcontentloaded' });
+  for (let i = 0; i < 100 && hits(LIGHT).length < loadsBefore + 2; i++) await sleep(200);
+  await sleep(3000);
+  check(hits(LIGHT).length === loadsBefore + 2, 'the page reloaded itself once when the new build\'s worker took over', hits(LIGHT).length - loadsBefore);
+  r = await get(light, '../' + enc(UNCHANGED) + '?build=2');
+  check(r.status === 200 && r.sha256 === sha256(Buffer.concat([liveBytes(UNCHANGED), MARK])), 'the file only the second build changed now arrives with the PR\'s bytes');
+  await light.close();
 
   // A browser where the worker never takes control (here: told to bypass it).
   // The page must reload once, find it is still uncontrolled, and stop.
