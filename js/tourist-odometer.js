@@ -61,6 +61,11 @@ export class TouristOdometer {
     this._written = this.distance;
   }
 
+  /** The bike was put somewhere else (stood up after a crash): nothing was ridden getting there. */
+  moved(x, z) {
+    if (this._last && isFinite(x) && isFinite(z)) { this._last.x = x; this._last.z = z; }
+  }
+
   /**
    * One frame. `current` is bike.distanceTraveled as it stands now: if it is not
    * what this odometer last returned, something reset the ride, so re-base on it.

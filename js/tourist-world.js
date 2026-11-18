@@ -480,7 +480,11 @@ export class TouristWorld {
    */
   _groundFollow(bikePos, dt) {
     const ground = this._ground;
-    const r = ground.step(bikePos, dt, this._tilesStarted, this._bike ? this._bike.heading : undefined);
+    const bike = this._bike;
+    const r = ground.step(bikePos, dt, this._tilesStarted, bike ? bike.heading : undefined, bike && !bike.fallen ? bike.speed : 0);
+    // #801: the grace after standing up runs while the bike is being ridden, not through the countdown
+    if (this._crashGraceS > 0 && bike && !bike.fallen && bike.speed > 0.3) this._crashGraceS = Math.max(0, this._crashGraceS - dt);
+    this._updateWarning(dt);
     // Until the street has been found and has stopped moving, the bike waits at the anchor height, above
     // the place. Dropping it onto the first (coarse) hit took the camera down with it, sometimes kilometres
     // under the city, and from there the detailed tiles were never asked for. From above they are. Then it
@@ -543,9 +547,16 @@ export class TouristWorld {
     // quaternion to yaw*lean (no pitch, since bike.roadPath is null); we
     // pre-multiply a world-space tilt that rotates +Y to the ground normal.
     if (this._bike && this._bike.group) {
+      // (While nothing drives the bike, a countdown, its quaternion is still the one tilted here last
+      // frame. Tilting that again every frame turned the bike over on any slope: take our tilt off first.)
+      const q = this._bike.group.quaternion;
+      if (!this._wroteQ) { this._wroteQ = new THREE.Quaternion(); this._tiltInv = new THREE.Quaternion(); this._wroteQ.set(NaN, 0, 0, 1); }
+      if (q.equals(this._wroteQ)) q.premultiply(this._tiltInv);
       this._tmpUpQ.setFromUnitVectors(UP, this._smoothNormal);
       this._tiltQ.slerp(this._tmpUpQ, ease);
-      this._bike.group.quaternion.premultiply(this._tiltQ);
+      q.premultiply(this._tiltQ);
+      this._wroteQ.copy(q);
+      this._tiltInv.copy(this._tiltQ).invert();
       this._bike.group.position.y = this._groundY;
     }
   }
@@ -570,7 +581,78 @@ export class TouristWorld {
    * of the face. Low things (cars, kerbs, hedges) are ridden over instead and
    * never reach here.
    */
-  checkTreeCollision() { return { hit: !!this._ground.bump, tree: null }; }
+  checkTreeCollision() { return { hit: !!this._ground.bump && !(this._crashGraceS > 0), tree: null }; }
+
+  /**
+   * #801 · where the bike stands up after a crash at (x, z): back along its own trail (5 m; further when
+   * it is `repeat` crashes into the same spot), facing the way it was going, with a clear way ahead.
+   * Starts the grace during which nothing counts as a crash.
+   * @returns {{x:number, z:number, heading:number}|null}
+   */
+  crashSpot(x, z, repeat = 1) {
+    const g = TOURIST_TUNE.ground;
+    const steps = g.recoverBackM;
+    const backM = steps[Math.min(steps.length, Math.max(1, repeat)) - 1];
+    const spot = this._ground.recoverySpot(x, z, backM);
+    this._crashGraceS = g.crashGraceS;
+    if (!spot) return null;
+    this._groundY = this._ground.groundY;
+    return { x: spot.x, z: spot.z, heading: spot.heading };
+  }
+
+  /** Seconds of riding left in which nothing counts as a crash. */
+  get crashGraceS() { return this._crashGraceS || 0; }
+
+  /** #801 · a wall the bike is heading for: how far off it is, in metres (null = the way is clear). */
+  get wallAhead() {
+    const g = this._ground;
+    if (this._crashGraceS > 0 || !this._bike || this._bike.fallen) return null;
+    return g.warn ? g.warn.distance : null;
+  }
+
+  /**
+   * #801 · the mark on the thing ahead: a red "!" on the wall the bike is heading for, so the crash reads
+   * as coming. It stays on what was hit while the bike is down.
+   */
+  _updateWarning(dt) {
+    const g = this._ground;
+    const at = g.bump ? g.bump.point : (g.warn ? g.warn.point : null);
+    const bike = this._bike;
+    if (at && !(bike && bike.fallen)) {
+      if (!this._warnMark) this._warnMark = this._makeWarnMark();
+      this._warnMark.position.set(at.x, at.y + 2.4, at.z);   // above the riders' heads, not over them
+      this._warnMark.visible = true;
+      this._warnHold = 0.35;
+    } else if (this._warnMark && this._warnMark.visible && !(bike && bike.fallen)) {
+      this._warnHold -= dt;
+      if (this._warnHold <= 0) this._warnMark.visible = false;
+    }
+    if (this._warnMark && this._warnMark.visible) {
+      this._warnT = (this._warnT || 0) + dt;
+      const k = 1.5 * (1 + 0.18 * Math.sin(this._warnT * 14));
+      this._warnMark.scale.set(k, k, 1);
+    }
+  }
+
+  _makeWarnMark() {
+    const c = document.createElement('canvas');
+    c.width = c.height = 128;
+    const x = c.getContext('2d');
+    if (x) {
+      x.fillStyle = 'rgba(214,40,40,.92)';
+      x.beginPath(); x.arc(64, 64, 58, 0, Math.PI * 2); x.fill();
+      x.lineWidth = 8; x.strokeStyle = '#fff'; x.stroke();
+      x.fillStyle = '#fff'; x.font = '900 92px system-ui,sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+      x.fillText('!', 64, 70);
+    }
+    const tex = new THREE.CanvasTexture(c);
+    const mark = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, fog: false, toneMapped: false }));
+    mark.name = 'tourist-wall-warning';
+    mark.renderOrder = 20;
+    mark.visible = false;
+    this.scene.add(mark);
+    return mark;
+  }
   // _startCountdown reseeds the world from the level; real streets have no seed.
   // (Without this _startCountdown threw before it built the RaceManager, so a
   // tourist ride rolled but never had a finish.)
@@ -589,6 +671,12 @@ export class TouristWorld {
     if (this._noticeEl) { this._noticeEl.remove(); this._noticeEl = null; }
     if (this._edgeEl) { this._edgeEl.remove(); this._edgeEl = null; }
     this.setDestination(null);
+    if (this._warnMark) {
+      this.scene.remove(this._warnMark);
+      if (this._warnMark.material.map) this._warnMark.material.map.dispose();
+      this._warnMark.material.dispose();
+      this._warnMark = null;
+    }
     if (this._creditsEl) this._creditsEl.textContent = '';
   }
 }

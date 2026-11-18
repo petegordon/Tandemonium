@@ -129,3 +129,22 @@ test('the finish distance of a ride is never more than the ride', () => {
   }
   assert.equal(rideLevelM(0), 1);
 });
+
+test('standing the bike up somewhere else (#801) counts nothing in any kind of ride', () => {
+  const open = new TouristOdometer();
+  let d = open.update(0, 0, 0);
+  for (let z = 1; z <= 30; z++) d = open.update(0, z, d);
+  open.moved(0, 25);                       // 5 m back along the trail
+  d = open.update(0, 25, d);
+  assert.ok(near(d, 30), `open world keeps 30 m, got ${d}`);
+  d = open.update(0, 26, d);
+  assert.ok(near(d, 31));
+
+  const to = new TouristOdometer({ target: { x: 0, z: 500 }, lengthM: 500 });
+  d = to.update(0, 0, 0);
+  for (let z = 1; z <= 100; z++) d = to.update(0, z, d);
+  const before = d;
+  to.moved(0, 70);                         // 30 m back: further than a teleport
+  d = to.update(0, 70, d);
+  assert.equal(d, before, 'a ride to a point keeps what it had');
+});

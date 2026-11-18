@@ -85,7 +85,7 @@ import { World } from './world.js';
 // exists to prevent. It is loaded on demand instead, only when ?mode=tourist
 // asks for it, and a failure to load degrades to the normal world with a
 // message rather than a blank screen.
-import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor } from './tourist-config.js';
+import { isTouristMode, getMapsApiKey, resolveTouristOrigin, resolveOriginAt, originFromAnchor, TOURIST_TUNE } from './tourist-config.js';
 import { formatDistance, skipLabel, headingForBearing, interpolate, bearing as bearingBetween, CAP_HALF_M, rideLevelM } from './tourist-route.js';
 import { TouristOdometer, OPEN_WORLD_PAY_CAP_M } from './tourist-odometer.js';
 import { EVT_TOURIST_SKIP } from './config.js';
@@ -3195,13 +3195,19 @@ class Game {
     if (this.obstacleManager) this.obstacleManager.restoreKnocked();
     if (this.physicsFx) this.physicsFx.clear();
 
+    // #801 · Map Tourist, standing up after a crash: where the bike is, and how far it has come
+    const touristCrash = this._touristRoute && this.isTourist && this._quickCountdown && !fromBeginning
+      ? { x: this.bike.position.x, z: this.bike.position.z, d: this.bike.distanceTraveled, h: this.bike.heading } : null;
+
     if (checkpointD > 0) {
       this.bike.resetToDistance(checkpointD);
     } else {
       this.bike.fullReset();
     }
-    // Map Tourist: back to the start of the ride (after the skip, that is another place on the globe).
-    if (this._touristRoute && this.isTourist) this._startTouristLeg(true);
+    // Map Tourist: a crash stands the bike up a little way back; anything else is back to the start of
+    // the ride (after the skip, that is another place on the globe).
+    if (touristCrash) this._touristStandUp(touristCrash);
+    else if (this._touristRoute && this.isTourist) this._startTouristLeg(true);
 
     // Refill the segment clock for whatever segment is about to be ridden.
     //
@@ -4307,6 +4313,7 @@ class Game {
     }
     this._touristSkipped = false;
     this._touristHold = false;
+    this._touristCrash = null;
     this._hideTouristSkip();
     if (plan.explore) {
       this.bike.startHeading = 0;                      // open world faces north
@@ -4327,6 +4334,44 @@ class Game {
     this.bike.heading = this.bike.startHeading;        // in case the bike was reset already
     this._prevTouristGoalText = null;
     this._updateTouristGoal();                         // (a restart after the skip: the whole ride is ahead again)
+  }
+
+  /**
+   * #801 (Pete, 2026-11-18) · after a crash the bike stands up 5 m back along the way it came, not at the
+   * start of the ride and not against the wall it hit. A second crash in the same spot takes it 15 m back,
+   * a third 30 m. The ride's distance is kept. The stoker's bike follows the captain's.
+   * @param {{x:number, z:number, d:number, h:number}} was  the bike when it fell
+   */
+  _touristStandUp(was) {
+    const b = this.bike;
+    const world = /** @type {any} */ (this.world);
+    const G = TOURIST_TUNE.ground;
+    b.distanceTraveled = was.d;
+    if (this.mode === 'stoker' || !world || !world.crashSpot) { b.position.x = was.x; b.position.z = was.z; b.heading = was.h; return; }
+    const last = this._touristCrash;
+    const again = last && Math.hypot(was.x - last.x, was.z - last.z) < G.recoverRepeatM;
+    this._touristCrash = { x: was.x, z: was.z, n: again ? last.n + 1 : 1 };
+    const spot = world.crashSpot(was.x, was.z, this._touristCrash.n);
+    b.position.x = spot ? spot.x : was.x;
+    b.position.z = spot ? spot.z : was.z;
+    b.heading = spot ? spot.heading : was.h;
+    if (this._touristOdo) this._touristOdo.moved(b.position.x, b.position.z);
+    b.position.y = world.getGroundY ? world.getGroundY() : b.position.y;
+    b._applyTransform();                               // (the model stands where the bike is through the countdown)
+    this._prevTouristGoalText = null;
+    this._updateTouristGoal();
+  }
+
+  /** #801 · the warning before a wall: beeps that come faster as it gets nearer. */
+  _tickTouristWarning(dt) {
+    const world = /** @type {any} */ (this.world);
+    if (!this.isTourist || !world || this.state !== 'playing') return;
+    const d = world.wallAhead;
+    this._touristWarnT = Math.max(0, (this._touristWarnT || 0) - dt);
+    if (d == null) return;
+    if (this._touristWarnT > 0) return;
+    this._touristWarnT = Math.max(0.12, Math.min(0.5, d / 20));
+    this._playBeep(d < 5 ? 1320 : 990, 0.07);
   }
 
   /**
@@ -8138,8 +8183,9 @@ class Game {
   _onCrashRecovered() {
     const segmentKey = this.raceManager ? this.raceManager.passedCheckpoints.size : 0;
     this._crashState = countCrash(this._crashState || { segmentKey: -1, crashes: 0 }, segmentKey);
+    // (Map Tourist has one "segment", the whole ride, and nothing to be stuck on: the bike is moved clear instead)
     const decision = decideAfterCrash({
-      crashesThisSegment: this._crashState.crashes
+      crashesThisSegment: this.isTourist ? 1 : this._crashState.crashes
     });
 
     if (decision.action === 'modal') {
@@ -8711,7 +8757,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
-    if (this._touristRoute) this._tickTouristOdometer();   // B3
+    if (this._touristRoute) { this._tickTouristOdometer(); this._tickTouristWarning(dt); }   // B3, #801
 
     // Race progress + contribution tracking
     if (this.raceManager) {
@@ -8819,7 +8865,7 @@ class Game {
     this._checkTreeCollision();
 
     this._recordBalanceCrashIfNew(wasFallen);
-    if (this._touristRoute) this._tickTouristOdometer();   // B3
+    if (this._touristRoute) { this._tickTouristOdometer(); this._tickTouristWarning(dt); }   // B3, #801
 
     // Race progress + contribution tracking (captain is authoritative).
     // The race clock keeps running during a partner reconnect (#316): a brief
