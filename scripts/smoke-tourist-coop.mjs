@@ -200,11 +200,15 @@ const waitState = (page, states, ms = 15000) =>
 let { cap, sto } = await pair(true);
 const cards = {
   captain: await cap.evaluate(() => !!document.querySelector('#level-cards .level-card[data-level-id="tourist"]')),
-  stoker: await sto.evaluate(() => !!document.querySelector('#level-cards .level-card[data-level-id="tourist"]')),
+  // (Pete, 2026-11-18: the stoker sees the card too, like every level, but only the captain can pick it)
+  stoker: await sto.evaluate(() => { const c = document.querySelector('#level-cards .level-card[data-level-id="tourist"]'); return c ? (getComputedStyle(c).pointerEvents === 'none' ? 'view-only' : 'pickable') : 'missing'; }),
 };
+// the captain opens the places: the stoker's list marks Map Tourists and says the captain is choosing
+await cap.evaluate(() => document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click());
+const stoChoosing = await sto.waitForFunction(() => /choosing a place/.test((document.getElementById('level-wait-text') || {}).textContent || '') &&
+  !!document.querySelector('#level-cards .level-card.selected[data-level-id="tourist"]'), { timeout: 5000, polling: 100 }).then(() => true, () => false);
 await cap.evaluate(async (planJs) => {
   const l = window._game.lobby;
-  document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click();
   window.__stepShown = document.getElementById('lobby-tourist').style.display !== 'none';
   window.__touristFor = l._touristFor;
   const plan = await eval(planJs);
@@ -214,6 +218,7 @@ await cap.evaluate(async (planJs) => {
 await waitState(cap, ['instructions']);
 await waitState(sto, ['instructions']);
 const coop = {
+  stoChoosing,
   step: await cap.evaluate(() => ({ shown: window.__stepShown, for: window.__touristFor })),
   cap: await worldState(cap),
   sto: await worldState(sto),
@@ -230,7 +235,7 @@ await sto.waitForFunction(() => window._game.state === 'lobby', { timeout: 5000,
 coop.capBack = await worldState(cap);
 coop.stoBack = await worldState(sto);
 console.log('co-op:', JSON.stringify(coop, null, 1));
-const coopOk = cards.captain && !cards.stoker && coop.step.shown && coop.step.for === 'multiplayer' &&
+const coopOk = cards.captain && cards.stoker === 'view-only' && coop.stoChoosing && coop.step.shown && coop.step.for === 'multiplayer' &&
   coop.cap.state === 'instructions' && coop.sto.state === 'instructions' &&
   coop.cap.kind === 'TouristWorld' && coop.sto.kind === 'TouristWorld' &&
   coop.cap.mode === 'captain' && coop.sto.mode === 'stoker' &&

@@ -64,7 +64,7 @@ import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
-import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M } from './tourist-route.js';
+import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage } from './tourist-config.js';
 /** Map Tourist: the player's own places and the week's count of new ones (this device). */
 const TOURIST_STORE_KEY = 'tandemonium_tourist_places';
@@ -1773,6 +1773,9 @@ export class Lobby {
     if (fromIn) fromIn.placeholder = 'Address or place';
     if (toIn) toIn.placeholder = together ? "Your partner's address or city" : 'Second address or city';
     if (this._touristFor === 'solo') this._pendingMode = 'tourist';
+    if (this._touristFor === 'multiplayer' && this._roomRole === 'captain' && this.net && this.net.connected) {
+      this.net.sendProfile(RoomProtocol.touristChoosing(true));
+    }
     this._forceWizard = false;
     this._touristStore = this._touristStoreLoad();
     this._showTouristForm(false);
@@ -1793,7 +1796,11 @@ export class Lobby {
     if (back) back.addEventListener('click', () => {
       // from the address form, Back is back to the places
       if (this._touristFormShown()) { this._showTouristForm(false); this._renderTouristPlaces(); this._refreshTouristFocus(true); return; }
-      if (this._touristFor === 'multiplayer') { this._showRoomLevelsStep(); return; }
+      if (this._touristFor === 'multiplayer') {
+        if (this._roomRole === 'captain' && this.net && this.net.connected) this.net.sendProfile(RoomProtocol.touristChoosing(false));
+        this._showRoomLevelsStep();
+        return;
+      }
       this._pendingMode = this._touristFor === 'local' ? 'local' : 'solo';
       this._showStep(this.levelStep);
     });
@@ -2554,9 +2561,12 @@ export class Lobby {
     // card opens the route-planning step. Only when it can work (a Maps key)
     // and the edition includes it — an entry point that fails is worse than
     // none (#350). Solo only: co-op Tourist is not built (see _initTouristEntry).
-    if ((mode === 'solo' || mode === 'multiplayer') && isClickable && this._touristAvailable()) {
+    // (the stoker's list shows it too, like every other level: the captain picks; Pete, 2026-11-18,
+    // "the stoker doesn't see ... Map Tourist but as Captain I see it")
+    const stokerView = mode === 'multiplayer' && !isClickable;
+    if ((mode === 'solo' || mode === 'multiplayer') && (isClickable || stokerView) && this._touristAvailable()) {
       const card = document.createElement('button');
-      card.className = 'level-card level-card-tourist';
+      card.className = 'level-card level-card-tourist' + (stokerView && this._captainChoosingTourist ? ' selected' : '');
       card.dataset.levelId = 'tourist';
       card.innerHTML =
         '<div class="level-card-top">' +
@@ -2564,9 +2574,15 @@ export class Lobby {
           '<span class="level-card-name">' + this._touristLabel() + '</span>' +
         '</div>' +
         '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
-      card.addEventListener('click', () => this._openTouristStep());
-      container.appendChild(card);
-      buttons.push(card);
+      if (stokerView) {
+        card.style.opacity = '0.7';
+        card.style.pointerEvents = 'none';
+        container.appendChild(card);
+      } else {
+        card.addEventListener('click', () => this._openTouristStep());
+        container.appendChild(card);
+        buttons.push(card);
+      }
     }
 
     // Default selection: restore previous or pick first unlocked non-tutorial level
@@ -5894,7 +5910,7 @@ export class Lobby {
       if (waitText) waitText.style.display = 'none';
     } else {
       startBtn.style.display = 'none';
-      if (waitText) waitText.style.display = '';
+      if (waitText) { waitText.style.display = ''; waitText.textContent = this._stokerWaitText(); }
     }
 
     // Build level cards into the shared container BEFORE _showStep
@@ -5913,6 +5929,26 @@ export class Lobby {
     // fire on the level step (A = confirm, B = back to room)
     this._gpPrevA = true;
     this._gpPrevB = true;
+  }
+
+  /** What the stoker's level screen says it is waiting for. */
+  _stokerWaitText() {
+    if (this._captainTouristPick) return 'The captain picked ' + this._captainTouristPick + '. Starting…';
+    if (this._captainChoosingTourist) return 'The captain is choosing a place on the map…';
+    return 'Waiting for captain...';
+  }
+
+  /** Stoker: the captain opened the Map Tourist places, or left them (or picked a place, or a level). */
+  _setCaptainTourist(choosing, pick = null) {
+    this._captainChoosingTourist = !!choosing;
+    this._captainTouristPick = choosing ? pick : null;
+    const container = document.getElementById('level-cards');
+    if (container && choosing) container.querySelectorAll('.level-card').forEach((c) => c.classList.toggle('selected', c.dataset.levelId === 'tourist'));
+    else if (container) { const t = container.querySelector('.level-card[data-level-id="tourist"]'); if (t) t.classList.remove('selected'); }
+    const waitText = document.getElementById('level-wait-text');
+    if (waitText && this._roomRole !== 'captain') waitText.textContent = this._stokerWaitText();
+    // (on a phone the list runs under the fold: bring the card into view)
+    if (choosing && container) { const t = container.querySelector('.level-card[data-level-id="tourist"]'); if (t && t.scrollIntoView) { try { t.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {} } }
   }
 
   /** In an online room (hosting or joined): its level step lists what the room can ride. */
@@ -6132,6 +6168,8 @@ export class Lobby {
 
   /** The stoker backs out of the ride: leave the room for the role screen. */
   _leaveRoomAsStoker() {
+    this._captainChoosingTourist = false;
+    this._captainTouristPick = null;
     this._roomSession.leave();
     this._removePipLobbyMode();
     for (const id of ['selfie-pip', 'partner-pip']) { const v = /** @type {any} */ (document.getElementById(id)); if (v) v.srcObject = null; }
@@ -6380,8 +6418,11 @@ export class Lobby {
       // The captain's bike: the stoker's room row shows it and the ride rides it (Pete, 2026-11-09)
       this._roomBikeKey = typeof profile.presetKey === 'string' && this._presetKeys.includes(profile.presetKey) ? profile.presetKey : null;
       this._syncRoomBikeRows();
+    } else if (profile.type === ROOM_MSG.TOURIST_CHOOSING) {
+      this._setCaptainTourist(!!profile.open);
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
+      if (this._captainChoosingTourist) this._setCaptainTourist(false);   // (a level, not the map)
       const picked = LEVELS.find(l => l.id === profile.levelId);
       // PR #397 m17: a level (or a Today's Road) this side's edition does not
       // offer is refused — the captain hears why, this side stays on the list.
@@ -6453,6 +6494,12 @@ export class Lobby {
       if (this._stokerTouristPlan && profile.toAnchor && Number.isFinite(profile.toAnchor.height)) {
         this._stokerTouristPlan.toAnchor = { height: profile.toAnchor.height, anchored: !!profile.toAnchor.anchored };
       }
+      if (this._stokerTouristPlan) {
+        const p = this._stokerTouristPlan;
+        const where = (profile.kind === 'scenic' && typeof profile.title === 'string' && profile.title) ? profile.title.slice(0, 80)
+          : (p.to ? shortPlace(p.to.label) : shortPlace(p.from && p.from.label));
+        this._setCaptainTourist(true, where || 'a place');
+      }
       if (this._stokerTouristPlan && (profile.kind === 'scenic' || profile.kind === 'yours')) {
         this._stokerTouristPlan.kind = profile.kind;
         if (profile.kind === 'scenic' && typeof profile.title === 'string' && profile.title) {
@@ -6473,6 +6520,8 @@ export class Lobby {
       // a plan that cannot load), so the pair returns to the room together.
       this._roomTouristPlan = profile.tourist ? (this._stokerTouristPlan || { unusable: true }) : null;
       this._stokerTouristPlan = null;
+      this._captainChoosingTourist = false;   // (back from the ride, the list waits for the next pick)
+      this._captainTouristPick = null;
       // Stoker: captain started the ride. Take the captain's placement salt and
       // world seed — they are authoritative for what the road contains (B-4).
       this._placementSalt = profile.placementSalt || 0;
