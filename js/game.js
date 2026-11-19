@@ -1307,7 +1307,9 @@ class Game {
     this.bike.setBotStoker(this._botRide);
     this.bike.setEmptySeat(flight && seat === NO_BOT);   // #644 step 2 · "Nobody": the back seat stays empty
     // #644 step 2 · race a bot ghost team (the Solo Flight card's Race row); the level decides at the countdown
-    this._botRaceTier = soloFlight && !roomBot && this.lobby && RACE_TIERS[this.lobby.selectedRace] ? this.lobby.selectedRace : null;
+    // (VERSUS BOTS only, Pete 2026-11-18: a SOLO ride on the Solo Flight never races)
+    const raceTier = this.lobby && this.lobby.rideRaceTier ? this.lobby.rideRaceTier() : 'off';
+    this._botRaceTier = soloFlight && !roomBot && RACE_TIERS[raceTier] ? raceTier : null;
     if (this.mode === 'solo' && this.hud) this.hud.setSeat('captain', !!this._botRide);   // the sync row: you and the bot
   }
 
