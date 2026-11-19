@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-400 -260 800 520" role="img" aria-label="House Tandem controller">
+  <title>House Tandem controller</title>
+  
+  <rect x="-339.5" y="-208.5" width="679" height="417" rx="208.5" fill="none" stroke="#2ef33c" stroke-width="37"/>
+  <path d="M-95 -227 H95 V-156 a34 34 0 0 1 -34 34 H-61 a34 34 0 0 1 -34 -34 Z" fill="#2ef33c"/>
+  <circle cx="-127" cy="3" r="70" fill="#934ef1"/>
+  <path d="M127 -51 V57 M73 3 H181" stroke="#118ae9" stroke-width="42" stroke-linecap="round" fill="none"/>
+</svg>
