@@ -862,6 +862,7 @@ export class Lobby {
       if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
     }
     if (step === this.roleStep) this._syncVersusBotsButton();
+    if (step === this.versusBotsStep) this._runVbPreview();   // (back from the level list: draw it again)
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -10523,11 +10524,44 @@ export class Lobby {
   _syncVersusBots() {
     for (const b of this._vbSeatButtons || []) { const on = b.dataset.bot === this.selectedBot; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
     for (const b of this._vbRaceButtons || []) { const on = b.dataset.race === this.selectedRace; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
+    this._showVbBot();
     const line = document.getElementById('vb-race-line');
     const tier = RACE_TIERS[this.selectedRace];
     if (line) line.textContent = tier
       ? `Racing ${ghostTeamName(ghostTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (tier.counts ? '' : ' (a warm-up: no versus achievements)')
       : '';
+  }
+
+  /**
+   * The bot on your back seat, in 3D on the Solo Flight, in its own colours, with its name (Pete, 2026-11-18: "show
+   * the bot 3d model and the color/name selected as it is changed"). "Nobody" shows an empty seat's words instead.
+   */
+  _showVbBot() {
+    const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById('vb-bot-canvas'));
+    const nameEl = document.getElementById('vb-bot-name');
+    if (!canvas || !nameEl) return;
+    const bot = BOTS[this.selectedBot];
+    nameEl.textContent = bot ? bot.name : 'Nobody: you ride alone';
+    nameEl.style.color = bot ? bot.color : 'rgba(255,255,255,0.7)';
+    canvas.classList.toggle('vb-empty', !bot);
+    if (!bot) return;
+    if (!this._vbPreview) {
+      const def = SPECIAL_BIKES[SOLO_FLIGHT_BIKE_KEY];
+      this._vbPreview = new DressingRoomPreview({ bike: { path: def.model, preset: null } });
+    }
+    this._vbPreview.show('vb', canvas, 'Stoker', { ...botStokerLook(bot.id), bot: bot.id });
+    this._runVbPreview();
+  }
+
+  /** Draw the preview while the VERSUS BOTS screen is up (it stops by itself when it is not). */
+  _runVbPreview() {
+    if (this._vbPreviewRaf || !this._vbPreview) return;
+    const step = (now) => {
+      if (this._currentStep !== this.versusBotsStep || !this._vbPreview) { this._vbPreviewRaf = 0; return; }
+      try { this._vbPreview.tick(now); } catch (e) { /* the next frame tries again */ }
+      this._vbPreviewRaf = requestAnimationFrame(step);
+    };
+    this._vbPreviewRaf = requestAnimationFrame(step);
   }
 
   /** The race this ride has: VERSUS BOTS' tier, and none from anywhere else. */
