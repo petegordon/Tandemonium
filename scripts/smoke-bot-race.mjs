@@ -2,9 +2,11 @@
 // smoke:bot-race · #644 step 2: on Solo Flight, race a bot ghost team (the two other player bots on a see-through
 // Penny-Farthing, replaying a recorded ride stretched to the tier's medal time). Beating it is a versus race.
 //
-//   BR-01  locked (player bots not earned): no Race row, and a stored race choice races nothing
-//   BR-02  unlocked: the Solo Flight card has a Race row (Off, Easy, Medium, Hard) and a "Nobody" back seat; the mouse
-//          picks Medium, a pad walks the row (D-pad) and picks Hard with A; both saved
+//   BR-01  locked (player bots not earned): VERSUS BOTS is shut and says what opens it; a stored race choice races
+//          nothing
+//   BR-02  unlocked (Pete, 2026-11-18: "A bot race is a versus race"): the Solo Flight card has no Race row; SOLO on
+//          the Solo Flight races nothing; VERSUS BOTS has a back seat row (with "Nobody") and a Race row (Easy,
+//          Medium, Hard); the mouse picks Medium, a pad walks the row (D-pad) and picks Hard with A; both saved
 //   BR-03  a Medium race with Bolt on the back: the ghost team is Rivet (captain) + Sprocket (stoker), robot geese in
 //          their colours, see-through, no collisions; it waits on the line in the countdown, then follows its line
 //          (its road distance is the recording's at the race clock); the race line on the HUD names them and the gap
@@ -35,34 +37,53 @@ const toSoloFlight = (page) => page.evaluate(() => { const l = window._game.lobb
 const card = (page) => page.evaluate(() => {
   const vis = (id) => { const e = document.getElementById(id); return !!e && e.getBoundingClientRect().width > 0; };
   return { picked: window._game.lobby.selectedPresetKey, race: window._game.lobby.selectedRace, bot: window._game.lobby.selectedBot,
-    raceRow: vis('race-picker'), seats: [...document.querySelectorAll('#bot-picker .bot-pick')].map(b => b.textContent.trim()),
-    races: [...document.querySelectorAll('#race-picker .race-pick')].map(b => ({ id: b.dataset.race, text: b.textContent.trim(), on: b.getAttribute('aria-checked') === 'true' })) };
+    raceRow: vis('race-picker'), step: document.getElementById('lobby-flow').current,
+    vbDesc: (document.getElementById('versus-bots-desc') || {}).textContent || '',
+    seats: [...document.querySelectorAll('#vb-seat-picks .bot-pick')].map(b => b.textContent.trim()),
+    races: [...document.querySelectorAll('#vb-race-picks .bot-pick')].map(b => ({ id: b.dataset.race, text: b.textContent.trim(), on: b.getAttribute('aria-checked') === 'true' })) };
 });
+/** RIDE TOGETHER, then VERSUS BOTS. */
+const openVersusBots = async (page) => {
+  await page.evaluate(() => window._game.lobby._showStep(window._game.lobby.modeStep));
+  await page.evaluate(() => document.getElementById('btn-together').click());
+  await until(page, () => document.getElementById('lobby-flow').current === 'lobby-role', null, 10000);
+  await page.evaluate(() => document.getElementById('btn-versus-bots').click());
+};
 
 // ── BR-01 locked ──
-console.log('BR-01 locked: no Race row, no race');
+console.log('BR-01 locked: VERSUS BOTS shut, no race');
 const locked = await h.gamePage({ storage: { ...BASE, tandemonium_achievements: earned(solo.slice(2)), tandemonium_bot_race: 'hard' } });
 await until(locked, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
 await toSoloFlight(locked);
 let c = await card(locked);
 check(!c.raceRow && c.picked === 'default', 'BR-01: locked Solo Flight shows no Race row and the ride stays on the default bike', c);
+await openVersusBots(locked);
+await sleep(500);
+c = await card(locked);
+check(c.step === 'lobby-role' && /\b1 more solo achievement\b/.test(c.vbDesc), 'BR-01: VERSUS BOTS is shut and says what opens it', { step: c.step, desc: c.vbDesc });
 const lockedRace = await locked.evaluate(() => { const g = window._game; g.mode = 'solo'; g._applyBikeChoice(); return g._botRaceTier; });
 check(!lockedRace, 'BR-01: a stored race choice races nothing on the default bike', lockedRace);
 await locked.close();
 
 // ── BR-02 the Race row ──
-console.log('BR-02 unlocked: the Race row by mouse and pad');
+console.log('BR-02 unlocked: VERSUS BOTS by mouse and pad');
 const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }),
   storage: { ...BASE, tandemonium_achievements: earned(solo.slice(1)), tandemonium_bot_race: 'off' } });
 await until(page, () => window._game.lobby._presetKeys.length > 1 && !!window._game.lobby._previewModel);
 await toSoloFlight(page);
 await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible && !sp.dark); });
 c = await card(page);
-check(c.raceRow && c.races.map(r => r.text).join(',') === 'Off,Easy,Medium,Hard' && c.race === 'off' && c.races.find(r => r.on).id === 'off',
-  'BR-02: the Race row shows Off, Easy, Medium, Hard (Off by default)', c.races);
+check(!c.raceRow, 'BR-02: the Solo Flight card has no Race row (it is VERSUS BOTS\' now)', c);
+const soloRace = await page.evaluate(() => { const g = window._game; g.lobby._pendingMode = 'solo'; g.mode = 'solo'; g._applyBikeChoice(); return g._botRaceTier; });
+check(!soloRace, 'BR-02: SOLO on the Solo Flight races nothing', soloRace);
+await openVersusBots(page);
+await until(page, () => document.getElementById('lobby-flow').current === 'lobby-versus-bots', null, 10000);
+c = await card(page);
+check(c.step === 'lobby-versus-bots' && c.races.map(r => r.text).join(',') === 'Easy,Medium,Hard' && c.race === 'easy' && c.races.find(r => r.on).id === 'easy',
+  'BR-02: VERSUS BOTS opens with a Race row of Easy, Medium, Hard (a stored Off becomes Easy)', c.races);
 check(c.seats.join(',') === 'Bolt,Rivet,Sprocket,Nobody', 'BR-02: the back seat can be left empty ("Nobody")', c.seats);
 const box = (sel) => page.evaluate((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, sel);
-let b = await box('.race-pick[data-race="medium"]');
+let b = await box('#vb-race-picks [data-race="medium"]');
 await page.mouse.click(b.x, b.y);
 c = await card(page);
 check(c.race === 'medium' && await page.evaluate(() => localStorage.getItem('tandemonium_bot_race')) === 'medium', 'BR-02: a mouse click picks Medium (saved)', c.race);
@@ -70,14 +91,14 @@ await h.shot(page, 'br-card-race-row-1080p');
 
 const pads = fakePads(page);
 await until(page, () => window._game.lobby.input && window._game.lobby.input.gamepadConnected, null, 30000);
-await until(page, () => window._game.lobby._stepFocus.items.some(e => e.classList && e.classList.contains('race-pick')), null, 30000);
+await until(page, () => window._game.lobby._stepFocus.items.some(e => e.dataset && e.dataset.race), null, 30000);
 await sleep(800);
 await page.evaluate(() => {
-  const fc = window._game.lobby._stepFocus, el = document.querySelector('.race-pick[data-race="off"]');
+  const fc = window._game.lobby._stepFocus, el = document.querySelector('#vb-race-picks [data-race="easy"]');
   fc._clearSpatialFocus(); fc.focusedEl = el; el.classList.add(fc.focusClass);
 });
 // each press, then wait for the focus to move (no fixed sleeps)
-for (const want of ['easy', 'medium', 'hard']) {
+for (const want of ['medium', 'hard']) {
   await pads.press(0, 'RIGHT');
   await until(page, (w) => { const f = window._game.lobby._stepFocus.focusedEl; return !!(f && f.dataset && f.dataset.race === w); }, want, 5000);
 }
@@ -95,8 +116,11 @@ await pads.unplug(0);
 
 // ── rides ──
 const lobbyRide = async ({ bot, race, difficulty = 'adventurous' }) => {
-  await page.evaluate((o) => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); l.pickBot(o.bot); l.pickRace(o.race); }, { bot, race });
-  await page.evaluate(() => document.getElementById('btn-solo').click());
+  // (VERSUS BOTS: the seat and the race on its own screen, then CHOOSE LEVEL)
+  await openVersusBots(page);
+  await until(page, () => document.getElementById('lobby-flow').current === 'lobby-versus-bots', null, 10000);
+  await page.evaluate((o) => { const l = window._game.lobby; l.pickBot(o.bot); l.pickRace(o.race); l._syncVersusBots(); }, { bot, race });
+  await page.evaluate(() => document.getElementById('btn-versus-bots-next').click());
   await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card[data-level-id="grandma"]'), { timeout: 20000 });
   await page.evaluate((d) => {
     document.querySelector('#level-cards .level-card[data-level-id="grandma"]').click();

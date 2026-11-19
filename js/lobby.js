@@ -55,7 +55,7 @@ import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
 import { resolveRider } from './goose-outfits.js';
-import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
+import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -255,6 +255,7 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
     this.versusStep = document.getElementById('lobby-versus');
+    this.versusBotsStep = document.getElementById('lobby-versus-bots');   // Pete, 2026-11-18: VERSUS BOTS
     this.touristStep = document.getElementById('lobby-tourist');   // E-6
     this._roomRole = null; // 'captain' | 'stoker'
 
@@ -408,6 +409,7 @@ export class Lobby {
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
       document.getElementById('btn-versus'),
+      document.getElementById('btn-versus-bots'),
       document.getElementById('btn-back-mode'),
     ];
     this._stepItems.set(this.roleStep, roleItems);
@@ -442,6 +444,7 @@ export class Lobby {
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
     this._stepBack.set(this.versusStep, document.getElementById('btn-back-versus'));
+    this._stepBack.set(this.versusBotsStep, document.getElementById('btn-back-versus-bots'));
     // #400: Tourist's inline Back is hidden by .lobby-step .lobby-back like every
     // step's; registering it drives the fixed bottom Back (and gamepad B).
     this._stepBack.set(this.touristStep, document.getElementById('btn-back-tourist'));
@@ -854,6 +857,11 @@ export class Lobby {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
+    if (step === this.levelStep && !this._inOnlineRoom() && this._pendingMode !== 'versus') {
+      const want = this._pendingMode === 'versusBots' ? 'versusBots' : 'solo';
+      if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
+    }
+    if (step === this.roleStep) this._syncVersusBotsButton();
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -888,7 +896,7 @@ export class Lobby {
     const lobbyCard = document.querySelector('.lobby-card');
     // Tourist opens from the level list (#400): the bike was already chosen
     // there, and on a phone the carousel pushes the route form off-screen.
-    const hideCarousel = (step === this.levelStep || step === this.touristStep);
+    const hideCarousel = (step === this.levelStep || step === this.touristStep || step === this.versusBotsStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
@@ -1212,6 +1220,7 @@ export class Lobby {
     this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
+      if (this._pendingMode === 'versusBots') { this._showStep(this.versusBotsStep); return; }
       if (this._pendingMode === 'versus') {
         // Back to team setup — players stay joined, monitor restarts via _showStep.
         this._showStep(this.versusStep);
@@ -1338,6 +1347,7 @@ export class Lobby {
       this._leaveVersus();
       this._showStep(this.roleStep);
     });
+    this._initVersusBots();
     // PAIR A CONTROLLER (mode screen + versus step): the WebHID grant a pad the
     // Gamepad API can't see needs — a Steam Controller is HID-only and a second
     // DualSense over Bluetooth never surfaces. Ported from the host step's
@@ -2432,8 +2442,10 @@ export class Lobby {
     const isVersus = mode === 'versus';
     // #400: every list offers only what this edition includes.
     const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
+    const vsBots = mode === 'solo' && this._pendingMode === 'versusBots';   // (Grandma's and the Daily Ride)
     const levels = LEVELS.filter(l =>
-      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id));
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id) && (!vsBots || raceableLevel(l)));
+    if (mode === 'solo') this._levelCardsFor = vsBots ? 'versusBots' : 'solo';
     this._lockedLevelIds = this._lockedLevelIds || new Set();   // read by NEXT LEVEL
 
     levels.forEach(level => {
@@ -2516,7 +2528,7 @@ export class Lobby {
       // column, so the TV's one-row card layout keeps its four columns). Not in
       // an online room (the partner is on the real date) and not in the versus
       // list (no Daily Ride there).
-      if (level.isDaily && !locked && isClickable && mode === 'solo' && this._timeWarpUnlocked()) {
+      if (level.isDaily && !locked && isClickable && mode === 'solo' && !vsBots && this._timeWarpUnlocked()) {
         const stack = document.createElement('div');
         stack.className = 'level-card-stack';
         const warp = this._buildWarpRow();
@@ -2536,7 +2548,7 @@ export class Lobby {
     // PR #397 m10: not for couch co-op, which shares this list — the Slingshot
     // is one rider, and leaving through it silently dropped P2.
     this._soloListFor = mode !== 'solo' ? null : this._pendingMode === 'local' ? 'local' : 'solo';
-    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local') {
+    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local' && !vsBots) {
       const card = document.createElement('button');
       card.className = 'level-card level-card-slingshot';
       card.dataset.levelId = 'slingshot';
@@ -2567,7 +2579,7 @@ export class Lobby {
     // (the stoker's list shows it too, like every other level: the captain picks; Pete, 2026-11-18,
     // "the stoker doesn't see ... Map Tourist but as Captain I see it")
     const stokerView = mode === 'multiplayer' && !isClickable;
-    if ((mode === 'solo' || mode === 'multiplayer') && (isClickable || stokerView) && this._touristAvailable()) {
+    if ((mode === 'solo' || mode === 'multiplayer') && (isClickable || stokerView) && !vsBots && this._touristAvailable()) {
       const card = document.createElement('button');
       card.className = 'level-card level-card-tourist' + (stokerView && this._captainChoosingTourist ? ' selected' : '');
       card.dataset.levelId = 'tourist';
@@ -10373,7 +10385,7 @@ export class Lobby {
       return b;
     });
     this._buildRacePicker();
-    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons, ...(this._raceButtons || []));
+    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
     // a pad already driving the mode step picks them up now, not on the next step change
     if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
       this._stepFocus.refreshSpatial(this._stepNavItems());
@@ -10404,6 +10416,123 @@ export class Lobby {
       el.appendChild(b);
       return b;
     });
+  }
+
+  // ── VERSUS BOTS (Pete, 2026-11-18) ───────────────────────────
+  // "A bot race is a versus race. ... let's call it 'versus bots' on mobile." The bot race used to be the Race row
+  // on the Solo Flight's card under SOLO; it is now its own entry beside VERSUS, the same on a phone and on a TV
+  // (Pete chose: one button on both, the Solo Flight only, shown from the start and shut until player bots are earned).
+
+  /** Is VERSUS BOTS open to this player? { ok, why } */
+  _versusBotsGate() {
+    if (!getEditionRules().versus) return { ok: false, why: 'In the full game' };
+    const p = playerBotsProgress(this._earnedAchievementIds());
+    if (!p.unlocked) {
+      const left = Math.max(1, p.need - p.have);
+      return { ok: false, why: left + ' more solo achievement' + (left === 1 ? '' : 's'), progress: p };
+    }
+    return { ok: true, why: '' };
+  }
+
+  _syncVersusBotsButton() {
+    const btn = document.getElementById('btn-versus-bots');
+    if (!btn) return;
+    const gate = this._versusBotsGate();
+    btn.classList.toggle('lobby-role-locked', !gate.ok);
+    btn.style.opacity = gate.ok ? '' : '0.55';
+    const desc = document.getElementById('versus-bots-desc');
+    if (desc) desc.textContent = gate.ok ? 'Race a robot tandem' : '🔒 ' + gate.why;
+  }
+
+  _initVersusBots() {
+    const btn = document.getElementById('btn-versus-bots');
+    if (!btn || !this.versusBotsStep) return;
+    this._syncVersusBotsButton();
+    btn.addEventListener('click', () => this._openVersusBots());
+    document.getElementById('btn-back-versus-bots')?.addEventListener('click', () => {
+      this._leaveVersusBots();
+      this._showStep(this.roleStep);
+    });
+    document.getElementById('btn-versus-bots-next')?.addEventListener('click', () => {
+      this._pendingMode = 'versusBots';
+      this._showStep(this.levelStep);
+    });
+  }
+
+  _openVersusBots() {
+    const gate = this._versusBotsGate();
+    if (!gate.ok) {
+      const p = gate.progress;
+      showInfoToast('🔒', 'Versus bots', gate.why === 'In the full game'
+        ? 'Race a robot tandem in the full game. Wishlist Tandemonium on Steam.'
+        : `Unlocks with the player bots: any ${p.need} of the ${p.total} solo achievements (you have ${p.have}).`);
+      try { analytics.trackEvent('versus_bots_locked', { why: gate.why }); } catch { /* offline */ }
+      return;
+    }
+    this._buildVersusBotsRows();
+    // the race is always on here: a choice of Off means Easy
+    if (!RACE_TIERS[this.selectedRace]) this.pickRace('easy');
+    // the Solo Flight, for this race (the player's own bike comes back on Back)
+    this._vbPrevMode = this._pendingMode;
+    if (this.selectedPresetKey !== SOLO_FLIGHT_BIKE_KEY) {
+      this._vbPrevBike = this.selectedPresetKey;
+      this.pickBike(SOLO_FLIGHT_BIKE_KEY);
+    }
+    this._syncVersusBots();
+    const items = [...this._vbSeatButtons, ...this._vbRaceButtons,
+      document.getElementById('btn-versus-bots-next'), document.getElementById('btn-back-versus-bots')].filter(Boolean);
+    this._stepItems.set(this.versusBotsStep, items);
+    this._stepCenterItems.set(this.versusBotsStep, items);
+    this._stepDefaultFocus.set(this.versusBotsStep, items.length - 2);   // (CHOOSE LEVEL)
+    try { analytics.trackEvent('versus_bots_opened', {}); } catch { /* offline */ }
+    this._showStep(this.versusBotsStep);
+  }
+
+  _leaveVersusBots() {
+    if (this._vbPrevBike) { this.pickBike(this._vbPrevBike); this._vbPrevBike = null; }
+    if (this._vbPrevMode) { this._pendingMode = this._vbPrevMode; this._vbPrevMode = null; }
+  }
+
+  /** The screen's two rows: who rides your back seat, and how fast the robot tandem is. Built once. */
+  _buildVersusBotsRows() {
+    if (this._vbSeatButtons) return;
+    const make = (parent, label, color, title, onPick, data) => {
+      const b = document.createElement('button');
+      b.className = 'bot-pick';
+      b.type = 'button';
+      b.setAttribute('role', 'radio');
+      Object.assign(b.dataset, data);
+      b.style.setProperty('--bot-color', color);
+      b.innerHTML = '<span class="bot-dot"></span>' + label;
+      b.title = title;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onPick(); this._syncVersusBots(); });
+      parent.appendChild(b);
+      return b;
+    };
+    const seats = document.getElementById('vb-seat-picks');
+    this._vbSeatButtons = [...BOT_IDS, NO_BOT].map((id) => {
+      const bot = BOTS[id];
+      return make(seats, bot ? bot.name : 'Nobody', bot ? bot.color : 'rgba(255,255,255,0.6)',
+        bot ? `${bot.name} rides your back seat` : 'Nobody: race them on your own', () => this.pickBot(id), { bot: id });
+    });
+    const races = document.getElementById('vb-race-picks');
+    this._vbRaceButtons = Object.values(RACE_TIERS).map((t) => make(races, t.name, '#ffc83d',
+      `They finish on ${t.medal} medal time`, () => this.pickRace(t.id), { race: t.id }));
+  }
+
+  _syncVersusBots() {
+    for (const b of this._vbSeatButtons || []) { const on = b.dataset.bot === this.selectedBot; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
+    for (const b of this._vbRaceButtons || []) { const on = b.dataset.race === this.selectedRace; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
+    const line = document.getElementById('vb-race-line');
+    const tier = RACE_TIERS[this.selectedRace];
+    if (line) line.textContent = tier
+      ? `Racing ${ghostTeamName(ghostTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (tier.counts ? '' : ' (a warm-up: no versus achievements)')
+      : '';
+  }
+
+  /** The race this ride has: VERSUS BOTS' tier, and none from anywhere else. */
+  rideRaceTier() {
+    return this._pendingMode === 'versusBots' && RACE_TIERS[this.selectedRace] ? this.selectedRace : 'off';
   }
 
   /** Pick the bot race tier for Solo Flight, or 'off' (saved on this device). */
@@ -10455,7 +10584,7 @@ export class Lobby {
     const el = document.getElementById('bot-picker');
     if (el) el.style.display = on ? '' : 'none';
     const race = document.getElementById('race-picker');
-    if (race) race.style.display = on ? '' : 'none';
+    if (race) race.style.display = 'none';   // (Pete, 2026-11-18: a bot race is a versus race: VERSUS BOTS has it)
     if (on) this._syncBotPicker();
   }
 
