@@ -224,8 +224,18 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host.host-online-on #host-local > h3, #lobby-host.host-online-on #host-local > p,
   #lobby-host.host-online-on #host-roster, #lobby-host.host-online-on #btn-host-local-next { opacity: .4; }
 }
-/* Narrow layouts have no local seats: the Local button never shows there. */
-@media (max-width: 1023px) { #btn-host-local-next { display: none; } }
+/* Narrow layouts have no local seats: the Local button never shows there... */
+@media (max-width: 1023px) {
+  #btn-host-local-next { display: none; }
+  /* ...except for a bot. A phone's room offers the same back seat as the TV's (Pete, 2026-11-18):
+     the Back seat row and RIDE WITH <BOT>, under the room code; the rest of the Local column stays away. */
+  /* (first on the screen: someone who wants the bot should not have to scroll past a greyed CHOOSE LEVEL to find it) */
+  #lobby-host[active].host-bot-on { display: flex !important; flex-direction: column; align-items: center; }
+  #lobby-host[active].host-bot-on #host-local { order: -1; display: grid; gap: 8px; justify-items: center; margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.14); width: 100%; }
+  #lobby-host[active].host-bot-on #host-local > :not(#host-bot-row):not(#btn-host-local-next) { display: none !important; }
+  #lobby-host[active].host-bot-on #btn-host-local-next { display: inline-flex; }
+  #lobby-host.host-online-on #host-local { display: none !important; }
+}
 
 /* ── Join with a code: kit keypad (#428 round 3) ── */
 .join-tv { display: none; }

@@ -53,7 +53,8 @@ import { BikeCelebration, giftOutfit } from './bike-celebration.js';
 import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor, prefetchOutfitGeese } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
-import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
+import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
+import { resolveRider } from './goose-outfits.js';
 import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
@@ -845,6 +846,7 @@ export class Lobby {
       if (this._previewModel) this._applyPresetToPreview();
     }
     this._syncRoomBikeRows();
+    if (this._botPickerAsked !== undefined) this._showBotPicker(this._botPickerAsked);   // (only where it means something)
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
@@ -1286,6 +1288,7 @@ export class Lobby {
         return;
       }
       this._showStep(this.hostStep);
+      this._refreshHostNext();   // (the Back seat row is there before the room has connected, or if it never does)
       this._createRoom();
     });
     // #563 · open the online room to type its code on another device.
@@ -6201,6 +6204,9 @@ export class Lobby {
     locBtn.disabled = !(local || botRide);
     step.classList.toggle('host-online-on', online);
     step.classList.toggle('host-local-on', local);
+    // (Pete, 2026-11-18: "Definitely need the experiences to match" — a phone's room offers the bot too)
+    step.classList.toggle('host-bot-on', botOn);
+    locBtn.textContent = botRide && !local ? 'RIDE WITH ' + BOTS[this._hostBot].name.toUpperCase() : 'CHOOSE LEVEL';
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
     if (sto) {
       if (!sto._openHint) sto._openHint = sto.hint;
@@ -9934,6 +9940,7 @@ export class Lobby {
       });
     }
     this._hostBotPicked();   // (fills the default)
+    this._prefetchBot(this._hostBot);
     for (const b of this._hostBotButtons) {
       const on_ = b.dataset.bot === this._hostBot;
       b.classList.toggle('active', on_);
@@ -10414,6 +10421,7 @@ export class Lobby {
   }
 
   _syncBotPicker() {
+    this._prefetchBot(this.selectedBot);
     for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
     // the race buttons name who you'd race (the two bots not on your back seat)
     const team = ghostTeamName(ghostTeamFor(this.selectedBot));
@@ -10425,12 +10433,41 @@ export class Lobby {
     }
   }
 
+  /**
+   * Fetch a bot's rider file as soon as it is picked, so the ride does not wait for it (Pete, 2026-11-18:
+   * "hesitation from the bot appearing"). Into the browser's cache only; once a bot.
+   */
+  _prefetchBot(id) {
+    if (!id || !BOTS[id]) return;
+    this._botFetched = this._botFetched || new Set();
+    if (this._botFetched.has(id)) return;
+    this._botFetched.add(id);
+    try {
+      const look = botStokerLook(id);
+      const path = resolveRider('Stoker', look.outfit, look.body).path;
+      if (path && typeof fetch === 'function') fetch(path, { cache: 'force-cache' }).catch(() => { this._botFetched.delete(id); });
+    } catch (e) { this._botFetched.delete(id); }
+  }
+
   _showBotPicker(on) {
+    this._botPickerAsked = !!on;
+    on = on && this._botPickerHere();
     const el = document.getElementById('bot-picker');
     if (el) el.style.display = on ? '' : 'none';
     const race = document.getElementById('race-picker');
     if (race) race.style.display = on ? '' : 'none';
     if (on) this._syncBotPicker();
+  }
+
+  /**
+   * Solo Flight's Seat and Race rows only mean something on the way to a SOLO ride: the main menu and the SOLO
+   * level list. On RIDE TOGETHER's screens they did nothing (Pete, 2026-11-18, on a phone: CHOOSE LEVEL stayed
+   * off with Sprocket picked); a room's bot is its Back seat row.
+   */
+  _botPickerHere() {
+    const s = this._currentStep;
+    if (!s || s === this.modeStep) return true;
+    return s === this.levelStep && (this._pendingMode === 'solo' || this._pendingMode === 'tourist') && !this._hostBotRide;
   }
 
   _applyPresetToPreview() {
