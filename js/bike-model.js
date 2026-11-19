@@ -596,6 +596,7 @@ export class BikeModel {
     const goose = this.goose;
     const loader = new GLTFLoader();
     loader.setDRACOLoader(getDracoLoader());
+    this._gooseSwapping = true;   // (read by the countdown: a bot or an outfit still arriving)
     this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
       if (this.goose !== goose) return; // the bike model was swapped meanwhile
       // A versus team's own geese that landed after its rig was torn down.
@@ -603,7 +604,8 @@ export class BikeModel {
       this.setSoloRider(this._soloRider);
       this.applyGooseColours();
       this._applyEnvMap();
-    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
+    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err))
+      .finally(() => { if (this.goose === goose) this._gooseSwapping = false; });
     return this._gooseSwap;
   }
 
@@ -685,6 +687,15 @@ export class BikeModel {
     if (!this.goose) return;   // the geese seat it when they load
     this.setSoloRider(this._soloRider);
     return this.setSeatLooks(this._seatLooks || getSeatLooks(), !this._sharedGeometry);
+  }
+
+  /**
+   * Is this bike all there: its model, and the geese meant to be on it (a bot just picked arrives as a new
+   * rider file)? The countdown waits for it, so a ride never starts with the back seat still filling.
+   */
+  get ridersSettled() {
+    // (a goose bike only counts as loaded once its geese are seated; a bike without geese, as phones ride, has none to wait for)
+    return !!this.modelLoaded && !this._gooseSwapping;
   }
 
   /** The player bot on the back seat, or null. */

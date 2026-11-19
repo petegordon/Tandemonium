@@ -1303,6 +1303,7 @@ class Game {
     const flight = soloFlight || (plain && !!roomBot);
     this._botRide = flight && seat !== NO_BOT ? seat : null;
     this._botSync = this._botRide ? new BotSync() : null;
+    this._bikeWaitS = 0;
     this.bike.setBotStoker(this._botRide);
     this.bike.setEmptySeat(flight && seat === NO_BOT);   // #644 step 2 · "Nobody": the back seat stays empty
     // #644 step 2 · race a bot ghost team (the Solo Flight card's Race row); the level decides at the countdown
@@ -2992,6 +2993,13 @@ class Game {
 
   _updateCountdown(dt) {
     if (this._warmGate) dt = 0;   // (the picture is held while the ride's models are warmed: its clock waits too)
+    // (Pete, 2026-11-18: "There was hesitation from the bot appearing". The Solo Flight and its bot are files of
+    // their own, loaded when the ride is set up: the clock waits for them, for as long as 6 s, so the bot is on the
+    // bike, and drawn once by the warm-up, before GO.)
+    if (this.bike && !this.bike.ridersSettled && this.mode !== 'versus' && (this._bikeWaitS || 0) < 6) {
+      this._bikeWaitS = (this._bikeWaitS || 0) + dt;
+      dt = 0;
+    }
     // Map Tourist: the countdown waits for the street under the bike (the first geometry to arrive is
     // coarse and can be far above or below it), for as long as 13 s. The stoker follows the captain's clock.
     if (this.isTourist && !this._touristHeld && this.mode !== 'stoker' && this.world && /** @type {any} */ (this.world).hasGround) {

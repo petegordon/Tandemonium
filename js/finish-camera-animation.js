@@ -28,6 +28,25 @@ const END_RADIUS = 4.2;
 const END_HEIGHT = 2.0;
 const END_LOOK_FWD = 1.4;
 const END_LOOK_Y = 1.55;
+/** The goose tandem's riderViewScale (bike-model.js): the end pose above was set on it. */
+const TANDEM_RIDER_SCALE = 1.02;
+/** The screen shape the end pose was set on (a desk or a TV). */
+const LANDSCAPE_ASPECT = 1.5;
+
+/**
+ * The end pose for this bike. A taller bike (the Solo Flight's riders sit 24% higher) is framed from as much higher
+ * and further off, and a captain sitting further forward (the Solo Flight's, 1.25 m) is allowed for, so no rider's
+ * head leaves the frame (Pete, 2026-11-18: "the camera at the end zooms in and cuts the heads of the riders off").
+ */
+export function endPoseFor(bike, aspect = LANDSCAPE_ASPECT) {
+  const k = Math.max(1, Math.min(2, ((bike && bike.riderViewScale) || TANDEM_RIDER_SCALE) / TANDEM_RIDER_SCALE));
+  const ahead = Math.max(0, (bike && bike.frontViewAhead) || 0);
+  // a narrow screen (a phone held upright) sees less from side to side: stand further off, and aim nearer the
+  // middle of the bike, so the rider behind is in the picture too
+  const a = Number.isFinite(aspect) && aspect > 0 ? aspect : LANDSCAPE_ASPECT;
+  const w = Math.max(1, Math.min(2, Math.sqrt(LANDSCAPE_ASPECT / a)));
+  return { radius: (END_RADIUS * k + ahead) * w, height: END_HEIGHT * k * (1 + (w - 1) * 0.5), lookFwd: (END_LOOK_FWD + ahead * 0.5) / w, lookY: END_LOOK_Y * k };
+}
 
 export class FinishCameraAnimation {
   /**
@@ -41,6 +60,7 @@ export class FinishCameraAnimation {
     this.camera = camera;
     this.bike = bike;
     this.startTheta = via < 0 ? -Math.PI : Math.PI;
+    this.end = endPoseFor(bike, camera && camera.aspect);
 
     // Capture the camera's starting pose so the swing eases out from
     // wherever the chase cam left it instead of snapping.
@@ -140,19 +160,19 @@ export class FinishCameraAnimation {
     const bikePos = this.bike.position;
 
     const theta = this._lerp(this.startTheta, END_THETA, e);
-    const radius = this._lerp(11, END_RADIUS, e);
-    const height = this._lerp(4.0, END_HEIGHT, e);
+    const radius = this._lerp(11, this.end.radius, e);
+    const height = this._lerp(4.0, this.end.height, e);
 
     this._orbitOffset(theta, radius, height, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
 
-    const lookFwdBias = this._lerp(-0.5, END_LOOK_FWD, e);
+    const lookFwdBias = this._lerp(-0.5, this.end.lookFwd, e);
     this._desiredLook.copy(bikePos);
     this._desiredLook.x += this._fwd.x * lookFwdBias;
     this._desiredLook.z += this._fwd.z * lookFwdBias;
     // Rises through the swing, so the riders sit lower in frame the closer the
     // camera gets rather than climbing towards the top strip.
-    this._desiredLook.y += this._lerp(1.2, END_LOOK_Y, e);
+    this._desiredLook.y += this._lerp(1.2, this.end.lookY, e);
 
     // Ease out of the chase cam's last pose for the first ~40% of swing.
     const blend = Math.min(1, t * 2.5);
@@ -173,14 +193,14 @@ export class FinishCameraAnimation {
   /** Park the camera on the held end pose. Shared by the zoom and hold phases. */
   _applyEndPose() {
     const bikePos = this.bike.position;
-    this._orbitOffset(END_THETA, END_RADIUS, END_HEIGHT, this._orbitPos);
+    this._orbitOffset(END_THETA, this.end.radius, this.end.height, this._orbitPos);
     this._desiredPos.copy(bikePos).add(this._orbitPos);
     this.camera.position.copy(this._desiredPos);
 
     this._desiredLook.copy(bikePos);
-    this._desiredLook.x += this._fwd.x * END_LOOK_FWD;
-    this._desiredLook.z += this._fwd.z * END_LOOK_FWD;
-    this._desiredLook.y += END_LOOK_Y;
+    this._desiredLook.x += this._fwd.x * this.end.lookFwd;
+    this._desiredLook.z += this._fwd.z * this.end.lookFwd;
+    this._desiredLook.y += this.end.lookY;
     this.camera.lookAt(this._desiredLook);
   }
 
