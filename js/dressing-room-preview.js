@@ -27,6 +27,7 @@ import { GooseRiders, disposeTree } from './goose-riders.js';
 import { isMirrorBike, isSparkleBike } from './special-bikes.js';
 import { applyMirrorEnv } from './mirror-env.js';
 import { addBikeSparkle } from './bike-sparkle.js';
+import { tintBot } from './player-bots.js';
 
 const FRAME_MS = 1000 / 30;
 const TURN_RATE = 0.25;        // rad/s turntable (auto)
@@ -189,6 +190,8 @@ export class DressingRoomPreview {
     const r = s.riders && s.riders.riders[s.seat];
     if (!r || !s.look) return;
     applyColourway(r.root, colourwayParamsForBody(s.look.outfit, s.look.colourway, s.body) || {});
+    // a player bot (VERSUS BOTS' preview): the robot in that bot's own colours
+    if (s.look.bot) tintBot(r.root, s.look.bot);
   }
 
   /**

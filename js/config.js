@@ -144,9 +144,10 @@ export function getShowRiders() {
     if (pref === 'on') return true;
     if (pref === 'off') return false;
   } catch (e) {}
-  // Default: on for desktop, off on phones — and off at the Low quality
+  // Default: on, phones included (Pete, 2026-11-18: "Turn it on by default so when I play with people on mobile
+  // online multiplayer they see the geese"). Off in a TV's own browser (a set-top chip) and at the Low quality
   // tier, where the riders' textures are most of the graphics memory.
-  return !isLowPower && getCurrentTier() !== 'low';
+  return !isTV && getCurrentTier() !== 'low';
 }
 
 /**

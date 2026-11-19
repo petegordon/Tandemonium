@@ -2744,6 +2744,11 @@
   .host-bot-row { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 4px 0 8px; flex-wrap: wrap; }
   .host-bot-row[hidden] { display: none; }
   #lobby-versus-bots .host-bot-row { flex-direction: column; gap: 6px; }
+  .vb-bot-view { display: grid; justify-items: center; gap: 2px; margin: 0 0 6px; }
+  #vb-bot-canvas { width: min(380px, 88vw); aspect-ratio: 16 / 10; height: auto; display: block; }   /* (wide: the Solo Flight is long) */
+  #vb-bot-canvas.vb-empty { visibility: hidden; }
+  .vb-bot-name { font: 800 22px/1.1 var(--uf-font-ui); letter-spacing: 1px; text-shadow: 0 2px 4px rgba(0,0,0,.6); min-height: 1.1em; }
+  @media (min-width: 1024px) { #vb-bot-canvas { width: min(460px, 32vw); } .vb-bot-name { font-size: var(--uf-size-xl); } }
   .versus-bots-hint { margin: 0 0 6px; }
   .versus-bots-line { min-height: 1.3em; margin: 2px 0 10px; }
   .lobby-role-locked .lobby-role-desc { opacity: .85; }
@@ -6068,6 +6073,8 @@ ON</button>
         <uf-step id="lobby-versus-bots" class="lobby-step">
           <p class="lobby-prompt">Versus bots</p>
           <p class="lobby-hint versus-bots-hint">Race a robot tandem on the Solo Flight</p>
+          <!-- Pete, 2026-11-18: "show the bot 3d model and the color/name selected as it is changed" -->
+          <div class="vb-bot-view"><canvas id="vb-bot-canvas" width="384" height="240" aria-hidden="true"></canvas><div id="vb-bot-name" class="vb-bot-name"></div></div>
           <div class="host-bot-row" id="vb-seat-row"><span class="room-bike-label">Your back seat</span><div class="host-bot-picks" id="vb-seat-picks" role="radiogroup" aria-label="Who rides your back seat"></div></div>
           <div class="host-bot-row" id="vb-race-row"><span class="room-bike-label">Race</span><div class="host-bot-picks" id="vb-race-picks" role="radiogroup" aria-label="How fast the robot tandem is"></div></div>
           <p class="lobby-hint versus-bots-line" id="vb-race-line"></p>
