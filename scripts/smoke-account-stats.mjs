@@ -90,7 +90,7 @@ ok = await waitFor(() => { const s = JSON.parse(sessionStorage.getItem('__api') 
 check(ok, 'D: time in game is reported while signed in', (await api()).seconds);
 
 // ── B. sign out: reset, and nothing comes back ──
-await page.evaluate(() => document.getElementById('profile-popup-logout').click());
+await page.evaluate(() => document.querySelector('#profile-popup-card button[data-act="signout"]').click());
 ok = await waitFor(() => !localStorage.getItem('tandemonium_auth_token') && window._game.achievements.getStats().cumulativeDistance === 0);
 l = await local();
 check(ok && l.earned.length === 0, 'B: sign-out resets the device\'s stats and badges', l);

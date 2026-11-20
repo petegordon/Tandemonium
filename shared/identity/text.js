@@ -43,6 +43,7 @@ export function summaryLines(/** @type {import('./client.js').AccountSummary} */
 export const TEXT = Object.freeze({
   signInWith: (/** @type {string} */ p) => `Sign in with ${providerName(p)}`,
   link: (/** @type {string} */ p) => `Link ${providerName(p)}`,
+  signOut: 'Sign out',
   confirmItsYou: 'Confirm it’s you',
   signInAgainWith: (/** @type {string} */ p) => `Sign in again with ${providerName(p)}`,
   freshWhy: 'For your safety, sign in again before linking another account.',

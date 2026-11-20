@@ -4065,6 +4065,21 @@
   .profile-popup-device-status { font-size: 11px; color: rgba(255,255,255,0.55); min-height: 1.4em; text-align: center; }
   /* The QR stands in for the Discord button that asked for it (lobby.js _setDiscordTriggersHidden). */
   .profile-popup-signin-btn[hidden] { display: none !important; }
+  #profile-popup uf-signin [hidden], #profile-popup uf-profile-card [hidden] { display: none !important; }
+  /* lab #146 · the shared sign-in buttons and login lines, at this popup's size (the
+     elements' own sizes are a page's; their look and words are untouched). */
+  #profile-popup uf-signin { align-self: stretch; margin-top: 8px; gap: 6px; }
+  #profile-popup uf-signin .uf-id-provider { min-width: 0; width: 100%; padding: 9px 14px; font-size: 13px; gap: 8px; border-radius: 6px; }
+  #profile-popup uf-signin .uf-id-provider svg { width: 18px; height: 18px; }
+  #profile-popup uf-profile-card { align-self: stretch; margin-top: 6px; gap: 8px; }
+  #profile-popup uf-profile-card ul { width: 100%; gap: 8px; }
+  #profile-popup uf-profile-card li { font-size: 13px; color: #fff; }
+  #profile-popup uf-profile-card .uf-id-login-name { text-align: left; }
+  #profile-popup uf-profile-card li[data-linked="false"] { justify-content: center; }
+  #profile-popup uf-profile-card .uf-id-login-pic { width: 36px; height: 36px; }
+  #profile-popup uf-profile-card .uf-id-link { font-size: 12px; font-weight: 700; padding: 7px 16px; }
+  #profile-popup uf-profile-card .uf-id-out { font-size: 11px; letter-spacing: 1px; padding: 7px 18px; border-radius: 6px; border-color: rgba(255,80,80,0.4); background: rgba(255,80,80,0.12); color: rgba(255,100,100,0.9); }
+  #profile-popup uf-profile-card .uf-id-out:hover { background: rgba(255,80,80,0.25); }
   .profile-popup-signin-btn.profile-popup-open-browser { background: transparent; border-color: rgba(255,255,255,0.35); color: #fff; font-size: 11px; }
   .profile-popup-signin-btn.profile-popup-open-browser:hover { background: rgba(255,255,255,0.1); }
 
@@ -5898,12 +5913,11 @@ ON</button>
           </svg>
         </button>
         <div id="profile-popup">
-          <!-- #612: the House Tandem account. One picture per linked sign-in
-               (Discord left, Steam right), and LINK DISCORD for a Steam player. -->
+          <!-- #612: the House Tandem account. The logins, the Link button for a missing one
+               and Sign out are the shared <uf-profile-card> (@usersfirst/identity, lab #146):
+               one line per login, the same on housetandem.com. -->
           <div class="profile-popup-content">
-            <div class="profile-popup-avatars" id="profile-popup-avatars"></div>
             <div class="profile-popup-name" id="profile-popup-name"></div>
-            <div class="profile-popup-email" id="profile-popup-email"></div>
             <div class="profile-popup-sub" id="profile-popup-prompt" hidden>Link Discord to keep your rides and achievements on housetandem.com and sign in on any device.</div>
             <!-- #612: a sign-in was linked or an account combined in; 7 days to undo it. -->
             <div class="profile-popup-notice" id="profile-popup-notice" role="status" hidden>
@@ -5911,8 +5925,7 @@ ON</button>
               <button class="profile-popup-notice-undo" id="profile-popup-notice-undo"></button>
               <button class="profile-popup-notice-ok" id="profile-popup-notice-ok">OK, THAT WAS ME</button>
             </div>
-            <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-link-discord" style="display:none;">LINK DISCORD</button>
-            <button class="profile-popup-logout" id="profile-popup-logout">SIGN OUT</button>
+            <uf-profile-card id="profile-popup-card" providers="discord" signout></uf-profile-card>
             <button class="profile-popup-back" id="profile-popup-back">CLOSE</button>
           </div>
           <!-- #612: Discord replaces Google. Same device: the button goes to
@@ -5921,9 +5934,9 @@ ON</button>
           <div id="profile-popup-signin" style="display:none;">
             <div class="profile-popup-title">Sign in to House Tandem</div>
             <div class="profile-popup-sub">Save your scores, achievements and Tandem Tokens everywhere you play.</div>
-            <!-- Steam build only: sign back in with this PC's Steam account (the ticket). -->
-            <button class="profile-popup-signin-btn profile-popup-steam" id="profile-popup-steam" style="display:none;">SIGN IN WITH STEAM</button>
-            <button class="profile-popup-signin-btn profile-popup-discord" id="profile-popup-discord">SIGN IN WITH DISCORD</button>
+            <!-- The shared <uf-signin> (lab #146). The Steam build adds Steam first: it signs
+                 back in with this PC's Steam account (the ticket). -->
+            <uf-signin id="profile-popup-providers" providers="discord"></uf-signin>
             <button class="profile-popup-back" id="profile-popup-signin-back">CLOSE</button>
           </div>
           <!-- The device-code steps; lobby.js moves this into whichever section is showing. -->
