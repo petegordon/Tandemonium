@@ -35,6 +35,15 @@ export {
 export { DEFAULT_YAW_RETURN_HALF_LIFE_S } from './yaw-return.js';
 
 export {
+  RollZero,
+  wrapAngle,
+  ROLL_ZERO_WINDOW_MS,
+  ROLL_ZERO_MIN_SAMPLES,
+  ROLL_ZERO_STILL_SPREAD_RAD,
+  ROLL_ZERO_DEFAULT_TIMEOUT_MS,
+} from './roll-zero.js';
+
+export {
   SensorFusion,
   FUSION_CALIB_COUNT,
   FUSION_CALIB_COUNT_BT,
