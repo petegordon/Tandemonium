@@ -80,8 +80,8 @@ export class UfCombineAccounts extends IdentityElement {
       <p class="uf-id-text">${esc(TEXT.combineAsk(into))}</p>
       ${this._error ? `<p class="uf-id-text uf-id-error" role="alert">${esc(this._error)}</p>` : ''}
       <div class="uf-id-actions">
-        <button type="button" class="uf-id-btn" data-act="no"${off}>${esc(TEXT.combineNo)}</button>
-        <button type="button" class="uf-id-btn" data-act="yes" data-tone="accent"${off}>${esc(TEXT.combineYes)}</button>
+        <button type="button" class="uf-id-btn" data-part="no" data-act="no"${off}>${esc(TEXT.combineNo)}</button>
+        <button type="button" class="uf-id-btn" data-part="yes" data-act="yes" data-tone="accent"${off}>${esc(TEXT.combineYes)}</button>
       </div>`;
   }
 

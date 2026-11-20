@@ -18,6 +18,15 @@
 //   el.busy = 'steam'      that button is waiting on the server
 //   el.error = 'Steam sign-in is unavailable right now'
 //   new-tab                links open in a new tab (a phone: this page stays put)
+//
+// Size and width (lab #152). Every size inside is in em, so the element scales as one piece:
+//   size="sm" | "lg"       smaller or larger than the default (13px, 22px; default 16px)
+//   style="font-size: …"   any other size
+//   block                  the buttons fill the width of the element (a narrow popup, a phone)
+//
+// Parts (stable names; el.named(name), or el.button(provider)): signin-discord, signin-steam, error.
+// el.buttons() lists the buttons top to bottom for a host that keeps its own focus list.
+// Setting busy, error or links keeps the same button nodes, so focus stays where it was.
 
 import { IdentityElement, esc } from './base.js';
 import { TEXT } from '../text.js';
@@ -28,18 +37,26 @@ const KNOWN = ['discord', 'steam'];
 export class UfSignin extends IdentityElement {
   /** @override */ static tag = 'uf-signin';
   /** @override */ static styles = `
-    uf-signin { display: flex; flex-direction: column; align-items: center; gap: var(--uf-space-2, 8px); font-family: var(--uf-font-ui, system-ui, sans-serif); }
+    uf-signin { display: flex; flex-direction: column; align-items: center; gap: .5em; font-family: var(--uf-font-ui, system-ui, sans-serif); font-size: var(--uf-size-md, 16px); }
+    uf-signin[size="sm"] { font-size: 13px; }
+    uf-signin[size="lg"] { font-size: 22px; }
     uf-signin[hidden] { display: none; }
-    uf-signin .uf-id-provider { display: inline-flex; align-items: center; justify-content: center; gap: 10px; box-sizing: border-box; min-width: 15.5rem; max-width: 100%;
-      padding: 13px 24px; border-radius: var(--uf-radius-md, 10px); border: 1px solid transparent; cursor: pointer; text-decoration: none;
-      font: 700 var(--uf-size-md, 16px)/1.2 var(--uf-font-ui, system-ui, sans-serif); color: #fff; }
+    /* a host may hide one button (set its hidden property); it stays hidden across renders */
+    uf-signin [hidden] { display: none !important; }
+    uf-signin .uf-id-provider { display: inline-flex; align-items: center; justify-content: center; gap: .625em; box-sizing: border-box; min-width: 15.5em; max-width: 100%;
+      padding: .8em 1.5em; border-radius: var(--uf-radius-md, 10px); border: 1px solid transparent; cursor: pointer; text-decoration: none;
+      font: 700 1em/1.2 var(--uf-font-ui, system-ui, sans-serif); color: #fff; }
+    uf-signin .uf-id-provider .uf-id-icon { width: 1.375em; height: 1.375em; flex: none; }
+    uf-signin[block] { align-items: stretch; }
+    /* (less side padding: in a narrow box the words must stay on one line) */
+    uf-signin[block] .uf-id-provider { min-width: 0; width: 100%; padding-left: .75em; padding-right: .75em; }
     uf-signin .uf-id-provider[data-provider="discord"] { background: #5865f2; }
     uf-signin .uf-id-provider[data-provider="discord"]:hover { background: #4752c4; }
     uf-signin .uf-id-provider[data-provider="steam"] { background: #171a21; border-color: #66c0f4; }
     uf-signin .uf-id-provider[data-provider="steam"]:hover { background: #2a475e; }
     uf-signin .uf-id-provider:focus-visible, uf-signin .uf-id-provider.uf-focus { outline: 3px solid var(--uf-color-focus, #ffd36b); outline-offset: 2px; }
     uf-signin .uf-id-provider[aria-disabled="true"], uf-signin .uf-id-provider[disabled] { opacity: .6; cursor: wait; }
-    uf-signin .uf-id-error { margin: 0; color: var(--uf-color-danger, #ff9b8a); font: 600 var(--uf-size-sm, 14px)/1.4 var(--uf-font-ui, system-ui, sans-serif); text-align: center; }
+    uf-signin .uf-id-error { margin: 0; color: var(--uf-color-danger, #ff9b8a); font: 600 .875em/1.4 var(--uf-font-ui, system-ui, sans-serif); text-align: center; }
   `;
 
   constructor() {
@@ -71,6 +88,9 @@ export class UfSignin extends IdentityElement {
   get error() { return this._error; }
   set error(v) { this._error = String(v || ''); this._busy = ''; this.requestUpdate(); }
 
+  /** The button (or link) of one provider, or null when it is not offered. @param {string} provider */
+  button(provider) { return this.named('signin-' + provider); }
+
   /** @override */
   render() {
     const tab = this.hasAttribute('new-tab') ? ' target="_blank" rel="noopener"' : '';
@@ -79,11 +99,12 @@ export class UfSignin extends IdentityElement {
       const href = this._links[p];
       // Only an https address at the provider itself is followed as a link.
       if (href && /^https:\/\//.test(href)) {
-        return `<a class="uf-id-provider" data-provider="${esc(p)}" href="${esc(href)}" rel="nofollow noopener"${tab}${this._busy ? ' aria-disabled="true"' : ''}>${inner}</a>`;
+        return `<a class="uf-id-provider" data-part="signin-${esc(p)}" data-provider="${esc(p)}" href="${esc(href)}" rel="nofollow noopener"${tab}${this._busy ? ' aria-disabled="true"' : ''}>${inner}</a>`;
       }
-      return `<button type="button" class="uf-id-provider" data-provider="${esc(p)}"${this._busy ? ' disabled' : ''}${this._busy === p ? ' aria-busy="true"' : ''}>${inner}</button>`;
+      // (busy is aria-disabled, never disabled: a browser drops the focus of a button that becomes disabled)
+      return `<button type="button" class="uf-id-provider" data-part="signin-${esc(p)}" data-provider="${esc(p)}"${this._busy ? ' aria-disabled="true"' : ''}${this._busy === p ? ' aria-busy="true"' : ''}>${inner}</button>`;
     }).join('');
-    return buttons + (this._error ? `<p class="uf-id-error" role="alert">${esc(this._error)}</p>` : '');
+    return buttons + (this._error ? `<p class="uf-id-error" data-part="error" role="alert">${esc(this._error)}</p>` : '');
   }
 }
 
