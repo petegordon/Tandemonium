@@ -2923,11 +2923,10 @@ export class Lobby {
             const img = this.toggleProfile.querySelector('img');
             if (img && pics[0]) img.src = this._avatarCache.get(pics[0].avatar) || pics[0].avatar;
             setBarAvatars(pics);
-            // (in place: a re-render would drop the pad's focus if the card is open)
-            for (const k of Object.keys(ids)) {
-              const pic = card.querySelector('li[data-provider="' + k + '"] img.uf-id-login-pic');
-              if (pic && ids[k] && this._avatarCache.has(ids[k].avatar)) pic.src = this._avatarCache.get(ids[k].avatar);
-            }
+            // (the card changes its nodes in place, lab #152: the pad's focus stays if it is open)
+            const fresh = {};
+            for (const k of Object.keys(ids)) fresh[k] = { ...ids[k], avatar: ids[k] && ids[k].avatar ? (this._avatarCache.get(ids[k].avatar) || ids[k].avatar) : ids[k] && ids[k].avatar };
+            card.user = { ...user, identities: fresh };
           });
         }
       } else {
@@ -4446,7 +4445,7 @@ export class Lobby {
     }
     if (card) {
       const had = card.hasAttribute('signout');
-      card.toggleAttribute('signout', !this._isSteam);
+      if (this._isSteam) card.removeAttribute('signout'); else card.setAttribute('signout', 'danger');
       const known = ids || (card.user && card.user.identities) || {};
       const want = (known.steam || this._isSteam) ? 'discord steam' : 'discord';
       const changed = card.getAttribute('providers') !== want;
@@ -4457,10 +4456,12 @@ export class Lobby {
 
   /** A shared element's button: the sign-in button, the Link button or Sign out (null when it is not showing). */
   _profileButton(which, provider) {
-    const sel = which === 'signin' ? '#profile-popup-providers [data-provider="' + provider + '"]'
-      : which === 'link' ? '#profile-popup-card button[data-act="link"][data-provider="' + provider + '"]'
-      : '#profile-popup-card button[data-act="signout"]';
-    return /** @type {HTMLElement|null} */ (document.querySelector(sel));
+    // (the elements' own way to their buttons, lab #152; null until the element has rendered)
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const el = which === 'signin' ? signin && signin.button && signin.button(provider)
+      : card && card.button && card.button(which, provider);
+    return /** @type {HTMLElement|null} */ (el || null);
   }
 
   /** The popup's pad-focusable buttons, top to bottom (hidden ones skipped, #332). */

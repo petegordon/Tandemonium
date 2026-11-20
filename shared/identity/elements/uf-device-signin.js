@@ -77,7 +77,7 @@ export class UfDeviceSignin extends IdentityElement {
           <li>${esc(type)} <span class="uf-id-code" aria-label="Code">${esc(this._code)}</span></li>
         </ol>
         <p class="uf-id-status" role="status">${esc(STATUS[this._status])}</p>
-        ${this.hasAttribute('open-here') && this._url ? `<div class="uf-id-actions"><button type="button" class="uf-id-btn" data-act="open">${esc(TEXT.openOnThisComputer)}</button></div>` : ''}
+        ${this.hasAttribute('open-here') && this._url ? `<div class="uf-id-actions"><button type="button" class="uf-id-btn" data-part="open" data-act="open">${esc(TEXT.openOnThisComputer)}</button></div>` : ''}
       </div>`;
   }
 }

@@ -55,8 +55,8 @@ export class UfAccountNotice extends IdentityElement {
     return `<p class="uf-id-text" role="status">${esc(t.text)}</p>
       ${this._error ? `<p class="uf-id-error" role="alert">${esc(this._error)}</p>` : ''}
       <div class="uf-id-actions">
-        <button type="button" class="uf-id-btn" data-act="undo" data-tone="danger"${off}>${esc(t.undo)}</button>
-        ${n.seen ? '' : `<button type="button" class="uf-id-btn" data-act="ok"${off}>${esc(t.ok)}</button>`}
+        <button type="button" class="uf-id-btn" data-part="undo" data-act="undo" data-tone="danger"${off}>${esc(t.undo)}</button>
+        ${n.seen ? '' : `<button type="button" class="uf-id-btn" data-part="ok" data-act="ok"${off}>${esc(t.ok)}</button>`}
       </div>`;
   }
 }
