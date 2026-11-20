@@ -10,7 +10,7 @@ var controlled=!!sw.controller;
 sw.register(S+"preview-sw.js",{scope:S,updateViaCache:'none'}).then(function(r){if(controlled)return r.update();}).catch(function(e){console.warn('[preview] service worker failed to register or update',e);});
 if(controlled)sw.addEventListener('controllerchange',function(){if(performance.now()<20000)reloadOnce('a newer build took over');else console.warn('[preview] a newer build took over; reload to be sure every file is from it');});
 else sw.ready.then(function(){reloadOnce('the service worker is still not in control');});
-})();</script><base href="/pr-preview/pr-814/"><script>window.__BUILD={sha:'8b30781',pr:814,time:'11-20-2026 08:22'}</script>
+})();</script><base href="/pr-preview/pr-814/"><script>window.__BUILD={sha:'4eab1ee',pr:814,time:'11-20-2026 10:05'}</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <script>
@@ -6419,7 +6419,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.8b30781 | 11-20-2026 08:22 (PR #814)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.4eab1ee | 11-20-2026 10:05 (PR #814)</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
