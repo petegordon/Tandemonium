@@ -111,39 +111,35 @@ jobs:
         # Always check out — the cleanup path (PR closed/merged) also needs a
         # git repo, or pr-preview-action fails with "not in a git directory".
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # On pull_request the checkout is GitHub's merge of the PR into its
+          # base. Depth 2 brings that merge's two parents: the base (HEAD^1) and
+          # the PR's head (HEAD^2). The stage step compares against the base to
+          # find the heavy files this PR changed; one commit is not enough.
+          fetch-depth: 2
 
+      # A preview is not a full copy of the game (#760): the heavy folders
+      # (tandem-3d/, assets/, images/, goose-stage/reels/) hold only the files this
+      # PR added or changed, and a service worker the preview registers fetches
+      # the rest from the live game. scripts/stage-preview.mjs does the staging
+      # (what is copied, the worker, the <base> tag, the version stamps) and
+      # explains each part; scripts/smoke-preview-fallback.mjs tests it.
       - name: Stage deploy files
         if: github.event.action != 'closed'
+        env:
+          # Passed as environment, not pasted into the script text.
+          PR_NUMBER: ${{ github.event.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          mkdir -p _site
-          # Exclude .gitignore: it would be published into pr-preview/pr-N/ and
-          # its `js/tourist-key.local.js` rule makes the gh-pages `git add` skip
-          # the key file we inject below. Nothing it ignores needs publishing —
-          # it's all already excluded here.
-          rsync -a --exclude='.git' --exclude='.github' --exclude='.gitignore' \
-                   --exclude='node_modules' --exclude='out' --exclude='desktop' \
-                   --exclude='electron' --exclude='scripts' --exclude='.env' \
-                   ./ _site/
-          # Inject <base> tag so relative asset paths resolve from the repo root,
-          # not from the /pr-preview/pr-N/ subdirectory
-          # Custom domain (CNAME) means no /repo-name/ prefix in URLs
-          sed -i 's|<head>|<head><base href="/pr-preview/pr-${{ github.event.number }}/">|' _site/index.html
-          # Stamp the previewed commit + time into the lobby footer so the
-          # preview build's version is visible (tagged with the PR number).
-          # The PR's HEAD commit, not `git rev-parse HEAD`: on pull_request
-          # that is a merge commit whose hash matches nothing in `git log`.
-          HASH=$(echo "${{ github.event.pull_request.head.sha }}" | cut -c1-7)
-          DATE=$(TZ='America/New_York' date '+%m-%d-%Y %H:%M')
-          VERSION="v.$HASH | $DATE (PR #${{ github.event.number }})"
-          # Delimiter '@' (not '#') — the version contains '#' from the PR number.
-          sed -i -E "s@id=\"lobby-version\">[^<]*@id=\"lobby-version\">${VERSION}@" _site/index.html
-          # Build identity for js/build-badge.js: an on-screen watermark, a
-          # version.json to spot a newer deploy, and the sha stamped into the
-          # module itself to spot stale cached game files.
-          PR=${{ github.event.number }}
-          echo "{\"sha\":\"$HASH\",\"pr\":$PR,\"time\":\"$DATE\"}" > _site/version.json
-          sed -i "s|<head>|<head><script>window.__BUILD={sha:'$HASH',pr:$PR,time:'$DATE'}</script>|" _site/index.html
-          sed -i "s|%%MODULE_SHA%%|$HASH|" _site/js/build-badge.js
+          # The comparison below is only right on GitHub's merge commit (two
+          # parents: the base, then the PR's head). Anything else: stop, don't guess.
+          if ! git rev-parse --verify --quiet 'HEAD^2' > /dev/null; then
+            echo "::error::Expected a checkout of the PR's merge commit; cannot tell which heavy files this PR changed."
+            exit 1
+          fi
+          # HEAD^1 is the base branch as merged, so HEAD^1...HEAD is exactly what
+          # origin/<base>...HEAD would give, without fetching the base's history.
+          node scripts/stage-preview.mjs --out _site --pr "$PR_NUMBER" --sha "$HEAD_SHA" --base 'HEAD^1'
 
       # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
       # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).

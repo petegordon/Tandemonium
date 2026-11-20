@@ -55,6 +55,7 @@
     "smoke:account-stats": "node scripts/smoke-account-stats.mjs",
     "smoke:helping-hand": "node scripts/smoke-helping-hand.mjs",
     "smoke:share-card": "node scripts/smoke-share-card.mjs",
+    "smoke:preview": "node scripts/smoke-preview-fallback.mjs",
     "sync-ui": "node scripts/sync-ui.js",
     "check:ui": "node scripts/check-ui.js",
     "sync-identity": "node scripts/sync-identity.js",
