@@ -59,7 +59,7 @@ import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoT
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer, lastCheckpointM } from './achievement-defs.js';
-import { InputManager, readGyroRollMode, setControllerManager, steamXInputMap } from './input-manager.js';
+import { InputManager, readGyroRollMode, normalizeGyroRollMode, GYRO_MODE_KEY, setControllerManager, steamXInputMap } from './input-manager.js';
 import { RowFocusController as FocusController, scrollWithStick, scrollPage } from './row-focus.js';   // #517: nearest-row up/down + scroll-into-view over the kit's controller
 import { ROOM_MSG, RoomProtocol } from './lobby/room-protocol.js';
 import { ROOM_WAIT_COPY, fmtClock } from './lobby/room-wait.js';   // #694 G: the disconnect pause says who + how long
@@ -7336,6 +7336,8 @@ class Game {
 
     const gyroEulerBtn   = document.getElementById('opt-gyro-euler');
     const gyroGravityBtn = document.getElementById('opt-gyro-gravity');
+    const gyroZeroBtn = document.getElementById('opt-gyro-zero');
+    if (gyroZeroBtn)    gyroZeroBtn.addEventListener('click',    () => this._setGyroRollMode('zero'));
     if (gyroEulerBtn)   gyroEulerBtn.addEventListener('click',   () => this._setGyroRollMode('euler'));
     if (gyroGravityBtn) gyroGravityBtn.addEventListener('click', () => this._setGyroRollMode('gravity'));
 
@@ -7731,11 +7733,12 @@ class Game {
   }
 
   _setGyroRollMode(mode) {
-    const m = (mode === 'gravity') ? 'gravity' : 'euler';
-    try { localStorage.setItem('tandemonium_gyro_roll_mode', m); } catch(e) {}
-    // Apply live to both players' input managers so it can be felt immediately.
+    const m = normalizeGyroRollMode(mode);
+    try { localStorage.setItem(GYRO_MODE_KEY, m); } catch(e) {}
+    // Apply live to every seat's input manager so it can be felt immediately.
     if (this.input) this.input.setGyroRollMode(m);
     if (this.inputP2) this.inputP2.setGyroRollMode(m);
+    for (const rig of this.versusRigs || []) for (const mem of rig.members || []) { if (mem.input && mem.input.setGyroRollMode) mem.input.setGyroRollMode(m); }
     this._updateOptionsGyroRollUI();
   }
 
@@ -7744,7 +7747,9 @@ class Game {
     const eulerBtn   = document.getElementById('opt-gyro-euler');
     const gravityBtn = document.getElementById('opt-gyro-gravity');
     if (!eulerBtn) return;
-    eulerBtn.classList.toggle('active',   mode !== 'gravity');
+    const zeroBtn = document.getElementById('opt-gyro-zero');
+    if (zeroBtn) zeroBtn.classList.toggle('active', mode === 'zero');
+    eulerBtn.classList.toggle('active',   mode === 'euler');
     gravityBtn.classList.toggle('active', mode === 'gravity');
   }
 
