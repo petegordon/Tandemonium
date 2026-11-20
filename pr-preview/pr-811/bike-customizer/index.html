@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
+<head><meta charset="UTF-8"><script>/* PR preview only (scripts/stage-preview.mjs): unchanged heavy files come from the live game through preview-sw.js */(function(){
+var S="/pr-preview/pr-811/",K='preview-sw-reloaded:'+S,sw=navigator.serviceWorker;
+if(!sw){console.warn('[preview] no service worker support: files this preview shares with the live game will be missing');return;}
+function reloadOnce(why){
+try{if(Date.now()-Number(sessionStorage.getItem(K)||0)<10000){console.warn('[preview] not reloading again ('+why+')');return;}sessionStorage.setItem(K,String(Date.now()));}catch(e){return;}
+location.reload();}
+var controlled=!!sw.controller;
+sw.register(S+"preview-sw.js",{scope:S,updateViaCache:'none'}).then(function(r){if(controlled)return r.update();}).catch(function(e){console.warn('[preview] service worker failed to register or update',e);});
+if(controlled)sw.addEventListener('controllerchange',function(){if(performance.now()<20000)reloadOnce('a newer build took over');else console.warn('[preview] a newer build took over; reload to be sure every file is from it');});
+else sw.ready.then(function(){reloadOnce('the service worker is still not in control');});
+})();</script>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Bike Customizer</title>

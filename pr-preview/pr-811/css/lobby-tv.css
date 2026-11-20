@@ -161,6 +161,12 @@ uf-system-bar#lobby-bar { display: none; }
   body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-sm) !important; color: rgba(255,255,255,0.8) !important; }
   body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
   body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* lab #146 · the shared buttons keep their mark beside their words (the rule above makes a button a block) */
+  body > #profile-popup.bar-popup button.uf-id-provider:not([hidden]) { display: flex !important; }
+  body > #profile-popup.bar-popup uf-signin .uf-id-provider svg { width: 1.3em; height: 1.3em; }
+  body > #profile-popup.bar-popup uf-profile-card li { font-size: var(--uf-size-sm); }
+  body > #profile-popup.bar-popup uf-profile-card .uf-id-login-pic { width: 2.6em; height: 2.6em; }
+  body > #profile-popup.bar-popup uf-profile-card ul, body > #profile-popup.bar-popup uf-profile-card li[data-linked="false"] button { margin-top: 0 !important; }
   /* The pad's ring sits inside the button here: the default ring is drawn 3px
      outside it with a glow, which covered the "Signed in with…" line above and
      ran over the system bar below. */
