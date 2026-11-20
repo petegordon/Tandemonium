@@ -78,6 +78,9 @@ import {
 import * as records from './records.js';
 import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { AuthManager, identityPictures } from './auth.js';
+// lab #146 · the Profile card's sign-in buttons and login lines are the shared elements
+import '../shared/identity/elements/uf-signin.js';
+import '../shared/identity/elements/uf-profile-card.js';
 import qrcode from '../shared/ui/third_party/qrcode-generator.js';
 import { SeatAccounts } from './seat-accounts.js';
 import { SeatAchievements } from './seat-achievements.js';
@@ -2840,9 +2843,8 @@ export class Lobby {
         if (gsiBtn) gsiBtn.style.display = 'none';
         const signInBtn = document.getElementById('btn-sign-in');
         if (signInBtn) signInBtn.style.display = 'none';
-        // Hide logout button — Steam auth is tied to Steam identity
-        const logoutBtn = document.getElementById('profile-popup-logout');
-        if (logoutBtn) logoutBtn.style.display = 'none';
+        // No Sign out — Steam auth is tied to Steam identity
+        this._syncProfileElements();
       } else {
         this.license = new LicenseManager(this.auth);
       }
@@ -2854,10 +2856,9 @@ export class Lobby {
 
   _setupAuth() {
     this.profilePopup = document.getElementById('profile-popup');
-    const popupAvatars = document.getElementById('profile-popup-avatars');
     const popupName = document.getElementById('profile-popup-name');
-    const popupEmail = document.getElementById('profile-popup-email');
-    const logoutBtn = document.getElementById('profile-popup-logout');
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
 
     // Initialize auth: Steam signs in by itself; everyone else can sign in
     // with Discord from the Profile popup (#612; Google is no longer offered).
@@ -2865,7 +2866,7 @@ export class Lobby {
 
     // Steam identity is automatic, so there's no meaningful logout on Steam (#332).
     // Elsewhere (web, or the desktop app without Steam) Discord can sign back in.
-    if (this._isSteam && logoutBtn) logoutBtn.style.display = 'none';
+    this._syncProfileElements();
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
@@ -2900,22 +2901,15 @@ export class Lobby {
         this.toggleProfile.classList.add('active');
         this.toggleLeaderboard.classList.add('active');
         const pics = identityPictures(user);
-        popupAvatars.replaceChildren(...pics.map((p) => {
-          const img = document.createElement('img');
-          img.alt = p.provider;
-          img.title = p.provider === 'discord' ? 'Discord' : p.provider === 'steam' ? 'Steam' : '';
-          img.referrerPolicy = 'no-referrer';
-          img.dataset.provider = p.provider;
-          img.src = this._avatarCache.get(p.avatar) || p.avatar;
-          return img;
-        }));
         popupName.textContent = user.name || '';
-        const linked = Object.keys(user.identities || {}).filter((k) => k !== 'google')
-          .map((k) => (k === 'discord' ? 'Discord' : k === 'steam' ? 'Steam' : k));
-        popupEmail.textContent = linked.length ? 'Signed in with ' + linked.join(' + ') : '';
-        // A Steam player can add Discord; it puts both on one House Tandem account.
-        const linkBtn = document.getElementById('profile-popup-link-discord');
-        if (linkBtn) linkBtn.style.display = this.auth.hasIdentity('discord') ? 'none' : '';
+        // One line per login: Discord always (a missing one is the Link Discord button: a Steam
+        // player can add it, and it puts both on one House Tandem account), Steam when it is
+        // linked or this is the Steam build. Pictures come from the avatar cache when it has them.
+        const ids = user.identities || {};
+        this._syncProfileElements(ids);
+        const cached = {};
+        for (const k of Object.keys(ids)) cached[k] = { ...ids[k], avatar: ids[k] && ids[k].avatar ? (this._avatarCache.get(ids[k].avatar) || ids[k].avatar) : ids[k] && ids[k].avatar };
+        card.user = { ...user, identities: cached };
         if (pics[0]) {
           const first = pics[0].avatar;
           this.toggleProfile.innerHTML = '<img src="' + (this._avatarCache.get(first) || first) + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
@@ -2929,6 +2923,11 @@ export class Lobby {
             const img = this.toggleProfile.querySelector('img');
             if (img && pics[0]) img.src = this._avatarCache.get(pics[0].avatar) || pics[0].avatar;
             setBarAvatars(pics);
+            // (in place: a re-render would drop the pad's focus if the card is open)
+            for (const k of Object.keys(ids)) {
+              const pic = card.querySelector('li[data-provider="' + k + '"] img.uf-id-login-pic');
+              if (pic && ids[k] && this._avatarCache.has(ids[k].avatar)) pic.src = this._avatarCache.get(ids[k].avatar);
+            }
           });
         }
       } else {
@@ -3025,22 +3024,33 @@ export class Lobby {
       this._updateModeButtons();
       this._rebuildLevelCards();
     };
-    logoutBtn.addEventListener('click', () => this._signOut());
+    card.addEventListener('uf-profile-signout', () => this._signOut());
+    // A Steam player links Discord: always the device code (QR, or this computer's browser).
+    card.addEventListener('uf-profile-link', (e) => { if (e.detail && e.detail.provider === 'discord') this._showProfileDevice(); });
     this._bindAccountNotice(updateUI);
 
-    // Steam build, signed out: sign back in with this PC's Steam account.
-    const steamBtn = document.getElementById('profile-popup-steam');
-    if (steamBtn) {
-      steamBtn.style.display = this._isSteam ? '' : 'none';
-      steamBtn.addEventListener('click', async () => {
+    signin.addEventListener('uf-signin', async (e) => {
+      const provider = e.detail && e.detail.provider;
+      if (provider === 'steam') {
+        // Steam build, signed out: sign back in with this PC's Steam account.
+        if (!this._isSteam) return;
         this._profileDiag('SIGN IN WITH STEAM');
         const ok = await this.auth.loginWithSteam();
         if (!ok) { this._showProfileError(this.auth.lastAuthError || 'Steam sign-in is unavailable'); return; }
         updateUI(this.auth.getUser());
         this._updateModeButtons();
         this.profilePopup.classList.remove('visible');
-      });
-    }
+        return;
+      }
+      if (provider !== 'discord') return;
+      // #612 · Sign in with Discord. On this device: go to Discord and back. In
+      // the desktop app: the device code, QR first (a phone from the couch), with
+      // OPEN ON THIS COMPUTER under it for a player at the desk. The browser no
+      // longer opens by itself: on a TV it opened out of sight.
+      if (this._hasDesktopBrowser()) { await this._showProfileDevice(); return; }
+      const ok = await this.auth.signInWithDiscordRedirect();
+      if (!ok) this._showProfileError(this.auth.lastAuthError || 'Discord sign-in is unavailable');
+    });
 
     // Back buttons close the popup
     document.getElementById('profile-popup-back').addEventListener('click', () => {
@@ -3051,17 +3061,6 @@ export class Lobby {
       this.profilePopup.classList.remove('visible');
     });
 
-    // #612 · Sign in with Discord. On this device: go to Discord and back. In
-    // the desktop app: the device code, QR first (a phone from the couch), with
-    // OPEN ON THIS COMPUTER under it for a player at the desk. The browser no
-    // longer opens by itself: on a TV it opened out of sight.
-    document.getElementById('profile-popup-discord').addEventListener('click', async () => {
-      if (this._hasDesktopBrowser()) { await this._showProfileDevice(); return; }
-      const ok = await this.auth.signInWithDiscordRedirect();
-      if (!ok) this._showProfileError(this.auth.lastAuthError || 'Discord sign-in is unavailable');
-    });
-    // A Steam player links Discord: always the device code (QR, or this computer's browser).
-    document.getElementById('profile-popup-link-discord').addEventListener('click', () => this._showProfileDevice());
     document.getElementById('profile-popup-open-browser').addEventListener('click', () => {
       if (this._profileDevUrl && this._hasDesktopBrowser()) window.electronApp.openSignIn(this._profileDevUrl);
     });
@@ -4234,7 +4233,7 @@ export class Lobby {
   signOutSeat(n) {
     if (n === 1) {
       if (this._isSteam) return;
-      document.getElementById('profile-popup-logout')?.click();
+      this._signOut();
       return;
     }
     try { this.seatAccounts.signOut(n); } catch (e) {}
@@ -4432,15 +4431,48 @@ export class Lobby {
     this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
   }
 
+  /**
+   * lab #146 · what the shared elements show, which is the game's to say: the Steam build
+   * offers Steam first on the signed-out card and has no Sign out (its account is the Steam
+   * one, #332); a login line for Steam shows when it is linked or this is the Steam build.
+   * @param {Record<string, any>} [ids] the signed-in account's logins
+   */
+  _syncProfileElements(ids) {
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
+    if (signin) {
+      const want = this._isSteam ? 'steam discord' : 'discord';
+      if (signin.getAttribute('providers') !== want) { signin.setAttribute('providers', want); if (signin.requestUpdate) signin.requestUpdate(); }
+    }
+    if (card) {
+      const had = card.hasAttribute('signout');
+      card.toggleAttribute('signout', !this._isSteam);
+      const known = ids || (card.user && card.user.identities) || {};
+      const want = (known.steam || this._isSteam) ? 'discord steam' : 'discord';
+      const changed = card.getAttribute('providers') !== want;
+      if (changed) card.setAttribute('providers', want);
+      if ((changed || had !== card.hasAttribute('signout')) && card.requestUpdate) card.requestUpdate();
+    }
+  }
+
+  /** A shared element's button: the sign-in button, the Link button or Sign out (null when it is not showing). */
+  _profileButton(which, provider) {
+    const sel = which === 'signin' ? '#profile-popup-providers [data-provider="' + provider + '"]'
+      : which === 'link' ? '#profile-popup-card button[data-act="link"][data-provider="' + provider + '"]'
+      : '#profile-popup-card button[data-act="signout"]';
+    return /** @type {HTMLElement|null} */ (document.querySelector(sel));
+  }
+
   /** The popup's pad-focusable buttons, top to bottom (hidden ones skipped, #332). */
   _profileItems() {
-    const ids = this.auth.isLoggedIn()
-      ? ['profile-popup-notice-undo', 'profile-popup-notice-ok', 'profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
-      : ['profile-popup-steam', 'profile-popup-discord', 'profile-popup-signin-back'];
+    const byId = (id) => document.getElementById(id);
+    const items = this.auth.isLoggedIn()
+      ? [byId('profile-popup-notice-undo'), byId('profile-popup-notice-ok'), this._profileButton('link', 'discord'), this._profileButton('signout'), byId('profile-popup-back')]
+      : [this._profileButton('signin', 'steam'), this._profileButton('signin', 'discord'), byId('profile-popup-signin-back')];
     // The QR's OPEN ON THIS COMPUTER sits just above CLOSE while the code is showing.
-    const box = document.getElementById('profile-popup-device');
-    if (box && !box.hidden) ids.splice(ids.length - 1, 0, 'profile-popup-open-browser');
-    return ids.map((id) => document.getElementById(id)).filter((el) => el && !el.hidden && el.style.display !== 'none');
+    const box = byId('profile-popup-device');
+    if (box && !box.hidden) items.splice(items.length - 1, 0, byId('profile-popup-open-browser'));
+    return items.filter((el) => el && !el.hidden && el.style.display !== 'none');
   }
 
   /**
@@ -4674,10 +4706,14 @@ export class Lobby {
 
   /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
   _setDiscordTriggersHidden(hide) {
-    for (const id of ['profile-popup-discord', 'profile-popup-link-discord']) {
-      const el = document.getElementById(id);
+    for (const el of [this._profileButton('signin', 'discord'), this._profileButton('link', 'discord')]) {
       if (el) el.hidden = hide;
     }
+  }
+
+  /** A popup button's name for the diag log (the shared elements' buttons have no id). */
+  _profileItemName(el) {
+    return el.id || [el.dataset.act || 'signin', el.dataset.provider].filter(Boolean).join(':');
   }
 
   /** The desktop app can open this computer's browser on a sign-in page. */
@@ -9031,13 +9067,13 @@ export class Lobby {
         this._activeModal = 'profile';
         this._modalBack = () => { this._profileDiag('closed by B'); this.profilePopup.classList.remove('visible'); };
         this._modalFocus.setItems(items);
-        this._profileDiag('pad list: ' + items.map((el) => el.id).join(', '));
+        this._profileDiag('pad list: ' + items.map((el) => this._profileItemName(el)).join(', '));
       }
       // Steam playtest (2026-11-07): RETURN TO LOBBY "did nothing" on the TV.
       // Log what the pad sends while the popup is open, to the diag file.
       if ((a && !this._profPrevA) || (b && !this._profPrevB)) {
         const f = items.find((el) => el.classList.contains('gamepad-focus'));
-        this._profileDiag((a ? 'A' : 'B') + ' down · focus ' + (f ? f.id : 'none') + ' · pad ' + (gp.id || '?'));
+        this._profileDiag((a ? 'A' : 'B') + ' down · focus ' + (f ? this._profileItemName(f) : 'none') + ' · pad ' + (gp.id || '?'));
       }
       this._profPrevA = a; this._profPrevB = b;
       this._modalFocus.poll();

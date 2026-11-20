@@ -106,6 +106,9 @@ const memory = () => {
 };
 const safe = (/** @type {() => KeyValue|undefined} */ get) => { try { return get() || memory(); } catch { return memory(); } };
 
+const AFTER_KEY = 'ht_after_signin';
+const AFTER_TTL_MS = 15 * 60 * 1000;
+
 export class IdentityClient {
   /** @param {IdentityOptions} opts */
   constructor(opts) {
@@ -125,6 +128,8 @@ export class IdentityClient {
     /** @type {IdentityUser|null} */ this.user = null;
     /** @type {string|null} */ this.token = null;
     /** @type {string|null} */ this.lastError = null;
+    /** The last refresh()'s HTTP status (0: offline). 401 without `account_gone` is a token the server no longer takes. */ this.meStatus = 0;
+    /** The last /me answer (the user, and what the API adds: achievements, best scores), or null. @type {any} */ this.me = null;
     this._listeners = new Set();
     this._device = null;
     this._load();
@@ -191,6 +196,7 @@ export class IdentityClient {
     this.cancelDevice();
     this.user = null;
     this.token = null;
+    this.me = null;
     this._save();
     this._emit('signout');
   }
@@ -216,9 +222,11 @@ export class IdentityClient {
   async refresh() {
     if (!this.token) return null;
     const r = await this.api('/me').catch(() => null);
+    this.meStatus = r ? r.status : 0;
     if (!r) return null;
     if (r.status === 401 && r.data.code === 'account_gone') { this.clearToken(); this._emit('gone'); return null; }
     if (!r.ok || !r.data.user || !this.user) return null;
+    this.me = r.data;
     const u = r.data.user;
     this.user = { ...this.user, identities: u.identities || this.user.identities || {} };
     if (u.display_name) this.user.name = u.display_name;
@@ -282,6 +290,27 @@ export class IdentityClient {
     return req;
   }
 
+  /**
+   * "Confirm it's you": a link needs a recent sign-in, and a browser has no quiet way to
+   * get one. Sign in again with a login this account already has; when it comes back as
+   * the same account, resume() answers with `after` (say 'link:steam'), for the page to
+   * carry on with what the player asked for.
+   * @param {'discord'|'steam'} provider @param {string} [then]
+   */
+  async confirmRedirect(provider, then, opts = {}) {
+    const c = this.claims();
+    try { this._storage.setItem(AFTER_KEY, JSON.stringify({ sub: c ? c.sub : null, then: then || null, at: this._now() })); } catch (e) { /* blocked */ }
+    return this.signInRedirect(provider, opts);
+  }
+
+  /** What confirmRedirect left, if this sign-in is the same account and recent. Read once. */
+  _takeAfter(sub) {
+    let after = null;
+    try { after = JSON.parse(this._storage.getItem(AFTER_KEY) || 'null'); } catch (e) { after = null; }
+    try { this._storage.removeItem(AFTER_KEY); } catch (e) { /* blocked */ }
+    return after && after.then && after.sub != null && String(after.sub) === String(sub) && this._now() - after.at < AFTER_TTL_MS ? String(after.then) : undefined;
+  }
+
   _pendingSecret(id) {
     try {
       const p = JSON.parse(this._tab.getItem('ht_link_pending') || 'null');
@@ -291,7 +320,7 @@ export class IdentityClient {
 
   /**
    * Back from a redirect? Sign in with what it carried, or finish the link this tab began.
-   * → null (nothing to do), { signedIn: true, server?, steam? },
+   * → null (nothing to do), { signedIn: true, server?, steam?, after? },
    *   { link: 'linked' }, { link: 'combine', id, provider, into, other },
    *   or { link: 'failed', error }.
    */
@@ -306,7 +335,7 @@ export class IdentityClient {
       const u = r && r.ok && r.data.user;
       const provider = typeof c.via === 'string' ? c.via.split(':')[0] : 'discord';
       this.apply(back.token, u ? { id: u.id, name: u.display_name, avatar: u.avatar_url, identities: u.identities } : { id: c.sub, name: c.name, avatar: c.picture }, { provider });
-      return { signedIn: true, server: back.server, steam: back.steam };
+      return { signedIn: true, server: back.server, steam: back.steam, after: this._takeAfter(c.sub) };
     }
     return this.completeLink(/** @type {{ id: string, code: string }} */ (back.link));
   }
@@ -409,6 +438,49 @@ export class IdentityClient {
     }
     this.apply(r.data.token, r.data.user, { provider, ...extra, ...(quiet ? { keep: true } : {}) }, quiet ? 'fresh' : 'signin');
     return true;
+  }
+
+  // ── the account's games, server membership, hand-off, delete ──
+
+  /** Achievements, stats and time played in every House Tandem game: { dice: { earned: [{ id, earnedAt }], stats, playtime } }. */
+  async games() {
+    if (!this.token) return {};
+    try {
+      const r = await this.api('/me/games');
+      return r.ok ? (r.data.games || {}) : {};
+    } catch (e) { return {}; }
+  }
+
+  /** Is the account's Discord in the House Tandem server? { linked, member: true|false|null, invite, server_url } or null. */
+  async membership() {
+    if (!this.token) return null;
+    try {
+      const r = await this.api('/me/discord');
+      return r.ok ? r.data : null;
+    } catch (e) { return null; }
+  }
+
+  /** A one-time code that opens another House Tandem site signed in (it goes in that site's URL; the session never does). → code or null */
+  async handoff() {
+    if (!this.token) return null;
+    try {
+      const r = await this.api('/auth/handoff', { method: 'POST' });
+      return (r.ok && r.data.code) || null;
+    } catch (e) { return null; }
+  }
+
+  /**
+   * Delete the account and everything on it. The server wants the typed word.
+   * → { deleted: true } (and this session is over) or { error }.
+   */
+  async deleteAccount(confirmWord) {
+    if (!this.token) return { error: 'Sign in first' };
+    try {
+      const r = await this.api('/me/delete', { method: 'POST', body: { confirm: confirmWord } });
+      if (!r.ok || !r.data.deleted) return { error: r.data.error || 'The account could not be deleted. Nothing was changed.' };
+      this.signOut();
+      return r.data;
+    } catch (e) { return { error: 'Offline. Nothing was changed.' }; }
   }
 
   // ── notices ──

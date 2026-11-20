@@ -56,7 +56,9 @@ await page.waitForFunction(()=>window._game?.bike?.goose && window._game.bike.mo
 
 const results = {};
 const fail = [];
-const check = (name, ok, info) => { results[name] = { ok: !!ok, ...(info !== undefined ? { info } : {}) }; if (!ok) fail.push(name); };
+// (each result also goes to stderr as it lands: a run takes many minutes, and a hang should say where)
+const T0 = Date.now();
+const check = (name, ok, info) => { results[name] = { ok: !!ok, ...(info !== undefined ? { info } : {}) }; if (!ok) fail.push(name); console.error(`[${Math.round((Date.now() - T0) / 1000)}s] ${ok ? "ok" : "FAIL"} ${name}`); };
 
 const load = await page.evaluate(() => {
   const b = window._game.bike, g = b.goose;
@@ -199,6 +201,20 @@ const EXPECT = { cyclists: ['goose_captain_cyclist.glb', 'goose_stoker_cyclist.g
                  fancy: ['goose_captain_fancy.glb', 'goose_stoker.glb'],
                  georgian: ['goose_captain_georgian.glb', 'goose_stoker_georgian.glb'],
                  victorian: ['goose_captain.glb', 'goose_stoker_victorian.glb'] };
+// #736 locked Cyclists, Fancy and Georgian behind their holiday bikes, so a fresh profile's
+// _setGooseOutfit() refuses them (and this smoke swapped nothing). First check that it does
+// refuse, then open the locks: the swap is what this smoke is about (smoke:wardrobe has the locks).
+const lockedAtStart = await page.evaluate(() => {
+  const gm = window._game, before = gm.bike._gooseRiderPaths.Captain;
+  const locked = [...gm._lockedOutfits()];
+  gm._setGooseOutfit('cyclists');
+  const refused = gm.bike._gooseRiderPaths.Captain === before && localStorage.getItem('tandemonium_goose_outfit') !== 'cyclists';
+  gm._lockedOutfits = () => new Set();
+  gm._updateOptionsGooseOutfitUI();
+  return { locked, refused };
+});
+check('a fresh profile has the holiday outfits locked, and a locked one is refused',
+  ['cyclists', 'fancy', 'georgian'].every(k => lockedAtStart.locked.includes(k)) && !lockedAtStart.locked.includes('victorian') && lockedAtStart.refused, lockedAtStart);
 for (const [key, files] of Object.entries(EXPECT)) {
   const solo = key === 'fancy';
   const r = await page.evaluate(async (key, solo) => {
