@@ -9,7 +9,8 @@
 //   el.addEventListener('uf-notice-ok', (e) => client.seen(e.detail.id));
 //
 // Shows one notice: what was linked or combined, until when it can be undone, and two
-// buttons, the undo first (it is the one that matters). `busy` disables both while the
+// buttons, the undo first (it is the one that matters). A notice already marked seen keeps
+// only its undo. `busy` disables both while the
 // host talks to the server; `error` shows why an undo failed.
 
 import { IdentityElement, SHARED_STYLES, esc } from './base.js';
@@ -55,7 +56,7 @@ export class UfAccountNotice extends IdentityElement {
       ${this._error ? `<p class="uf-id-error" role="alert">${esc(this._error)}</p>` : ''}
       <div class="uf-id-actions">
         <button type="button" class="uf-id-btn" data-act="undo" data-tone="danger"${off}>${esc(t.undo)}</button>
-        <button type="button" class="uf-id-btn" data-act="ok"${off}>${esc(t.ok)}</button>
+        ${n.seen ? '' : `<button type="button" class="uf-id-btn" data-act="ok"${off}>${esc(t.ok)}</button>`}
       </div>`;
   }
 }

@@ -6,3 +6,6 @@ export { TEXT, PROVIDER_NAMES, providerName, noticeText, summaryLines, shortDay 
 export { UfAccountNotice } from './elements/uf-account-notice.js';
 export { UfCombineAccounts } from './elements/uf-combine-accounts.js';
 export { UfDeviceSignin } from './elements/uf-device-signin.js';
+export { UfSignin } from './elements/uf-signin.js';
+export { UfProfileCard } from './elements/uf-profile-card.js';
+export { providerIcon, PROVIDER_COLORS } from './elements/icons.js';
