@@ -62,6 +62,15 @@ jobs:
           git -C ../tandemonium-controller-lab checkout --quiet "$ref"
           npm run check:identity
 
+      # shared/rooms is the same kind of copy, of @usersfirst/rooms (the room transport
+      # js/net/room-transport.js is built on), pinned by shared/rooms/ROOMS_VERSION.json.
+      - name: Rooms drift check (shared/rooms vs the lab at its pinned commit)
+        run: |
+          ref=$(node -e 'process.stdout.write(require("./shared/rooms/ROOMS_VERSION.json").sourceCommit)')
+          git -C ../tandemonium-controller-lab sparse-checkout set packages/rooms
+          git -C ../tandemonium-controller-lab checkout --quiet "$ref"
+          npm run check:rooms
+
       # A-3 · the game has no build step, so a broken import only shows up when
       # someone opens the page. This opens it.
       - name: Lobby smoke test
