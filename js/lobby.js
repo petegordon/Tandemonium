@@ -94,6 +94,7 @@ import { AchievementManager, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { SteamJoin } from './steam-join.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { GyroTip, gyroOptionAvailable } from './gyro-tip.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
@@ -727,6 +728,7 @@ export class Lobby {
     this._currentStep = step;
     if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
     if (step === this.modeStep) this._scheduleMenuBikeCheck();   // #736 · back on the main menu: any new bike
+    if (step === this.modeStep) this._gyroTip?.arm();   // #820
     if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
       const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
       this._presetIndex = i >= 0 ? i : 0;
@@ -3484,7 +3486,39 @@ export class Lobby {
         if (!requestAppQuit(window) && btn) btn.removeAttribute('disabled');
       });
     }
+    this._initGyroTip();
     this._syncSystemBar();
+  }
+
+  /** #820 · the Steam build's "best with motion control" popup. */
+  _initGyroTip() {
+    const $ = (id) => /** @type {any} */ (document.getElementById(id));
+    const sheet = $('gyro-tip-sheet');
+    if (!sheet || !window.steam) return;
+    sheet.attachFocus(this._stepFocus);
+    this._gyroTip = new GyroTip({
+      sheet, toggle: $('gyro-tip-never'), ok: $('gyro-tip-ok'), focus: this._stepFocus,
+      canShow: () => this._isSteam && !this._tapOverlay && !this._activeModal
+        && document.visibilityState === 'visible'
+        && this.lobbyEl?.style.display !== 'none' && this._flow.current === this.modeStep.id
+        // (result sheets stay [open] inside their hidden screens: only a visible one counts)
+        && ![...document.querySelectorAll('uf-sheet[open], #options-overlay.visible, .phone-qr-panel.open')].some((el) => el.getClientRects().length),
+      hasGyro: () => this._gyroOptionHere(),
+    });
+    this._gyroTip.arm();
+  }
+
+  /** Is a gyro controller or a paired phone here? */
+  async _gyroOptionHere() {
+    const devices = navigator.hid ? await navigator.hid.getDevices().catch(() => []) : [];
+    const pads = Array.from(navigator.getGamepads?.() || []).filter(Boolean);
+    return gyroOptionAvailable({
+      active: !!(this.motionActive || this.input?.gyroConnected || this.input?._remoteTilt),
+      phones: this.phonePool?.joinedEntries().length || 0,
+      hidGyro: devices.some((d) => ControllerRegistry.getEntry(d.vendorId, d.productId)?.capabilities?.gyro),
+      padGyro: pads.some((p) => ControllerRegistry.identifyFromGamepadId(p.id)?.hasGyro),
+      steamTypes: (window.steam?.input?.getXInputMap?.() || []).map((e) => e.type),
+    });
   }
 
   _openQuitSheet() {
@@ -8545,7 +8579,7 @@ export class Lobby {
     // controllers that connect async without a 'gamepadconnected' event (e.g.
     // a WebHID DualSense), which otherwise left the mode screen un-navigable
     // until the first _showStep.
-    if (this._stepFocus.items.length === 0) this._applyStepSpatialFocus(this._currentStep);
+    if (this._stepFocus.items.length === 0 && !this._sheetHoldsFocus()) this._applyStepSpatialFocus(this._currentStep);
     // Re-prime edges when returning from a modal (ranLast captured at the top
     // of this poll) so a held button across the transition isn't read as a
     // fresh press.
@@ -8662,6 +8696,11 @@ export class Lobby {
    * (matching the old _applyFocusHighlight gate). Called from _showStep and on
    * gamepad hot-connect. (#318)
    */
+  /** A kit sheet is up (result sheets stay [open] inside hidden screens): its focus is not the step's to take back. */
+  _sheetHoldsFocus() {
+    return [...document.querySelectorAll('uf-sheet[open]')].some((el) => el.getClientRects().length > 0);
+  }
+
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
