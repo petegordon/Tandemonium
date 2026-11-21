@@ -5856,14 +5856,15 @@ export class Lobby {
     const pool = this.phonePool;
     if (this.padRoom) this.padRoom.allowPlay = on;
     // Only the offer this step made is withdrawn (versus has its own panel).
-    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true); }
+    // #848 · co-op is two riders: one phone seat for Player 2 (Player 1's phone pairs from the main menu)
+    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true, { last: 2 }); }
     else if (pool && !on && this._hostOffering) { this._hostOffering = false; pool.setOffering(false); }
     const qr = /** @type {any} */ (document.getElementById('host-join-qr'));
     if (qr) {
       const link = on && pool ? (pool.joinLink({ play: true }) || '') : '';
       if (qr.value !== link) qr.value = link;
       const caption = !on ? ''
-        : !link ? (pool && pool.joinedEntries().length >= 3 ? 'Every phone seat is taken' : 'Opening…')
+        : !link ? (pool && pool.joinedEntries().length && !pool.pending ? 'The partner seat has a phone: press OK on it' : 'Opening…')
         : this._hostRoomCode ? 'Scan with your phone, or type this code on another device:' : 'Scan with your phone';
       if (qr.caption !== caption) qr.caption = caption;
     }
@@ -7181,6 +7182,7 @@ export class Lobby {
   _versusP1Descriptor() {
     const inp = this.input;
     if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
+    if (this.padRoom && this.padRoom.connected) return { type: 'gamepad', name: 'Phone 1' };   // #848
     if (inp.gamepadConnected) {
       const slot = inp._slot;
       if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };

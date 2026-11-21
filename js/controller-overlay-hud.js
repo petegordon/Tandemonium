@@ -34,6 +34,7 @@
 
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { steamTypeForGamepad } from './input-manager.js';
+import { PLAYER_COLORS } from './remote/pad-protocol.js';
 
 export const CONTROLLER_OVERLAY_PREF = 'tandemonium_controller_overlay';
 
@@ -46,7 +47,7 @@ export function getControllerOverlayPref() {
 // P1 green + P2 coral are the game's own player colours (see the local co-op
 // spike); P3/P4 borrow the lab's multi-overlay blue/purple so four lobby
 // tiles stay distinct. Versus tiles use the TEAM colour instead.
-export const PLAYER_COLORS = { P1: '#44ff66', P2: '#ff4560', P3: '#6ea8ff', P4: '#c79dff' };
+export { PLAYER_COLORS };
 
 // Result / cinematic states: the overlays there are modal and the front view
 // hides too, so the tiles step aside as well.
@@ -656,6 +657,9 @@ class Tile {
     this._initFails = 0;
     this._retryAt = 0;
     overlay.setCameraPreset('player');
+    // Pete, 2026-11-21: the exploded view, as the lab's overlay shows by default: bumpers, triggers and
+    // back buttons float clear of the body, so a press on them can be seen.
+    overlay.setFloatParts(true);
     overlay.setPressColor(this.entry.color);
     this.overlay = overlay;
     this.profile = type;

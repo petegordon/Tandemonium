@@ -79,6 +79,7 @@ export function resetPhoneSynthetic(gp) {
  * @typedef {object} PhoneHostLike   the parts of a PadSeat an entry uses
  * @property {() => Promise<string|null>} open
  * @property {() => void} close
+ * @property {() => Promise<void>} reoffer
  * @property {(mode: 'menu'|'ride') => void} setMode
  * @property {(cue: string) => void} cue
  * @property {(label: string) => void} setLabel
@@ -134,6 +135,17 @@ export class PhoneEntry {
 
   get link() { return this.host.link; }
   get status() { return this.host.status; }
+
+  /** #848 · no phone here any more: put this seat back on the shared QR. */
+  reoffer() {
+    this.everJoined = false;
+    this.present = false;
+    this.handedOff = false;
+    this.input.remotePresent = false;
+    resetPhoneSynthetic(this.synthetic);
+    this._initialPressedMask = null;
+    return this.host.reoffer();
+  }
 
   /** Open this phone's seat (offered with the room's shared join QR). */
   open() { return this.host.open(); }
@@ -220,6 +232,8 @@ export class PhonePool {
     /** @type {'menu'|'ride'} */
     this.mode = 'menu';
     this.offering = false;
+    /** #848 · the highest phone seat on offer: 4 for Versus, 2 for co-op. */
+    this.last = LAST_POOL_PHONE;
   }
 
   /** Free seats on offer: open, no phone has joined them yet. @returns {PhoneEntry[]} */
@@ -239,7 +253,8 @@ export class PhonePool {
    */
   joinLink(opts = {}) {
     const p = this.pending;
-    if (!this.offering || !p || !p.link) return null;
+    const open = (p && p.link) || (this.deps.seatOneOpen && this.deps.seatOneOpen());   // #848
+    if (!this.offering || !open) return null;
     return this.deps.joinLink ? this.deps.joinLink(opts) : p.link;
   }
 
@@ -250,7 +265,7 @@ export class PhonePool {
   offer() {
     const d = this.deps;
     let added = false;
-    for (let n = FIRST_POOL_PHONE; n <= LAST_POOL_PHONE; n++) {
+    for (let n = FIRST_POOL_PHONE; n <= this.last; n++) {
       if (this.entries.has(n)) continue;
       const entry = new PhoneEntry(n, {
         makeInput: d.makeInput,
@@ -259,6 +274,13 @@ export class PhonePool {
         onDrop: (e) => {
           // #563: a phone that went to play on itself is done here; its seat
           // goes back on offer.
+          // #848 · co-op has one phone seat: a phone that left without sitting down frees it for the next one.
+          // The seat is offered again in place: closing the room's only seat would close the room and its QR.
+          if (!e.attached && this.offering && this.last < LAST_POOL_PHONE) {
+            e.reoffer().then(() => this._changed(), () => {});
+            this._changed();
+            return;
+          }
           if (e.handedOff) { this.remove(e); if (this.offering) this.offer(); return; }
           this._changed();
           if (e.attached) d.onDrop?.(e);
@@ -282,10 +304,16 @@ export class PhonePool {
    * it off closes the seats no phone has joined and retires the QR (the next
    * offer shows a new one). Joined phones stay. Cheap to call repeatedly.
    * @param {boolean} on
+   * @param {{last?: number}} [opts]  #848 · the highest seat to offer (co-op has two riders)
    * @returns {PhoneEntry|null} the first entry on offer
    */
-  setOffering(on) {
-    if (on) { this.offering = true; return this.offer(); }
+  setOffering(on, { last = LAST_POOL_PHONE } = {}) {
+    if (on) {
+      this.offering = true;
+      this.last = last;
+      for (const e of this.offeredEntries()) if (e.n > last) { this.entries.delete(e.n); e.destroy(); }
+      return this.offer();
+    }
     if (!this.offering && !this.offeredEntries().length) return null;
     this.offering = false;
     for (const e of this.offeredEntries()) { this.entries.delete(e.n); e.destroy(); }
