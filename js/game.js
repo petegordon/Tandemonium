@@ -4302,14 +4302,22 @@ class Game {
     if (!el) return;
     const ridden = this.bike ? this.bike.distanceTraveled : 0;
     const left = Math.max(0, this._touristGoalM - ridden);
-    const text = this._touristRoute.explore
-      ? this._touristRoute.headline + ' · <span class="tourist-togo">' + formatDistance(ridden) + ' ridden</span>'
-      : this._touristRoute.headline +
-        ' · <span class="tourist-togo">' + (this.raceManager && this.raceManager.finished ? 'you are here!' : formatDistance(left) + ' to go') + '</span>';
+    const togo = this._touristRoute.explore ? formatDistance(ridden) + ' ridden'
+      : (this.raceManager && this.raceManager.finished ? 'you are here!' : formatDistance(left) + ' to go');
+    const headline = String(this._touristRoute.headline || '');
+    const text = headline + ' · ' + togo;
     if (text !== this._prevTouristGoalText) {
       this._prevTouristGoalText = text;
-      el.innerHTML = '<span class="tourist-arrow" aria-hidden="true">&#x27A4;</span> ' + text;
-      this._touristArrowEl = el.querySelector('.tourist-arrow');
+      // Built as text, never as markup: in a room the headline is made from the partner's plan.
+      const arrow = document.createElement('span');
+      arrow.className = 'tourist-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '➤';
+      const togoEl = document.createElement('span');
+      togoEl.className = 'tourist-togo';
+      togoEl.textContent = togo;
+      el.replaceChildren(arrow, ' ' + headline + ' · ', togoEl);
+      this._touristArrowEl = arrow;
     }
     // which way the beam is from where the bike points (no road to follow here)
     const arrow = this._touristArrowEl;

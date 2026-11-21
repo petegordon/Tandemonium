@@ -67,6 +67,7 @@ import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
+import { cleanText, cleanPlace } from './remote-safe.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage, setLookupReporter } from './tourist-config.js';
 import { setTilesSessionHooks, hasLiveTilesSession } from './tourist-tiles-session.js';
 import { TOURIST_USAGE_KEY, readUsage, mergeUsage, sessionGate, countSession, noteAddresses, storeWithUsage, sessionText } from './tourist-limits.js';
@@ -6076,6 +6077,11 @@ export class Lobby {
       // select; this re-syncs it (and moves an older build off its room step).
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
+      // The plan is the captain's to send: a captain takes none from its stoker.
+      if (this._roomRole === 'captain') return;
+      // Its words come from the partner's copy of the game: plain, short text only (js/remote-safe.js).
+      profile = { ...profile, from: cleanPlace(profile.from), to: cleanPlace(profile.to),
+        title: typeof profile.title === 'string' ? cleanText(profile.title, 80) : undefined };
       // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
       // plan from the two end points (pure, deterministic); held until the
       // flagged START_RIDE that follows.
