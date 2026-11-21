@@ -96,7 +96,7 @@ export class FrontViewCamera {
   }
 
   /** Square sized relative to the smaller screen dimension. Returns the
-   *  top-left CSS position + size. In multiplayer, if the partner webcam PiP is
+   *  top-left CSS position + size. In multiplayer, if the partner's picture circle is
    *  on screen (it shares the front-view's lower-right corner), the front view
    *  stacks directly ABOVE it, right-aligned and taken live from its rect, so
    *  the two never overlap. Otherwise it sits lower-right, above the pedal bar. */
@@ -128,9 +128,9 @@ export class FrontViewCamera {
     return { size, cssLeft: w - size - margin, cssTop: h - size - bottomClear };
   }
 
-  /** The partner webcam PiP's on-screen rect when it's actually visible with
-   *  content, else null. The recorder toggles its display when the partner has
-   *  a camera/avatar, so this is how we detect "multiplayer has video there". */
+  /** The partner's picture circle's on-screen rect when it's actually visible with
+   *  content, else null. The lobby shows it in the online room and hides it for
+   *  the ride, so in a ride this is normally null. */
   _partnerPipRect() {
     const el = document.getElementById('partner-pip-wrap');
     if (!el) return null;
@@ -297,7 +297,7 @@ export class FrontViewCamera {
 
     const w = window.innerWidth;
     const h = window.innerHeight;
-    // Re-measure on a throttle so the PiP still tracks the partner webcam
+    // Re-measure on a throttle so the PiP still tracks the partner's circle
     // appearing/leaving mid-ride (resize/orientation re-measure immediately),
     // but steady-state frames do no layout reads (#390).
     const now = performance.now();

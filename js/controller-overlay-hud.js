@@ -25,7 +25,7 @@
 //                          "which pad is which" identify view (issue #241).
 //
 // Tiles dodge what the ride already draws in the corners — the front-view
-// selfie cam, the partner webcam PiP, the pedal bars — so nothing gets covered.
+// selfie cam, the partner's picture circle, the pedal bars — so nothing gets covered.
 //
 // Cost: nothing while off. The visualizer (and its Three addons) is imported
 // on first enable; each tile owns a small WebGL canvas with its own render

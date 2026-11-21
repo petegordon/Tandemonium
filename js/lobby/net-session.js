@@ -97,6 +97,6 @@ export class NetSession {
 /** Every callback a consumer assigns on a room transport (RoomTransport + NetworkManager). */
 export const NET_CALLBACKS = [
   'onRoomJoined', 'onRoomWaiting', 'onConnected', 'onDisconnected', 'onReconnecting', 'onAuthError',
-  'onRemoteStream', 'onP2PUpgrade', 'onPartnerLeft',
+  'onP2PUpgrade', 'onPartnerLeft',
   'onProfileReceived', 'onPedalReceived', 'onStateReceived', 'onLeanReceived', 'onEventReceived',
 ];

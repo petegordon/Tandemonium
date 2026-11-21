@@ -12,7 +12,7 @@
 //   #lobby-role         — Role selection (Captain / Stoker)           back: #lobby-mode
 //   #lobby-host         — Captain waiting room (room code + QR)      back: #lobby-role
 //   #lobby-join         — Stoker join room (code input / spinner)     back: #lobby-role
-//   #lobby-room         — Multiplayer social room (video + PLAY)     back: leave room
+//   #lobby-room         — Multiplayer social room (players + PLAY)   back: leave room
 //   (multiplayer reuses #lobby-level with START RIDE / wait text)
 //
 // SHARED COMPONENTS:
@@ -21,7 +21,7 @@
 //   Tutorial Level Card   — .level-card-tutorial, built in the LEVELS loop (dashed border)
 //   Back Button          — .lobby-back per step, plus #lobby-fixed-back (non-gamepad)
 //   Toggle Columns       — .lobby-left-col (help/leaderboard/profile)
-//                          .lobby-right-col (camera/audio/joystick/motion/music)
+//                          .lobby-right-col (joystick/motion/music)
 //   Waiting Text         — .conn-status elements ("Waiting for captain...")
 //
 // GAMEPAD NAVIGATION:
@@ -113,7 +113,6 @@ import { canHostInstead } from './edition.js';   // #667
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
-import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
 import { playerLooks, padKeyFor, vidPidFromGamepadId, lookToWire, lookFromWire, lookColourway, LED_COLOURS } from './player-look.js';   // #548
@@ -126,15 +125,6 @@ import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
 const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
-
-// Timeout wrapper for permission promises that may hang on iOS stale tabs
-const PERMISSION_TIMEOUT_MS = 8000;
-function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('permission_timeout')), ms))
-  ]);
-}
 
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
 
@@ -264,45 +254,17 @@ export class Lobby {
 
     // Permission toggle buttons
     this.toggleAll = document.getElementById('toggle-all');
-    this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
     this.toggleJoystick = document.getElementById('toggle-joystick');
-    this.toggleAudio = document.getElementById('toggle-audio');
     this.toggleMusic = document.getElementById('toggle-music');
     this.toggleHelp = document.getElementById('toggle-help');
     this.helpModal = document.getElementById('help-modal');
     this.toggleProfile = document.getElementById('toggle-profile');
     this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
     this.toggleAchievements = document.getElementById('toggle-achievements');   // #540
-    this.cameraActive = false;
     this.motionActive = false;
     this.joystickActive = true; // joystick steering on by default when gamepad connected
-    this.audioActive = false;
-    this._cameraPermitted = false;
-    this._hasCamera = true; // assume true, check async below
-
-    // Room camera/mic off (#400 D7, default): no camera/audio toggles, and
-    // never touch getUserMedia/enumerateDevices. Multiplayer is unaffected.
-    this._mediaEnabled = isMediaEnabled();
-    if (!this._mediaEnabled) {
-      this._hasCamera = false;
-      this.toggleCamera.style.display = 'none';
-      this.toggleAudio.style.display = 'none';
-    }
-
-    // Hide camera toggle if no camera hardware exists
-    if (this._mediaEnabled && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      navigator.mediaDevices.enumerateDevices().then(devices => {
-        this._hasCamera = devices.some(d => d.kind === 'videoinput');
-        if (!this._hasCamera) {
-          this.toggleCamera.style.display = 'none';
-          this.cameraActive = false;
-          this._setToggleActive('camera', false);
-        }
-      }).catch(() => {});
-    }
     this._motionPermitted = false;
-    this._audioPermitted = false;
     this._permissionsChecked = false;
 
     // Music toggle (not a permission — just on/off, persisted in localStorage)
@@ -397,7 +359,7 @@ export class Lobby {
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleAchievements, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
-      [this.toggleAll, this.toggleCamera, this.toggleAudio],
+      [this.toggleAll],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
@@ -563,7 +525,7 @@ export class Lobby {
     }
 
     // iOS stale-tab recovery: detect when tab resumes and check if
-    // permissions/media tracks have been revoked by the OS.
+    // the motion sensors were suspended by the OS.
     this._tabHiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -588,7 +550,7 @@ export class Lobby {
       console.log('Desktop: overlay dismissed, activating gamepad...');
       this._runDesktopGamepadDetection();
     } else {
-      // Mobile/browser: request all permissions (audio, camera, motion)
+      // Mobile/browser: request motion (ALL covers motion + music)
       this._toggleAll();
       if (this.musicActive && this.onMusicChanged) {
         this.onMusicChanged(true);
@@ -694,44 +656,6 @@ export class Lobby {
     // Only check if the tab was hidden for more than 5 seconds
     if (this._tabHiddenAt && Date.now() - this._tabHiddenAt < 5000) return;
 
-    let stale = false;
-
-    // Check if media tracks have been ended by the OS
-    if (this.net && this.net._localMediaStream) {
-      const tracks = this.net._localMediaStream.getTracks();
-      for (const track of tracks) {
-        if (track.readyState === 'ended') {
-          stale = true;
-          break;
-        }
-      }
-    }
-
-    // Check if permission grants have been revoked
-    if (!stale && navigator.permissions) {
-      const checks = [];
-      if (this._cameraPermitted) {
-        checks.push(
-          navigator.permissions.query({ name: 'camera' }).then(r => {
-            if (r.state !== 'granted') return true;
-          }).catch(() => false)
-        );
-      }
-      if (this._audioPermitted) {
-        checks.push(
-          navigator.permissions.query({ name: 'microphone' }).then(r => {
-            if (r.state !== 'granted') return true;
-          }).catch(() => false)
-        );
-      }
-      if (checks.length > 0) {
-        Promise.all(checks).then(results => {
-          if (results.some(r => r)) this._showStaleOverlay();
-        });
-        return;
-      }
-    }
-
     // Check if motion data stopped flowing (iOS may suspend sensors)
     if (this.motionActive && this.input && this.input.motionEnabled) {
       const hadMotion = this.input.motionEnabled;
@@ -751,49 +675,6 @@ export class Lobby {
         }, 500);
       }, 200);
     }
-
-    if (stale) this._showStaleOverlay();
-  }
-
-  _showStaleOverlay() {
-    // Prevent duplicate overlays
-    if (document.getElementById('tap-to-start')) return;
-
-    // Reset permission state — grants are no longer valid
-    this._cameraPermitted = false;
-    this._audioPermitted = false;
-    this.cameraActive = false;
-    this.audioActive = false;
-    this._setToggleActive('camera', false);
-    this._setToggleActive('audio', false);
-
-    // Stop dead tracks
-    if (this.net && this.net._localMediaStream) {
-      this.net._localMediaStream.getTracks().forEach(t => t.stop());
-    }
-
-    // Create the overlay (reuses tap-to-start styling)
-    const overlay = document.createElement('div');
-    overlay.id = 'tap-to-start';
-    overlay.innerHTML = `<div class="tap-to-start-content">
-      <p>Permissions expired</p>
-      <p style="font-size:16px;opacity:0.6;margin-top:8px;">Tap to retry</p>
-    </div>`;
-    document.body.appendChild(overlay);
-    this._tapOverlay = overlay;
-
-    const dismiss = () => {
-      if (!this._tapOverlay) return;
-      this._tapOverlay = null;
-      // Re-request all permissions (user gesture required on iOS)
-      this._permissionsChecked = false;
-      this._toggleAll();
-      // Fade out
-      overlay.classList.add('fade-out');
-      setTimeout(() => overlay.remove(), 400);
-    };
-
-    overlay.addEventListener('click', dismiss, { once: true });
   }
 
   show() {
@@ -946,53 +827,8 @@ export class Lobby {
     if (step === this.levelStep) {
       requestAnimationFrame(() => this._adjustLevelCompact());
     }
-
-    // ── PiP class management ──
-    // Show PiP circles on room (hero size) and multiplayer level (scaled down).
-    // Hidden on all other steps (base CSS display:none).
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    // #428: no video PiPs unless media sharing is on (?media=1, #400 D7) — the
-    // room shows player cards instead.
-    if (selfieWrap && partnerWrap && !this._mediaEnabled) {
-      for (const w of [selfieWrap, partnerWrap]) w.classList.remove('pip-lobby-mode', 'pip-level-mode');
-    } else if (selfieWrap && partnerWrap) {
-      const isRoom = false;   // the room step is gone (merged into the host step)
-      const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
-      selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
-      selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
-      partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
-      partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
-      // Position PiPs to align with room-video-area in the center column (desktop)
-      if (isRoom) {
-        requestAnimationFrame(() => this._positionPipToVideoArea());
-        // Re-render badges with rect shape on desktop TV/Monitor
-        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
-        updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
-        if (this._partnerAchievements) {
-          updateBadgeDisplay('partner-badges', this._partnerAchievements, shape);
-        }
-      }
-      // Mobile: show room code between PiP circles using a body-level element
-      // (can't use the original label — it's inside a display:none parent on mobile)
-      if (isMobile) {
-        let mobileCode = document.getElementById('mobile-room-code');
-        if (isRoom && this.net && this.net.roomCode) {
-          if (!mobileCode) {
-            mobileCode = document.createElement('div');
-            mobileCode.id = 'mobile-room-code';
-            document.body.appendChild(mobileCode);
-          }
-          mobileCode.textContent = this.net.roomCode;
-          mobileCode.style.display = 'block';
-        } else if (mobileCode) {
-          mobileCode.style.display = 'none';
-        }
-      }
-    }
   }
 
-  /** Position each PiP over its slot container in the room grid */
   /**
    * The room's two <uf-seat>s (#173): which seat is yours, who is in the
    * other one, and whether they are here. Seats are keyed by role; 'self' /
@@ -1089,7 +925,7 @@ export class Lobby {
   }
 
   /**
-   * The room's two player cards (#428; video sharing is off since #400 D7):
+   * The room's two player cards (#428):
    * my profile and recent achievements in my seat, the partner's once their
    * profile message arrives, "Waiting for partner…" until then.
    */
@@ -1117,46 +953,6 @@ export class Lobby {
     fill(theirs, connected
       ? { name: partnerName || 'Partner', avatar: this._partnerAvatarUrl, achievements: this._partnerAchievements || [], here: true }
       : { name: 'Waiting for partner…', here: false });
-  }
-
-  _positionPipToVideoArea() {
-    const captainSlot = document.getElementById('room-player-captain');
-    const stokerSlot = document.getElementById('room-player-stoker');
-    if (!captainSlot || !stokerSlot) return;
-    const cRect = captainSlot.getBoundingClientRect();
-    const sRect = stokerSlot.getBoundingClientRect();
-    const root = document.documentElement.style;
-    root.setProperty('--pip-captain-left', (cRect.left + cRect.width / 2) + 'px');
-    root.setProperty('--pip-captain-top', (cRect.top + cRect.height / 2) + 'px');
-    root.setProperty('--pip-stoker-left', (sRect.left + sRect.width / 2) + 'px');
-    root.setProperty('--pip-stoker-top', (sRect.top + sRect.height / 2) + 'px');
-
-    // #167: on phones the partner circle sits at 50% + 20vw, which with its
-    // badges runs into the right toggle column (ALL / music). Cap its left
-    // edge so circle + badges end just short of that column, and keep the
-    // room code centred in the gap between the two circles.
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    const rightCol = this.lobbyEl && this.lobbyEl.querySelector('.lobby-right-col');
-    const colRect = rightCol && rightCol.getBoundingClientRect();
-    const wRect = partnerWrap && partnerWrap.getBoundingClientRect();
-    if (!selfieWrap || !wRect || wRect.width === 0 || !colRect || colRect.width === 0) {
-      root.removeProperty('--pip-partner-max-left');
-      root.removeProperty('--pip-room-code-left');
-      root.removeProperty('--pip-room-code-lift');
-      return;
-    }
-    let right = wRect.right;
-    for (const b of partnerWrap.querySelectorAll('.pip-badge')) right = Math.max(right, b.getBoundingClientRect().right);
-    const maxLeft = Math.max(0, colRect.left - (right - wRect.left) - 6);
-    root.setProperty('--pip-partner-max-left', maxLeft + 'px');
-    const partnerLeft = Math.min(window.innerWidth * 0.7, maxLeft); // 50% + 20vw
-    const selfieRight = selfieWrap.getBoundingClientRect().right;
-    root.setProperty('--pip-room-code-left', ((selfieRight + partnerLeft) / 2) + 'px');
-    // Too narrow for the code between them (e.g. 320px phones): lift it above the circles.
-    const code = document.getElementById('mobile-room-code');
-    const codeW = code ? code.getBoundingClientRect().width : 0;
-    root.setProperty('--pip-room-code-lift', (partnerLeft - selfieRight - 40 < codeW ? 60 : 0) + 'px');
   }
 
   _hideLobby() {
@@ -1522,17 +1318,9 @@ export class Lobby {
 
     // Permission toggles
     this.toggleAll.addEventListener('click', () => this._toggleAll());
-    this.toggleCamera.addEventListener('click', () => {
-      this._toggleCamera();
-      analytics.trackEvent('video_toggle', { enabled: this.cameraActive });
-    });
     // #646: a choice made here is P1's controller's (js/controller-settings.js).
     this.toggleMotion.addEventListener('click', () => { const want = !this.motionActive; this._toggleMotion(); this._rememberP1Steering({ gyro: want }); });
     this.toggleJoystick.addEventListener('click', () => { const want = !this.joystickActive; this._toggleJoystick(); this._rememberP1Steering({ stick: want }); });
-    this.toggleAudio.addEventListener('click', () => {
-      this._toggleAudio();
-      analytics.trackEvent('audio_toggle', { enabled: this.audioActive });
-    });
     // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
     this._musicLongPressed = false;
     this.toggleMusic.addEventListener('pointerdown', (e) => {
@@ -3230,69 +3018,12 @@ export class Lobby {
   // we remember it so re-enabling doesn't re-prompt.
 
   _toggleAll() {
-    // Room media off: ALL covers only what's left (motion + music).
-    if (!this._mediaEnabled) {
-      const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
-      if (allOn) {
-        if (this._motionAvailable() && this.motionActive) this._toggleMotion();
-        if (this.musicActive) this._toggleMusic();
-      } else {
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      }
-      return;
-    }
-    // If ALL is active, turn everything off
-    const motionOk = !this._motionAvailable() || this.motionActive;
-    const cameraOk = !this._hasCamera || this.cameraActive;
-    if (cameraOk && this.audioActive && motionOk && this.musicActive) {
-      if (this.cameraActive) this._toggleCamera();
-      if (this.audioActive)  this._toggleAudio();
+    // ALL covers motion + music.
+    const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
+    if (allOn) {
       if (this._motionAvailable() && this.motionActive) this._toggleMotion();
       if (this.musicActive) this._toggleMusic();
-      return;
-    }
-
-    // Batch camera + mic into one getUserMedia prompt when both are needed
-    const needCam = !this.cameraActive && !this._cameraPermitted && this._hasCamera;
-    const needMic = !this.audioActive  && !this._audioPermitted;
-
-    if (needCam || needMic) {
-      const constraints = {};
-      if (needCam) constraints.video = true;
-      if (needMic) constraints.audio = true;
-      withTimeout(navigator.mediaDevices.getUserMedia(constraints)).then(stream => {
-        stream.getTracks().forEach(t => t.stop());
-        if (needCam) {
-          this._cameraPermitted = true;
-          this.cameraActive = true;
-          this._setToggleActive('camera', true);
-        }
-        if (needMic) {
-          this._audioPermitted = true;
-          this.audioActive = true;
-          this._setToggleActive('audio', true);
-        }
-        // Already-permitted but inactive toggles
-        if (!needCam && !this.cameraActive) this._toggleCamera();
-        if (!needMic && !this.audioActive)  this._toggleAudio();
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      }).catch((err) => {
-        if (err && err.message === 'permission_timeout') {
-          this._showStaleOverlay();
-          return;
-        }
-        // Even if cam+mic fails, still try the ones that are already permitted
-        if (!this.cameraActive && this._cameraPermitted) this._toggleCamera();
-        if (!this.audioActive  && this._audioPermitted)  this._toggleAudio();
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      });
     } else {
-      // Both cam+mic already permitted — just activate any that are off
-      if (!this.cameraActive) this._toggleCamera();
-      if (!this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
       if (!this.musicActive) this._toggleMusic();
     }
@@ -3416,90 +3147,10 @@ export class Lobby {
 
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
-    const mediaOk = !this._mediaEnabled || (this.cameraActive && this.audioActive);
-    if (mediaOk && motionOk && this.musicActive) {
+    if (motionOk && this.musicActive) {
       this.toggleAll.classList.add('active');
     } else {
       this.toggleAll.classList.remove('active');
-    }
-  }
-
-  _toggleCamera() {
-    if (!this._mediaEnabled) return; // room media off (#400 D7)
-    if (!this._hasCamera) return; // no camera hardware
-    if (this.cameraActive) {
-      this.cameraActive = false;
-      this._setToggleActive('camera', false);
-      this._applyVideoTrackState(false);
-      // Notify partner to show avatar
-      if (this.net && this.net.connected) {
-        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
-      }
-      return;
-    }
-    if (this._cameraPermitted) {
-      this.cameraActive = true;
-      this._setToggleActive('camera', true);
-      // If we're in the room but have no video track yet, acquire it now
-      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
-        this._acquireAndShowCamera();
-      } else {
-        this._applyVideoTrackState(true);
-      }
-      // Notify partner to show video
-      if (this.net && this.net.connected) {
-        this.net.sendProfile(RoomProtocol.cameraToggle(true));
-      }
-      return;
-    }
-    withTimeout(navigator.mediaDevices.getUserMedia({ video: true })).then(stream => {
-      stream.getTracks().forEach(t => t.stop());
-      this._cameraPermitted = true;
-      this.cameraActive = true;
-      this._setToggleActive('camera', true);
-      // If in the room, acquire the real track and show it
-      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
-        this._acquireAndShowCamera();
-      } else {
-        this._applyVideoTrackState(true);
-      }
-      // Notify partner to show video
-      if (this.net && this.net.connected) {
-        this.net.sendProfile(RoomProtocol.cameraToggle(true));
-      }
-    }).catch((err) => {
-      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
-    });
-  }
-
-  async _acquireAndShowCamera() {
-    if (!this.net) return;
-    await this.net.acquireLocalMedia(true, this._audioPermitted);
-    if (!this.net._localMediaStream) return;
-    const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-    if (videoTrack) videoTrack.enabled = true;
-    // Wire up the selfie PiP
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    if (selfieVideo) {
-      selfieVideo.srcObject = this.net._localMediaStream;
-      selfieVideo.style.display = 'block';
-      selfieVideo.play().catch(() => {});
-    }
-    if (selfieAvatar) selfieAvatar.style.display = 'none';
-    if (selfieWrap) selfieWrap.style.display = 'block';
-    // Re-initiate media call so partner gets the video
-    if (this.net.transport === 'p2p') {
-      this.net.initiateCall();
-    } else {
-      // P2P not up yet — initiate when upgrade completes
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        this.net.initiateCall();
-        if (prevOnP2P) prevOnP2P();
-      };
     }
   }
 
@@ -3663,37 +3314,10 @@ export class Lobby {
     setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
   }
 
-  _toggleAudio() {
-    if (!this._mediaEnabled) return; // room media off (#400 D7)
-    if (this.audioActive) {
-      this.audioActive = false;
-      this._setToggleActive('audio', false);
-      this._applyAudioTrackState(false);
-      return;
-    }
-    if (this._audioPermitted) {
-      this.audioActive = true;
-      this._setToggleActive('audio', true);
-      this._applyAudioTrackState(true);
-      return;
-    }
-    withTimeout(navigator.mediaDevices.getUserMedia({ audio: true })).then(stream => {
-      stream.getTracks().forEach(t => t.stop());
-      this._audioPermitted = true;
-      this.audioActive = true;
-      this._setToggleActive('audio', true);
-      this._applyAudioTrackState(true);
-    }).catch((err) => {
-      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
-    });
-  }
-
   _setToggleActive(name, active) {
-    const el = name === 'camera' ? this.toggleCamera
-             : name === 'motion' ? this.toggleMotion
+    const el = name === 'motion' ? this.toggleMotion
              : name === 'joystick' ? this.toggleJoystick
-             : name === 'music'  ? this.toggleMusic
-             : this.toggleAudio;
+             : this.toggleMusic;
     if (active) {
       el.classList.add('active');
     } else {
@@ -4236,36 +3860,6 @@ export class Lobby {
       return;
     }
     try { this.seatAccounts.signOut(n); } catch (e) {}
-  }
-
-  _applyVideoTrackState(enabled) {
-    if (!this.net || !this.net._localMediaStream) return;
-    const track = this.net._localMediaStream.getVideoTracks()[0];
-    if (track) track.enabled = enabled;
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (enabled && track) {
-      if (selfieVideo) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-      }
-      if (selfieAvatar) selfieAvatar.style.display = 'none';
-    } else {
-      if (selfieVideo) selfieVideo.style.display = 'none';
-      if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-        const user = this.auth.getUser();
-        if (user && user.avatar) {
-          selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-          selfieAvatar.style.display = 'block';
-        }
-      }
-    }
-  }
-
-  _applyAudioTrackState(enabled) {
-    if (!this.net || !this.net._localMediaStream) return;
-    const track = this.net._localMediaStream.getAudioTracks()[0];
-    if (track) track.enabled = enabled;
   }
 
   /** #567: music is on but the browser hasn't let it play yet (it starts on the next key, click or touch). */
@@ -5265,26 +4859,6 @@ export class Lobby {
     if (this._permissionsChecked) return;
     this._permissionsChecked = true;
 
-    // Camera
-    if (this._mediaEnabled && navigator.permissions) {
-      navigator.permissions.query({ name: 'camera' }).then(r => {
-        if (r.state === 'granted') {
-          this._cameraPermitted = true;
-          this.cameraActive = true;
-          this._setToggleActive('camera', true);
-        }
-      }).catch(() => {});
-
-      // Microphone
-      navigator.permissions.query({ name: 'microphone' }).then(r => {
-        if (r.state === 'granted') {
-          this._audioPermitted = true;
-          this.audioActive = true;
-          this._setToggleActive('audio', true);
-        }
-      }).catch(() => {});
-    }
-
     // Motion — only show the toggle when a real sensor source exists.
     // Hidden by default (display:none in HTML).
     if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
@@ -5446,7 +5020,7 @@ export class Lobby {
     const fullCode = RoomSession.autoJoinCode(window.location.search);
     if (!fullCode) { this._checkDailyLink(); return; }
 
-    // B4a: drop ?room= but keep demo/media so a reload stays in this edition.
+    // B4a: drop ?room= but keep demo so a reload stays in this edition.
     history.replaceState(null, '', window.location.pathname + carriedQuery(window.location.search));
 
     try { await this._requestMotion(); } catch (_) {}
@@ -5485,7 +5059,6 @@ export class Lobby {
     const el = (id) => document.getElementById(id);
     return {
       replaceNet: () => this._replaceNet(),
-      media: () => ({ camera: this.cameraActive, audio: this.audioActive, cameraPermitted: this._cameraPermitted, audioPermitted: this._audioPermitted }),
       newRoom: (kind) => {
         this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
         // #563: set once the relay has us in the room. #694 (Pete): a rejoin matches create.
@@ -5725,8 +5298,6 @@ export class Lobby {
   async _openMoveNet(code, role) {
     const net = new NetworkManager();
     net._fallbackUrl = RELAY_URL;
-    net.cameraEnabled = this.cameraActive;
-    net.audioEnabled = this.audioActive;
     const moveNet = watchMoveNet(net);
     try { const t = await this.auth.getRelayToken(code, role); if (t) net._relayToken = t; } catch (e) { /* the relay takes no token */ }
     net.enterRoom(code, role);
@@ -5905,13 +5476,8 @@ export class Lobby {
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
     this._partnerIdle.reset(); this._activity.mark();   // #694 F: a fresh baseline, and say we're here
-    this._partnerCameraOn = true; // assume on until cameraToggle received
 
-    // Set role labels on PiP circles
-    const selfieLabel = document.getElementById('selfie-pip-label');
-    const partnerLabel = document.getElementById('partner-pip-label');
-    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
-    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._setPipLabels(role);
     this._syncRoomSeats(role);
 
     if (role === 'captain') {
@@ -5921,8 +5487,8 @@ export class Lobby {
       this._showRoomLevelsStep();
     }
 
-    // Start media
-    this._startRoomMedia();
+    // My picture in my circle
+    this._showSelfPip();
 
     // Register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
@@ -5936,9 +5502,7 @@ export class Lobby {
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
-    // Notify partner of current camera state so they show video or avatar
-    const camUser = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-    this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
+    this._sendNoCamera();
 
     // Handle partner disconnect while in room or levels
     const roomNet = this._watchRoomDrop();
@@ -6035,168 +5599,63 @@ export class Lobby {
     });
   }
 
+  /** The role labels under the two picture circles. */
+  _setPipLabels(role) {
+    const selfLabel = document.getElementById('self-pip-label');
+    const partnerLabel = document.getElementById('partner-pip-label');
+    if (selfLabel) selfLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
+    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+  }
+
+  /** The partner's picture (or the default icon) in the partner circle. */
   _updatePartnerPip() {
-    const partnerVideo = document.getElementById('partner-pip');
     const partnerAvatar = document.getElementById('partner-pip-avatar');
     const partnerWrap = document.getElementById('partner-pip-wrap');
     if (!partnerWrap) return;
-
-    const stream = partnerVideo && partnerVideo.srcObject;
-    const hasVideo = stream && stream.getVideoTracks().length > 0;
-    const hasLiveTrack = hasVideo && stream.getVideoTracks().some(t => t.readyState === 'live');
-
-    if (this._partnerCameraOn && hasVideo) {
-      partnerVideo.style.display = 'block';
-      partnerVideo.play().catch(() => {});
-      if (partnerAvatar) partnerAvatar.style.display = 'none';
-    } else if (!this._partnerCameraOn) {
-      // Partner explicitly turned off camera — show avatar
-      if (partnerVideo) partnerVideo.style.display = 'none';
-      if (partnerAvatar) {
-        partnerAvatar.src = this._partnerAvatarUrl
-          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-          : DEFAULT_AVATAR_SVG;
-        partnerAvatar.style.display = 'block';
-      }
-    } else if (!hasVideo && this._partnerCameraOn) {
-      // Camera on but stream not yet available — show avatar temporarily,
-      // then retry in case stream arrives shortly
-      if (partnerAvatar) {
-        partnerAvatar.src = this._partnerAvatarUrl
-          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-          : DEFAULT_AVATAR_SVG;
-        partnerAvatar.style.display = 'block';
-      }
-      if (partnerVideo) partnerVideo.style.display = 'none';
-      // Retry to catch stream arriving after a delay
-      setTimeout(() => this._updatePartnerPip(), 2000);
+    if (partnerAvatar) {
+      partnerAvatar.src = this._partnerAvatarUrl
+        ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
+        : DEFAULT_AVATAR_SVG;
+      partnerAvatar.style.display = 'block';
     }
     partnerWrap.style.display = 'block';
   }
 
-  async _startRoomMedia() {
-    if (!this.net) return;
-
-    // Register remote stream handler BEFORE acquiring local media so that
-    // an incoming call that arrives while getUserMedia is pending still
-    // gets its stream rendered in the partner PiP.
-    this.net.onRemoteStream = (remoteStream) => {
-      const partnerVideo = document.getElementById('partner-pip');
-      if (!partnerVideo || !remoteStream) return;
-
-      // Authoritative: always set srcObject, show video, call play.
-      // Don't delegate initial display to _updatePartnerPip — just show it.
-      partnerVideo.srcObject = remoteStream;
-      partnerVideo.style.display = 'block';
-      partnerVideo.play().catch(() => {});
-      const partnerAvatar = document.getElementById('partner-pip-avatar');
-      if (partnerAvatar) partnerAvatar.style.display = 'none';
-
-      // If partner camera is known to be off, switch to avatar
-      if (!this._partnerCameraOn) {
-        this._updatePartnerPip();
-      }
-
-      // Fall back to avatar if track ends
-      const vt = remoteStream.getVideoTracks()[0];
-      if (vt) {
-        vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
-      }
-    };
-
-    // Acquire all permitted tracks so they can be toggled on/off in the room
-    await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-
-    // Apply current toggle states to live tracks
-    if (this.net._localMediaStream) {
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      if (videoTrack) videoTrack.enabled = this.cameraActive;
-      const audioTrack = this.net._localMediaStream.getAudioTracks()[0];
-      if (audioTrack) audioTrack.enabled = this.audioActive;
-    }
-
-    // PiP class is managed by _showStep() — just get the element reference
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-
-    // Start selfie video from the acquired stream
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (selfieVideo && this.net._localMediaStream) {
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      // Always bind the stream so toggling on later works immediately
-      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
-      if (videoTrack && this.cameraActive) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-        if (selfieAvatar) selfieAvatar.style.display = 'none';
-      } else {
-        selfieVideo.style.display = 'none';
-        // Show avatar fallback when camera is off (or default icon if not logged in)
-        if (selfieAvatar) {
-          const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-          selfieAvatar.src = (user && user.avatar)
-            ? (this._avatarCache.get(user.avatar) || user.avatar)
-            : DEFAULT_AVATAR_SVG;
-          selfieAvatar.style.display = 'block';
-        }
-      }
-      if (selfieWrap) selfieWrap.style.display = 'block';
-    } else {
-      // No stream at all — fallback to avatar or default icon
-      if (selfieAvatar && selfieWrap) {
-        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        selfieAvatar.src = (user && user.avatar)
-          ? (this._avatarCache.get(user.avatar) || user.avatar)
-          : DEFAULT_AVATAR_SVG;
-        selfieAvatar.style.display = 'block';
-        if (selfieVideo) selfieVideo.style.display = 'none';
-        selfieWrap.style.display = 'block';
-      }
-    }
-
-    // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
-    // PiP class is managed by _showStep() — no manual toggle needed here
-
-    // Room media off (#400 D7): no media call to place.
-    if (!this._mediaEnabled) return;
-
-    // Captain initiates media call first; stoker follows after a delay as fallback.
-    // Staggered to avoid cross-call interference that causes flickering.
-    // PeerJS media calls require P2P, so we wait for the upgrade first.
-    this._mediaCallRetries = 0;
-    this._mediaCallTimer = null;
-    const initialDelay = this._roomRole === 'captain' ? 0 : 4000;
-
-    const tryInitiateCall = () => {
-      if (!this.net || !this.net.peer || !this.net.conn) return;
-      // Skip if we already have a live partner stream
-      const pv = document.getElementById('partner-pip');
-      const hasLive = pv && pv.srcObject &&
-        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-      if (hasLive) return;
-      this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 3) {
-        this._mediaCallTimer = setTimeout(() => {
-          tryInitiateCall();
-        }, 5000);
-      }
-    };
-
-    const onP2PReady = () => {
-      this._mediaCallTimer = setTimeout(() => tryInitiateCall(), initialDelay);
-    };
-
-    if (this.net.transport === 'p2p') {
-      onP2PReady();
-    } else {
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        onP2PReady();
-        if (prevOnP2P) prevOnP2P();
-      };
-    }
+  /** My picture (or the default icon when not signed in) in my circle. */
+  _showSelfPip() {
+    const selfAvatar = document.getElementById('self-pip-avatar');
+    const selfWrap = document.getElementById('self-pip-wrap');
+    if (!this.net || !selfAvatar || !selfWrap) return;
+    const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+    selfAvatar.src = (user && user.avatar)
+      ? (this._avatarCache.get(user.avatar) || user.avatar)
+      : DEFAULT_AVATAR_SVG;
+    selfAvatar.style.display = 'block';
+    selfWrap.style.display = 'block';
   }
+
+  /**
+   * Builds from before the room camera was removed (2026-11-20) wait for this message before
+   * they stop expecting a partner video: without it their partner circle comes back mid-ride.
+   */
+  _sendNoCamera() {
+    const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+    this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
+  }
+
+  /** Hide both picture circles (a ride is starting, or the room is left). */
+  _hideRoomPips() {
+    for (const id of ['self-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
+  }
+
+  /** Hide the partner's circle (they left, or the ride is over). */
+  hidePartnerPip() {
+    const w = document.getElementById('partner-pip-wrap');
+    if (w) w.style.display = 'none';
+  }
+
+  /** Hide both circles from outside the lobby (game.js, leaving a ride for the menu). */
+  hideRoomPips() { this._hideRoomPips(); }
 
   /** Online room: leave level select, resetting its multiplayer bits. The
    *  captain goes back to the host step (partner still shown); the stoker's
@@ -6224,9 +5683,7 @@ export class Lobby {
     this._captainChoosingTourist = false;
     this._captainTouristPick = null;
     this._roomSession.leave();
-    this._removePipLobbyMode();
-    for (const id of ['selfie-pip', 'partner-pip']) { const v = /** @type {any} */ (document.getElementById(id)); if (v) v.srcObject = null; }
-    for (const id of ['selfie-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
+    this._hideRoomPips();
     const waitText = document.getElementById('level-wait-text');
     if (waitText) waitText.style.display = 'none';
     this._showStep(this.roleStep);
@@ -6443,7 +5900,7 @@ export class Lobby {
           this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
         }
       }
-      // Cache partner avatar URL for camera toggle
+      // The partner's picture, for their circle and their player card
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
       }
@@ -6508,19 +5965,7 @@ export class Lobby {
       // side would force (e.g. a full stoker on a demo captain's road).
       if (typeof profile.difficulty === 'string' && profile.difficulty) this._adoptDifficulty(profile.difficulty);
     } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
-      // Partner toggled their camera — update state and refresh PiP
-      this._partnerCameraOn = !!profile.enabled;
-      if (!profile.enabled) {
-        const avatarUrl = profile.avatar || this._partnerAvatarUrl;
-        if (avatarUrl) this._partnerAvatarUrl = avatarUrl;
-      }
-      // When partner enables camera, the new media stream may not have arrived yet.
-      // Re-evaluate PiP after a delay to catch the stream/track becoming live.
-      if (profile.enabled) {
-        setTimeout(() => this._updatePartnerPip(), 1500);
-        setTimeout(() => this._updatePartnerPip(), 4000);
-      }
-      this._updatePartnerPip();
+      // An older build's camera on/off: there is no room camera any more, nothing to do.
     } else if (profile.type === ROOM_MSG.DIFFICULTY_SYNC) {
       // Stoker: update difficulty selection to match captain's choice
       this._adoptDifficulty(profile.difficulty);
@@ -6713,12 +6158,10 @@ export class Lobby {
   }
 
   _transitionToGame() {
-    // Stop media call retry timer
-    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
     // #672: the captain started while this side was still dressing; every pick is already saved.
     if (this._room) this._room.close('ride');
-    // Remove lobby mode from PiP elements
-    this._removePipLobbyMode();
+    // No picture circles in the ride
+    this._hideRoomPips();
     // Detect input method before hiding lobby
     this._detectAndSetInputMethod();
     // Hide lobby
@@ -8528,24 +7971,6 @@ export class Lobby {
     strip.rows = rows;
   }
 
-  _removePipLobbyMode() {
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    // Remove lobby/level classes and set inline display:block to prevent
-    // base CSS display:none from flashing the PiPs invisible before
-    // game-recorder shows them. Room media off (#400 D7): the in-ride
-    // selfie/partner PiP frames stay hidden.
-    const pipDisplay = this._mediaEnabled ? 'block' : 'none';
-    if (selfieWrap) {
-      selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      selfieWrap.style.display = pipDisplay;
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      partnerWrap.style.display = pipDisplay;
-    }
-  }
-
   /**
    * The room screen's handler for the partner (or this seat) dropping for good: say why, then
    * back to the role screen. Shared by the room step and the return from a ride. Returns the
@@ -8567,7 +7992,7 @@ export class Lobby {
       setTimeout(() => {
         // Only this room's transport, and only if the lobby is still on it (not a fresh room).
         if (!this._roomSession.dropIfCurrent(roomNet)) return;
-        this._removePipLobbyMode();
+        this._hideRoomPips();
         this._showStep(this.roleStep);
       }, 2000);
     };
@@ -8584,11 +8009,7 @@ export class Lobby {
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
 
-    // Set role labels on PiP circles
-    const selfieLabel = document.getElementById('selfie-pip-label');
-    const partnerLabel = document.getElementById('partner-pip-label');
-    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
-    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
+    this._setPipLabels(role);
     this._syncRoomSeats(role);
 
     // After a ride together both land on level select (Pete, 2026-10-23): the
@@ -8616,23 +8037,7 @@ export class Lobby {
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
 
-    // Return-to-room: the connection and media streams are still alive from the
-    // game session. Do NOT call _startRoomMedia() — that re-acquires media,
-    // Return to room: add lobby-mode class for CSS positioning.
-    // Return to room: video streams are already playing from room → game.
-    // Don't touch srcObject, don't initiate new calls, don't call play().
-    // Just switch the CSS class for lobby positioning.
-
-    // Re-register handlers (game.js replaced these during gameplay)
-    this.net.onRemoteStream = (remoteStream) => {
-      const pv = document.getElementById('partner-pip');
-      if (!pv || !remoteStream) return;
-      pv.srcObject = remoteStream;
-      pv.style.display = 'block';
-      pv.play().catch(() => {});
-      const pa = document.getElementById('partner-pip-avatar');
-      if (pa) pa.style.display = 'none';
-    };
+    // Re-register the room handler (game.js replaced it during gameplay)
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
     // Replay any messages buffered during the rejoin delay
@@ -8642,8 +8047,7 @@ export class Lobby {
     if (this.net.connected) {
       this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
       this._sendRoomProfile();
-      const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-      this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, user && user.avatar));
+      this._sendNoCamera();
     }
 
     // Re-register disconnect handler for room

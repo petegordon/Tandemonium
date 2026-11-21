@@ -26,7 +26,6 @@
 //
 // Host interface (the lobby implements these; see Lobby._roomSessionHost):
 //   replaceNet()                       new transport, epoch++ (Lobby._replaceNet, which smoke:rejoin wraps)
-//   media()                            { camera, audio, cameraPermitted, audioPermitted }
 //   newRoom(kind)                      'create' | 'join' | 'rejoin': forget the last partner
 //   status(seat, text, cls?)           seat 'host' | 'join'; cls '' | 'connected' | 'error' (undefined: keep)
 //   showCode(text)                     the host step's code display
@@ -111,19 +110,16 @@ export class RoomSession {
 
   _live(epoch) { return this._ns.isCurrent(epoch); }
 
-  /** A fresh transport for this room attempt, with the relay and media settings applied. */
+  /** A fresh transport for this room attempt, with the relay settings applied. */
   _open(kind) {
     this._stopSeen();
     this._host.replaceNet();
     this._host.newRoom(kind);
     const epoch = this._ns.epoch;
     const net = this.net;
-    const m = this._host.media();
     net._fallbackUrl = this._relayUrl;
-    net.cameraEnabled = m.camera;
     // #694: the relay remembers this seat by name (a signed-in player's; none for a guest)
     net._displayName = (this._host.myName && this._host.myName()) || null;
-    net.audioEnabled = m.audio;
     return { epoch, net };
   }
 
@@ -160,7 +156,6 @@ export class RoomSession {
 
     net.onConnected = () => {
       if (!this._live(epoch)) return;
-      const m = host.media();
       this.wait.end();
       this._named(net);
       host.status('host', ROOM_WAIT_COPY.joined(partnerOf(net, 'captain')), 'connected');
@@ -169,8 +164,6 @@ export class RoomSession {
       a.trackRoomUpdate(code, {
         webrtc_connected: 1,
         connection_type: net.connectionType || 'p2p',
-        video_enabled: m.camera ? 1 : 0,
-        audio_enabled: m.audio ? 1 : 0,
       });
       this._settleThenOpen(epoch, net, 'captain');
     };
@@ -308,11 +301,6 @@ export class RoomSession {
     const relayToken = await this._auth.getRelayToken(saved.roomCode, role);
     if (!this._live(epoch)) return;
     if (relayToken) net._relayToken = relayToken;
-
-    // Local media early, so it is ready when P2P connects
-    const m = host.media();
-    await net.acquireLocalMedia(m.cameraPermitted, m.audioPermitted);
-    if (!this._live(epoch)) return;
 
     net.onRoomJoined = () => {
       if (!this._live(epoch)) return;
