@@ -2,3 +2,4 @@
 shared/ui/** text eol=lf
 shared/identity/** text eol=lf
 shared/rooms/** text eol=lf
+shared/rooms-relay/** text eol=lf

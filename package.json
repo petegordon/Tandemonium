@@ -62,6 +62,8 @@
     "check:identity": "node scripts/sync-identity.js --check",
     "sync-rooms": "node scripts/sync-rooms.js",
     "check:rooms": "node scripts/sync-rooms.js --check",
+    "sync-rooms-relay": "node scripts/sync-rooms-relay.js",
+    "check:rooms-relay": "node scripts/sync-rooms-relay.js --check",
     "docs:screen-flow": "node scripts/gen-screen-flow.mjs",
     "typecheck": "tsc -p jsconfig.json",
     "smoke:phone-pad": "node scripts/smoke-phone-pad.mjs",
