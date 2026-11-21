@@ -1059,6 +1059,10 @@ export async function handleSteamWebGo(request, env, url) {
  */
 export async function verifySteamAssertion(url, rowId, fetchImpl = fetch) {
   const q = url.searchParams;
+  // Every openid.* field appears once, so the values read here are exactly the ones Steam checks.
+  for (const k of new Set(q.keys())) {
+    if (k.startsWith('openid.') && q.getAll(k).length !== 1) throw new Error('Steam returned an answer we could not read');
+  }
   if (q.get('openid.mode') !== 'id_res') throw new Error('Steam did not sign you in');
   if (q.get('openid.op_endpoint') !== STEAM_OPENID) throw new Error('Not a Steam sign-in');
   if (q.get('openid.return_to') !== steamCallbackUrl(url, rowId)) throw new Error('This sign-in was for a different request');
