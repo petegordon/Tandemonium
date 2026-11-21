@@ -1,0 +1,4 @@
+/* A · Hero right: the painting is a fixed panel on the right at its natural
+   aspect (504×1017 → 535×1080); the menus get the other 1385px. */
+#lobby { --art-w: 535px; }
+#lobby-img-right { box-shadow: -24px 0 48px rgba(0,0,0,.55); }

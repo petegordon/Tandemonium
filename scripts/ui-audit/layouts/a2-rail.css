@@ -1,0 +1,12 @@
+/* extends: a-hero-right, _a2, _toggle-labels */
+/* A2 · left rail: a narrow labelled column on the left edge, like a TV app's nav. */
+#lobby { padding-left: 120px !important; }
+#lobby::after { content: ''; position: fixed; left: 0; top: 0; bottom: 0; width: 120px; background: rgba(255,255,255,.035); border-right: 1px solid rgba(255,255,255,.08); z-index: 3; }
+#lobby .lobby-left-col, #lobby .lobby-right-col {
+  flex-direction: column !important; left: 0 !important; right: auto !important; width: 120px; gap: 40px !important;
+}
+#lobby .lobby-left-col { top: 150px; }
+#lobby .lobby-right-col { top: 480px; }
+#lobby .lobby-toggle::after { position: absolute; top: calc(100% + 8px); left: 50%; transform: translateX(-50%); }
+#lobby .gamepad-back-hint { left: calc(120px + var(--gutter)); }
+#bike-carousel { margin-left: var(--gutter) !important; }
