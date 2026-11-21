@@ -6308,6 +6308,12 @@ ON</button>
     <p id="steam-join-text" style="margin:0;color:var(--uf-color-fg-muted);"></p>
     <div slot="actions"><uf-button variant="accent" id="steam-join-confirm">JOIN</uf-button><uf-button id="steam-join-cancel">STAY HERE</uf-button></div>
   </uf-sheet>
+  <!-- #820 · Steam build, no gyro controller or phone seen (js/gyro-tip.js). GOT IT takes the first focus. -->
+  <uf-sheet id="gyro-tip-sheet" heading="Best with motion control" size="sm">
+    <p style="margin:0;color:var(--uf-color-fg-muted);">No gyro controller found. Tandemonium is best played with a gyro controller, or your phone with gyro motion control.</p>
+    <uf-setting id="gyro-tip-never" label="Don't show this again"></uf-setting>
+    <div slot="actions"><uf-button variant="accent" id="gyro-tip-ok">GOT IT</uf-button></div>
+  </uf-sheet>
   <uf-sheet id="quit-sheet" heading="Quit Tandemonium?" size="sm" tone="danger">
     <p style="margin:0;color:var(--uf-color-fg-muted);">Close the game and go back to the desktop.</p>
     <div slot="actions"><uf-button variant="danger" id="quit-confirm">QUIT</uf-button><uf-button id="quit-cancel">CANCEL</uf-button></div>
