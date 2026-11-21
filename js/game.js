@@ -381,6 +381,7 @@ class Game {
       onChange: () => this.lobby?._syncHostJoinQr?.(),
       makeInput: () => new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false, remoteOnly: true }),
       p1Input: this.input,
+      p1Free: () => !this.input.gamepadConnected && !this.phonePad.connected,   // #848
       onPause: () => { if (!this._optionsOpen && !this._pause) this._pauseOrOptions(); },
     });
 
@@ -9219,7 +9220,9 @@ class Game {
     // any physical-pad member of either team can trigger it.
     // gamepadConnected covers Gamepad API slots and HID-claimed slots alike.
     const dropped = rigs.flatMap((r) => r.members)
-      .find((m) => m.type !== 'keyboard' && m.type !== 'bot' && !m.input.gamepadConnected);
+      // (#848: Player 1's phone is a gamepad only in the menus; while riding, the pad room says it's here)
+      .find((m) => m.type !== 'keyboard' && m.type !== 'bot' && !m.input.gamepadConnected
+        && !(m.input === this.input && this.phonePad && this.phonePad.connected));
     if (dropped) {
       if (!this._versusPaused) {
         this._versusPaused = true;
