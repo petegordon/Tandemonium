@@ -1,12 +1,16 @@
 // ============================================================
-// RoomTransport — a two-seat room over a relay, with an optional P2P upgrade
+// RoomTransport — a two-seat room over a relay
 // ============================================================
 //
 // @usersfirst/rooms (lab #137). Lifted from Tandemonium's js/net/room-transport.js
 // (Tandemonium #318, #346), where it had already been separated from the game:
-// it owns room join-by-code, relay primary + PeerJS P2P upgrade + automatic
-// fallback, reconnect/backoff, the HEARTBEAT keepalive, and media (camera/mic)
-// calls. It sends/receives OPAQUE bytes — `send(bytes)` out, `onMessage(bytes)`
+// it owns room join-by-code on the relay, reconnect/backoff and the HEARTBEAT
+// keepalive. Two optional layers sit on top, each a mixin in its own file that
+// only a game that wants it loads (lab #137):
+//   p2p.js    withP2P(RoomTransport): the PeerJS P2P upgrade, its unordered
+//             fast lane, and the automatic fall back to the relay
+//   media.js  withMedia(withP2P(RoomTransport)): camera and microphone calls
+// It sends/receives OPAQUE bytes — `send(bytes)` out, `onMessage(bytes)`
 // in — and knows nothing about the game. A game extends or wraps it and adds
 // its own codec + protocol. HEARTBEAT is the transport's own keepalive (the one
 // reserved message type it understands; its number is the game's to choose).
@@ -39,16 +43,6 @@
 /** 2026-11-17 · the relay closes a connection with this reason when both seats are taken. */
 const ROOM_FULL_REASON = 'room-full';
 
-// Fast lane for high-rate, latest-wins traffic (bike STATE / LEAN). A second
-// data channel on the same RTCPeerConnection, unordered with no retransmits,
-// so one lost packet never holds up the ones behind it the way the reliable,
-// ordered PeerJS channel does (issue #390). Both sides create it with the same
-// pre-agreed id (negotiated: no signaling needed). It's only used once the
-// partner has proved it speaks it (any message received on it), so a peer on
-// an older build keeps getting everything on the main channel.
-const FAST_CHANNEL_ID = 1000;       // clear of PeerJS's auto-assigned ids
-const FAST_CHANNEL_MAX_BUFFERED = 16 * 1024; // bytes queued before we fall back
-
 /** The relay replaced our socket: re-dial once after this long… */
 const REPLACED_REDIAL_MS = 3000;
 /** …and a second replace within this window means the seat is taken. */
@@ -60,9 +54,6 @@ export class RoomTransport {
     /** @type {RoomTransportOptions} */
     this.options = options;
     this._hb = options.heartbeatType ?? 0x04;
-    this._fastHello = new Uint8Array([this._hb, 0x03]);
-    this.peer = null;
-    this.conn = null;
     this.role = null; // 'captain' | 'stoker'
     this.roomCode = null;
     this.connected = false;
@@ -75,22 +66,12 @@ export class RoomTransport {
     this.onConnected = null;
     this.onDisconnected = null;
     this.onReconnecting = null;
-    this.onRemoteStream = null;
     this.onRoomJoined = null; // fires when relay WebSocket opens (room entered, waiting for partner)
     this.onRoomWaiting = null; // #346: the relay says the room is open and the partner is NOT in it
     this.partnerAbsent = false; // #346: last relay word was "waiting" (cleared by partner-ready)
     this.roomInfo = null; // #694: what the relay remembers about the room (on "waiting"), or null
     this.partnerName = null; // #694: the name the partner gave the relay (on "partner-ready"), or null
-    this.onP2PUpgrade = null; // fires when P2P transport is established (for media calls)
     this.onAuthError = null; // fires when relay rejects connection (401/403 auth failure)
-    this.cameraEnabled = true; // set false to suppress local camera in calls
-    this.audioEnabled = false; // set true to include microphone in calls
-    // Room camera/mic (#400 D7). When false the transport never acquires a
-    // local stream, never places a media call, and closes incoming ones.
-    // Data connections are unaffected.
-    this.mediaEnabled = !!options.mediaEnabled;
-    this._mediaCall = null;
-    this._localMediaStream = null;
     this._heartbeatInterval = null;
     this._reconnectAttempts = 0;
     this._fastReconnectAttempts = 5;   // phase 1: exponential backoff (1s,2s,4s,8s,16s)
@@ -100,21 +81,10 @@ export class RoomTransport {
     this._relayToken = null;
     this._relayPartnerReady = false;
     this._reconnectTimeout = null;
-    this._activeConn = null; // tracks which conn is current to ignore stale close events
-    this._iceServers = null; // cached TURN + STUN servers
     this._enterRoomCallback = null;
     this._relayReconnectAttempts = 0;
     this._relayKeepaliveInterval = null;
     this._relayDidOpen = false; // tracks if relay WS ever opened (false = auth rejection)
-    this._p2pUpgradeTimeout = null;
-    this._p2pUpgradeRetryTimeout = null;
-    this._fastChannel = null;       // RTCDataChannel (unordered, no retransmits)
-    this._fastPeerSeen = false;     // partner has sent on it → safe to use
-    this._fastHelloInterval = null;
-
-    // WebRTC quality stats
-    this._statsInterval = null;
-    this._statsSamples = []; // { rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp }
 
     // Tab/network resume → force a fresh reconnect when the partner could
     // have silently dropped while we were backgrounded or offline. Stored so
@@ -145,40 +115,6 @@ export class RoomTransport {
     return code;
   }
 
-  _defaultIceServers() {
-    return [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' }
-    ];
-  }
-
-  async _fetchIceServers() {
-    if (this._iceServers) return this._iceServers;
-    try {
-      // Only a connection holding a seat in this room gets TURN credentials (the relay checks).
-      const q = '?room=' + encodeURIComponent(this.roomCode || '') + '&role=' + encodeURIComponent(this.role || '') + this._deviceParam();
-      if (!this.options.turnCredentialsUrl) return this._defaultIceServers();   // no TURN: STUN only
-      const resp = await fetch(this.options.turnCredentialsUrl + q);
-      const data = await resp.json();
-      if (data.iceServers && data.iceServers.urls) {
-        // CF returns { iceServers: { urls: [...], username, credential } }
-        // PeerJS expects an array of server objects
-        this._iceServers = [
-          ...this._defaultIceServers(),
-          data.iceServers
-        ];
-      } else if (Array.isArray(data.iceServers)) {
-        this._iceServers = [...this._defaultIceServers(), ...data.iceServers];
-      } else {
-        this._iceServers = this._defaultIceServers();
-      }
-    } catch (e) {
-      console.warn('NET: Failed to fetch TURN credentials, using STUN only', e);
-      this._iceServers = this._defaultIceServers();
-    }
-    return this._iceServers;
-  }
-
   async enterRoom(roomCode, role, callback) {
     this.role = role;
     this.roomCode = roomCode;
@@ -191,39 +127,6 @@ export class RoomTransport {
 
     // Store the callback for status updates
     this._enterRoomCallback = callback;
-  }
-
-  _setupConnection() {
-    const conn = this.conn;
-    this._activeConn = conn;
-
-    conn.on('open', () => {
-      clearTimeout(this._reconnectTimeout);
-      this.connected = true;
-      this.transport = 'p2p';
-      // Don't reset _reconnectAttempts here — a flaky connection that
-      // opens briefly then closes would reset the counter and loop forever.
-      // Instead, reset in the heartbeat ACK handler after a verified round-trip.
-
-      this._startHeartbeat();
-      this._openFastChannel(conn);
-      if (this.onConnected) this.onConnected();
-    });
-
-    conn.on('data', (data) => {
-      this._handleMessage(data);
-    });
-
-    conn.on('close', () => {
-      // Ignore close events from stale connections
-      if (conn !== this._activeConn) return;
-      this._closeFastChannel();
-      this._handleDisconnect();
-    });
-
-    conn.on('error', (err) => {
-      console.warn('NET: Connection error:', err);
-    });
   }
 
   _handleMessage(data) {
@@ -316,71 +219,14 @@ export class RoomTransport {
     try { this.retryConnection(); } catch (e) { console.warn('NET: retry on resume failed:', e); }
   }
 
-  // Latest-wins traffic: the unordered fast channel when the partner speaks
-  // it, otherwise the normal path. Messages sent here may be dropped or
-  // arrive out of order — receivers order them by their send time.
+  // Latest-wins traffic. The relay has one lane, so this is _send; the P2P layer
+  // overrides it with its unordered fast channel.
   _sendFast(data) {
-    const ch = this._fastChannel;
-    if (this.transport === 'p2p' && this._fastPeerSeen && ch &&
-        ch.readyState === 'open' && ch.bufferedAmount < FAST_CHANNEL_MAX_BUFFERED) {
-      try { ch.send(data); return; } catch (e) { /* fall through */ }
-    }
     this._send(data);
   }
 
-  _openFastChannel(conn) {
-    this._closeFastChannel();
-    const pc = conn && conn.peerConnection;
-    if (!pc || typeof pc.createDataChannel !== 'function') return;
-    let ch;
-    try {
-      ch = pc.createDataChannel(this.options.fastChannelLabel || 'rooms-fast', {
-        negotiated: true, id: FAST_CHANNEL_ID, ordered: false, maxRetransmits: 0
-      });
-    } catch (e) {
-      console.warn('NET: fast channel unavailable:', e);
-      return;
-    }
-    ch.binaryType = 'arraybuffer';
-    this._fastChannel = ch;
-    this._fastPeerSeen = false;
-    const hello = () => {
-      if (ch.readyState === 'open') { try { ch.send(this._fastHello); } catch (e) {} }
-    };
-    ch.onopen = hello;
-    ch.onmessage = (e) => {
-      if (ch !== this._fastChannel) return;
-      if (!this._fastPeerSeen) {
-        this._fastPeerSeen = true;
-        hello(); // make sure the partner hears us too, then stop announcing
-        clearInterval(this._fastHelloInterval);
-        this._fastHelloInterval = null;
-        console.log('NET: fast channel active');
-      }
-      const bytes = new Uint8Array(e.data);
-      if (bytes.length && bytes[0] === this._hb) return; // hello only
-      this._handleMessage(bytes);
-    };
-    ch.onclose = () => {
-      if (ch === this._fastChannel) this._fastPeerSeen = false;
-    };
-    // Keep announcing until the partner answers (an older build never will).
-    this._fastHelloInterval = setInterval(hello, 1000);
-  }
-
-  _closeFastChannel() {
-    clearInterval(this._fastHelloInterval);
-    this._fastHelloInterval = null;
-    const ch = this._fastChannel;
-    this._fastChannel = null;
-    this._fastPeerSeen = false;
-    if (ch) { try { ch.close(); } catch (e) {} }
-  }
-
   _send(data) {
-    if (this.transport === 'p2p' && this.conn && this.conn.open) {
-      try { this.conn.send(data); } catch (e) { console.warn('NET: P2P send failed:', e); }
-    } else if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
+    if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
       try { this._relayWs.send(data); } catch (e) { console.warn('NET: Relay send failed:', e); }
     }
   }
@@ -459,19 +305,12 @@ export class RoomTransport {
     this._handleDisconnect();
   }
 
-  // Re-register with PeerJS signaling server if the broker WebSocket dropped
-  _ensureBrokerConnection() {
-    if (this.peer && this.peer.disconnected && !this.peer.destroyed) {
-      try { this.peer.reconnect(); } catch (e) { console.warn('NET: Broker reconnect failed:', e); }
-    }
-  }
-
   _attemptReconnect() {
     if (this._destroyed || this._evicted) return;
     if (this.onReconnecting) this.onReconnecting(this._reconnectAttempts, this._maxReconnectAttempts);
 
     // Close stale connections
-    if (this.conn) { try { this.conn.close(); } catch (e) {} }
+    this._closeDirect();
     this._dropRelaySocket();
 
     // Reconnect via relay first (primary transport)
@@ -483,62 +322,9 @@ export class RoomTransport {
         if (!this.connected) this._handleDisconnect();
       }, 5000);
     } else {
-      // Fallback to PeerJS-only reconnection
-      this._ensureBrokerConnection();
-      if (this.role === 'stoker' && this.roomCode) {
-        if (this.peer && !this.peer.destroyed) {
-          this.conn = this.peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
-          this._setupConnection();
-          this._reconnectTimeout = setTimeout(() => {
-            if (!this.connected) {
-              if (this.conn) { try { this.conn.close(); } catch (e) {} }
-              this._handleDisconnect();
-            }
-          }, 5000);
-        }
-      } else if (this.role === 'captain') {
-        this._reconnectTimeout = setTimeout(() => {
-          if (!this.connected) this._handleDisconnect();
-        }, 5000);
-      }
+      // No relay address: only a direct (P2P) layer can reconnect.
+      this._reconnectWithoutRelay();
     }
-  }
-
-  _handleIncomingCall(call) {
-    // Media off: refuse the call (an older client with media on may still
-    // place one) — close it rather than answer, so no MediaConnection opens.
-    if (!this.mediaEnabled) {
-      try { call.close(); } catch (e) {}
-      return;
-    }
-    // Close previous media call to prevent duplicate streams
-    if (this._mediaCall) {
-      try { this._mediaCall.close(); } catch (e) {}
-    }
-    this._mediaCall = call;
-    // Answer immediately with pre-acquired stream (from game.js _acquireLocalMedia)
-    // to avoid async getUserMedia delay that causes call timeouts on mobile
-    if (this._localMediaStream) {
-      call.answer(this._localMediaStream);
-      this._answeredWithoutMedia = false;
-    } else {
-      call.answer();
-      this._answeredWithoutMedia = true;
-    }
-
-    call.on('stream', (remoteStream) => {
-      this._playRemoteAudio(remoteStream);
-      if (this.onRemoteStream) this.onRemoteStream(remoteStream);
-    });
-  }
-
-  _playRemoteAudio(stream) {
-    const audioTracks = stream.getAudioTracks();
-    if (audioTracks.length === 0) return;
-    const audioEl = this.options.audioElement ? this.options.audioElement() : null;
-    if (!audioEl) return;
-    audioEl.srcObject = stream;
-    audioEl.play().catch(() => {});
   }
 
   /**
@@ -636,10 +422,7 @@ export class RoomTransport {
         clearTimeout(this._authRetryTimer);
         clearTimeout(this._relayRetryTimer);
         // Let go of the P2P side too: its peer id belongs to whoever holds the seat now.
-        this._activeConn = null;
-        if (this.conn) { try { this.conn.close(); } catch (e2) { /* closed */ } this.conn = null; }
-        this._closeFastChannel();
-        if (this.peer) { try { this.peer.destroy(); } catch (e2) { /* gone */ } this.peer = null; }
+        this._releaseDirect();
         if (this.connected) { this.connected = false; this._stopHeartbeat(); }
         if (this.onDisconnected) this.onDisconnected('This room was opened somewhere else');
         return;
@@ -717,188 +500,18 @@ export class RoomTransport {
     }, 2000);
   }
 
-  _attemptP2PUpgrade() {
-    if (!this.roomCode || !this.role) return;
-    if (this.transport === 'p2p') return; // already on P2P
-    // PeerJS comes from a CDN; when it didn't load (blocked, offline) stay on
-    // the relay instead of throwing on every upgrade attempt (#472).
-    if (typeof window === 'undefined' || typeof window.Peer !== 'function') {
-      if (!this._peerMissingWarned) { this._peerMissingWarned = true; console.warn('NET: PeerJS not loaded; staying on the relay'); }
-      return;
-    }
+  // ── What a direct (P2P) layer adds. The relay alone does nothing here. ──
 
-    // Destroy stale peer from previous session to free the ID on the signaling server
-    if (this.peer) {
-      this._activeConn = null; // prevent close handler from triggering disconnect
-      this.conn = null;
-      this._closeFastChannel();
-      try { this.peer.destroy(); } catch (e) {}
-      this.peer = null;
-    }
-
-    // Peer ids carry the room's P2P key (the relay gives it only to the two seat holders), so
-    // nobody who just knows the room code can find, or pose as, either peer. No key (an older
-    // relay): stay on the relay.
-    if (!this.p2pKey) return;
-    const peerId = this.roomCode + '-' + this.p2pKey + '-' + this.role;
-    const partnerPeerId = this.roomCode + '-' + this.p2pKey + '-' + (this.role === 'captain' ? 'stoker' : 'captain');
-
-    this._fetchIceServers().then(iceServers => {
-      // Destroyed while the TURN fetch was in flight: a Peer made now would never be destroyed,
-      // hold this room's peer id ("peer ID in use") and could take the partner's connection.
-      if (this._destroyed || this._evicted) return;
-      // Two upgrade attempts close together both reach here: keep one Peer, never leak the
-      // other (a leaked Peer holds this room's id: "peer ID in use").
-      if (this.peer) { try { this.peer.destroy(); } catch (e) { /* gone */ } this.peer = null; }
-      this.peer = new window.Peer(peerId, {
-        ...(this.options.peerjs || {}),
-        config: { iceServers }
-      });
-
-      this.peer.on('open', () => {
-        if (this.role === 'stoker') {
-          // Stoker initiates data channel to captain
-          this.conn = this.peer.connect(partnerPeerId, { reliable: true, serialization: 'binary' });
-          this._setupP2PUpgradeConnection();
-        }
-        // Captain waits for incoming connection
-      });
-
-      this.peer.on('connection', (conn) => {
-        // Only the partner's peer id (see above); anyone else is refused.
-        if (conn.peer !== partnerPeerId) { try { conn.close(); } catch (e) { /* gone */ } return; }
-        this.conn = conn;
-        this._setupP2PUpgradeConnection();
-      });
-
-      this.peer.on('call', (call) => this._handleIncomingCall(call));
-
-      this.peer.on('error', (err) => {
-        if (err.type === 'unavailable-id') {
-          // Peer ID already taken — skip P2P upgrade
-          console.warn('NET: P2P upgrade skipped — peer ID in use');
-          return;
-        }
-        if (err.type === 'peer-unavailable') {
-          // Partner not registered yet — retry later
-          this._scheduleP2PRetry();
-          return;
-        }
-        console.warn('NET: P2P upgrade error:', err);
-      });
-
-      // Timeout: if P2P doesn't connect within 15s, stay on relay
-      this._p2pUpgradeTimeout = setTimeout(() => {
-        if (this.transport !== 'p2p') {
-          console.log('NET: P2P upgrade timed out, staying on relay');
-          this._scheduleP2PRetry();
-        }
-      }, 15000);
-    });
-  }
-
-  _setupP2PUpgradeConnection() {
-    const conn = this.conn;
-    conn.on('open', () => {
-      clearTimeout(this._p2pUpgradeTimeout);
-      this.transport = 'p2p';
-      this._activeConn = conn;
-      console.log('NET: Upgraded to P2P transport');
-      // Start WebRTC quality stats polling
-      this._startStatsPolling();
-      // Start relay keepalive to keep it as hot standby
-      this._startRelayKeepalive();
-      this._openFastChannel(conn);
-      // Notify listeners (game.js uses this to start media calls)
-      if (this.onP2PUpgrade) this.onP2PUpgrade();
-    });
-
-    conn.on('data', (data) => {
-      this._handleMessage(data);
-    });
-
-    conn.on('close', () => {
-      if (conn !== this._activeConn) return;
-      // P2P dropped — fall back to relay silently if relay is alive
-      this._stopStatsPolling();
-      this._closeFastChannel();
-      if (this._relayWs && this._relayWs.readyState === WebSocket.OPEN) {
-        console.log('NET: P2P dropped, falling back to relay');
-        this.transport = 'relay';
-        // Retry P2P upgrade later
-        this._scheduleP2PRetry();
-      } else {
-        this._handleDisconnect();
-      }
-    });
-
-    conn.on('error', (err) => {
-      console.warn('NET: P2P connection error:', err);
-    });
-  }
-
-  _scheduleP2PRetry() {
-    clearTimeout(this._p2pUpgradeRetryTimeout);
-    this._p2pUpgradeRetryTimeout = setTimeout(() => {
-      if (this.connected && this.transport !== 'p2p') {
-        // Clean up old peer before retrying
-        this._closeFastChannel();
-        if (this.peer) { try { this.peer.destroy(); } catch (e) {} this.peer = null; }
-        this._attemptP2PUpgrade();
-      }
-    }, 30000);
-  }
-
-  async acquireLocalMedia(cameraEnabled, audioEnabled) {
-    if (!this.mediaEnabled) return;
-    // If stream already has all requested tracks, nothing to do
-    if (this._localMediaStream) {
-      const hasVideo = this._localMediaStream.getVideoTracks().length > 0;
-      const hasAudio = this._localMediaStream.getAudioTracks().length > 0;
-      if ((!cameraEnabled || hasVideo) && (!audioEnabled || hasAudio)) return;
-      // Need to add missing tracks to the existing stream
-      const constraints = {};
-      if (cameraEnabled && !hasVideo) constraints.video = { facingMode: 'user', width: 240, height: 240 };
-      if (audioEnabled && !hasAudio) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-      if (Object.keys(constraints).length === 0) return;
-      try {
-        const extra = await navigator.mediaDevices.getUserMedia(constraints);
-        for (const track of extra.getTracks()) {
-          this._localMediaStream.addTrack(track);
-        }
-      } catch (e) { /* denied — continue without */ }
-      return;
-    }
-    const constraints = {};
-    if (cameraEnabled) constraints.video = { facingMode: 'user', width: 240, height: 240 };
-    if (audioEnabled) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-    if (!constraints.video && !constraints.audio) return;
-    try {
-      this._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      // Camera/mic denied — continue without media
-    }
-  }
-
-  initiateCall() {
-    if (!this.mediaEnabled) return;
-    if (!this.peer || !this.conn) return;
-    const localStream = this._localMediaStream || new MediaStream();
-    const remotePeerId = this.conn.peer;
-    if (!remotePeerId) return;
-    // Close previous outgoing call to prevent duplicate streams
-    if (this._mediaCall) {
-      try { this._mediaCall.close(); } catch (e) {}
-    }
-    const call = this.peer.call(remotePeerId, localStream);
-    if (call) {
-      this._mediaCall = call;
-      call.on('stream', (remoteStream) => {
-        this._playRemoteAudio(remoteStream);
-        if (this.onRemoteStream) this.onRemoteStream(remoteStream);
-      });
-    }
-  }
+  /** Both seats are on the relay: a direct layer may now try its upgrade. */
+  _attemptP2PUpgrade() {}
+  /** A retry is starting: a direct layer re-registers with its signalling server. */
+  _ensureBrokerConnection() {}
+  /** A reconnect is starting: a direct layer closes its stale connection. */
+  _closeDirect() {}
+  /** The seat went to another connection: a direct layer lets go of its peer. */
+  _releaseDirect() {}
+  /** A reconnect with no relay address: only a direct layer can do it. */
+  _reconnectWithoutRelay() {}
 
   destroy() {
     this._destroyed = true;   // pending relay retries and late socket events stop here
@@ -907,12 +520,8 @@ export class RoomTransport {
     clearTimeout(this._replacedRedialTimer);
     clearTimeout(this._relayRetryTimer);
     this._stopHeartbeat();
-    this._stopStatsPolling();
     clearTimeout(this._reconnectTimeout);
-    clearTimeout(this._p2pUpgradeTimeout);
-    clearTimeout(this._p2pUpgradeRetryTimeout);
     this._stopRelayKeepalive();
-    this._closeFastChannel();
     // Detach resume listeners
     if (typeof document !== 'undefined' && this._onVisibilityChange) {
       document.removeEventListener('visibilitychange', this._onVisibilityChange);
@@ -920,93 +529,7 @@ export class RoomTransport {
     if (typeof window !== 'undefined' && this._onOnline) {
       window.removeEventListener('online', this._onOnline);
     }
-    // Stop local media tracks
-    if (this._localMediaStream) {
-      this._localMediaStream.getTracks().forEach(t => t.stop());
-      this._localMediaStream = null;
-    }
-    // Close media call
-    if (this._mediaCall) {
-      try { this._mediaCall.close(); } catch (e) {}
-      this._mediaCall = null;
-    }
-    // Stop remote audio playback
-    const audioEl = this.options.audioElement ? this.options.audioElement() : null;
-    if (audioEl) { audioEl.srcObject = null; }
-    if (this.conn) { try { this.conn.close(); } catch (e) {} }
-    if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
     this._dropRelaySocket();
     this.connected = false;
-    this.conn = null;
-    this.peer = null;
-  }
-
-  // ---- WebRTC Quality Stats ----
-
-  _startStatsPolling() {
-    this._stopStatsPolling();
-    this._statsSamples = [];
-    this._statsInterval = setInterval(() => this._sampleStats(), 5000);
-  }
-
-  _stopStatsPolling() {
-    if (this._statsInterval) {
-      clearInterval(this._statsInterval);
-      this._statsInterval = null;
-    }
-  }
-
-  async _sampleStats() {
-    if (this.transport !== 'p2p' || !this.conn) return;
-    // PeerJS exposes the underlying RTCPeerConnection via conn.peerConnection
-    const pc = this.conn.peerConnection;
-    if (!pc || !pc.getStats) return;
-
-    try {
-      const stats = await pc.getStats();
-      let rtt = null, packetsLost = 0, packetsSent = 0, bytesReceived = 0, bytesSent = 0;
-
-      stats.forEach(report => {
-        if (report.type === 'candidate-pair' && report.state === 'succeeded') {
-          rtt = report.currentRoundTripTime != null ? Math.round(report.currentRoundTripTime * 1000) : null;
-        }
-        if (report.type === 'inbound-rtp') {
-          packetsLost += report.packetsLost || 0;
-          bytesReceived += report.bytesReceived || 0;
-        }
-        if (report.type === 'outbound-rtp') {
-          packetsSent += report.packetsSent || 0;
-          bytesSent += report.bytesSent || 0;
-        }
-      });
-
-      this._statsSamples.push({ rtt, packetsLost, packetsSent, bytesReceived, bytesSent, timestamp: Date.now() });
-    } catch (e) {
-      console.warn('NET: Stats sampling failed:', e);
-    }
-  }
-
-  getQualityStats() {
-    const samples = this._statsSamples;
-    if (samples.length === 0) return null;
-
-    const rtts = samples.map(s => s.rtt).filter(r => r != null);
-    const avgRtt = rtts.length > 0 ? Math.round(rtts.reduce((a, b) => a + b, 0) / rtts.length) : null;
-    const maxRtt = rtts.length > 0 ? Math.max(...rtts) : null;
-
-    // Packet loss: compare last and first samples for cumulative diff
-    const first = samples[0];
-    const last = samples[samples.length - 1];
-    const totalLost = last.packetsLost - first.packetsLost;
-    const totalSent = last.packetsSent - first.packetsSent;
-    const lossRate = totalSent > 0 ? Math.round((totalLost / totalSent) * 10000) / 100 : 0;
-
-    return {
-      avg_rtt_ms: avgRtt,
-      max_rtt_ms: maxRtt,
-      packet_loss_pct: lossRate,
-      samples: samples.length,
-      duration_sec: Math.round((last.timestamp - first.timestamp) / 1000),
-    };
   }
 }

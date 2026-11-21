@@ -1,7 +1,7 @@
 {
   "package": "@usersfirst/rooms",
-  "version": "0.1.0",
-  "sourceCommit": "7c8107d",
-  "sourceRef": "rooms-v0.1.0",
-  "syncedAt": "2026-11-20"
+  "version": "0.2.0",
+  "sourceCommit": "144c3d4",
+  "sourceRef": "identity-v0.3.0-1-g144c3d4",
+  "syncedAt": "2026-11-21"
 }
