@@ -4028,7 +4028,7 @@ class Game {
     const rideM = plan.explore ? 100000 : rideLevelM(plan.route.ridableM);
     this.lobby.selectedLevel = this._touristLevel = {
       id: 'tourist',
-      name: plan.explore ? 'Map Tourist' : (plan.to.label || 'Their door'),
+      name: plan.explore ? 'Tourist' : (plan.to.label || 'Their door'),
       distance: rideM,
       checkpointInterval: rideM,
       collectibles: 'none',

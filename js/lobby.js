@@ -67,6 +67,8 @@ import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-see
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage } from './tourist-config.js';
+/** Tourist's "experimental" note: '1' = don't show it again. */
+const TOURIST_NOTE_OFF_KEY = 'tandemonium_tourist_note_off';
 /** Map Tourist: the player's own places and the week's count of new ones (this device). */
 const TOURIST_STORE_KEY = 'tandemonium_tourist_places';
 import { SCENIC_PLACES, planForPlace, rideKind, emptyStore, readStore, newPlaceGate, countNewPlaces, limitText,
@@ -1532,10 +1534,10 @@ export class Lobby {
     return this.roomRules().tourist && !!getMapsApiKey();   // M1: room needs a partner that can ride it
   }
 
-  /** #400: "Map Tourist" alone, "Map Tourists" when two ride it. */
+  /** #400: "Tourist" alone, "Tourists" when two ride it. */
   _touristLabel() {
     return this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
-      ? 'Map Tourists' : 'Map Tourist';
+      ? 'Tourists' : 'Tourist';
   }
 
   /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
@@ -1573,13 +1575,41 @@ export class Lobby {
     try { localStorage.setItem(TOURIST_STORE_KEY, JSON.stringify(store)); } catch { /* private mode: this ride still works */ }
   }
 
+  /** Pressing the Tourist card: the "experimental" note first, until the player turns it off. */
+  _pressTourist() {
+    let off = false;
+    try { off = localStorage.getItem(TOURIST_NOTE_OFF_KEY) === '1'; } catch { /* storage off: show it */ }
+    const sheet = /** @type {any} */ (document.getElementById('tourist-note-sheet'));
+    if (off || !sheet) { this._openTouristStep(); return; }
+    if (!this._touristNoteWired) {
+      this._touristNoteWired = true;
+      const never = /** @type {any} */ (document.getElementById('tourist-note-never'));
+      const fun = document.getElementById('tourist-note-fun');
+      sheet.attachFocus(this._stepFocus);
+      document.getElementById('tourist-note-return')?.addEventListener('click', () => sheet.close());
+      fun?.addEventListener('click', () => { this._touristNoteGo = true; sheet.close(); });
+      // the sheet starts on its first body item, the option: A should mean Have Fun!, not opt out
+      sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => {
+        if (sheet.open) this._stepFocus.setSpatial(sheet.focusables(), fun);
+      }));
+      // every way out keeps the choice; only Have Fun! goes on (the sheet hands the focus back first)
+      sheet.addEventListener('uf-sheet:close', () => {
+        if (never.checked) { try { localStorage.setItem(TOURIST_NOTE_OFF_KEY, '1'); } catch { /* this session only */ } }
+        const go = this._touristNoteGo;
+        this._touristNoteGo = false;
+        if (go) this._openTouristStep();
+      });
+    }
+    sheet.show();
+  }
+
   _openTouristStep() {
     // Who rides it: alone, two on this screen, or the room (captain plans).
     this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
       ? this._pendingMode : 'solo';
     const together = this._touristFor !== 'solo';
     const prompt = this.touristStep.querySelector('.lobby-prompt');
-    if (prompt) prompt.textContent = together ? 'Map Tourists · Where will you ride?' : 'Map Tourist · Where will you ride?';
+    if (prompt) prompt.textContent = together ? 'Tourists · Where will you ride?' : 'Tourist · Where will you ride?';
     const fromIn = document.getElementById('tourist-from');
     const toIn = document.getElementById('tourist-to');
     if (fromIn) fromIn.placeholder = 'Address or place';
@@ -2385,7 +2415,8 @@ export class Lobby {
       card.innerHTML =
         '<div class="level-card-top">' +
           '<span class="level-card-icon">&#128205;</span>' +
-          '<span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-name-wrap"><span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-experimental">⚠️ Experimental</span></span>' +
         '</div>' +
         '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
       if (stokerView) {
@@ -2393,7 +2424,7 @@ export class Lobby {
         card.style.pointerEvents = 'none';
         container.appendChild(card);
       } else {
-        card.addEventListener('click', () => this._openTouristStep());
+        card.addEventListener('click', () => this._pressTourist());
         container.appendChild(card);
         buttons.push(card);
       }
