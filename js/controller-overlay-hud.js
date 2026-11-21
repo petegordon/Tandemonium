@@ -656,6 +656,9 @@ class Tile {
     this._initFails = 0;
     this._retryAt = 0;
     overlay.setCameraPreset('player');
+    // Pete, 2026-11-21: the exploded view, as the lab's overlay shows by default: bumpers, triggers and
+    // back buttons float clear of the body, so a press on them can be seen.
+    overlay.setFloatParts(true);
     overlay.setPressColor(this.entry.color);
     this.overlay = overlay;
     this.profile = type;

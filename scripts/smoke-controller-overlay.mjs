@@ -133,6 +133,22 @@ try {
     && phone.turn === 'rotate(22.5deg)' && phone.left && !phone.right, `a phone seat draws the phone, its lean and its pedals ${JSON.stringify(phone)}`);
   note(phone.back !== 'phone', `the seat goes back when the phone leaves (${phone.back})`);
 
+  // The exploded view: bumpers and triggers float clear of the body
+  const exploded = await page.evaluate(async () => {
+    window.__setScenario('steam-xinput');
+    const end = performance.now() + 20000;
+    let tiles = [];
+    while (performance.now() < end) {
+      tiles = [...window.__hud.tiles.values()].filter((t) => t.overlay && t.overlay.model);
+      if (tiles.length && tiles.every((t) => !t.overlay._floatWrappers.length || t.overlay._floatWrappers.every((w) => w.t > 0.95))) break;
+      await new Promise(requestAnimationFrame);
+    }
+    return tiles.map((t) => ({ profile: t.profile, on: t.overlay._floatActive, parts: t.overlay._floatWrappers.length, out: t.overlay._floatWrappers.every((w) => w.t > 0.95) }));
+  });
+  await page.screenshot({ path: path.join(OUT, 'exploded-view.png') });
+  note(exploded.length > 0 && exploded.every((t) => t.on), `every tile uses the exploded view ${JSON.stringify(exploded)}`);
+  note(exploded.some((t) => t.parts > 0 && t.out), 'bumpers and triggers float clear of the body');
+
   // #821 · a controller that drops and returns draws again, on a canvas with a live context
   const back = await page.evaluate(async () => {
     const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
