@@ -100,9 +100,11 @@ test('a signed-in seat earns its own achievements from a ride, once', () => {
   const sa = new SeatAchievements({ store });
   const ride = { finishedLevel: 'grandma', distance: 1200, raceDistance: 1200, crashes: 1, isCoop: true, isMultiplayer: true, partnerKey: '7', timeMs: 200000 };
   const first = sa.finish(42, ride, { today: '2026-11-06' }).map((a) => a.id);
-  assert.ok(first.includes('first_finish'), first.join());
+  assert.ok(!first.includes('first_finish'), 'Made It takes 2 finishes (#819)');
   assert.ok(first.includes('first_pedal'));
   assert.ok(first.includes('first_crash'));
+  const second = sa.finish(42, ride, { today: '2026-11-06' }).map((a) => a.id);
+  assert.ok(second.includes('first_finish'), second.join());
   const again = sa.finish(42, ride, { today: '2026-11-06' }).map((a) => a.id);
   assert.ok(!again.includes('first_finish'), 'never twice');
   // What the account already has on the server is not awarded again on a new device.
@@ -111,5 +113,6 @@ test('a signed-in seat earns its own achievements from a ride, once', () => {
   const fresh = other.finish(42, ride, { today: '2026-11-06' }).map((a) => a.id);
   assert.ok(!fresh.includes('first_finish') && !fresh.includes('first_pedal'));
   // Each account keeps its own.
+  sa.finish(77, ride, { today: '2026-11-06' });
   assert.ok(sa.finish(77, ride, { today: '2026-11-06' }).some((a) => a.id === 'first_finish'));
 });
