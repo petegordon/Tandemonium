@@ -87,7 +87,7 @@
   {
    "id": "first_finish",
    "name": "Made It",
-   "description": "Finish any level",
+   "description": "Finish 2 rides",
    "icon": "🏁",
    "group": "first"
   },
@@ -108,7 +108,7 @@
   {
    "id": "first_boost",
    "name": "Turbo Goose",
-   "description": "Trigger a boost by grabbing a present or gem",
+   "description": "Trigger 3 boosts in a row without missing a present",
    "icon": "🚀",
    "group": "first"
   },
@@ -185,7 +185,7 @@
   {
    "id": "home_sweet",
    "name": "Home Sweet Home",
-   "description": "Finish Grandma's",
+   "description": "Finish Grandma's 3 times",
    "icon": "🏠",
    "group": "medals"
   },
@@ -199,21 +199,21 @@
   {
    "id": "grandma_bronze",
    "name": "Cookie",
-   "description": "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own",
+   "description": "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own. One medal per run",
    "icon": "🍪",
    "group": "medals"
   },
   {
    "id": "grandma_silver",
    "name": "Tea and Biscuits",
-   "description": "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own",
+   "description": "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own. One medal per run",
    "icon": "🫖",
    "group": "medals"
   },
   {
    "id": "grandma_gold",
    "name": "Grandma's Favourite",
-   "description": "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own",
+   "description": "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own. One medal per run",
    "icon": "🥇",
    "group": "medals"
   },
@@ -234,7 +234,7 @@
   {
    "id": "adventurer",
    "name": "Adventurer",
-   "description": "Finish any level on Adventurous",
+   "description": "Finish 3 rides on Adventurous",
    "icon": "🧭",
    "group": "medals"
   },
@@ -262,7 +262,7 @@
   {
    "id": "no_offroad",
    "name": "Stayed on the Road",
-   "description": "Finish a level without going off-road",
+   "description": "Finish 3 rides without going off-road",
    "icon": "🛤️",
    "group": "clean"
   },
@@ -472,7 +472,7 @@
   {
    "id": "payday",
    "name": "Payday",
-   "description": "Earn 200 Tandem Tokens from one regular (non-Slingshot) ride",
+   "description": "Earn 300 Tandem Tokens from one regular (non-Slingshot) ride",
    "icon": "💰",
    "group": "coins"
   },
@@ -708,7 +708,7 @@
   {
    "id": "grandma_default",
    "name": "Grandma's Classic",
-   "description": "Finish Grandma's on the default bike",
+   "description": "Finish Grandma's 5 times on the default bike",
    "icon": "🚲",
    "group": "colours"
   },

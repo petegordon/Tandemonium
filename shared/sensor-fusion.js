@@ -184,6 +184,8 @@ export class SensorFusion {
 
     // Timekeeping: set to performance.now() on first ingest().
     this._lastGyroTime = 0;
+    // The last device IMU timestamp, for drivers that report one (#822).
+    this._lastImuTicks = null;
 
     // Reusable scratch vectors — instance-scoped so two SensorFusion
     // instances can't clobber each other mid-frame.
@@ -309,6 +311,7 @@ export class SensorFusion {
     this._sfTimeSteady = 0;
     this._sfSkippedTime = 0;
     this._lastGyroTime = 0;
+    this._lastImuTicks = null;
     // Gravity starts again from straight down and converges on the real pose:
     // that jump is not the player, so it must not count as movement or as a
     // still window. The zero itself is kept (it is the grip, not fusion state).
@@ -338,6 +341,16 @@ export class SensorFusion {
   }
 
   /**
+   * The bias a calibration settled on, in degrees per second. A window taken while the controller was moving
+   * commits a wrong bias, which turns into heading drift, so a diagnostic log has to be able to show it (#822).
+   * A warning, because the desktop build's diagnostic log keeps warnings and errors only.
+   */
+  _logCalibCommit(kind, stddev, gyroScale) {
+    const dps = (v) => (v * gyroScale).toFixed(2);
+    console.warn(`Fusion calib committed ${kind} (stddev ${stddev.toFixed(0)}): bias ${dps(this.bias.x)}, ${dps(this.bias.y)}, ${dps(this.bias.z)} deg/s`);
+  }
+
+  /**
    * Ingest one HID report's worth of IMU data. Caller is responsible for
    * unit scales (gyroScale: deg/sec per raw unit; accelScale: g per raw
    * unit — typical values 2000/32768 * π/180 after conversion for gyro,
@@ -354,8 +367,12 @@ export class SensorFusion {
    *                            gravity correction is unit-scale-invariant
    *                            so this can be approximate)
    * @param {number} nowMs performance.now() from the caller
+   * @param {number} [imuTicks] the device's own uint32 sample timestamp, if the
+   *   driver has one. Reports queued behind a busy main thread all arrive at
+   *   about the same nowMs, so the time between samples must come from here.
+   * @param {number} [imuTicksPerMs] that timestamp's clock rate
    */
-  ingest(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz, gyroScale, accelScale, nowMs) {
+  ingest(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz, gyroScale, accelScale, nowMs, imuTicks, imuTicksPerMs) {
     // Initial one-shot bias capture with best-of-N retry selection.
     if (this._calibrating) {
       this._calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
@@ -387,6 +404,7 @@ export class SensorFusion {
           this.bias.x = meanX;
           this.bias.y = meanY;
           this.bias.z = meanZ;
+          this._logCalibCommit('clean', maxStd, gyroScale);
           this._calibSamples = [];
           this._calibrating = false;
           this._calibBest = null;
@@ -405,7 +423,7 @@ export class SensorFusion {
             this.bias.x = best.meanX;
             this.bias.y = best.meanY;
             this.bias.z = best.meanZ;
-            console.warn(`Fusion calib committed best-of-${FUSION_CALIB_MAX_RETRIES + 1} (stddev ${best.stddev.toFixed(0)})`);
+            this._logCalibCommit(`best-of-${FUSION_CALIB_MAX_RETRIES + 1}`, best.stddev, gyroScale);
           } else {
             console.warn(`Fusion calib aborted — all ${FUSION_CALIB_MAX_RETRIES + 1} captures too noisy (best stddev ${best.stddev.toFixed(0)}); keeping previous bias, letting continuous calibration refine`);
           }
@@ -417,13 +435,25 @@ export class SensorFusion {
     }
 
     // First-frame dt init: skip integration, just remember the time.
+    const hasImuClock = Number.isFinite(imuTicks) && imuTicksPerMs > 0;
     if (this._lastGyroTime === 0) {
       this._lastGyroTime = nowMs;
+      this._lastImuTicks = hasImuClock ? imuTicks : null;
       return;
     }
 
-    const dt = (nowMs - this._lastGyroTime) / 1000.0;
+    let dt = (nowMs - this._lastGyroTime) / 1000.0;
     this._lastGyroTime = nowMs;
+    if (hasImuClock) {
+      if (this._lastImuTicks !== null) {
+        // >>> 0 keeps the difference right across the uint32 wrap. Zero means
+        // the report repeats the last IMU sample, so there is nothing to add.
+        dt = ((imuTicks - this._lastImuTicks) >>> 0) / imuTicksPerMs / 1000.0;
+      }
+      this._lastImuTicks = imuTicks;
+    } else {
+      this._lastImuTicks = null;
+    }
     if (dt <= 0 || dt >= 0.1) return;
 
     const hasAccel = rawAx != null && rawAy != null && rawAz != null;

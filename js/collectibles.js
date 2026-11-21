@@ -481,6 +481,16 @@ export class CollectibleManager {
     if (this.collected < 0) this.collected = 0;
   }
 
+  /** #819 · Turbo Goose: the longest run of presents taken one after another, none ridden past. */
+  collectedRun() {
+    let best = 0, run = 0;
+    for (const item of this._items) {
+      run = item.collected ? run + 1 : 0;
+      if (run > best) best = run;
+    }
+    return best;
+  }
+
   getTotalItems() {
     return this._items.length;
   }
