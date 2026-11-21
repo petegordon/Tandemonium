@@ -78,7 +78,8 @@ export async function startHarness({ port, outDir = null, headless = 'new', auto
       return req.abort();
     });
     page.on('pageerror', (e) => { errors.push(e.message); console.log('  PAGEERROR:', e.message); });
-    const seed = { tandemonium_started: '1', ...storage };
+    // (#tourist note: smoke:tourist-note asks for it by clearing this key)
+    const seed = { tandemonium_started: '1', tandemonium_tourist_note_off: '1', ...storage };
     await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, seed);
     if (before) await before(page);
     // SMOKE_CPU_THROTTLE=<n> slows the page n× (CDP), to reproduce a CI runner's

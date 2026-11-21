@@ -274,7 +274,9 @@
     text-align: center;
   }
   .tourist-preview strong { color: var(--uf-color-accent-2); }
-  /* Map Tourist's places: scenic rides, your own, and the week's new places. */
+  .level-card-name-wrap { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+  .level-card-experimental { margin-top: 2px; font-size: 12px; font-weight: 700; line-height: 1.2; color: #ffc83d; white-space: nowrap; }
+  /* Tourist's places: scenic rides, your own, and the week's new places. */
   #tourist-places { display: flex; flex-direction: column; gap: 8px; width: min(560px, calc(100vw - 150px)); margin: 0 auto; }
   .tourist-head { font-size: 11px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-top: 2px; }
   .tourist-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
@@ -4683,6 +4685,7 @@
     .level-card-icon { font-size: calc(22 * var(--ls)); }
     .level-card-name { font-size: calc(12 * var(--ls)); }
     .level-card-desc { font-size: calc(9 * var(--ls)); padding-left: 0; }
+    .level-card-experimental { font-size: calc(9 * var(--ls)); }
     .level-card-record { font-size: calc(9 * var(--ls)); }
     .level-card-distance { font-size: calc(8 * var(--ls)); }
     /* Map Tourist's places and address form, sized for a desk or a couch like the rest of this layout
@@ -6145,6 +6148,12 @@ ON</button>
   <uf-sheet id="steam-join-sheet" heading="Join your Steam friend?" size="sm">
     <p id="steam-join-text" style="margin:0;color:var(--uf-color-fg-muted);"></p>
     <div slot="actions"><uf-button variant="accent" id="steam-join-confirm">JOIN</uf-button><uf-button id="steam-join-cancel">STAY HERE</uf-button></div>
+  </uf-sheet>
+  <!-- Tourist's note: Have Fun! takes the first focus; B / Esc / the scrim are Return. js/lobby.js _pressTourist -->
+  <uf-sheet id="tourist-note-sheet" heading="&#9888;&#65039; Experimental" size="sm">
+    <p style="margin:0;color:var(--uf-color-fg-muted);">This is an experimental Google Maps integration. It may not behave as you expect, but have fun with it anyway!</p>
+    <uf-setting id="tourist-note-never" label="Don't show this again"></uf-setting>
+    <div slot="actions"><uf-button id="tourist-note-return">RETURN</uf-button><uf-button variant="accent" id="tourist-note-fun">HAVE FUN!</uf-button></div>
   </uf-sheet>
   <!-- #820 · Steam build, no gyro controller or phone seen (js/gyro-tip.js). GOT IT takes the first focus. -->
   <uf-sheet id="gyro-tip-sheet" heading="Best with motion control" size="sm">

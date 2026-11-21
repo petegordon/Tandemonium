@@ -66,10 +66,10 @@ console.log('TP-01 the places come first');
 const page = await h.gamePage({ viewport: { width: 1600, height: 900 }, before,
   storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_route: JSON.stringify({ from: { lat: 39.9612, lon: -82.9988, label: 'Columbus, OH, USA' }, to: { lat: 39.7392, lon: -104.9903, label: 'Denver, CO, USA' }, at: 1 }) } });
 await ready(page);
-check(await openTourist(page), 'TP-01: the Map Tourist card is in the SOLO list');
+check(await openTourist(page), 'TP-01: the Tourist card is in the SOLO list');
 await sleep(400);
 let s = await screen(page);
-check(s.step === 'lobby-tourist' && s.prompt === 'Map Tourist · Where will you ride?', 'TP-01: its screen asks where to ride', s.prompt);
+check(s.step === 'lobby-tourist' && s.prompt === 'Tourist · Where will you ride?', 'TP-01: its screen asks where to ride', s.prompt);
 check(s.scenic.length >= 10 && s.scenic.length <= 14 && !s.form, `TP-01: about a dozen scenic rides, and no form to fill (${s.scenic.length})`, s.scenic);
 check(s.subs.every((t) => /·/.test(t)) && s.subs.some((t) => /km ride$/.test(t)) && s.subs.some((t) => /Open ride$/.test(t)), 'TP-01: each says where it is and what kind of ride', s.subs.slice(0, 3));
 check(s.yours.length === 1 && /Columbus → Denver/.test(s.yours[0]) && !s.none, 'TP-06: the route the old screen remembered is the first of "your places"', s.yours);
