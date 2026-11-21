@@ -10,6 +10,7 @@ import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './special-bikes.js';
 import { BotSync, botPartnerKey, recordBotRide, NO_BOT } from './player-bots.js';
 import { botTargetMs } from './bot-race.js';
+import { withGrandmaFinished } from './achievement-defs.js';
 import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -3768,7 +3769,7 @@ class Game {
     if (!level || !level.isDaily || !level.key) return { ok: true, left: null };
     // One gate for the lobby and the game (lobby._dailyGate reads the saved list).
     if (this.lobby._dailyGate) return this.lobby._dailyGate();
-    const earned = this.achievements ? this.achievements.getEarnedIds() : [];
+    const earned = this.achievements ? withGrandmaFinished(this.achievements.getEarnedIds(), this.achievements.getStats()) : [];   // #819
     return dailyRideGate(this._roomRules(), ridesStarted(browserStore(), level.key), earned);
   }
 
@@ -5457,7 +5458,9 @@ class Game {
     if (this.isSlingshot && this._slingRun) this._onSlingCoin(count);
     else {
       this.bike.boostTimer = 3; // 3-second speed boost
-      this.achievements.record('boost', { count });   // #401
+      const level = this.lobby && this.lobby.selectedLevel;
+      const streak = level && level.isTutorial ? 0 : this.collectibleManager.collectedRun();   // #819
+      this.achievements.record('boost', { count, streak });   // #401
     }
     // B-4: the boost was silent apart from a pickup beep, so it read as "you
     // collected a thing" rather than "you are now faster". Pitch up.

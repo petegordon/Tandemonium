@@ -363,7 +363,9 @@ export class AchievementManager {
    * `quiet`: award without the per-badge toast (onEarned). After a sign-in
    * brings the account's stats, the caller shows one summary instead.
    */
-  _evaluate(state, { quiet = false } = {}) {
+  _evaluate(rawState, { quiet = false } = {}) {
+    // #819 · the medal achievements read what was earned BEFORE this check, so a run earns one
+    const state = rawState && rawState.finishedLevel ? { ...rawState, earnedIds: new Set(this._earned.keys()) } : rawState;
     const newlyEarned = [];
     const demo = this.demo;
     const guestPass = demo && this.guestPass;   // #666: once per check, not per achievement

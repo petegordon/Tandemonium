@@ -55,6 +55,7 @@ import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
 import { resolveRider } from './goose-outfits.js';
+import { withGrandmaFinished } from './achievement-defs.js';
 import { RACE_TIERS, botTeamFor, botTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
@@ -2277,6 +2278,7 @@ export class Lobby {
       const raw = localStorage.getItem('tandemonium_achievements');
       if (raw) earned = JSON.parse(raw).map(a => a.id);
     } catch { /* empty */ }
+    earned = withGrandmaFinished(earned, this._achievements.getStats());   // #819
     return dailyRideGate(this.roomRules(), ridesStarted(browserStore(), playDayKey()), earned);   // #611: per warped day
   }
 

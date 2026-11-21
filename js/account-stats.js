@@ -35,13 +35,14 @@ export const ADD_KEYS = Object.freeze([
   'straightShots', 'medalKeys', 'dailyPractice', 'shares',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
   'versus1v2Wins', 'versusClean', 'versusEasyWins', 'touristDistance',
+  'grandmaFinishes', 'grandmaDefaultFinishes', 'cleanRoadFinishes', 'adventurousFinishes',   // #819
 ]);
 /**
  * Highest wins. `days` is a max, not a counter: the same day ridden on two
  * devices is one day (each device starts from the account's count, and the
  * merged day list fills in the rest).
  */
-export const MAX_KEYS = Object.freeze(['days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'slingTopSpeed', 'dailyDayBest']);
+export const MAX_KEYS = Object.freeze(['boostStreakBest', 'days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'slingTopSpeed', 'dailyDayBest']);
 export const OR_KEYS = Object.freeze(['pedalled', 'maxedAny', 'maxedAll']);
 export const UNION_KEYS = Object.freeze(['golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished']);
 export const RECENT_KEYS = Object.freeze(['dayList']);
