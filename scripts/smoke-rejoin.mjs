@@ -53,7 +53,6 @@ await page.evaluate(() => {
   l._replaceNet = () => {
     const n = orig();
     l.net.enterRoom = (code, role) => { window.__rj.push([code, role]); };
-    l.net.acquireLocalMedia = async () => {};
     return n;
   };
 });

@@ -1,14 +1,16 @@
 // ============================================================
-// GAME RECORDER — rolling buffer, compositing, selfie/partner PiP
+// GAME RECORDER — rolling buffer, compositing, clip save and share
 // ============================================================
 
 // iOS Safari: canvas.captureStream() produces blank video (WebKit bugs 229611, 181663).
 // Detect iOS and use WebCodecs VideoEncoder + mp4-muxer instead.
 import * as analytics from './analytics.js';
 import { FocusController } from '../shared/ui/focus-controller.js';
-import { clipToGif } from './clip-gif.js';
+import { clipToGif, GIF_SECONDS, windowStart } from './clip-gif.js';
+
+/** EARLIER / LATER move the GIF's window by this many seconds. */
+const CLIP_WINDOW_STEP_S = 2;
 import { clipDiscordLabel, discordMemberState, postClipGifToDiscord, HOUSE_TANDEM_DISCORD_URL } from './share-result.js';
-import { isMediaEnabled } from './edition.js';
 import { CLIP_SLOW_KEY } from './quality.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -26,6 +28,8 @@ export function canRecordClips() {
 }
 
 // iOS clip resolution cap (long side, px) for the composite + H.264 encode.
+/** A phone: fewer recordings at once (#805). */
+const _isPhone = typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 const WC_MAX_LONG_SIDE = 1280;
 
 // Clip lengths, in seconds. The rolling buffer keeps the last CLIP_SECONDS;
@@ -34,6 +38,37 @@ const WC_MAX_LONG_SIDE = 1280;
 // as a file from iPhone Messages to Android over RCS came back Not Delivered).
 export const CLIP_SECONDS = 20;
 export const SHORT_CLIP_SECONDS = 10;
+
+/**
+ * #805 · the MediaRecorder path (desktop, Android) keeps its clip playable by running recordings in
+ * turn. A recording's first chunk holds the file's header, so chunks cannot simply be dropped off the
+ * front of one that runs for ever (that was the bug: any clip saved more than 20 s in could not be
+ * opened). Instead recordings are started ROLL_STAGGER_SECONDS apart and each runs for at most
+ * ROLL_MAX_SECONDS; the clip is the whole of the oldest. So once a ride is ROLL_MAX_SECONDS old there is
+ * always between ROLL_MAX_SECONDS - ROLL_STAGGER_SECONDS and ROLL_MAX_SECONDS of it on hand.
+ *
+ * Pete, 2026-11-18: "Can we do the 30-40 seconds and they choose the 8 seconds?" 40 and 10 give that,
+ * with four recordings running. Measured in the desktop build the same day: 56 frames a second with
+ * none, one, two, three or four. A phone gets two (20 to 40 s): it has less to spare.
+ */
+export const ROLL_MAX_SECONDS = 40;
+export const ROLL_STAGGER_SECONDS = 10;
+export const ROLL_STAGGER_SECONDS_PHONE = 20;
+
+/**
+ * What the staggered recordings should do now.
+ * @param {number[]} ages  how long each recording has run, oldest first
+ * @returns {{ start: boolean, drop: boolean }}  start another; drop the oldest
+ */
+export function rollPlan(ages, { max = ROLL_MAX_SECONDS, stagger = ROLL_STAGGER_SECONDS } = {}) {
+  if (!ages.length) return { start: true, drop: false };
+  const newest = ages[ages.length - 1], oldest = ages[0];
+  return {
+    start: newest >= stagger && ages.length < Math.ceil(max / stagger) + 1,
+    // (the oldest goes when it is full, as long as something is left to be the clip)
+    drop: oldest >= max && ages.length > 1,
+  };
+}
 
 /**
  * #408 · the last `seconds` of a WebCodecs chunk buffer, cut at the muxing
@@ -284,26 +319,6 @@ export class GameRecorder {
     this._wcLastFrameTime = 0;
     this._wcMp4Muxer = null;      // loaded dynamically
 
-    // Room camera/mic (#400 D7). Off: clips are game video + game audio only —
-    // no selfie camera, no mic narration, no partner video/voice, no PiPs.
-    this.mediaEnabled = isMediaEnabled();
-
-    // Selfie camera
-    this.selfieStream = null;
-    this.selfieVideo = document.getElementById('selfie-pip');
-    this.selfieWrap = document.getElementById('selfie-pip-wrap');
-    this.selfieLabel = document.getElementById('selfie-pip-label');
-    this.selfieAvatar = document.getElementById('selfie-pip-avatar');
-    this.selfieActive = false;
-
-    // Partner video
-    this.partnerStream = null;
-    this.partnerVideo = document.getElementById('partner-pip');
-    this.partnerWrap = document.getElementById('partner-pip-wrap');
-    this.partnerLabel = document.getElementById('partner-pip-label');
-    this.partnerAvatar = document.getElementById('partner-pip-avatar');
-    this.partnerActive = false;
-
     // Audio mixing for clip recording
     this._audioCtx = null;
     this._audioDestination = null;
@@ -327,6 +342,17 @@ export class GameRecorder {
     this._discordClipState = 'idle';
     this._discordClipBusy = false;
     this.previewDiscardBtn = document.getElementById('clip-discard-btn');
+    // Pete, 2026-11-18 · choosing the 8 seconds of the clip that become the GIF: a bar the length of the
+    // clip with the window on it (drag it, or tap the bar), and EARLIER / LATER for a controller.
+    this.clipWindowRow = document.getElementById('clip-window-row');
+    this.clipWindowBar = document.getElementById('clip-window-bar');
+    this.clipWindowEl = document.getElementById('clip-window');
+    this.clipWindowLabel = document.getElementById('clip-window-label');
+    this.clipEarlierBtn = document.getElementById('clip-earlier-btn');
+    this.clipLaterBtn = document.getElementById('clip-later-btn');
+    this._clipDuration = 0;
+    this._clipWindowStart = 0;
+    this._clipWindowOn = false;
     // #408 · the share choice: full clip or a short cut for messaging apps.
     this.previewActions = document.getElementById('clip-actions');
     this.previewShareOptions = document.getElementById('clip-share-options');
@@ -363,6 +389,31 @@ export class GameRecorder {
     if (this.previewSaveBtn) onTap(this.previewSaveBtn, () => this._downloadClip());
     if (this.previewDiscordBtn) onTap(this.previewDiscordBtn, () => this._postClipToDiscord());
     if (this.previewDiscardBtn) onTap(this.previewDiscardBtn, () => this._discardClip());
+    if (this.clipEarlierBtn) onTap(this.clipEarlierBtn, () => this._moveClipWindow(-CLIP_WINDOW_STEP_S));
+    if (this.clipLaterBtn) onTap(this.clipLaterBtn, () => this._moveClipWindow(CLIP_WINDOW_STEP_S));
+    if (this.clipWindowBar) {
+      // one finger, a mouse or a pen: the window goes where the pointer is (its middle under it)
+      const at = (e) => {
+        const r = this.clipWindowBar.getBoundingClientRect();
+        if (!(r.width > 0) || !(this._clipDuration > 0)) return;
+        const t = (e.clientX - r.left) / r.width * this._clipDuration;
+        this._setClipWindow(t - GIF_SECONDS / 2);
+      };
+      let held = false;
+      this.clipWindowBar.addEventListener('pointerdown', (e) => { held = true; try { this.clipWindowBar.setPointerCapture(e.pointerId); } catch (_) {} at(e); e.preventDefault(); });
+      this.clipWindowBar.addEventListener('pointermove', (e) => { if (held) at(e); });
+      const up = () => { held = false; };
+      this.clipWindowBar.addEventListener('pointerup', up);
+      this.clipWindowBar.addEventListener('pointercancel', up);
+    }
+    if (this.previewVideo) {
+      // the preview plays the chosen seconds round and round
+      this.previewVideo.addEventListener('timeupdate', () => {
+        if (!this._clipWindowOn) return;
+        const t = this.previewVideo.currentTime, a = this._clipWindowStart;
+        if (t < a - 0.4 || t >= a + GIF_SECONDS) { try { this.previewVideo.currentTime = a; } catch (_) {} }
+      });
+    }
 
     // Hide share button if not supported
     if (!this.supported && this.shareBtn) {
@@ -649,145 +700,13 @@ export class GameRecorder {
     this.compCanvas.height = h;
   }
 
-  // ── Selfie camera (Phase 2) ──
-
-  async startSelfie(existingStream) {
-    if (!this.mediaEnabled) return;
-    if (this.selfieActive) return;
-    // Hide avatar fallback when real camera starts
-    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
-    if (this.selfieVideo) this.selfieVideo.style.display = 'block';
-    try {
-      // Reuse existing stream from network manager instead of creating a
-      // duplicate getUserMedia. On iOS, two camera streams simultaneously
-      // doubles memory pressure and can crash the tab.
-      if (existingStream) {
-        this.selfieStream = existingStream;
-        this._sharedSelfieStream = true;
-      } else {
-        this.selfieStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 240, height: 240 },
-          audio: false
-        });
-      }
-      if (this.selfieVideo) {
-        // Only reassign if different stream — avoids killing iOS playback
-        if (this.selfieVideo.srcObject !== this.selfieStream) {
-          this.selfieVideo.srcObject = this.selfieStream;
-        }
-        this.selfieVideo.play().catch(() => {});
-        if (this.selfieWrap) this.selfieWrap.style.display = 'block';
-      }
-      this.selfieActive = true;
-    } catch (e) {
-      // Permission denied or no camera — silent fallback
-      this.selfieActive = false;
-    }
-  }
-
-  showAvatarPip(avatarUrl) {
-    if (!this.mediaEnabled) return;
-    if (!avatarUrl || !this.selfieAvatar || !this.selfieWrap) return;
-    this.selfieAvatar.src = avatarUrl;
-    this.selfieAvatar.style.display = 'block';
-    if (this.selfieVideo) this.selfieVideo.style.display = 'none';
-    this.selfieWrap.style.display = 'block';
-  }
-
-  stopSelfie() {
-    if (this.selfieStream) {
-      // Only stop tracks if this is a recorder-owned stream (not shared with network manager)
-      if (!this._sharedSelfieStream) {
-        this.selfieStream.getTracks().forEach(t => t.stop());
-      }
-      this.selfieStream = null;
-      this._sharedSelfieStream = false;
-    }
-    if (this.selfieVideo) {
-      this.selfieVideo.srcObject = null;
-    }
-    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
-    if (this.selfieWrap) this.selfieWrap.style.display = 'none';
-    this.selfieActive = false;
-  }
-
-  // ── Partner video (Phase 3) ──
-
-  setPartnerStream(stream) {
-    if (!this.mediaEnabled) return;
-    this.partnerStream = stream;
-    if (this.partnerVideo && stream) {
-      // Only reassign if different stream — avoids killing iOS playback
-      if (this.partnerVideo.srcObject !== stream) {
-        this.partnerVideo.srcObject = stream;
-      }
-      this.partnerVideo.style.display = 'block';
-      this.partnerVideo.play().catch(() => {});
-      if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
-      if (this.partnerWrap) this.partnerWrap.style.display = 'block';
-      this.partnerActive = true;
-    }
-  }
-
-  showPartnerAvatar(avatarUrl) {
-    if (!this.mediaEnabled) return;
-    if (!avatarUrl || !this.partnerAvatar || !this.partnerWrap) return;
-    this.partnerAvatar.src = avatarUrl;
-    this.partnerAvatar.style.display = 'block';
-    if (this.partnerVideo) this.partnerVideo.style.display = 'none';
-    this.partnerWrap.style.display = 'block';
-    this.partnerActive = false;
-  }
-
-  clearPartnerStream() {
-    this.partnerStream = null;
-    if (this.partnerVideo) {
-      this.partnerVideo.srcObject = null;
-    }
-    if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
-    if (this.partnerWrap) this.partnerWrap.style.display = 'none';
-    this.partnerActive = false;
-  }
-
-  setLabels(mode) {
-    const selfieText = mode === 'captain' ? 'CAPTAIN' : (mode === 'stoker' ? 'STOKER' : 'YOU');
-    const partnerText = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
-    if (this.selfieLabel) this.selfieLabel.textContent = selfieText;
-    if (this.partnerLabel) this.partnerLabel.textContent = partnerText;
-  }
-
-  // ── Audio mixing for clip recording ──
-
-  addAudioStreams(localStream, remoteStream) {
-    if (!this.mediaEnabled) return;
-    // Use the existing audio destination set up by startBuffer()
-    if (!this._audioCtx || !this._audioDestination) return;
-    try {
-      if (localStream) {
-        const localAudio = localStream.getAudioTracks();
-        if (localAudio.length > 0) {
-          this._audioCtx.createMediaStreamSource(new MediaStream(localAudio))
-            .connect(this._audioDestination);
-        }
-      }
-      if (remoteStream) {
-        const remoteAudio = remoteStream.getAudioTracks();
-        if (remoteAudio.length > 0) {
-          this._audioCtx.createMediaStreamSource(new MediaStream(remoteAudio))
-            .connect(this._audioDestination);
-        }
-      }
-    } catch (e) {
-      console.warn('Audio mix for recording failed:', e);
-    }
-  }
-
   // ── Rolling buffer ──
   // Strategy: single continuous MediaRecorder with 1s timeslice.
+  // (MediaRecorder path: the recordings take turns, see ROLL_MAX_SECONDS. What follows is the old note.)
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
-  async startBuffer(audioCtx, micEnabled = false, audioEngine = null) {
+  async startBuffer(audioCtx, audioEngine = null) {
     // Wait for GPU readback probe to finish before deciding whether to buffer
     await this._gpuProbe;
     if (!this.supported || this.buffering) return;
@@ -851,51 +770,70 @@ export class GameRecorder {
 
     // Show share button
     if (this.shareBtn) this.shareBtn.style.display = 'block';
-
-    // Request mic in background (non-blocking) — game beeps still recorded without it
-    if (audioCtx && micEnabled && this.mediaEnabled) {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
-        this._micStream = micStream;
-        if (this._audioCtx && this._audioDestination) {
-          this._audioCtx.createMediaStreamSource(micStream)
-            .connect(this._audioDestination);
-        }
-      }).catch(() => {
-        // Mic denied — silently continue (game beeps still captured)
-      });
-    }
   }
 
-  _startRecorder() {
-    if (!this._stream || !this._mimeType) return;
-
+  /** A MediaRecorder on the clip stream, its chunks going into `chunks`. null when one cannot be made. */
+  _newRecorder(chunks) {
+    if (!this._stream || !this._mimeType) return null;
+    let rec = null;
     try {
-      this.recorder = new MediaRecorder(this._stream, {
-        mimeType: this._mimeType,
-        videoBitsPerSecond: 2500000
-      });
+      rec = new MediaRecorder(this._stream, { mimeType: this._mimeType, videoBitsPerSecond: 2500000 });
     } catch (e) {
-      try {
-        this.recorder = new MediaRecorder(this._stream, { mimeType: this._mimeType });
-      } catch (e2) {
-        return;
-      }
+      try { rec = new MediaRecorder(this._stream, { mimeType: this._mimeType }); } catch (e2) { return null; }
     }
-
-    this.recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) {
-        this._chunks.push({ data: e.data, time: performance.now() });
-        // Prune chunks older than bufferDuration
-        const cutoff = performance.now() - this.bufferDuration * 1000;
-        while (this._chunks.length > 1 && this._chunks[0].time < cutoff) {
-          this._chunks.shift();
-        }
-      }
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) chunks.push({ data: e.data, time: performance.now() });
+      // (the current recording keeps the turn-taking going: #805)
+      if (rec === this.recorder) this._roll();
     };
-
     // 1-second timeslice: each chunk fires ondataavailable every ~1s
-    this.recorder.start(1000);
+    try { rec.start(1000); } catch (e) { return null; }
+    return rec;
+  }
+
+  /** Start the clip's recording afresh (anything recorded so far is let go). */
+  _startRecorder() {
+    this._dropYoungerRecorders();
+    this._chunks = [];
+    this.recorder = this._newRecorder(this._chunks);
     this._recordStartTime = performance.now();
+    /** The recordings running, oldest first. The oldest is the clip (this.recorder, this._chunks). */
+    this._gens = this.recorder ? [{ rec: this.recorder, chunks: this._chunks, start: this._recordStartTime }] : [];
+  }
+
+  _dropYoungerRecorders() {
+    for (const g of this._gens || []) {
+      if (g.rec === this.recorder) continue;
+      g.rec.ondataavailable = null;
+      if (g.rec.state !== 'inactive') { try { g.rec.stop(); } catch (e) {} }
+    }
+    this._gens = (this._gens || []).filter((g) => g.rec === this.recorder);
+  }
+
+  /** #805 · the recordings take turns (see ROLL_MAX_SECONDS). Not while a clip is being cut. */
+  _roll() {
+    if (this._saving || !this.buffering || !this.recorder || !this._gens || !this._gens.length) return;
+    const now = performance.now();
+    const stagger = _isPhone ? ROLL_STAGGER_SECONDS_PHONE : ROLL_STAGGER_SECONDS;
+    const plan = rollPlan(this._gens.map((g) => (now - g.start) / 1000), { stagger });
+    if (plan.start && !this._rollNoMore) {
+      const chunks = [];
+      const rec = this._newRecorder(chunks);
+      if (rec) this._gens.push({ rec, chunks, start: now });
+      else this._rollNoMore = this._gens.length;   // this device will not run another: make do with these
+    }
+    if (plan.drop) {
+      const old = this._gens.shift();
+      const next = this._gens[0];
+      this.recorder = next.rec;
+      this._chunks = next.chunks;
+      this._recordStartTime = next.start;
+      old.rec.ondataavailable = null;
+      if (old.rec.state !== 'inactive') { try { old.rec.stop(); } catch (e) {} }
+    } else if (this._gens.length === 1 && (now - this._gens[0].start) / 1000 >= ROLL_MAX_SECONDS) {
+      // (only one will run here: start over when it is full, so it never grows without end)
+      this._startRecorder();
+    }
   }
 
   stopBuffer() {
@@ -906,7 +844,10 @@ export class GameRecorder {
     }
     this._wcEncodedChunks = [];
 
+    this._dropYoungerRecorders();
+    this._gens = [];
     if (this.recorder && this.recorder.state !== 'inactive') {
+      this.recorder.ondataavailable = null;
       try { this.recorder.stop(); } catch (e) {}
     }
     this.recorder = null;
@@ -915,11 +856,7 @@ export class GameRecorder {
     this._chunks = [];
     this._saving = false;
 
-    // Stop mic stream (AudioContext is owned by game.js, don't close it)
-    if (this._micStream) {
-      this._micStream.getTracks().forEach(t => t.stop());
-      this._micStream = null;
-    }
+    // (the AudioContext is owned by game.js, don't close it)
     this._audioDestination = null;
     this._audioCtx = null;
 
@@ -927,6 +864,26 @@ export class GameRecorder {
     if (this.shareBtn && !this._clipUrl) {
       this.shareBtn.style.display = 'none';
     }
+  }
+
+  /**
+   * Draw one frame's worth of everything the clip's HUD can show, then the true frame over it, before the
+   * ride starts. The browser builds a drawing pipeline the first time each kind of shape is painted on this
+   * canvas (the game picture copied in, the gradient bar, rounded buttons, text), and that took 110 to 150 ms
+   * of the GPU process at GO, in the first frames of every first ride (traced 2026-11-17). Done in the
+   * countdown instead, nobody is steering yet. Both draws happen in one task, so the recording only ever
+   * sees the true frame. → true once done (false: not recording yet, ask again)
+   */
+  prime(state) {
+    if (!this.buffering || !state) return false;
+    if (this._useWebCodecs) return true;   // (iOS feeds frames by hand: nothing to gain, and a frame to lose)
+    const race = state.raceDistance > 0 ? state.raceDistance : 250;
+    try {
+      this.composite({ ...state, raceDistance: race, distance: race * 0.5, speed: Math.max(Number(state.speed) || 0, 6),
+        leftPressed: true, rightPressed: true, checkpointFlash: 0.5, checkpointPositions: state.checkpointPositions || [0.5] });
+    } catch (e) { /* the real frame below still draws */ }
+    try { this.composite(state); } catch (e) { /* drawn at GO as before */ }
+    return true;
   }
 
   // ── Compositing (called every frame) ──
@@ -945,6 +902,13 @@ export class GameRecorder {
 
     // Draw game canvas
     ctx.drawImage(this.gameCanvas, 0, 0, w, h);
+
+    // #802 · a plain frame (Map Tourist's arrival): the picture and the marks, none of the ride's HUD
+    if (state && state.plain) {
+      this._drawClipMarks(ctx, w, h, s, state);
+      if (this._useWebCodecs) this._feedWebCodecsFrame();
+      return;
+    }
 
     // Feed frame to WebCodecs encoder (iOS) — done AFTER full composite below
     // (scheduled via _wcNeedsFeed flag, actual feed at end of this method)
@@ -966,18 +930,6 @@ export class GameRecorder {
       this._drawPartnerIndicators(ctx, w, h, s, state);
     }
 
-    // ── Selfie PiP (top-right corner of recording) ──
-    if (this.selfieActive && this.selfieVideo && this.selfieVideo.readyState >= 2) {
-      const selfieLabel = state.mode === 'captain' ? 'CAPTAIN' : (state.mode === 'stoker' ? 'STOKER' : 'YOU');
-      this._drawCircularPiP(ctx, this.selfieVideo, w, h, 'right', selfieLabel);
-    }
-
-    // ── Partner PiP (left of selfie, top-right area) ──
-    if (this.partnerActive && this.partnerVideo && this.partnerVideo.readyState >= 2) {
-      const partnerLabel = state.mode === 'captain' ? 'STOKER' : 'CAPTAIN';
-      this._drawCircularPiP(ctx, this.partnerVideo, w, h, 'left', partnerLabel);
-    }
-
     // ── Role label at bottom center ──
     if (state.mode === 'captain' || state.mode === 'stoker') {
       ctx.save();
@@ -997,6 +949,29 @@ export class GameRecorder {
       this._drawCheckpointFlash(ctx, w, h, s, state.checkpointFlash);
     }
 
+    this._drawClipMarks(ctx, w, h, s, state);
+
+    // Feed composited frame to WebCodecs encoder (iOS path)
+    if (feedWC) this._feedWebCodecsFrame();
+  }
+
+  /** The lines every frame of a clip carries: whose imagery it is (Map Tourist), and the game's name. */
+  _drawClipMarks(ctx, w, h, s, state) {
+    // ── Whose imagery this is (Map Tourist: Google's attribution travels with the clip) ──
+    if (state && state.credit) {
+      ctx.save();
+      ctx.font = Math.round(6.5 * s) + 'px Helvetica Neue, Arial, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.shadowColor = 'rgba(0,0,0,0.8)'; ctx.shadowBlur = 2 * s;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      let credit = String(state.credit);
+      while (credit.length > 8 && ctx.measureText(credit).width > w * 0.66) credit = credit.slice(0, -2);
+      if (credit !== String(state.credit)) credit += '…';
+      ctx.fillText(credit, 8 * s, h - 8 * s);
+      ctx.restore();
+    }
+
     // ── Watermark ──
     ctx.save();
     ctx.font = Math.round(9 * s) + 'px Helvetica Neue, Arial, sans-serif';
@@ -1005,9 +980,6 @@ export class GameRecorder {
     ctx.textBaseline = 'bottom';
     ctx.fillText('TANDEMONIUM', w - 12 * s, h - 8 * s);
     ctx.restore();
-
-    // Feed composited frame to WebCodecs encoder (iOS path)
-    if (feedWC) this._feedWebCodecsFrame();
   }
 
   // ── Speed dashboard — replicates #hud-dashboard ──
@@ -1434,10 +1406,15 @@ export class GameRecorder {
     // Visible items only (SHARE may be hidden on desktop). The controller
     // primes edge-state so a button held when the modal opens doesn't fire.
     // With the share choice open (#408) the pad walks that row instead.
+    const choosing = this._clipWindowOn && this.clipWindowRow && this.clipWindowRow.style.display !== 'none';
     const row = this._shareOptionsOpen
       ? [this.previewShareFullBtn, this.previewShareShortBtn, this.previewShareBackBtn]
-      : [this.previewShareBtn, this.previewSaveBtn, this.previewDiscordBtn, this.previewDiscardBtn];
-    this._previewFocus.setItems(row.filter(el => el && el.style.display !== 'none'));
+      : [...(choosing ? [this.clipEarlierBtn, this.clipLaterBtn] : []), this.previewShareBtn, this.previewSaveBtn, this.previewDiscordBtn, this.previewDiscardBtn];
+    // (the pad starts on the first action, not on EARLIER: the choice is there for whoever wants it)
+    const items = row.filter(el => el && el.style.display !== 'none');
+    const first = items.find((el) => el !== this.clipEarlierBtn && el !== this.clipLaterBtn);
+    const keep = this._previewFocusKeep && items.includes(this._previewFocusKeep) ? this._previewFocusKeep : first;
+    this._previewFocus.setItems(items, Math.max(0, items.indexOf(keep)));
     // Singleton RAF loop: cancel any prior poll before starting a new one so
     // re-showing the preview can't stack loops that double-process input. (#318)
     if (this._previewPollId) cancelAnimationFrame(this._previewPollId);
@@ -1490,63 +1467,57 @@ export class GameRecorder {
     ctx.closePath();
   }
 
-  _drawCircularPiP(ctx, videoEl, canvasW, canvasH, side, label) {
-    const sc = canvasW / 375;
-    const size = Math.round(80 * sc);
-    const margin = Math.round(14 * sc);
-    const borderWidth = 2.5 * sc;
-    // Position at top-right of canvas (selfie right, partner left of selfie)
-    const topPad = 14 * sc;
-    const x = side === 'left' ? canvasW - margin - size - 6 * sc - size / 2 : canvasW - margin - size / 2;
-    const y = topPad + size / 2;
-
-    ctx.save();
-
-    // Circular clip
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-
-    // Draw video scaled to fill circle, shifted down 25% to center on face
-    // (phone held upright → camera captures above head; offset compensates)
-    const vw = videoEl.videoWidth || size;
-    const vh = videoEl.videoHeight || size;
-    const scale = Math.max(size / vw, size / vh);
-    const dw = vw * scale;
-    const dh = vh * scale;
-    const faceOffset = (dh - size) * 0.25; // shift crop downward
-    ctx.drawImage(videoEl, x - dw / 2, y - dh / 2 + faceOffset, dw, dh);
-
-    ctx.restore();
-
-    // White border ring
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = borderWidth;
-    ctx.stroke();
-    ctx.restore();
-
-    // Role label below circle
-    if (label) {
-      ctx.save();
-      const fontSize = Math.round(9 * sc);
-      ctx.font = 'bold ' + fontSize + 'px Helvetica Neue, Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillText(label, x + 1, y + size / 2 + 4 * sc + 1);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(label, x, y + size / 2 + 4 * sc);
-      ctx.restore();
-    }
-  }
-
   // ── Save clip ──
 
-  saveClip() {
+  /**
+   * #802 · start the clip again from here (the arrival: what came before is not part of it).
+   * On the MediaRecorder path this also keeps the clip playable: its buffer drops the chunks older
+   * than bufferDuration, and the first of those holds the file's header.
+   */
+  restartBuffer() {
+    if (!this.buffering || this._saving || this._useWebCodecs) return;
+    const rec = this.recorder;
+    if (!rec || rec.state !== 'recording') return;
+    rec.addEventListener('stop', () => { this._chunks = []; this._startRecorder(); }, { once: true });
+    try { rec.stop(); } catch { this._chunks = []; this._startRecorder(); }
+  }
+
+  /**
+   * #802 · take the clip NOW and keep it, without opening the preview (the arrival: the celebration and
+   * the camera's rise, cut where the end screen comes up). showHeldClip() opens it later.
+   */
+  holdClip() {
+    if (!this.buffering || this._saving) return false;
+    this.dropHeldClip();
+    this._quietClip = true;
+    this._heldWindowFrom = 'start';   // (Pete: "Start on the confetti")
+    this.saveClip({ delayMs: 250 });
+    return true;
+  }
+
+  /** Is a clip from holdClip() ready? */
+  get hasHeldClip() { return !!this._heldClip && !!this._clipUrl; }
+
+  /** Open the preview (save, share, post the GIF to Discord) on the clip holdClip() took. */
+  showHeldClip() {
+    if (!this.hasHeldClip) return false;
+    this._clipWindowFrom = this._heldWindowFrom || 'end';
+    this._showPreview();
+    return true;
+  }
+
+  /** The held clip was never asked for: let it go. (One that is open in the preview is the player's now.) */
+  dropHeldClip() {
+    this._quietClip = false;
+    if (!this._heldClip) return;
+    this._heldClip = false;
+    if (this.previewModal && this.previewModal.classList.contains('visible')) return;
+    if (this._clipUrl) { URL.revokeObjectURL(this._clipUrl); this._clipUrl = null; }
+    this._clipBlob = null; this._clipChunks = null; this._clipDecoderConfig = null; this._clipDims = null; this._shortClipBlob = null;
+  }
+
+  saveClip(opts = {}) {
+    const delayMs = opts && Number.isFinite(opts.delayMs) ? opts.delayMs : 2000;
     _dbg(`saveClip buf=${this.buffering} saving=${this._saving} useWC=${this._useWebCodecs} enc=${this._wcEncoder ? this._wcEncoder.state : 'null'} chunks=${this._wcEncodedChunks.length} rec=${this.recorder ? this.recorder.state : 'null'}`);
     if (!this.buffering) { _dbg('BAIL: not buffering'); return; }
     if (this._saving) { _dbg('BAIL: already saving'); return; }
@@ -1579,7 +1550,7 @@ export class GameRecorder {
           this.shareBtn.textContent = '\uD83C\uDFAC'; // 🎬
           this.shareBtn.style.background = 'rgba(0,0,0,0.4)';
         }
-      }, 2000);
+      }, delayMs);
       return;
     }
 
@@ -1612,7 +1583,7 @@ export class GameRecorder {
         this._chunks = [];
         this._startRecorder();
       }
-    }, 2000);
+    }, delayMs);
   }
 
   _assembleClip() {
@@ -1627,10 +1598,13 @@ export class GameRecorder {
 
   _showPreview() {
     if (!this.previewModal || !this.previewVideo || !this._clipUrl) return;
+    // (taken to be held: kept until it is asked for)
+    if (this._quietClip) { this._quietClip = false; this._heldClip = true; if (this.onHeldClip) this.onHeldClip(); return; }
 
     this.previewVideo.src = this._clipUrl;
     this.previewVideo.play().catch(() => {});
     this.previewModal.classList.add('visible');
+    this._openClipWindow();
 
     // Only show SHARE on actual mobile/tablet where the native share sheet
     // is useful; on desktop it just falls back to download (same as SAVE).
@@ -1660,6 +1634,7 @@ export class GameRecorder {
     Promise.resolve(this.discordClip.configured()).then((on) => {
       if (!on || this._clipUrl !== url) return;
       b.style.display = '';
+      this._showClipWindow();
       if (this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
     }).catch(() => {});
   }
@@ -1689,7 +1664,7 @@ export class GameRecorder {
       const member = await discordMemberState(token, { apiBase: this.discordClip.apiBase });
       if (member === 'signin' || member === 'join') { this._setDiscordClipState(member); return; }
       this._setDiscordClipState('making');
-      const gif = await clipToGif(url, { onProgress: (p) => { if (this._clipUrl === url) this._setDiscordClipState('making', p); } });
+      const gif = await clipToGif(url, { start: this._clipWindowOn ? this._clipWindowStart : undefined, onProgress: (p) => { if (this._clipUrl === url) this._setDiscordClipState('making', p); } });
       if (this._clipUrl !== url) return;   // discarded meanwhile
       this._setDiscordClipState('posting');
       const res = await postClipGifToDiscord({ blob: gif, token, caption: this.discordClip.caption() }, { apiBase: this.discordClip.apiBase });
@@ -1793,7 +1768,74 @@ export class GameRecorder {
     analytics.trackEvent('clip_save', { method: 'download' });
   }
 
+  /**
+   * The chooser for a clip that has just opened in the preview: find how long the clip is (a
+   * MediaRecorder WebM does not say until it is asked for its end), then put the window at the end of
+   * it, or at the start for a clip that asked for that (Map Tourist's arrival: the confetti).
+   */
+  _openClipWindow() {
+    this._clipWindowOn = false;
+    this._clipDuration = 0;
+    if (this.clipWindowRow) this.clipWindowRow.style.display = 'none';
+    const v = this.previewVideo, url = this._clipUrl;
+    const from = this._clipWindowFrom || 'end';
+    this._clipWindowFrom = null;
+    if (!v || !this.clipWindowRow) return;
+    const ready = () => {
+      if (this._clipUrl !== url) return;
+      const d = v.duration;
+      if (!Number.isFinite(d) || d <= GIF_SECONDS + 0.5) return;   // nothing to choose in a clip this short
+      this._clipDuration = d;
+      this._clipWindowOn = true;
+      this._setClipWindow(from === 'start' ? 0 : d - GIF_SECONDS);
+      this._showClipWindow();
+      if (this.previewModal.classList.contains('visible')) this._startPreviewGamepadNav();
+    };
+    const find = () => {
+      if (this._clipUrl !== url) return;
+      if (Number.isFinite(v.duration)) { ready(); return; }
+      const got = () => { v.removeEventListener('durationchange', got); if (Number.isFinite(v.duration)) ready(); };
+      v.addEventListener('durationchange', got);
+      try { v.currentTime = 1e7; } catch (_) {}
+    };
+    if (v.readyState >= 1) find(); else v.addEventListener('loadedmetadata', find, { once: true });
+  }
+
+  /** The chooser shows when there is something to choose and a GIF to be made of it. */
+  _showClipWindow() {
+    if (!this.clipWindowRow) return;
+    const on = this._clipWindowOn && !!this.previewDiscordBtn && this.previewDiscordBtn.style.display !== 'none' && !this._shareOptionsOpen;
+    this.clipWindowRow.style.display = on ? '' : 'none';
+  }
+
+  _moveClipWindow(byS) {
+    if (!this._clipWindowOn) return;
+    this._previewFocusKeep = byS < 0 ? this.clipEarlierBtn : this.clipLaterBtn;
+    this._setClipWindow(this._clipWindowStart + byS);
+  }
+
+  /** Put the window at `startS` (held inside the clip), and play from there. */
+  _setClipWindow(startS) {
+    if (!(this._clipDuration > 0)) return;
+    const a = windowStart(this._clipDuration, GIF_SECONDS, startS);
+    this._clipWindowStart = a;
+    if (this.clipWindowEl) {
+      this.clipWindowEl.style.left = (a / this._clipDuration * 100) + '%';
+      this.clipWindowEl.style.width = (Math.min(GIF_SECONDS, this._clipDuration) / this._clipDuration * 100) + '%';
+    }
+    const mmss = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+    if (this.clipWindowLabel) this.clipWindowLabel.textContent = `GIF: ${mmss(a)} to ${mmss(a + GIF_SECONDS)} of ${mmss(this._clipDuration)}`;
+    if (this.clipEarlierBtn) this.clipEarlierBtn.toggleAttribute('disabled', a <= 0.01);
+    if (this.clipLaterBtn) this.clipLaterBtn.toggleAttribute('disabled', a >= this._clipDuration - GIF_SECONDS - 0.01);
+    if (this.previewVideo) { try { this.previewVideo.currentTime = a; } catch (_) {} this.previewVideo.play().catch(() => {}); }
+    // a posted GIF was of other seconds: it can be posted again for these
+    if (this._discordClipState === 'posted' || this._discordClipState === 'error') this._setDiscordClipState('idle');
+  }
+
   _discardClip() {
+    this._clipWindowOn = false;
+    this._previewFocusKeep = null;
+    if (this.clipWindowRow) this.clipWindowRow.style.display = 'none';
     this._stopPreviewGamepadNav();
     analytics.trackEvent('clip_discard', {});
     if (this._clipUrl) {
@@ -1819,13 +1861,7 @@ export class GameRecorder {
   // ── Cleanup ──
 
   destroy() {
-    if (this._micStream) {
-      this._micStream.getTracks().forEach(t => t.stop());
-      this._micStream = null;
-    }
     this.stopBuffer();
-    this.stopSelfie();
-    this.clearPartnerStream();
     this._discardClip();
   }
 }

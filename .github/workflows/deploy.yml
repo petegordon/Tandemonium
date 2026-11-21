@@ -1,4 +1,6 @@
 name: Deploy to GitHub Pages
+# Third-party actions are pinned to a commit (the tag is in the comment): a tag can be moved
+# to different code, a commit cannot. To update one, change both.
 
 on:
   push:
@@ -24,18 +26,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # Nothing reaches production on red: the unit tests run here, before
       # anything is staged, and a failure stops the job (no deploy). This does
       # not rely on the PR's `tests` check having been green when it merged.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24
 
       - name: Install dependencies
-        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
 
       - name: Unit tests
         run: npm test
@@ -106,12 +108,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/prune-previews.sh _site/pr-preview
 
+      # A preview staged before #760 is a full copy of the game (no
+      # preview-sw.js at its root). Those are not carried forward: a few of
+      # them put the site over the Pages limit, and they only shrink when
+      # their PR is built again. The PR's next push or reopen publishes a
+      # small one. Previews staged the new way are always kept.
+      - name: Drop full-size previews staged the old way
+        run: bash .github/scripts/drop-full-previews.sh _site/pr-preview
+
+      # _site is now everything Pages will serve: the game plus the open PRs'
+      # previews. Past 1 GB Pages stops updating without failing anything, which
+      # is how publishing broke unnoticed (#760). So measure it, print each
+      # preview's size, and stop the deploy with a clear error over 900 MB.
+      - name: Check publish size (fails over 900 MB)
+        run: bash .github/scripts/check-publish-size.sh _site 900
+
       - name: Deploy to gh-pages branch
         id: deploy
         # A preview push landing mid-deploy rejects this one (non-fast-forward).
         # Don't fail yet — the retry below re-reads gh-pages and tries again.
         continue-on-error: true
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_site
@@ -139,10 +156,14 @@ jobs:
             git archive origin/gh-pages pr-preview | tar -x -C _site || echo "WARNING: failed to preserve pr-preview"
           fi
           bash .github/scripts/prune-previews.sh _site/pr-preview
+          bash .github/scripts/drop-full-previews.sh _site/pr-preview
+          # The previews were just re-read (one was pushed meanwhile), so the
+          # size is checked again before the second attempt.
+          bash .github/scripts/check-publish-size.sh _site 900
 
       - name: Deploy to gh-pages branch (retry)
         if: steps.deploy.outcome == 'failure'
-        uses: peaceiris/actions-gh-pages@v4
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_site

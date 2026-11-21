@@ -25,10 +25,22 @@ export function gifSize(w, h, long) {
   return { w: Math.max(2, Math.round(w * s / 2) * 2), h: Math.max(2, Math.round(h * s / 2) * 2) };
 }
 
-/** The frame times (s) for the last `seconds` of a clip `duration` s long. */
-export function frameTimes(duration, seconds, fps) {
-  const start = Math.max(0, duration - seconds);
-  const n = Math.max(1, Math.floor((duration - start) * fps));
+/**
+ * Where a window of `seconds` may start in a clip `duration` s long: `want` held inside the clip
+ * (no number = the last `seconds`).
+ */
+export function windowStart(duration, seconds, want) {
+  const last = Math.max(0, duration - seconds);
+  return Number.isFinite(want) ? Math.max(0, Math.min(last, want)) : last;
+}
+
+/**
+ * The frame times (s) for `seconds` of a clip `duration` s long: the last of it, or from `from`
+ * (the player's choice, held inside the clip).
+ */
+export function frameTimes(duration, seconds, fps, from = undefined) {
+  const start = windowStart(duration, seconds, from);
+  const n = Math.max(1, Math.floor(Math.min(seconds, duration - start) * fps));
   const out = [];
   for (let i = 0; i < n; i++) out.push(+(start + i / fps).toFixed(4));
   return out;
@@ -70,14 +82,14 @@ async function openClip(url) {
   return v;
 }
 
-async function encodeStep(video, step, onProgress) {
+async function encodeStep(video, step, onProgress, from) {
   const { GIFEncoder, quantize, applyPalette } = await loadGifenc();
   const { w, h } = gifSize(video.videoWidth, video.videoHeight, step.long);
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const gif = GIFEncoder();
-  const times = frameTimes(video.duration, step.seconds, step.fps);
+  const times = frameTimes(video.duration, step.seconds, step.fps, from);
   const delay = Math.round(1000 / step.fps);
   for (let i = 0; i < times.length; i++) {
     video.currentTime = times[i];
@@ -96,13 +108,13 @@ async function encodeStep(video, step, onProgress) {
 
 /**
  * The clip at `url` as a GIF under GIF_MAX_BYTES. Resolves a Blob, or throws.
- * onProgress(0..1) follows the current step.
+ * onProgress(0..1) follows the current step. start: the second the GIF begins at (default: the last GIF_SECONDS).
  */
-export async function clipToGif(url, { onProgress, maxBytes = GIF_MAX_BYTES, steps = GIF_STEPS } = {}) {
+export async function clipToGif(url, { onProgress, maxBytes = GIF_MAX_BYTES, steps = GIF_STEPS, start = undefined } = {}) {
   const video = await openClip(url);
   try {
     for (const step of steps) {
-      const blob = await encodeStep(video, step, onProgress);
+      const blob = await encodeStep(video, step, onProgress, start);
       if (blob.size <= maxBytes) return blob;
     }
     throw new Error('gif too big');

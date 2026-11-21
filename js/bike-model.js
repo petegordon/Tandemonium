@@ -38,7 +38,6 @@ const GOOSE_TANDEM_LENGTH = 2.466;
 // #644 · where the goose tandem's captain sits ahead of the bike's centre, in game units (the selfie cam's reference)
 const GOOSE_TANDEM_CAPTAIN_AHEAD = 0.096;
 // #644 step 2 · a ghost tandem's crank turn per metre (a quarter turn per stroke, ~3 strokes/s at ~6 m/s)
-const GHOST_CRANK_PER_M = (Math.PI / 2) * 3 / 6;
 // #644 · the chase camera's extra height on the Penny-Farthing (game units). Its captain sits up over the big front
 // wheel with the stoker straight behind him, so from the tandem's camera the stoker's back hid him: from higher up
 // the camera looks down past the stoker's head onto the captain (screenshots in the PR for #644 step 2).
@@ -596,6 +595,7 @@ export class BikeModel {
     const goose = this.goose;
     const loader = new GLTFLoader();
     loader.setDRACOLoader(getDracoLoader());
+    this._gooseSwapping = true;   // (read by the countdown: a bot or an outfit still arriving)
     this._gooseSwap = goose.swapRiders(loader, paths, disposeOld && !this._sharedGeometry).then(() => {
       if (this.goose !== goose) return; // the bike model was swapped meanwhile
       // A versus team's own geese that landed after its rig was torn down.
@@ -603,7 +603,8 @@ export class BikeModel {
       this.setSoloRider(this._soloRider);
       this.applyGooseColours();
       this._applyEnvMap();
-    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err));
+    }).catch((err) => console.warn('Goose outfit failed to load; keeping the current geese:', err))
+      .finally(() => { if (this.goose === goose) this._gooseSwapping = false; });
     return this._gooseSwap;
   }
 
@@ -616,7 +617,7 @@ export class BikeModel {
   }
 
   /**
-   * #644 step 2 · a bot ghost team's tandem (a clone of the player's Solo Flight): two player bots ride it, each a
+   * VERSUS BOTS · the rival team's tandem: two player bots ride it, each a
    * robot goose in its own colour. Its geese are this bike's own (disposeOwnGeese frees them).
    * @returns {Promise|undefined} settles once both bots are seated
    */
@@ -629,22 +630,6 @@ export class BikeModel {
     this._ownGeese = true;
     this.setSoloRider(false);
     return this.setGooseRiders(riderPathsFor(this._withBot(this._seatLooks)), false);
-  }
-
-  /**
-   * #644 step 2 · move a ghost bike (no physics): where it is on the road, its lean, its speed. The cranks, wheels
-   * and the geese's legs turn with the distance, as a direct-drive Penny-Farthing's do.
-   */
-  applyGhostState({ x, y, z, heading, lean, speed, distance }, dt) {
-    this.position.set(x, y, z);
-    this.heading = heading;
-    this.lean = lean || 0;
-    this.speed = speed || 0;
-    this.distanceTraveled = distance || 0;
-    this.roadD = this.roadPath ? this.distanceTraveled % this.roadPath.loopLength : this.distanceTraveled;
-    this.crankAngle = this.distanceTraveled * GHOST_CRANK_PER_M;
-    this._updateCrank(dt);
-    this._applyTransform(dt);
   }
 
   /**
@@ -685,6 +670,15 @@ export class BikeModel {
     if (!this.goose) return;   // the geese seat it when they load
     this.setSoloRider(this._soloRider);
     return this.setSeatLooks(this._seatLooks || getSeatLooks(), !this._sharedGeometry);
+  }
+
+  /**
+   * Is this bike all there: its model, and the geese meant to be on it (a bot just picked arrives as a new
+   * rider file)? The countdown waits for it, so a ride never starts with the back seat still filling.
+   */
+  get ridersSettled() {
+    // (a goose bike only counts as loaded once its geese are seated; a bike without geese, as phones ride, has none to wait for)
+    return !!this.modelLoaded && !this._gooseSwapping;
   }
 
   /** The player bot on the back seat, or null. */

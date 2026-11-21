@@ -26,6 +26,7 @@ export const ROOM_MSG = {
   BIKE_SYNC:       'bikeSync',
   TOURIST_PLAN:    'touristPlan',    // #400 · co-op Tourist route, captain → stoker
   TOURIST_READY:   'touristReady',   // #400 · in-ride: my tiles world is up (or not)
+  TOURIST_CHOOSING: 'touristChoosing', // captain → stoker: I opened (or left) the Map Tourist places
   LEVEL_REFUSED:   'levelRefused',   // PR #397 M1/m17 · stoker → captain: my edition can't ride that
   DRESSING:        'dressing',       // #672 · my Wardrobe opened / closed (a "dressing…" tag on my card)
   ROOM_MOVED:      'roomMoved',      // #667 · HOST INSTEAD: the room is moving to { code }; follow it
@@ -98,7 +99,7 @@ export const RoomProtocol = {
    * the stoker rebuilds the identical plan with the pure planRoute(). Sent
    * immediately before a startRide(…, tourist = true).
    */
-  touristPlan: (from, to, anchor = null) => {
+  touristPlan: (from, to, anchor = null, extra = null) => {
     const m = {
       type: ROOM_MSG.TOURIST_PLAN,
       from: { lat: from.lat, lon: from.lon, label: String(from.label || '') },
@@ -108,11 +109,22 @@ export const RoomProtocol = {
     // PR #397 m16: the captain looked the anchor's ground height up once; the
     // stoker uses it instead of a second lookup inside the shared deadline.
     if (anchor && Number.isFinite(anchor.height)) m.anchor = { height: anchor.height, anchored: !!anchor.anchored };
+    // a long ride's far end (where it picks up after the skip), and what kind of ride it is (the wording)
+    if (extra && extra.toAnchor && Number.isFinite(extra.toAnchor.height)) m.toAnchor = { height: extra.toAnchor.height, anchored: !!extra.toAnchor.anchored };
+    if (extra && (extra.kind === 'scenic' || extra.kind === 'yours')) m.kind = extra.kind;
+    if (extra && typeof extra.title === 'string') m.title = extra.title.slice(0, 80);
     return m;
   },
 
+  /**
+   * The captain opened the Map Tourist places (true) or went back to the level list (false). The
+   * stoker's list marks the Map Tourists card and says the captain is choosing a place. An old peer
+   * drops the unknown type.
+   */
+  touristChoosing: (open) => ({ type: ROOM_MSG.TOURIST_CHOOSING, open: !!open }),
+
   /** #400 · in-ride ready barrier for co-op Tourist. */
-  touristReady: (ok) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok }),
+  touristReady: (ok, reason) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok, ...(reason ? { reason } : {}) }),   // #824 · reason 'limit'
 
   /**
    * #672 · this player's Wardrobe opened (true) or closed (false). The partner's room screen tags

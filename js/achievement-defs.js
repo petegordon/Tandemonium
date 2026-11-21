@@ -274,7 +274,10 @@ export const ACHIEVEMENTS = [
   { id: 'versus_win',     section: 'versus', name: 'Crown the Goose',    icon: '🏆', desc: 'Win a versus race',                   ...count('versusWins', 1) },
   { id: 'versus_2v2',     section: 'versus', name: 'Royal Court',        icon: '🤴', desc: 'Win a 2v2 versus race',               ...count('versus2v2Wins', 1) },
   { id: 'versus_comeback', section: 'versus', name: 'Comeback Geese',    icon: '↩️', desc: 'Win a versus race after trailing at halfway', ...count('versusComebacks', 1) },
-  { id: 'versus_10',      section: 'versus', name: 'House Champion',     icon: '🏅', desc: 'Win 10 versus races',                 ...count('versusWins', 10) },
+  { id: 'versus_10',      section: 'versus', name: 'House Champion',     icon: '🏅', desc: 'Win 10 versus races',
+    // Pete, 2026-11-21: an Easy bot race earns the other versus achievements, but not these ten wins
+    condition: (s, L) => n(L.versusWins) - n(L.versusEasyWins) >= 10,
+    progress: L => [Math.min(10, Math.max(0, Math.floor(n(L.versusWins) - n(L.versusEasyWins)))), 10] },
   { id: 'versus_underdog', section: 'versus', name: 'Underdog',          icon: '🐣', desc: 'Win a versus race riding alone against a two-goose tandem', ...count('versus1v2Wins', 1) },   // #608
   { id: 'versus_clean',   section: 'versus', name: 'Clean Sweep',        icon: '🧹', desc: 'Win a versus race without crashing',  ...count('versusClean', 1) },   // #608
 
@@ -381,12 +384,15 @@ const NUMERIC = [
   'slingLaunches', 'slingBest', 'slingStage', 'slingTopSpeed', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
   'straightShots', 'medalKeys', 'dailyPractice', 'shares', 'dailyDayRun', 'dailyDayBest',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
-  'versus1v2Wins', 'versusClean',
+  'versus1v2Wins', 'versusClean', 'versusEasyWins',
   'touristDistance',
 ];
 const LISTS = ['dayList', 'golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished'];
 const FLAGS = ['pedalled', 'maxedAny', 'maxedAll'];
 const STRINGS = ['lastDay', 'lastDailyDay'];
+/** #824 · [period 'YYYY-MM-DD', count]: Tourist's daily sessions and weekly addresses, on the account too. */
+export const TOURIST_PAIRS = Object.freeze(['touristSessions', 'touristAddresses']);
+const isPair = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && Number.isFinite(v[1]) && v[1] >= 0;
 
 export function emptyStats() {
   const L = { v: STATS_VERSION, bests: {}, bestsAt: {} };
@@ -394,6 +400,7 @@ export function emptyStats() {
   for (const k of LISTS) L[k] = [];
   for (const k of FLAGS) L[k] = false;
   for (const k of STRINGS) L[k] = null;
+  for (const k of TOURIST_PAIRS) L[k] = null;
   return L;
 }
 
@@ -433,6 +440,7 @@ export function migrateStats(raw) {
   }
   for (const k of FLAGS) L[k] = raw[k] === true;
   for (const k of STRINGS) L[k] = typeof raw[k] === 'string' ? raw[k] : null;
+  for (const k of TOURIST_PAIRS) L[k] = isPair(raw[k]) ? [raw[k][0], raw[k][1]] : null;
   if (raw.bests && typeof raw.bests === 'object') {
     for (const [k, v] of Object.entries(raw.bests)) if (Number.isFinite(v) && v > 0) L.bests[k] = v;
   }
@@ -705,12 +713,19 @@ export function applyEvent(prev, type, d = {}, today = null) {
       L.modesFinished = addUnique(L.modesFinished || [], 'versus');
       if (d.win) {
         L.versusWins += 1;
+        if (d.easy) L.versusEasyWins += 1;
         if (d.twoVtwo) L.versus2v2Wins += 1;
         if (d.close) L.versusClose += 1;
         if (d.comeback) L.versusComebacks += 1;
         if (d.oneVtwo) L.versus1v2Wins += 1;
         if (d.clean) L.versusClean += 1;
       }
+      break;
+    // ── VERSUS BOTS: a bot on your back seat is a co-op partner
+    case 'botPartner':
+      L.coopFinishes += 1;
+      L.modesFinished = addUnique(L.modesFinished || [], 'coop');
+      if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       break;
     default: break;
   }

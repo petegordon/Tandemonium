@@ -139,22 +139,34 @@ export function slotStickIsSteamGyro(slot) {
 }
 
 /**
- * Controller-gyro roll source (Issue #314):
- *   'gravity' — roll from the gravity-corrected down vector (DEFAULT).
- *               Drift-free and bounded (no ±180° wrap), so it can't exhibit
- *               the "fuses to one side then bounces to the other" failure.
- *   'euler'   — legacy roll from Euler-Z of the integrated orientation; kept
- *               as a fallback via the Options toggle (relies on the drift-EMA
- *               compensation in _applyTilt).
- * Stored under 'tandemonium_gyro_roll_mode'; applied live. Defaults to 'gravity'.
+ * Controller-gyro steering source (#314, #365):
+ *   'zero'    — DEFAULT (#365, Pete 2026-11-20: "Make the new gyro mode the default
+ *               for all release"). Gravity roll measured from the controller lab's
+ *               roll zero (SensorFusion.rollRelativeRadians, controller-core 0.8).
+ *               "Level" is taken when the controller is at rest and then stays put:
+ *               no drift tracking moves it, and a recentre does not reset the fusion.
+ *   'gravity' — gravity roll with this file's own centre (motionOffset) and drift
+ *               tracking in _applyTilt. The default before #365.
+ *   'euler'   — legacy roll from Euler-Z of the integrated orientation, same centre
+ *               and drift tracking.
+ * Stored under GYRO_MODE_KEY; applied live. The key is new with #365, so a choice
+ * saved under the old key ('tandemonium_gyro_roll_mode') does not hold anyone on the
+ * old default.
  */
+export const GYRO_MODE_KEY = 'tandemonium_gyro_steer_mode';
+export const GYRO_MODES = ['zero', 'gravity', 'euler'];
+export function normalizeGyroRollMode(v) { return GYRO_MODES.includes(v) ? v : 'zero'; }
 export function readGyroRollMode() {
-  try {
-    const v = localStorage.getItem('tandemonium_gyro_roll_mode');
-    if (v === 'euler') return v;
-  } catch (e) {}
-  return 'gravity';
+  try { return normalizeGyroRollMode(localStorage.getItem(GYRO_MODE_KEY)); } catch (e) {}
+  return 'zero';
 }
+
+/** #365 · the first "level" of a controller: how long to wait for it to be at rest. */
+export const ZERO_FIRST_WAIT_MS = 1500;
+/** #365 · a recentre while the controller moves: how long to wait for the next still moment. */
+export const ZERO_RECENTRE_WAIT_MS = 2500;
+/** #365 · no level after this long (no accelerometer data): take the roll as it is. */
+export const ZERO_GIVE_UP_MS = 3000;
 
 // Controller state (gamepad binding, WebHID, sensor fusion, synthetic
 // gamepad for BT-silent DualSense) now lives on a ControllerManager slot.
@@ -843,7 +855,13 @@ export class InputManager {
     this._driftEma = null;
   }
 
-  _applyTilt(rawTilt, isGyro = false) {
+  /**
+   * @param {number} rawTilt  degrees
+   * @param {boolean} [isGyro]
+   * @param {number|null} [zeroedRelative]  #365 · degrees from the lab's roll zero. When given,
+   *   this file's own centre (warm-up, calibration, drift tracking) is skipped: the lab owns "level".
+   */
+  _applyTilt(rawTilt, isGyro = false, zeroedRelative = null) {
     this.rawGamma = rawTilt;
 
     // Track time between calls for rate-independent output smoothing
@@ -853,12 +871,34 @@ export class InputManager {
       : 1 / 60; // assume 60Hz on first call
     this._lastApplyTiltTime = now;
 
+    let relative;
+    if (zeroedRelative != null) {
+      // #365 · the lab's zero. motionOffset is kept in step (diagnostics, and a live switch
+      // back to the old modes carries on from the same centre).
+      this._calibrating = false;
+      this._rideCentring = false;
+      this._driftEma = null;
+      this.motionOffset = rawTilt - zeroedRelative;
+      relative = zeroedRelative;
+    } else {
+      relative = this._ownCentreRelative(now, isGyro);
+      if (relative === null) return;
+    }
+    this._finishTilt(relative, isGyro, dtSec);
+  }
+
+  /**
+   * This file's own centre: warm-up, calibration, drift tracking (phone tilt, and controller
+   * gyro in the 'gravity' and 'euler' modes). Returns the tilt from the centre in degrees,
+   * or null while the centre is still being taken (the lean holds where it was).
+   */
+  _ownCentreRelative(now, isGyro) {
     if (this.motionOffset === null && !this._calibrating) {
       this._warmupCount++;
       if (this._warmupCount >= 5) {
         this.startTiltCalibration();
       }
-      return;
+      return null;
     }
 
     if (this._calibrating && this._rideCentring) {
@@ -874,7 +914,7 @@ export class InputManager {
           this.motionOffset = this._calibBuf.reduce((a, b) => a + b, 0) / n;
           this._rideStillAt = now;
         }
-        return;
+        return null;
       }
     }
 
@@ -902,7 +942,7 @@ export class InputManager {
           this._calibBuf = win.slice(1);
         }
       }
-      return;
+      return null;
     }
 
     // Drift compensation: nudge motionOffset toward the long-term average
@@ -948,6 +988,11 @@ export class InputManager {
     let relative = this.rawGamma - this.motionOffset;
     if (relative > 180) relative -= 360;
     else if (relative < -180) relative += 360;
+    return relative;
+  }
+
+  /** The tilt from the centre (degrees) to a lean: deadzone, response curve, gain, smoothing. */
+  _finishTilt(relative, isGyro, dtSec) {
     this.motionRawRelative = relative;
 
     // Select tuning parameters based on input source
@@ -1106,7 +1151,8 @@ export class InputManager {
       ? fusion.gravityRollRadians() * (180 / Math.PI)
       : eulerLeanDeg;
 
-    const leanDeg = this._gyroRollMode === 'gravity' ? gravLeanDeg : eulerLeanDeg;
+    const zeroMode = this._usesLabZero(fusion);
+    const leanDeg = (zeroMode || this._gyroRollMode === 'gravity') ? gravLeanDeg : eulerLeanDeg;
 
     // Lightweight diagnostic (off unless window.__gyroDebug is set).
     if (typeof window !== 'undefined' && window.__gyroDebug) {
@@ -1136,12 +1182,75 @@ export class InputManager {
     // prevents gravity correction from tracking through extreme angles.
     this._gyroRollAccum = -leanDeg;
     this._accelRoll = leanDeg;
+    if (zeroMode) {
+      // #365 · steer by the roll from the lab's zero. Until a controller has its first
+      // "level" the lean holds at 0 (as the old first calibration did).
+      if (!this._labZeroReady(fusion)) { this._holdLeanAtZero(); return; }
+      this._applyTilt(leanDeg, true, fusion.rollRelativeRadians() * (180 / Math.PI));
+      return;
+    }
     this._applyTilt(leanDeg, true);
   }
 
-  // Switch the controller-gyro roll source live (Options toggle, #314).
+  /** #365 · this controller steers by the lab's roll zero ('zero' mode, and a fusion that has one). */
+  _usesLabZero(fusion) {
+    return this._gyroRollMode === 'zero' && !!fusion && typeof fusion.rollRelativeRadians === 'function' && !!fusion.rollZero;
+  }
+
+  /**
+   * #365 · does this controller have its "level" yet? The first time, ask the lab to take it at
+   * the next still moment; with no still moment it uses its steadiest window, and with no
+   * accelerometer data at all (nothing decides) the roll as it is becomes level.
+   */
+  _labZeroReady(fusion) {
+    const rz = fusion.rollZero;
+    if (rz.zero != null) { this._zeroAskedAt = 0; return true; }
+    const now = performance.now();
+    if (!this._zeroAskedAt) {
+      this._zeroAskedAt = now;
+      fusion.requestRollZero({ timeoutMs: ZERO_FIRST_WAIT_MS, fallback: 'best' });
+      return false;
+    }
+    if (!rz.pending || now - this._zeroAskedAt > ZERO_GIVE_UP_MS) {
+      rz.cancelRequest();
+      rz.setTo(fusion.gravityRollRadians());
+      this._zeroAskedAt = 0;
+      return true;
+    }
+    return false;
+  }
+
+  /** The lean and its smoothing back to 0 (a centre is being taken). */
+  _holdLeanAtZero() {
+    this._smoothedLean = 0;
+    this._prevLeanRaw = 0;
+    this.motionLean = 0;
+    this.motionLeanVisual = 0;
+    this.motionRawRelative = 0;
+  }
+
+  /**
+   * #365 · "the way I hold it now is level", through the lab. At rest the zero is taken at once.
+   * While the controller moves (a ride's countdown: the player is still getting a grip) it is
+   * taken at the next still moment, and the old zero steers until then. The fusion is NOT
+   * reset: after a reset the gravity roll takes seconds to come back, which is what made a
+   * recentre pull to one side.
+   * @returns {boolean} whether the lab's zero was used
+   */
+  _recentreOnLabZero() {
+    const fusion = this._slot?.fusion;
+    if (!this._usesLabZero(fusion)) return false;
+    if (fusion.rollZero.still) fusion.setRollZero();
+    else fusion.requestRollZero({ timeoutMs: ZERO_RECENTRE_WAIT_MS, fallback: 'best' });
+    this._gyroRollAccum = 0;
+    this._holdLeanAtZero();
+    this._driftEma = null;
+    return true;
+  }
+
+  // Switch the controller-gyro steering source live (Options, #314, #365).
   setGyroRollMode(mode) {
-    this._gyroRollMode = (mode === 'gravity') ? 'gravity' : 'euler';
+    this._gyroRollMode = normalizeGyroRollMode(mode);
   }
 
   /**
@@ -1197,6 +1306,11 @@ export class InputManager {
    * orientation re-converges from identity.
    */
   recenterGyro() {
+    if (this._recentreOnLabZero()) {
+      console.log('Gyro recentered on the lab roll zero: ' + (this._slot.fusion.rollZero.pending ? 'at the next still moment' : 'now') +
+        ' conn=' + (this._gyroConnType || 'unknown'));
+      return;
+    }
     if (this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     } else {
@@ -1223,6 +1337,9 @@ export class InputManager {
     this._prevLeanRaw = 0;
     this.motionLean = 0;
     this.motionLeanVisual = 0;
+    // #365 · on the lab's zero the centre is the player's grip: a restart keeps it, and the
+    // fusion is not reset (see _recentreOnLabZero).
+    if (this.gyroConnected && this._usesLabZero(this._slot?.fusion)) { this._gyroRollAccum = 0; this._driftEma = null; return; }
     if (this.gyroConnected && this._accelRoll != null) {
       this.motionOffset = -this._accelRoll;
     }

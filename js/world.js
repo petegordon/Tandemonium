@@ -1146,7 +1146,8 @@ export class World {
       if (dd < 9 && slot.lateralOffset < 0 && slot.lateralOffset > -12) { slot.mesh.visible = false; slot.active = false; }
     }
     this._grandmaFinish = set;
-    set.grandma.load().catch((e) => console.warn('[grandma] model did not load:', e && e.message));
+    // warm: the game's hook that readies a late model for its first frame (set by the game; none in tests)
+    set.grandma.load(undefined, this.warm || null).catch((e) => console.warn('[grandma] model did not load:', e && e.message));
   }
 
   _disposeGrandmaFinish() {

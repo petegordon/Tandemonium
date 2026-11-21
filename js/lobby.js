@@ -12,7 +12,7 @@
 //   #lobby-role         — Role selection (Captain / Stoker)           back: #lobby-mode
 //   #lobby-host         — Captain waiting room (room code + QR)      back: #lobby-role
 //   #lobby-join         — Stoker join room (code input / spinner)     back: #lobby-role
-//   #lobby-room         — Multiplayer social room (video + PLAY)     back: leave room
+//   #lobby-room         — Multiplayer social room (players + PLAY)   back: leave room
 //   (multiplayer reuses #lobby-level with START RIDE / wait text)
 //
 // SHARED COMPONENTS:
@@ -21,7 +21,7 @@
 //   Tutorial Level Card   — .level-card-tutorial, built in the LEVELS loop (dashed border)
 //   Back Button          — .lobby-back per step, plus #lobby-fixed-back (non-gamepad)
 //   Toggle Columns       — .lobby-left-col (help/leaderboard/profile)
-//                          .lobby-right-col (camera/audio/joystick/motion/music)
+//                          .lobby-right-col (joystick/motion/music)
 //   Waiting Text         — .conn-status elements ("Waiting for captain...")
 //
 // GAMEPAD NAVIGATION:
@@ -50,11 +50,12 @@ import { ACHIEVEMENTS } from './achievement-defs.js';
 import { SPECIAL_BIKE_KEYS, SPECIAL_BIKES, isSpecialBike, SOLO_FLIGHT_BIKE_KEY, bikeModelPathFor } from './special-bikes.js';
 import { seedKeptBikes, HOLIDAY_BIKES, BIKE_ACHIEVEMENT_MAP, bikeUnlocked, earnedLine, holidayUnlocked, countBikeProgress, nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';
 import { BikeCelebration, giftOutfit } from './bike-celebration.js';
-import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor } from './bike-showcase.js';
+import { BikeShowcase, showcaseLoader, seatOutfitRiders, applyPresetMaterials, loadStudioGoose, studioGooseFor, prefetchOutfitGeese } from './bike-showcase.js';
 import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
-import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice } from './player-bots.js';
-import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice } from './bot-race.js';
+import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
+import { resolveRider } from './goose-outfits.js';
+import { RACE_TIERS, botTeamFor, botTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -64,8 +65,16 @@ import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
-import { planRoute, planExplore, skipLabel, isValidPoint } from './tourist-route.js';
-import { getMapsApiKey, geocodeAddress, resolveOriginAt } from './tourist-config.js';
+import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
+import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage, setLookupReporter } from './tourist-config.js';
+import { setTilesSessionHooks, hasLiveTilesSession } from './tourist-tiles-session.js';
+import { TOURIST_USAGE_KEY, readUsage, mergeUsage, sessionGate, countSession, noteAddresses, storeWithUsage, sessionText } from './tourist-limits.js';
+/** Tourist's "experimental" note: '1' = don't show it again. */
+const TOURIST_NOTE_OFF_KEY = 'tandemonium_tourist_note_off';
+/** Map Tourist: the player's own places and the week's count of new ones (this device). */
+const TOURIST_STORE_KEY = 'tandemonium_tourist_places';
+import { SCENIC_PLACES, planForPlace, rideKind, emptyStore, readStore, newPlaceGate, countNewPlaces, limitText,
+  knownPoint, rememberPlace, placeLabel } from './tourist-places.js';
 import {
   resolveDailyLevel, dailyStatus, dailyDescription, browserStore, DAILY_RULES_LINE,
   ridesStarted, formatDayLabel
@@ -73,6 +82,9 @@ import {
 import * as records from './records.js';
 import { isTutorialDone, tutorialStore } from './tutorial-progress.js';
 import { AuthManager, identityPictures } from './auth.js';
+// lab #146 · the Profile card's sign-in buttons and login lines are the shared elements
+import '../shared/identity/elements/uf-signin.js';
+import '../shared/identity/elements/uf-profile-card.js';
 import qrcode from '../shared/ui/third_party/qrcode-generator.js';
 import { SeatAccounts } from './seat-accounts.js';
 import { SeatAchievements } from './seat-achievements.js';
@@ -82,10 +94,11 @@ import { API_BASE } from './config.js';
 const LINK_PROMPT_SNOOZE_KEY = 'tandemonium_link_discord_prompt_until';
 const LINK_PROMPT_SNOOZE_MS = 7 * 24 * 3600 * 1000;
 import { LicenseManager } from './license.js';
-import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { AchievementManager, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { SteamJoin } from './steam-join.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { GyroTip, gyroOptionAvailable } from './gyro-tip.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
@@ -105,7 +118,6 @@ import { canHostInstead } from './edition.js';   // #667
 import { renderRoomQR, joinUrl } from './lobby/room-qr.js';
 import { isDemoEdition, getEditionRules, levelAllowed, carriedQuery, dailyRideGate, bikeAllowed } from './edition.js';
 import { mergeRoomRules, roomProfileFields, partnerFromProfile, levelSyncVerdict, roomBadge } from './edition.js'; // PR #397 M1, #666
-import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { versusBotAllowed } from './versus/versus-bot.js';
 import { loadWallet, browserStore as walletStore } from './wallet.js';
 import { playerLooks, padKeyFor, vidPidFromGamepadId, lookToWire, lookFromWire, lookColourway, LED_COLOURS } from './player-look.js';   // #548
@@ -118,15 +130,6 @@ import { DressingRoomPreview } from './dressing-room-preview.js';   // #548
 
 /** #576 · the difficulty a leaderboard row was ridden on. */
 const DIFF_LABEL = { chill: 'Chill', adventurous: 'Adventurous', daredevil: 'Daredevil' };
-
-// Timeout wrapper for permission promises that may hang on iOS stale tabs
-const PERMISSION_TIMEOUT_MS = 8000;
-function withTimeout(promise, ms = PERMISSION_TIMEOUT_MS) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('permission_timeout')), ms))
-  ]);
-}
 
 const DEFAULT_AVATAR_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 80 80'%3E%3Ccircle cx='40' cy='30' r='14' fill='%23666'/%3E%3Cellipse cx='40' cy='72' rx='24' ry='18' fill='%23666'/%3E%3C/svg%3E";
 
@@ -250,50 +253,23 @@ export class Lobby {
     this.hostStep = document.getElementById('lobby-host');
     this.joinStep = document.getElementById('lobby-join');
     this.versusStep = document.getElementById('lobby-versus');
+    this.versusBotsStep = document.getElementById('lobby-versus-bots');   // Pete, 2026-11-18: VERSUS BOTS
     this.touristStep = document.getElementById('lobby-tourist');   // E-6
     this._roomRole = null; // 'captain' | 'stoker'
 
     // Permission toggle buttons
     this.toggleAll = document.getElementById('toggle-all');
-    this.toggleCamera = document.getElementById('toggle-camera');
     this.toggleMotion = document.getElementById('toggle-motion');
     this.toggleJoystick = document.getElementById('toggle-joystick');
-    this.toggleAudio = document.getElementById('toggle-audio');
     this.toggleMusic = document.getElementById('toggle-music');
     this.toggleHelp = document.getElementById('toggle-help');
     this.helpModal = document.getElementById('help-modal');
     this.toggleProfile = document.getElementById('toggle-profile');
     this.toggleLeaderboard = document.getElementById('toggle-leaderboard');
     this.toggleAchievements = document.getElementById('toggle-achievements');   // #540
-    this.cameraActive = false;
     this.motionActive = false;
     this.joystickActive = true; // joystick steering on by default when gamepad connected
-    this.audioActive = false;
-    this._cameraPermitted = false;
-    this._hasCamera = true; // assume true, check async below
-
-    // Room camera/mic off (#400 D7, default): no camera/audio toggles, and
-    // never touch getUserMedia/enumerateDevices. Multiplayer is unaffected.
-    this._mediaEnabled = isMediaEnabled();
-    if (!this._mediaEnabled) {
-      this._hasCamera = false;
-      this.toggleCamera.style.display = 'none';
-      this.toggleAudio.style.display = 'none';
-    }
-
-    // Hide camera toggle if no camera hardware exists
-    if (this._mediaEnabled && navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      navigator.mediaDevices.enumerateDevices().then(devices => {
-        this._hasCamera = devices.some(d => d.kind === 'videoinput');
-        if (!this._hasCamera) {
-          this.toggleCamera.style.display = 'none';
-          this.cameraActive = false;
-          this._setToggleActive('camera', false);
-        }
-      }).catch(() => {});
-    }
     this._motionPermitted = false;
-    this._audioPermitted = false;
     this._permissionsChecked = false;
 
     // Music toggle (not a permission — just on/off, persisted in localStorage)
@@ -388,7 +364,7 @@ export class Lobby {
     this._modeColumns = [
       [this.toggleHelp, this.toggleLeaderboard, this.toggleAchievements, this.toggleProfile],
       [document.getElementById('btn-together'), document.getElementById('btn-solo'), document.getElementById('btn-mode-connect-hid'), document.getElementById('btn-mode-phone')].filter(Boolean),
-      [this.toggleAll, this.toggleCamera, this.toggleAudio],
+      [this.toggleAll],
       [this.toggleJoystick, this.toggleMotion, this.toggleMusic],
     ];
     this._modeCol = 1;
@@ -403,6 +379,7 @@ export class Lobby {
       document.getElementById('btn-captain'),
       document.getElementById('btn-stoker'),
       document.getElementById('btn-versus'),
+      document.getElementById('btn-versus-bots'),
       document.getElementById('btn-back-mode'),
     ];
     this._stepItems.set(this.roleStep, roleItems);
@@ -437,6 +414,7 @@ export class Lobby {
     this._stepBack.set(this.hostStep, document.getElementById('btn-back-role-host'));
     this._stepBack.set(this.joinStep, document.getElementById('btn-back-role-join'));
     this._stepBack.set(this.versusStep, document.getElementById('btn-back-versus'));
+    this._stepBack.set(this.versusBotsStep, document.getElementById('btn-back-versus-bots'));
     // #400: Tourist's inline Back is hidden by .lobby-step .lobby-back like every
     // step's; registering it drives the fixed bottom Back (and gamepad B).
     this._stepBack.set(this.touristStep, document.getElementById('btn-back-tourist'));
@@ -552,7 +530,7 @@ export class Lobby {
     }
 
     // iOS stale-tab recovery: detect when tab resumes and check if
-    // permissions/media tracks have been revoked by the OS.
+    // the motion sensors were suspended by the OS.
     this._tabHiddenAt = 0;
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
@@ -577,7 +555,7 @@ export class Lobby {
       console.log('Desktop: overlay dismissed, activating gamepad...');
       this._runDesktopGamepadDetection();
     } else {
-      // Mobile/browser: request all permissions (audio, camera, motion)
+      // Mobile/browser: request motion (ALL covers motion + music)
       this._toggleAll();
       if (this.musicActive && this.onMusicChanged) {
         this.onMusicChanged(true);
@@ -683,44 +661,6 @@ export class Lobby {
     // Only check if the tab was hidden for more than 5 seconds
     if (this._tabHiddenAt && Date.now() - this._tabHiddenAt < 5000) return;
 
-    let stale = false;
-
-    // Check if media tracks have been ended by the OS
-    if (this.net && this.net._localMediaStream) {
-      const tracks = this.net._localMediaStream.getTracks();
-      for (const track of tracks) {
-        if (track.readyState === 'ended') {
-          stale = true;
-          break;
-        }
-      }
-    }
-
-    // Check if permission grants have been revoked
-    if (!stale && navigator.permissions) {
-      const checks = [];
-      if (this._cameraPermitted) {
-        checks.push(
-          navigator.permissions.query({ name: 'camera' }).then(r => {
-            if (r.state !== 'granted') return true;
-          }).catch(() => false)
-        );
-      }
-      if (this._audioPermitted) {
-        checks.push(
-          navigator.permissions.query({ name: 'microphone' }).then(r => {
-            if (r.state !== 'granted') return true;
-          }).catch(() => false)
-        );
-      }
-      if (checks.length > 0) {
-        Promise.all(checks).then(results => {
-          if (results.some(r => r)) this._showStaleOverlay();
-        });
-        return;
-      }
-    }
-
     // Check if motion data stopped flowing (iOS may suspend sensors)
     if (this.motionActive && this.input && this.input.motionEnabled) {
       const hadMotion = this.input.motionEnabled;
@@ -740,49 +680,6 @@ export class Lobby {
         }, 500);
       }, 200);
     }
-
-    if (stale) this._showStaleOverlay();
-  }
-
-  _showStaleOverlay() {
-    // Prevent duplicate overlays
-    if (document.getElementById('tap-to-start')) return;
-
-    // Reset permission state — grants are no longer valid
-    this._cameraPermitted = false;
-    this._audioPermitted = false;
-    this.cameraActive = false;
-    this.audioActive = false;
-    this._setToggleActive('camera', false);
-    this._setToggleActive('audio', false);
-
-    // Stop dead tracks
-    if (this.net && this.net._localMediaStream) {
-      this.net._localMediaStream.getTracks().forEach(t => t.stop());
-    }
-
-    // Create the overlay (reuses tap-to-start styling)
-    const overlay = document.createElement('div');
-    overlay.id = 'tap-to-start';
-    overlay.innerHTML = `<div class="tap-to-start-content">
-      <p>Permissions expired</p>
-      <p style="font-size:16px;opacity:0.6;margin-top:8px;">Tap to retry</p>
-    </div>`;
-    document.body.appendChild(overlay);
-    this._tapOverlay = overlay;
-
-    const dismiss = () => {
-      if (!this._tapOverlay) return;
-      this._tapOverlay = null;
-      // Re-request all permissions (user gesture required on iOS)
-      this._permissionsChecked = false;
-      this._toggleAll();
-      // Fade out
-      overlay.classList.add('fade-out');
-      setTimeout(() => overlay.remove(), 400);
-    };
-
-    overlay.addEventListener('click', dismiss, { once: true });
   }
 
   show() {
@@ -835,6 +732,7 @@ export class Lobby {
     this._currentStep = step;
     if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
     if (step === this.modeStep) this._scheduleMenuBikeCheck();   // #736 · back on the main menu: any new bike
+    if (step === this.modeStep) this._gyroTip?.arm();   // #820
     if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
       const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
       this._presetIndex = i >= 0 ? i : 0;
@@ -848,6 +746,12 @@ export class Lobby {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
+    if (step === this.levelStep && !this._inOnlineRoom() && this._pendingMode !== 'versus') {
+      const want = this._pendingMode === 'versusBots' ? 'versusBots' : 'solo';
+      if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
+    }
+    if (step === this.roleStep) this._syncVersusBotsButton();
+    if (step === this.versusBotsStep) this._runVbPreview();   // (back from the level list: draw it again)
 
     // Local-MP JOIN RIDE monitor: run only while the captain host page is visible.
     if (step === this.hostStep) {
@@ -882,7 +786,7 @@ export class Lobby {
     const lobbyCard = document.querySelector('.lobby-card');
     // Tourist opens from the level list (#400): the bike was already chosen
     // there, and on a phone the carousel pushes the route form off-screen.
-    const hideCarousel = (step === this.levelStep || step === this.touristStep);
+    const hideCarousel = (step === this.levelStep || step === this.touristStep || step === this.versusBotsStep);
     if (carousel) carousel.style.display = hideCarousel ? 'none' : '';
     if (lobbyCard) lobbyCard.classList.toggle('carousel-hidden', hideCarousel);
     const lobbyEl = document.getElementById('lobby');
@@ -928,53 +832,8 @@ export class Lobby {
     if (step === this.levelStep) {
       requestAnimationFrame(() => this._adjustLevelCompact());
     }
-
-    // ── PiP class management ──
-    // Show PiP circles on room (hero size) and multiplayer level (scaled down).
-    // Hidden on all other steps (base CSS display:none).
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    // #428: no video PiPs unless media sharing is on (?media=1, #400 D7) — the
-    // room shows player cards instead.
-    if (selfieWrap && partnerWrap && !this._mediaEnabled) {
-      for (const w of [selfieWrap, partnerWrap]) w.classList.remove('pip-lobby-mode', 'pip-level-mode');
-    } else if (selfieWrap && partnerWrap) {
-      const isRoom = false;   // the room step is gone (merged into the host step)
-      const isMultiplayerLevel = (step === this.levelStep && this._pendingMode === 'multiplayer');
-      selfieWrap.classList.toggle('pip-lobby-mode', isRoom);
-      selfieWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
-      partnerWrap.classList.toggle('pip-lobby-mode', isRoom);
-      partnerWrap.classList.toggle('pip-level-mode', isMultiplayerLevel);
-      // Position PiPs to align with room-video-area in the center column (desktop)
-      if (isRoom) {
-        requestAnimationFrame(() => this._positionPipToVideoArea());
-        // Re-render badges with rect shape on desktop TV/Monitor
-        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
-        updateBadgeDisplay('selfie-badges', this._achievements.getEarned(), shape);
-        if (this._partnerAchievements) {
-          updateBadgeDisplay('partner-badges', this._partnerAchievements, shape);
-        }
-      }
-      // Mobile: show room code between PiP circles using a body-level element
-      // (can't use the original label — it's inside a display:none parent on mobile)
-      if (isMobile) {
-        let mobileCode = document.getElementById('mobile-room-code');
-        if (isRoom && this.net && this.net.roomCode) {
-          if (!mobileCode) {
-            mobileCode = document.createElement('div');
-            mobileCode.id = 'mobile-room-code';
-            document.body.appendChild(mobileCode);
-          }
-          mobileCode.textContent = this.net.roomCode;
-          mobileCode.style.display = 'block';
-        } else if (mobileCode) {
-          mobileCode.style.display = 'none';
-        }
-      }
-    }
   }
 
-  /** Position each PiP over its slot container in the room grid */
   /**
    * The room's two <uf-seat>s (#173): which seat is yours, who is in the
    * other one, and whether they are here. Seats are keyed by role; 'self' /
@@ -1071,7 +930,7 @@ export class Lobby {
   }
 
   /**
-   * The room's two player cards (#428; video sharing is off since #400 D7):
+   * The room's two player cards (#428):
    * my profile and recent achievements in my seat, the partner's once their
    * profile message arrives, "Waiting for partner…" until then.
    */
@@ -1099,46 +958,6 @@ export class Lobby {
     fill(theirs, connected
       ? { name: partnerName || 'Partner', avatar: this._partnerAvatarUrl, achievements: this._partnerAchievements || [], here: true }
       : { name: 'Waiting for partner…', here: false });
-  }
-
-  _positionPipToVideoArea() {
-    const captainSlot = document.getElementById('room-player-captain');
-    const stokerSlot = document.getElementById('room-player-stoker');
-    if (!captainSlot || !stokerSlot) return;
-    const cRect = captainSlot.getBoundingClientRect();
-    const sRect = stokerSlot.getBoundingClientRect();
-    const root = document.documentElement.style;
-    root.setProperty('--pip-captain-left', (cRect.left + cRect.width / 2) + 'px');
-    root.setProperty('--pip-captain-top', (cRect.top + cRect.height / 2) + 'px');
-    root.setProperty('--pip-stoker-left', (sRect.left + sRect.width / 2) + 'px');
-    root.setProperty('--pip-stoker-top', (sRect.top + sRect.height / 2) + 'px');
-
-    // #167: on phones the partner circle sits at 50% + 20vw, which with its
-    // badges runs into the right toggle column (ALL / music). Cap its left
-    // edge so circle + badges end just short of that column, and keep the
-    // room code centred in the gap between the two circles.
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    const rightCol = this.lobbyEl && this.lobbyEl.querySelector('.lobby-right-col');
-    const colRect = rightCol && rightCol.getBoundingClientRect();
-    const wRect = partnerWrap && partnerWrap.getBoundingClientRect();
-    if (!selfieWrap || !wRect || wRect.width === 0 || !colRect || colRect.width === 0) {
-      root.removeProperty('--pip-partner-max-left');
-      root.removeProperty('--pip-room-code-left');
-      root.removeProperty('--pip-room-code-lift');
-      return;
-    }
-    let right = wRect.right;
-    for (const b of partnerWrap.querySelectorAll('.pip-badge')) right = Math.max(right, b.getBoundingClientRect().right);
-    const maxLeft = Math.max(0, colRect.left - (right - wRect.left) - 6);
-    root.setProperty('--pip-partner-max-left', maxLeft + 'px');
-    const partnerLeft = Math.min(window.innerWidth * 0.7, maxLeft); // 50% + 20vw
-    const selfieRight = selfieWrap.getBoundingClientRect().right;
-    root.setProperty('--pip-room-code-left', ((selfieRight + partnerLeft) / 2) + 'px');
-    // Too narrow for the code between them (e.g. 320px phones): lift it above the circles.
-    const code = document.getElementById('mobile-room-code');
-    const codeW = code ? code.getBoundingClientRect().width : 0;
-    root.setProperty('--pip-room-code-lift', (partnerLeft - selfieRight - 40 < codeW ? 60 : 0) + 'px');
   }
 
   _hideLobby() {
@@ -1206,6 +1025,7 @@ export class Lobby {
     this._initTouristEntry();   // E-6 · "ride the distance between you"
 
     document.getElementById('btn-back-level').addEventListener('click', () => {
+      if (this._pendingMode === 'versusBots') { this._showStep(this.versusBotsStep); return; }
       if (this._pendingMode === 'versus') {
         // Back to team setup — players stay joined, monitor restarts via _showStep.
         this._showStep(this.versusStep);
@@ -1282,6 +1102,7 @@ export class Lobby {
         return;
       }
       this._showStep(this.hostStep);
+      this._refreshHostNext();   // (the Back seat row is there before the room has connected, or if it never does)
       this._createRoom();
     });
     // #563 · open the online room to type its code on another device.
@@ -1331,6 +1152,7 @@ export class Lobby {
       this._leaveVersus();
       this._showStep(this.roleStep);
     });
+    this._initVersusBots();
     // PAIR A CONTROLLER (mode screen + versus step): the WebHID grant a pad the
     // Gamepad API can't see needs — a Steam Controller is HID-only and a second
     // DualSense over Bluetooth never surfaces. Ported from the host step's
@@ -1437,6 +1259,12 @@ export class Lobby {
         });
         this._hideLobby();
         this.onVersusReady({ teams: this._versusTeams() });
+      } else if (this._pendingMode === 'versusBots') {
+        // Pete, 2026-11-21: the real couch race, split screen, against a bot team
+        const teams = this._versusBotTeams();
+        analytics.trackEvent('versus_start', { team_a: teams[0].members.length, team_b: 2, bots: this.selectedRace });
+        this._hideLobby();
+        this.onVersusReady({ teams, botTier: this.rideRaceTier() });
       } else {
         // Solo: start game directly
         this._hideLobby();
@@ -1501,17 +1329,9 @@ export class Lobby {
 
     // Permission toggles
     this.toggleAll.addEventListener('click', () => this._toggleAll());
-    this.toggleCamera.addEventListener('click', () => {
-      this._toggleCamera();
-      analytics.trackEvent('video_toggle', { enabled: this.cameraActive });
-    });
     // #646: a choice made here is P1's controller's (js/controller-settings.js).
     this.toggleMotion.addEventListener('click', () => { const want = !this.motionActive; this._toggleMotion(); this._rememberP1Steering({ gyro: want }); });
     this.toggleJoystick.addEventListener('click', () => { const want = !this.joystickActive; this._toggleJoystick(); this._rememberP1Steering({ stick: want }); });
-    this.toggleAudio.addEventListener('click', () => {
-      this._toggleAudio();
-      analytics.trackEvent('audio_toggle', { enabled: this.audioActive });
-    });
     // Music toggle: tap = mute/unmute, long press (500ms) = show volume slider
     this._musicLongPressed = false;
     this.toggleMusic.addEventListener('pointerdown', (e) => {
@@ -1684,7 +1504,7 @@ export class Lobby {
   // form, the geocoding calls, and remembering the pair's last route so the
   // second ride is one button (E-8).
 
-  /** E-8 · the last route this browser rode, or null. */
+  /** E-8 · the last route this browser rode, or null (from before "your places"; read once to carry it over). */
   _loadSavedRoute() {
     try {
       const raw = localStorage.getItem('tandemonium_tourist_route');
@@ -1716,10 +1536,10 @@ export class Lobby {
     return this.roomRules().tourist && !!getMapsApiKey();   // M1: room needs a partner that can ride it
   }
 
-  /** #400: "Map Tourist" alone, "Map Tourists" when two ride it. */
+  /** #400: "Tourist" alone, "Tourists" when two ride it. */
   _touristLabel() {
     return this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
-      ? 'Map Tourists' : 'Map Tourist';
+      ? 'Tourists' : 'Tourist';
   }
 
   /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
@@ -1732,30 +1552,106 @@ export class Lobby {
     if (name) name.textContent = this._touristLabel();
   }
 
+  // ── Map Tourist: where to ride (Pete, 2026-11-17) ──────────────────────────
+  //
+  // The screen leads with places that need no typing: a dozen scenic rides, and the places this
+  // player has ridden before. Typing an address is the third way in, limited to a few new places a
+  // week because each one is a paid lookup, and the screen says how many are left and what never
+  // counts (js/tourist-places.js). Everything here works with a controller: the places are buttons,
+  // and a typed address has an on-screen keyboard.
+
+  /** The player's places and this week's count (kept on this device). */
+  _touristStoreLoad() {
+    let store = emptyStore();
+    try { store = readStore(localStorage.getItem(TOURIST_STORE_KEY)); } catch { /* storage off */ }
+    // the one route the old screen remembered becomes the first of "your places"
+    if (!store.places.length) {
+      const old = this._loadSavedRoute();
+      if (old) store = rememberPlace(store, { from: old.from, to: old.to });
+    }
+    return store;
+  }
+
+  _touristStoreSave(store) {
+    this._touristStore = store;
+    try { localStorage.setItem(TOURIST_STORE_KEY, JSON.stringify(store)); } catch { /* private mode: this ride still works */ }
+  }
+
+  /** Pressing the Tourist card: the "experimental" note first, until the player turns it off. */
+  _pressTourist() {
+    let off = false;
+    try { off = localStorage.getItem(TOURIST_NOTE_OFF_KEY) === '1'; } catch { /* storage off: show it */ }
+    const sheet = /** @type {any} */ (document.getElementById('tourist-note-sheet'));
+    if (off || !sheet) { this._openTouristStep(); return; }
+    if (!this._touristNoteWired) {
+      this._touristNoteWired = true;
+      const never = /** @type {any} */ (document.getElementById('tourist-note-never'));
+      const fun = document.getElementById('tourist-note-fun');
+      sheet.attachFocus(this._stepFocus);
+      document.getElementById('tourist-note-return')?.addEventListener('click', () => sheet.close());
+      fun?.addEventListener('click', () => { this._touristNoteGo = true; sheet.close(); });
+      // the sheet starts on its first body item, the option: A should mean Have Fun!, not opt out
+      // (the first time it opens, its controls can take a frame or two to lay out)
+      const land = (tries = 0) => {
+        if (!sheet.open) return;
+        const items = sheet.focusables();
+        if (items.includes(fun)) this._stepFocus.setSpatial(items, fun);
+        else if (tries < 20) requestAnimationFrame(() => land(tries + 1));
+      };
+      sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => land()));
+      // every way out keeps the choice; only Have Fun! goes on (the sheet hands the focus back first)
+      sheet.addEventListener('uf-sheet:close', () => {
+        if (never.checked) { try { localStorage.setItem(TOURIST_NOTE_OFF_KEY, '1'); } catch { /* this session only */ } }
+        const go = this._touristNoteGo;
+        this._touristNoteGo = false;
+        if (go) this._openTouristStep();
+      });
+    }
+    sheet.show();
+  }
+
   _openTouristStep() {
     // Who rides it: alone, two on this screen, or the room (captain plans).
     this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
       ? this._pendingMode : 'solo';
     const together = this._touristFor !== 'solo';
     const prompt = this.touristStep.querySelector('.lobby-prompt');
-    if (prompt) prompt.textContent = together ? 'Map Tourists · Where will you ride?' : 'Map Tourist · Where will you ride?';
+    if (prompt) prompt.textContent = together ? 'Tourists · Where will you ride?' : 'Tourist · Where will you ride?';
     const fromIn = document.getElementById('tourist-from');
     const toIn = document.getElementById('tourist-to');
     if (fromIn) fromIn.placeholder = 'Address or place';
     if (toIn) toIn.placeholder = together ? "Your partner's address or city" : 'Second address or city';
     if (this._touristFor === 'solo') this._pendingMode = 'tourist';
+    if (this._touristFor === 'multiplayer' && this._roomRole === 'captain' && this.net && this.net.connected) {
+      this.net.sendProfile(RoomProtocol.touristChoosing(true));
+    }
     this._forceWizard = false;
+    this._touristStore = storeWithUsage(this._touristStoreLoad(), this._touristUsage());
+    this._showTouristForm(false);
+    this._renderTouristPlaces();
     this._showStep(this.touristStep);
-    this._prefillTouristForm();
+    this._syncTouristUsage();   // #824
+    this._refreshTouristFocus(true);
+    // the step slides in and its fonts settle: the neighbours are worked out again from where things ended up
+    for (const ms of [200, 600, 1400]) setTimeout(() => this._refreshTouristFocus(false), ms);
     analytics.trackEvent('tourist_open');
   }
 
   _initTouristEntry() {
+    // the two lookups a typed place needs (a seam: the smoke stands a table in for Google)
+    this._touristLookups = { geocode: geocodeAddress, origin: resolveOriginAt };
     if (!this._touristAvailable()) return;     // no card is built either
+    this._initTouristCosts();
 
     const back = document.getElementById('btn-back-tourist');
     if (back) back.addEventListener('click', () => {
-      if (this._touristFor === 'multiplayer') { this._showRoomLevelsStep(); return; }
+      // from the address form, Back is back to the places
+      if (this._touristFormShown()) { this._showTouristForm(false); this._renderTouristPlaces(); this._refreshTouristFocus(true); return; }
+      if (this._touristFor === 'multiplayer') {
+        if (this._roomRole === 'captain' && this.net && this.net.connected) this.net.sendProfile(RoomProtocol.touristChoosing(false));
+        this._showRoomLevelsStep();
+        return;
+      }
       this._pendingMode = this._touristFor === 'local' ? 'local' : 'solo';
       this._showStep(this.levelStep);
     });
@@ -1771,17 +1667,37 @@ export class Lobby {
       this._touristPlan = null;
       const preview = document.getElementById('tourist-preview');
       if (preview) preview.textContent = '';
+      const err = document.getElementById('tourist-error');
+      if (err) err.textContent = '';
+      this._refreshTouristFocus(false);
     };
     this._onTouristEdit = onEdit;
     from.addEventListener('input', onEdit);
     to.addEventListener('input', onEdit);
+    // Enter in a field does what the button does
+    for (const el of [from, to]) {
+      el.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !go.disabled) { e.preventDefault(); this._planTouristRide(); } });
+      el.addEventListener('focus', () => this._setTouristOskTarget(el));
+    }
     go.addEventListener('click', () => this._planTouristRide());
 
     // #400: one address explores around it; a second one plans a route.
     const add = document.getElementById('btn-tourist-add-to');
     const remove = document.getElementById('btn-tourist-remove-to');
-    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); to.focus(); onEdit(); });
-    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); onEdit(); });
+    if (add) add.addEventListener('click', () => { this._setTouristTwoAddresses(true); this._setTouristOskTarget(to); if (!this._touristOskOn()) to.focus(); onEdit(); });
+    if (remove) remove.addEventListener('click', () => { to.value = ''; this._setTouristTwoAddresses(false); this._setTouristOskTarget(from); onEdit(); });
+
+    const fresh = document.getElementById('btn-tourist-new');
+    if (fresh) fresh.addEventListener('click', () => {
+      if (!newPlaceGate(this._touristStore).allowed) return;
+      from.value = ''; to.value = '';
+      this._setTouristTwoAddresses(false);
+      this._showTouristForm(true);
+      onEdit();
+      if (!this._touristOskOn()) from.focus();
+      this._refreshTouristFocus(true);
+    });
+    this._buildTouristOsk();
   }
 
   /** #400 · is the second-address field showing? */
@@ -1797,36 +1713,281 @@ export class Lobby {
     if (add) add.style.display = on ? 'none' : '';
   }
 
-  /** E-8 · offer the last route back, so a repeat ride is one button. */
-  _prefillTouristForm() {
-    const saved = this._loadSavedRoute();
-    const preview = document.getElementById('tourist-preview');
-    const go = document.getElementById('btn-tourist-ride');
-    if (!saved) {
-      if (preview) preview.textContent = '';
-      this._setTouristTwoAddresses(false);
-      if (this._onTouristEdit) this._onTouristEdit();
-      return;
+  _touristFormShown() {
+    const form = document.getElementById('tourist-form');
+    return !!form && form.style.display !== 'none';
+  }
+
+  /** The places (scenic, yours) or the address form: one at a time. */
+  _showTouristForm(on) {
+    const form = document.getElementById('tourist-form');
+    const places = document.getElementById('tourist-places');
+    if (form) form.style.display = on ? '' : 'none';
+    if (places) places.style.display = on ? 'none' : '';
+    this._touristPlan = null;
+    if (on) {
+      this._setTouristOskTarget(document.getElementById('tourist-from'));
+      this._syncTouristOsk();
+      this._renderTouristQuota();
     }
-    document.getElementById('tourist-from').value = saved.from.label || '';
-    document.getElementById('tourist-to').value = saved.to ? (saved.to.label || '') : '';
-    this._setTouristTwoAddresses(!!saved.to);
-    if (go) go.disabled = false;
-    const plan = saved.to ? planRoute(saved.from, saved.to) : planExplore(saved.from);
-    if (preview) {
-      preview.innerHTML = saved.to
-        ? 'Again? <strong>' + this._escape(saved.from.label) + '</strong> to <strong>' +
-          this._escape(saved.to.label) + '</strong><br>' + this._escape(plan.headline)
-        : 'Again? <strong>' + this._escape(saved.from.label) + '</strong><br>Open world · ride anywhere nearby';
+  }
+
+  /** The scenic rides, the player's places, and where they stand against the week's new places. */
+  _renderTouristPlaces() {
+    const grid = document.getElementById('tourist-scenic');
+    if (grid && !grid.childElementCount) {
+      for (const p of SCENIC_PLACES) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tourist-place';
+        b.id = 'tourist-place-' + p.id;
+        b.dataset.place = p.id;
+        b.innerHTML = '<span class="tourist-place-icon" aria-hidden="true">' + p.icon + '</span>' +
+          '<span class="tourist-place-name">' + this._escape(p.name) + '</span>' +
+          '<span class="tourist-place-sub">' + this._escape(p.where + ' · ' + rideKind(p)) + '</span>';
+        b.addEventListener('click', () => {
+          analytics.trackEvent('tourist_scenic_pick', { place: p.id });
+          this._startTouristRide(planForPlace(p, 'scenic'));
+        });
+        grid.appendChild(b);
+      }
     }
-    this._touristPlan = plan;
-    if (go) go.textContent = 'RIDE IT AGAIN';
+    const store = this._touristStore || emptyStore();
+    const yours = document.getElementById('tourist-yours');
+    if (yours) {
+      yours.replaceChildren();
+      for (const place of store.places) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'tourist-yours-place';
+        b.textContent = '📍 ' + placeLabel(place);
+        b.title = place.to ? `${place.from.label} to ${place.to.label}` : place.from.label;
+        b.addEventListener('click', () => {
+          analytics.trackEvent('tourist_yours_pick', { route: !!place.to });
+          // newest first next time; nothing is looked up
+          this._touristStoreSave(rememberPlace(this._touristStore, place));
+          this._startTouristRide(planForPlace(place, 'yours'));
+        });
+        yours.appendChild(b);
+      }
+      if (!store.places.length) {
+        const none = document.createElement('span');
+        none.className = 'tourist-yours-none';
+        none.textContent = 'Places you look up are kept here to ride again.';
+        yours.appendChild(none);
+      }
+    }
+    this._renderTouristQuota();
+  }
+
+  // ── #824 · what a player may use of Google, and what it cost ─────────────
+
+  /** Counts only: never a typed address or a ridden place. */
+  _initTouristCosts() {
+    const track = (name, data) => { try { analytics.trackEvent(name, data); } catch { /* offline */ } };
+    const platform = window.steam ? 'steam' : navigator.userAgent.includes('Electron') ? 'desktop' : 'web';
+    const edition = this._achievements.demo ? 'demo' : 'full';
+    setLookupReporter((r) => track('tourist_lookup', r));
+    setTilesSessionHooks({
+      onRoot: ({ ok, status }) => {
+        track('tourist_tiles_session', { ok, status, platform, edition });
+        if (ok) this._saveTouristUsage(countSession(this._touristUsage()));
+      },
+      onReused: () => track('tourist_session_reused', { platform, edition }),
+      onRefused: (status) => { if (this.onTouristRefused) this.onTouristRefused(status); },
+    });
+  }
+
+  /** This player's counts: the device's and the account's, the higher of each. */
+  _touristUsage() {
+    let device = null;
+    try { device = readUsage(localStorage.getItem(TOURIST_USAGE_KEY)); } catch { /* storage off */ }
+    let u = mergeUsage(device, this._achievements.touristUsage());
+    const store = this._touristStore;
+    if (store && store.week) u = noteAddresses(u, store.week, store.used || 0);
+    return u;
+  }
+
+  _saveTouristUsage(u) {
+    try { localStorage.setItem(TOURIST_USAGE_KEY, JSON.stringify(u)); } catch { /* this session only */ }
+    this._achievements.noteTouristUsage(u);
+    if (this._currentStep === this.touristStep) this._renderTouristQuota();
+  }
+
+  /** May a ride start now? (A live session always may.) */
+  touristSessionGate() {
+    return sessionGate(this._touristUsage(), Date.now(), hasLiveTilesSession());
+  }
+
+  /** Signed in: bring the account's counts here before the player picks. Offline: the device's count stands. */
+  async _syncTouristUsage() {
+    this._saveTouristUsage(this._touristUsage());
+    try { await this._achievements.syncStats(); } catch { return; }
+    const u = this._touristUsage();
+    this._touristStoreSave(storeWithUsage(this._touristStore, u));
+    this._saveTouristUsage(u);
+  }
+
+  /** "Map sessions today: 4 of 5 left" and "New places this week: 3 of 5 left", on the places and on the form. */
+  _renderTouristQuota() {
+    const gate = newPlaceGate(this._touristStore);
+    const limit = limitText(gate);
+    const sessions = this.touristSessionGate();
+    const text = { headline: sessionText(sessions), detail: `${limit.headline}. ${limit.detail}` };
+    for (const id of ['tourist-quota', 'tourist-quota-form']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.innerHTML = '<b>' + this._escape(text.headline) + '</b><span>' + this._escape(text.detail) + '</span>';
+      el.classList.toggle('out', !gate.allowed || !sessions.allowed);
+    }
+    const fresh = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-tourist-new'));
+    if (fresh) {
+      fresh.disabled = !gate.allowed;
+      fresh.textContent = gate.allowed ? '+ A NEW PLACE' : 'NO NEW PLACES LEFT THIS WEEK';
+    }
+  }
+
+  // ── the on-screen keyboard (a controller on a TV has no other way to type) ──
+
+  _touristOskOn() {
+    return !!(this.input && this.input.gamepadConnected) || document.documentElement.classList.contains('tv');
+  }
+
+  _buildTouristOsk() {
+    const osk = document.getElementById('tourist-osk');
+    if (!osk || osk.childElementCount) return;
+    const rows = ['1234567890', 'QWERTYUIOP', "ASDFGHJKL'", 'ZXCVBNM,.-'];
+    rows.forEach((row, ri) => {
+      const r = document.createElement('div');
+      r.className = 'tourist-osk-row';
+      [...row].forEach((ch, ci) => { const k = this._touristOskKey(ch, ch); k.id = 'tourist-key-' + ri + '-' + ci; r.appendChild(k); });
+      osk.appendChild(r);
+    });
+    const last = document.createElement('div');
+    last.className = 'tourist-osk-row';
+    [['SPACE', ' '], ['⌫ DELETE', 'Backspace'], ['CLEAR', 'Clear']].forEach(([label, key], i) => {
+      const k = this._touristOskKey(label, key, 'wide');
+      k.id = 'tourist-key-4-' + i;
+      last.appendChild(k);
+    });
+    osk.appendChild(last);
+  }
+
+  _touristOskKey(label, key, cls = '') {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'tourist-osk-key' + (cls ? ' ' + cls : '');
+    b.textContent = label;
+    b.dataset.key = key;
+    b.addEventListener('click', () => this._touristOskPress(key));
+    return b;
+  }
+
+  _touristOskPress(key) {
+    const el = this._touristOskTarget || document.getElementById('tourist-from');
+    if (!el) return;
+    if (key === 'Backspace') el.value = el.value.slice(0, -1);
+    else if (key === 'Clear') el.value = '';
+    else if (el.value.length < 120) {
+      // Sentence case as it is typed: capitals only after a space or at the start
+      const start = !el.value || /[\s,.-]$/.test(el.value);
+      el.value += /[A-Z]/.test(key) && !start ? key.toLowerCase() : key;
+    }
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  /** Which field the keyboard types into (shown with a ring). */
+  _setTouristOskTarget(el) {
+    this._touristOskTarget = el;
+    for (const id of ['tourist-from', 'tourist-to']) {
+      const f = document.getElementById(id);
+      if (f) f.classList.toggle('osk-target', f === el && this._touristOskOn());
+    }
+  }
+
+  _syncTouristOsk() {
+    const osk = document.getElementById('tourist-osk');
+    if (osk) osk.style.display = this._touristOskOn() ? '' : 'none';
+    this._setTouristOskTarget(this._touristOskTarget || document.getElementById('tourist-from'));
+  }
+
+  /** What a controller can reach on this step right now, in reading order. */
+  _touristFocusables() {
+    const shown = (el) => !!el && el.getBoundingClientRect().width > 0 && !el.disabled;
+    const q = (sel) => [...this.touristStep.querySelectorAll(sel)].filter(shown);
+    if (!this._touristFormShown()) {
+      return [...q('#tourist-scenic .tourist-place'), ...q('#tourist-yours .tourist-yours-place'), ...q('#btn-tourist-new')];
+    }
+    // the fields come first (confirm on one makes it the keyboard's target), then the keys, then the actions
+    return [...q('#tourist-from'), ...q('#tourist-to'), ...q('#btn-tourist-remove-to'), ...q('#tourist-osk .tourist-osk-key'),
+      ...q('#btn-tourist-add-to'), ...q('#btn-tourist-ride')];
   }
 
   /**
-   * Geocode both ends, show what the ride will be, and — on the second press —
-   * start it. Two presses on purpose: the distance is the reveal, and riding
-   * straight past it would throw away the best moment this mode has.
+   * Which control each direction leads to, where plain geometry would get it wrong: the focus moves by
+   * the nearest centre, and from a card at the grid's edge the nearest centre below is the bottom bar,
+   * not the full-width button under the grid; from a letter key it is not the wide key under it.
+   */
+  _wireTouristNav() {
+    const shown = (el) => !!el && el.getBoundingClientRect().width > 0 && !el.disabled;
+    const nav = (el, dir, to) => { if (!el) return; if (to && shown(to)) el.dataset['nav' + dir] = to.id; else delete el.dataset['nav' + dir]; };
+    const $ = (id) => document.getElementById(id);
+    if (!this._touristFormShown()) {
+      const cards = [...document.querySelectorAll('#tourist-scenic .tourist-place')].filter(shown);
+      const yours = [...document.querySelectorAll('#tourist-yours .tourist-yours-place')].filter(shown);
+      const fresh = $('btn-tourist-new');
+      yours.forEach((b, i) => { b.id = 'tourist-yours-' + i; });
+      // the grid's last row is the cards sharing the lowest top edge
+      const lastTop = Math.max(0, ...cards.map((c) => Math.round(c.getBoundingClientRect().top)));
+      const lastRow = cards.filter((c) => Math.round(c.getBoundingClientRect().top) === lastTop);
+      const below = yours[0] || fresh;
+      for (const c of cards) nav(c, 'Down', lastRow.includes(c) ? below : null);
+      for (const y of yours) { nav(y, 'Up', lastRow[0] || null); nav(y, 'Down', fresh); }
+      nav(fresh, 'Up', yours[0] || lastRow[Math.floor(lastRow.length / 2)] || null);
+      return;
+    }
+    const from = $('tourist-from'), to = $('tourist-to'), add = $('btn-tourist-add-to'), go = $('btn-tourist-ride');
+    const key = (r, c) => $('tourist-key-' + r + '-' + c);
+    const field = shown(to) ? to : from;
+    nav(from, 'Down', shown(to) ? to : key(0, 4));
+    nav(to, 'Up', from); nav(to, 'Down', key(0, 4));
+    for (let c = 0; c < 10; c++) {
+      nav(key(0, c), 'Up', field);
+      nav(key(3, c), 'Down', key(4, c < 4 ? 0 : c < 7 ? 1 : 2));
+    }
+    const after = shown(add) ? add : go;
+    [[0, 1], [1, 5], [2, 8]].forEach(([w, c]) => { nav(key(4, w), 'Up', key(3, c)); nav(key(4, w), 'Down', after); });
+    nav(add, 'Up', key(4, 1)); nav(add, 'Down', go);
+    nav(go, 'Up', shown(add) ? add : key(4, 1));
+  }
+
+  /** Hand the step's current controls to the controller focus (after the screen changes). */
+  _refreshTouristFocus(reset) {
+    if (this._currentStep !== this.touristStep) return;
+    this._syncTouristOsk();
+    if (!this.input || !this.input.gamepadConnected) return;
+    const items = this._touristFocusables();
+    this._wireTouristNav();
+    this._modeColumns[1] = items;
+    const nav = this._stepNavItems();
+    const cur = this._stepFocus.focused;
+    if (reset || !cur || nav.indexOf(cur) < 0) {
+      const first = this._touristFormShown()
+        ? (items.find((el) => el.classList.contains('tourist-osk-key')) || items[0])
+        : items[0];
+      this._stepFocus.setSpatial(nav, first || null);
+    } else {
+      this._stepFocus.refreshSpatial(nav);
+    }
+  }
+
+  /**
+   * Find the typed places, show what the ride will be, and — on the second press — start it. Two
+   * presses for a route on purpose: the distance is the reveal, and riding straight past it would
+   * throw away the best moment this mode has.
+   *
+   * A place the player already has costs nothing and does not count. Each address that has to be
+   * looked up counts as one of the week's new places.
    */
   async _planTouristRide() {
     const go = document.getElementById('btn-tourist-ride');
@@ -1842,38 +2003,78 @@ export class Lobby {
       return;
     }
 
-    errorEl.textContent = '';
-    go.disabled = true;
-    go.textContent = 'FINDING…';
+    const label = two ? 'PLAN THE RIDE' : 'EXPLORE HERE';
+    const fail = (message) => {
+      errorEl.textContent = message;
+      go.disabled = false;
+      go.textContent = label;
+      this._refreshTouristFocus(false);
+    };
 
-    // #400 · one address: find it and ride straight in (open world). No
-    // two-press reveal — there is no distance to show.
-    if (!two) {
-      try {
-        const from = await geocodeAddress(fromText);
-        if (!isValidPoint(from)) throw new Error('could not place that address');
-        this._saveRoute(from, null);
-        analytics.trackEvent('tourist_explore_planned');
-        go.disabled = false;
-        go.textContent = 'EXPLORE HERE';
-        this._startTouristRide(planExplore(from));
-      } catch (err) {
-        errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
-        go.disabled = false;
-        go.textContent = 'EXPLORE HERE';
-        analytics.trackEvent('tourist_route_failed');
-      }
+    // #824 · no paid address lookup for a ride that could not start
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      fail(sessionText(sessions));
       return;
     }
 
-    try {
-      const [from, to] = await Promise.all([
-        geocodeAddress(fromText),
-        geocodeAddress(toText)
-      ]);
-      if (!isValidPoint(from) || !isValidPoint(to)) throw new Error('could not place one of those');
+    // which of them need looking up, and is there room in the week for that many
+    const texts = two ? [fromText, toText] : [fromText];
+    const known = texts.map((t) => knownPoint(this._touristStore, t));
+    const need = known.filter((k) => !k).length;
+    const gate = newPlaceGate(this._touristStore);
+    if (need > gate.left) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'addresses' });
+      const t = limitText(gate);
+      fail(gate.left === 0 ? `${t.headline}. ${t.detail}`
+        : `That is ${need} new places and you have ${gate.left} left this week. Try one address, or a place you have ridden.`);
+      return;
+    }
 
-      const plan = planRoute(from, to);
+    errorEl.textContent = '';
+    go.disabled = true;
+    go.textContent = 'FINDING…';
+    try {
+      const points = await Promise.all(texts.map(async (t, i) => {
+        if (known[i]) return known[i];
+        const p = await this._touristLookups.geocode(t);
+        if (!isValidPoint(p)) throw new Error('could not place that address');
+        return { ...p, typed: String(t).trim() };
+      }));
+      // the lookups happened: they count, whatever comes next
+      if (need) {
+        this._touristStoreSave(countNewPlaces(this._touristStore, need));
+        this._saveTouristUsage(this._touristUsage());
+      }
+      const [from, to] = points;
+      const plan = two ? planRoute(from, to) : planExplore(from);
+      plan.kind = 'yours';
+
+      // ground heights, once, kept with the place so riding it again looks nothing up
+      const place = { from, to: two ? to : null };
+      try {
+        const o = await this._touristLookups.origin(from);
+        if (o && Number.isFinite(o.height) && o.anchored) { plan.anchor = { height: o.height, anchored: true }; place.height = o.height; }
+      } catch { /* the ride looks it up */ }
+      if (two && plan.route.capped) {
+        try {
+          const p2 = interpolate(from, to, 1 - CAP_HALF_M / plan.realM);
+          const o2 = await this._touristLookups.origin({ lat: p2.lat, lon: p2.lon, label: to.label });
+          if (o2 && Number.isFinite(o2.height) && o2.anchored) { plan.toAnchor = { height: o2.height, anchored: true }; place.toHeight = o2.height; }
+        } catch { /* looked up at the skip */ }
+      }
+      this._touristStoreSave(rememberPlace(this._touristStore, place));
+      this._saveRoute(from, two ? to : null);
+      this._renderTouristQuota();
+
+      if (!two) {
+        analytics.trackEvent('tourist_explore_planned', { looked_up: need });
+        go.disabled = false;
+        go.textContent = label;
+        this._startTouristRide(plan);
+        return;
+      }
       this._touristPlan = plan;
       preview.innerHTML = '<strong>' + this._escape(from.label) + '</strong><br>to <strong>' +
         this._escape(to.label) + '</strong><br>' + this._escape(plan.headline) +
@@ -1883,22 +2084,29 @@ export class Lobby {
           : '');
       go.disabled = false;
       go.textContent = 'RIDE IT';
-      this._saveRoute(from, to);
       analytics.trackEvent('tourist_route_planned', {
-        km: Math.round(plan.realM / 1000), capped: plan.route.capped
+        km: Math.round(plan.realM / 1000), capped: plan.route.capped, looked_up: need
       });
+      this._refreshTouristFocus(false);
     } catch (err) {
       // Inline, never a console exception: a mistyped address is the most
       // ordinary thing that can happen on this screen.
-      errorEl.textContent = String(err && err.message || err).replace(/^Error:\s*/, '');
-      go.disabled = false;
-      go.textContent = 'PLAN THE RIDE';
+      fail(touristLookupMessage(err));
       analytics.trackEvent('tourist_route_failed');
     }
   }
 
   async _startTouristRide(plan) {
     const forMode = this._touristFor || 'solo';
+    // #824 · checked before a ride would open a new paid session; a live session always rides
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      const err = document.getElementById('tourist-error');
+      if (err) err.textContent = sessionText(sessions) + ' Grandma’s, the Daily Ride and Slingshot are still open.';
+      this._renderTouristQuota();
+      return;
+    }
     if (forMode === 'multiplayer') {
       // Online co-op: the captain's plan travels as its two end points, then
       // the ordinary start message (flagged), and both sides enter the game.
@@ -1925,7 +2133,7 @@ export class Lobby {
       }
       this._roomTouristPlan = plan;
       this._placementSalt = makePlacementSalt();
-      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor));
+      this.net.sendProfile(RoomProtocol.touristPlan(plan.from, plan.explore ? null : plan.to, plan.anchor, { toAnchor: plan.toAnchor, kind: plan.kind, title: plan.title }));
       this.net.sendProfile(RoomProtocol.startRide(this._placementSalt, null, true, this.selectedDifficulty));
       analytics.trackEvent('tourist_ride_start', { km: Math.round(plan.realM / 1000), mode: 'online' });
       this._transitionToGame();
@@ -2143,8 +2351,10 @@ export class Lobby {
     const isVersus = mode === 'versus';
     // #400: every list offers only what this edition includes.
     const rules = this.roomRules();   // PR #397 M1: a room offers what BOTH sides can ride
+    const vsBots = mode === 'solo' && this._pendingMode === 'versusBots';   // (Grandma's and the Daily Ride)
     const levels = LEVELS.filter(l =>
-      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id));
+      (showTutorial || !l.isTutorial) && !(isVersus && l.isDaily) && levelAllowed(rules, l.id) && (!vsBots || raceableLevel(l)));
+    if (mode === 'solo') this._levelCardsFor = vsBots ? 'versusBots' : 'solo';
     this._lockedLevelIds = this._lockedLevelIds || new Set();   // read by NEXT LEVEL
 
     levels.forEach(level => {
@@ -2227,7 +2437,7 @@ export class Lobby {
       // column, so the TV's one-row card layout keeps its four columns). Not in
       // an online room (the partner is on the real date) and not in the versus
       // list (no Daily Ride there).
-      if (level.isDaily && !locked && isClickable && mode === 'solo' && this._timeWarpUnlocked()) {
+      if (level.isDaily && !locked && isClickable && mode === 'solo' && !vsBots && this._timeWarpUnlocked()) {
         const stack = document.createElement('div');
         stack.className = 'level-card-stack';
         const warp = this._buildWarpRow();
@@ -2247,7 +2457,7 @@ export class Lobby {
     // PR #397 m10: not for couch co-op, which shares this list — the Slingshot
     // is one rider, and leaving through it silently dropped P2.
     this._soloListFor = mode !== 'solo' ? null : this._pendingMode === 'local' ? 'local' : 'solo';
-    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local') {
+    if (mode === 'solo' && isClickable && rules.slingshot.enabled && this._pendingMode !== 'local' && !vsBots) {
       const card = document.createElement('button');
       card.className = 'level-card level-card-slingshot';
       card.dataset.levelId = 'slingshot';
@@ -2275,19 +2485,29 @@ export class Lobby {
     // card opens the route-planning step. Only when it can work (a Maps key)
     // and the edition includes it — an entry point that fails is worse than
     // none (#350). Solo only: co-op Tourist is not built (see _initTouristEntry).
-    if ((mode === 'solo' || mode === 'multiplayer') && isClickable && this._touristAvailable()) {
+    // (the stoker's list shows it too, like every other level: the captain picks; Pete, 2026-11-18,
+    // "the stoker doesn't see ... Map Tourist but as Captain I see it")
+    const stokerView = mode === 'multiplayer' && !isClickable;
+    if ((mode === 'solo' || mode === 'multiplayer') && (isClickable || stokerView) && !vsBots && this._touristAvailable()) {
       const card = document.createElement('button');
-      card.className = 'level-card level-card-tourist';
+      card.className = 'level-card level-card-tourist' + (stokerView && this._captainChoosingTourist ? ' selected' : '');
       card.dataset.levelId = 'tourist';
       card.innerHTML =
         '<div class="level-card-top">' +
           '<span class="level-card-icon">&#128205;</span>' +
-          '<span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-name-wrap"><span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-experimental">⚠️ Experimental</span></span>' +
         '</div>' +
         '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
-      card.addEventListener('click', () => this._openTouristStep());
-      container.appendChild(card);
-      buttons.push(card);
+      if (stokerView) {
+        card.style.opacity = '0.7';
+        card.style.pointerEvents = 'none';
+        container.appendChild(card);
+      } else {
+        card.addEventListener('click', () => this._pressTourist());
+        container.appendChild(card);
+        buttons.push(card);
+      }
     }
 
     // Default selection: restore previous or pick first unlocked non-tutorial level
@@ -2529,9 +2749,8 @@ export class Lobby {
         if (gsiBtn) gsiBtn.style.display = 'none';
         const signInBtn = document.getElementById('btn-sign-in');
         if (signInBtn) signInBtn.style.display = 'none';
-        // Hide logout button — Steam auth is tied to Steam identity
-        const logoutBtn = document.getElementById('profile-popup-logout');
-        if (logoutBtn) logoutBtn.style.display = 'none';
+        // No Sign out — Steam auth is tied to Steam identity
+        this._syncProfileElements();
       } else {
         this.license = new LicenseManager(this.auth);
       }
@@ -2543,10 +2762,9 @@ export class Lobby {
 
   _setupAuth() {
     this.profilePopup = document.getElementById('profile-popup');
-    const popupAvatars = document.getElementById('profile-popup-avatars');
     const popupName = document.getElementById('profile-popup-name');
-    const popupEmail = document.getElementById('profile-popup-email');
-    const logoutBtn = document.getElementById('profile-popup-logout');
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
 
     // Initialize auth: Steam signs in by itself; everyone else can sign in
     // with Discord from the Profile popup (#612; Google is no longer offered).
@@ -2554,7 +2772,7 @@ export class Lobby {
 
     // Steam identity is automatic, so there's no meaningful logout on Steam (#332).
     // Elsewhere (web, or the desktop app without Steam) Discord can sign back in.
-    if (this._isSteam && logoutBtn) logoutBtn.style.display = 'none';
+    this._syncProfileElements();
 
     // Save original SVG to restore on logout
     const profileSvg = this.toggleProfile.innerHTML;
@@ -2589,22 +2807,15 @@ export class Lobby {
         this.toggleProfile.classList.add('active');
         this.toggleLeaderboard.classList.add('active');
         const pics = identityPictures(user);
-        popupAvatars.replaceChildren(...pics.map((p) => {
-          const img = document.createElement('img');
-          img.alt = p.provider;
-          img.title = p.provider === 'discord' ? 'Discord' : p.provider === 'steam' ? 'Steam' : '';
-          img.referrerPolicy = 'no-referrer';
-          img.dataset.provider = p.provider;
-          img.src = this._avatarCache.get(p.avatar) || p.avatar;
-          return img;
-        }));
         popupName.textContent = user.name || '';
-        const linked = Object.keys(user.identities || {}).filter((k) => k !== 'google')
-          .map((k) => (k === 'discord' ? 'Discord' : k === 'steam' ? 'Steam' : k));
-        popupEmail.textContent = linked.length ? 'Signed in with ' + linked.join(' + ') : '';
-        // A Steam player can add Discord; it puts both on one House Tandem account.
-        const linkBtn = document.getElementById('profile-popup-link-discord');
-        if (linkBtn) linkBtn.style.display = this.auth.hasIdentity('discord') ? 'none' : '';
+        // One line per login: Discord always (a missing one is the Link Discord button: a Steam
+        // player can add it, and it puts both on one House Tandem account), Steam when it is
+        // linked or this is the Steam build. Pictures come from the avatar cache when it has them.
+        const ids = user.identities || {};
+        this._syncProfileElements(ids);
+        const cached = {};
+        for (const k of Object.keys(ids)) cached[k] = { ...ids[k], avatar: ids[k] && ids[k].avatar ? (this._avatarCache.get(ids[k].avatar) || ids[k].avatar) : ids[k] && ids[k].avatar };
+        card.user = { ...user, identities: cached };
         if (pics[0]) {
           const first = pics[0].avatar;
           this.toggleProfile.innerHTML = '<img src="' + (this._avatarCache.get(first) || first) + '" alt="" style="width:100%;height:100%;border-radius:50%;object-fit:cover;">';
@@ -2618,6 +2829,10 @@ export class Lobby {
             const img = this.toggleProfile.querySelector('img');
             if (img && pics[0]) img.src = this._avatarCache.get(pics[0].avatar) || pics[0].avatar;
             setBarAvatars(pics);
+            // (the card changes its nodes in place, lab #152: the pad's focus stays if it is open)
+            const fresh = {};
+            for (const k of Object.keys(ids)) fresh[k] = { ...ids[k], avatar: ids[k] && ids[k].avatar ? (this._avatarCache.get(ids[k].avatar) || ids[k].avatar) : ids[k] && ids[k].avatar };
+            card.user = { ...user, identities: fresh };
           });
         }
       } else {
@@ -2714,22 +2929,33 @@ export class Lobby {
       this._updateModeButtons();
       this._rebuildLevelCards();
     };
-    logoutBtn.addEventListener('click', () => this._signOut());
+    card.addEventListener('uf-profile-signout', () => this._signOut());
+    // A Steam player links Discord: always the device code (QR, or this computer's browser).
+    card.addEventListener('uf-profile-link', (e) => { if (e.detail && e.detail.provider === 'discord') this._showProfileDevice(); });
     this._bindAccountNotice(updateUI);
 
-    // Steam build, signed out: sign back in with this PC's Steam account.
-    const steamBtn = document.getElementById('profile-popup-steam');
-    if (steamBtn) {
-      steamBtn.style.display = this._isSteam ? '' : 'none';
-      steamBtn.addEventListener('click', async () => {
+    signin.addEventListener('uf-signin', async (e) => {
+      const provider = e.detail && e.detail.provider;
+      if (provider === 'steam') {
+        // Steam build, signed out: sign back in with this PC's Steam account.
+        if (!this._isSteam) return;
         this._profileDiag('SIGN IN WITH STEAM');
         const ok = await this.auth.loginWithSteam();
         if (!ok) { this._showProfileError(this.auth.lastAuthError || 'Steam sign-in is unavailable'); return; }
         updateUI(this.auth.getUser());
         this._updateModeButtons();
         this.profilePopup.classList.remove('visible');
-      });
-    }
+        return;
+      }
+      if (provider !== 'discord') return;
+      // #612 · Sign in with Discord. On this device: go to Discord and back. In
+      // the desktop app: the device code, QR first (a phone from the couch), with
+      // OPEN ON THIS COMPUTER under it for a player at the desk. The browser no
+      // longer opens by itself: on a TV it opened out of sight.
+      if (this._hasDesktopBrowser()) { await this._showProfileDevice(); return; }
+      const ok = await this.auth.signInWithDiscordRedirect();
+      if (!ok) this._showProfileError(this.auth.lastAuthError || 'Discord sign-in is unavailable');
+    });
 
     // Back buttons close the popup
     document.getElementById('profile-popup-back').addEventListener('click', () => {
@@ -2740,17 +2966,6 @@ export class Lobby {
       this.profilePopup.classList.remove('visible');
     });
 
-    // #612 · Sign in with Discord. On this device: go to Discord and back. In
-    // the desktop app: the device code, QR first (a phone from the couch), with
-    // OPEN ON THIS COMPUTER under it for a player at the desk. The browser no
-    // longer opens by itself: on a TV it opened out of sight.
-    document.getElementById('profile-popup-discord').addEventListener('click', async () => {
-      if (this._hasDesktopBrowser()) { await this._showProfileDevice(); return; }
-      const ok = await this.auth.signInWithDiscordRedirect();
-      if (!ok) this._showProfileError(this.auth.lastAuthError || 'Discord sign-in is unavailable');
-    });
-    // A Steam player links Discord: always the device code (QR, or this computer's browser).
-    document.getElementById('profile-popup-link-discord').addEventListener('click', () => this._showProfileDevice());
     document.getElementById('profile-popup-open-browser').addEventListener('click', () => {
       if (this._profileDevUrl && this._hasDesktopBrowser()) window.electronApp.openSignIn(this._profileDevUrl);
     });
@@ -2921,69 +3136,12 @@ export class Lobby {
   // we remember it so re-enabling doesn't re-prompt.
 
   _toggleAll() {
-    // Room media off: ALL covers only what's left (motion + music).
-    if (!this._mediaEnabled) {
-      const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
-      if (allOn) {
-        if (this._motionAvailable() && this.motionActive) this._toggleMotion();
-        if (this.musicActive) this._toggleMusic();
-      } else {
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      }
-      return;
-    }
-    // If ALL is active, turn everything off
-    const motionOk = !this._motionAvailable() || this.motionActive;
-    const cameraOk = !this._hasCamera || this.cameraActive;
-    if (cameraOk && this.audioActive && motionOk && this.musicActive) {
-      if (this.cameraActive) this._toggleCamera();
-      if (this.audioActive)  this._toggleAudio();
+    // ALL covers motion + music.
+    const allOn = (!this._motionAvailable() || this.motionActive) && this.musicActive;
+    if (allOn) {
       if (this._motionAvailable() && this.motionActive) this._toggleMotion();
       if (this.musicActive) this._toggleMusic();
-      return;
-    }
-
-    // Batch camera + mic into one getUserMedia prompt when both are needed
-    const needCam = !this.cameraActive && !this._cameraPermitted && this._hasCamera;
-    const needMic = !this.audioActive  && !this._audioPermitted;
-
-    if (needCam || needMic) {
-      const constraints = {};
-      if (needCam) constraints.video = true;
-      if (needMic) constraints.audio = true;
-      withTimeout(navigator.mediaDevices.getUserMedia(constraints)).then(stream => {
-        stream.getTracks().forEach(t => t.stop());
-        if (needCam) {
-          this._cameraPermitted = true;
-          this.cameraActive = true;
-          this._setToggleActive('camera', true);
-        }
-        if (needMic) {
-          this._audioPermitted = true;
-          this.audioActive = true;
-          this._setToggleActive('audio', true);
-        }
-        // Already-permitted but inactive toggles
-        if (!needCam && !this.cameraActive) this._toggleCamera();
-        if (!needMic && !this.audioActive)  this._toggleAudio();
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      }).catch((err) => {
-        if (err && err.message === 'permission_timeout') {
-          this._showStaleOverlay();
-          return;
-        }
-        // Even if cam+mic fails, still try the ones that are already permitted
-        if (!this.cameraActive && this._cameraPermitted) this._toggleCamera();
-        if (!this.audioActive  && this._audioPermitted)  this._toggleAudio();
-        if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
-        if (!this.musicActive) this._toggleMusic();
-      });
     } else {
-      // Both cam+mic already permitted — just activate any that are off
-      if (!this.cameraActive) this._toggleCamera();
-      if (!this.audioActive)  this._toggleAudio();
       if (this._motionAvailable() && !this.motionActive) this._toggleMotion();
       if (!this.musicActive) this._toggleMusic();
     }
@@ -3107,90 +3265,10 @@ export class Lobby {
 
   _updateAllToggle() {
     const motionOk = !this._motionAvailable() || this.motionActive;
-    const mediaOk = !this._mediaEnabled || (this.cameraActive && this.audioActive);
-    if (mediaOk && motionOk && this.musicActive) {
+    if (motionOk && this.musicActive) {
       this.toggleAll.classList.add('active');
     } else {
       this.toggleAll.classList.remove('active');
-    }
-  }
-
-  _toggleCamera() {
-    if (!this._mediaEnabled) return; // room media off (#400 D7)
-    if (!this._hasCamera) return; // no camera hardware
-    if (this.cameraActive) {
-      this.cameraActive = false;
-      this._setToggleActive('camera', false);
-      this._applyVideoTrackState(false);
-      // Notify partner to show avatar
-      if (this.net && this.net.connected) {
-        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
-      }
-      return;
-    }
-    if (this._cameraPermitted) {
-      this.cameraActive = true;
-      this._setToggleActive('camera', true);
-      // If we're in the room but have no video track yet, acquire it now
-      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
-        this._acquireAndShowCamera();
-      } else {
-        this._applyVideoTrackState(true);
-      }
-      // Notify partner to show video
-      if (this.net && this.net.connected) {
-        this.net.sendProfile(RoomProtocol.cameraToggle(true));
-      }
-      return;
-    }
-    withTimeout(navigator.mediaDevices.getUserMedia({ video: true })).then(stream => {
-      stream.getTracks().forEach(t => t.stop());
-      this._cameraPermitted = true;
-      this.cameraActive = true;
-      this._setToggleActive('camera', true);
-      // If in the room, acquire the real track and show it
-      if (this.net && !this.net._localMediaStream?.getVideoTracks().length) {
-        this._acquireAndShowCamera();
-      } else {
-        this._applyVideoTrackState(true);
-      }
-      // Notify partner to show video
-      if (this.net && this.net.connected) {
-        this.net.sendProfile(RoomProtocol.cameraToggle(true));
-      }
-    }).catch((err) => {
-      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
-    });
-  }
-
-  async _acquireAndShowCamera() {
-    if (!this.net) return;
-    await this.net.acquireLocalMedia(true, this._audioPermitted);
-    if (!this.net._localMediaStream) return;
-    const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-    if (videoTrack) videoTrack.enabled = true;
-    // Wire up the selfie PiP
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    if (selfieVideo) {
-      selfieVideo.srcObject = this.net._localMediaStream;
-      selfieVideo.style.display = 'block';
-      selfieVideo.play().catch(() => {});
-    }
-    if (selfieAvatar) selfieAvatar.style.display = 'none';
-    if (selfieWrap) selfieWrap.style.display = 'block';
-    // Re-initiate media call so partner gets the video
-    if (this.net.transport === 'p2p') {
-      this.net.initiateCall();
-    } else {
-      // P2P not up yet — initiate when upgrade completes
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        this.net.initiateCall();
-        if (prevOnP2P) prevOnP2P();
-      };
     }
   }
 
@@ -3354,37 +3432,10 @@ export class Lobby {
     setTimeout(() => document.addEventListener('click', outsideClick, true), 0);
   }
 
-  _toggleAudio() {
-    if (!this._mediaEnabled) return; // room media off (#400 D7)
-    if (this.audioActive) {
-      this.audioActive = false;
-      this._setToggleActive('audio', false);
-      this._applyAudioTrackState(false);
-      return;
-    }
-    if (this._audioPermitted) {
-      this.audioActive = true;
-      this._setToggleActive('audio', true);
-      this._applyAudioTrackState(true);
-      return;
-    }
-    withTimeout(navigator.mediaDevices.getUserMedia({ audio: true })).then(stream => {
-      stream.getTracks().forEach(t => t.stop());
-      this._audioPermitted = true;
-      this.audioActive = true;
-      this._setToggleActive('audio', true);
-      this._applyAudioTrackState(true);
-    }).catch((err) => {
-      if (err && err.message === 'permission_timeout') this._showStaleOverlay();
-    });
-  }
-
   _setToggleActive(name, active) {
-    const el = name === 'camera' ? this.toggleCamera
-             : name === 'motion' ? this.toggleMotion
+    const el = name === 'motion' ? this.toggleMotion
              : name === 'joystick' ? this.toggleJoystick
-             : name === 'music'  ? this.toggleMusic
-             : this.toggleAudio;
+             : this.toggleMusic;
     if (active) {
       el.classList.add('active');
     } else {
@@ -3551,7 +3602,39 @@ export class Lobby {
         if (!requestAppQuit(window) && btn) btn.removeAttribute('disabled');
       });
     }
+    this._initGyroTip();
     this._syncSystemBar();
+  }
+
+  /** #820 · the Steam build's "best with motion control" popup. */
+  _initGyroTip() {
+    const $ = (id) => /** @type {any} */ (document.getElementById(id));
+    const sheet = $('gyro-tip-sheet');
+    if (!sheet || !window.steam) return;
+    sheet.attachFocus(this._stepFocus);
+    this._gyroTip = new GyroTip({
+      sheet, toggle: $('gyro-tip-never'), ok: $('gyro-tip-ok'), focus: this._stepFocus,
+      canShow: () => this._isSteam && !this._tapOverlay && !this._activeModal
+        && document.visibilityState === 'visible'
+        && this.lobbyEl?.style.display !== 'none' && this._flow.current === this.modeStep.id
+        // (result sheets stay [open] inside their hidden screens: only a visible one counts)
+        && ![...document.querySelectorAll('uf-sheet[open], #options-overlay.visible, .phone-qr-panel.open')].some((el) => el.getClientRects().length),
+      hasGyro: () => this._gyroOptionHere(),
+    });
+    this._gyroTip.arm();
+  }
+
+  /** Is a gyro controller or a paired phone here? */
+  async _gyroOptionHere() {
+    const devices = navigator.hid ? await navigator.hid.getDevices().catch(() => []) : [];
+    const pads = Array.from(navigator.getGamepads?.() || []).filter(Boolean);
+    return gyroOptionAvailable({
+      active: !!(this.motionActive || this.input?.gyroConnected || this.input?._remoteTilt),
+      phones: this.phonePool?.joinedEntries().length || 0,
+      hidGyro: devices.some((d) => ControllerRegistry.getEntry(d.vendorId, d.productId)?.capabilities?.gyro),
+      padGyro: pads.some((p) => ControllerRegistry.identifyFromGamepadId(p.id)?.hasGyro),
+      steamTypes: (window.steam?.input?.getXInputMap?.() || []).map((e) => e.type),
+    });
   }
 
   _openQuitSheet() {
@@ -3923,40 +4006,10 @@ export class Lobby {
   signOutSeat(n) {
     if (n === 1) {
       if (this._isSteam) return;
-      document.getElementById('profile-popup-logout')?.click();
+      this._signOut();
       return;
     }
     try { this.seatAccounts.signOut(n); } catch (e) {}
-  }
-
-  _applyVideoTrackState(enabled) {
-    if (!this.net || !this.net._localMediaStream) return;
-    const track = this.net._localMediaStream.getVideoTracks()[0];
-    if (track) track.enabled = enabled;
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (enabled && track) {
-      if (selfieVideo) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-      }
-      if (selfieAvatar) selfieAvatar.style.display = 'none';
-    } else {
-      if (selfieVideo) selfieVideo.style.display = 'none';
-      if (selfieAvatar && this.auth && this.auth.isLoggedIn()) {
-        const user = this.auth.getUser();
-        if (user && user.avatar) {
-          selfieAvatar.src = this._avatarCache.get(user.avatar) || user.avatar;
-          selfieAvatar.style.display = 'block';
-        }
-      }
-    }
-  }
-
-  _applyAudioTrackState(enabled) {
-    if (!this.net || !this.net._localMediaStream) return;
-    const track = this.net._localMediaStream.getAudioTracks()[0];
-    if (track) track.enabled = enabled;
   }
 
   /** #567: music is on but the browser hasn't let it play yet (it starts on the next key, click or touch). */
@@ -4121,15 +4174,50 @@ export class Lobby {
     this._modalFocus.setSpatial(this._lbFocusables(), document.querySelector('#lb-main-tabs .lb-tab.active'));
   }
 
+  /**
+   * lab #146 · what the shared elements show, which is the game's to say: the Steam build
+   * offers Steam first on the signed-out card and has no Sign out (its account is the Steam
+   * one, #332); a login line for Steam shows when it is linked or this is the Steam build.
+   * @param {Record<string, any>} [ids] the signed-in account's logins
+   */
+  _syncProfileElements(ids) {
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
+    if (signin) {
+      const want = this._isSteam ? 'steam discord' : 'discord';
+      if (signin.getAttribute('providers') !== want) { signin.setAttribute('providers', want); if (signin.requestUpdate) signin.requestUpdate(); }
+    }
+    if (card) {
+      const had = card.hasAttribute('signout');
+      if (this._isSteam) card.removeAttribute('signout'); else card.setAttribute('signout', 'danger');
+      const known = ids || (card.user && card.user.identities) || {};
+      const want = (known.steam || this._isSteam) ? 'discord steam' : 'discord';
+      const changed = card.getAttribute('providers') !== want;
+      if (changed) card.setAttribute('providers', want);
+      if ((changed || had !== card.hasAttribute('signout')) && card.requestUpdate) card.requestUpdate();
+    }
+  }
+
+  /** A shared element's button: the sign-in button, the Link button or Sign out (null when it is not showing). */
+  _profileButton(which, provider) {
+    // (the elements' own way to their buttons, lab #152; null until the element has rendered)
+    const signin = /** @type {any} */ (document.getElementById('profile-popup-providers'));
+    const card = /** @type {any} */ (document.getElementById('profile-popup-card'));
+    const el = which === 'signin' ? signin && signin.button && signin.button(provider)
+      : card && card.button && card.button(which, provider);
+    return /** @type {HTMLElement|null} */ (el || null);
+  }
+
   /** The popup's pad-focusable buttons, top to bottom (hidden ones skipped, #332). */
   _profileItems() {
-    const ids = this.auth.isLoggedIn()
-      ? ['profile-popup-notice-undo', 'profile-popup-notice-ok', 'profile-popup-link-discord', 'profile-popup-logout', 'profile-popup-back']
-      : ['profile-popup-steam', 'profile-popup-discord', 'profile-popup-signin-back'];
+    const byId = (id) => document.getElementById(id);
+    const items = this.auth.isLoggedIn()
+      ? [byId('profile-popup-notice-undo'), byId('profile-popup-notice-ok'), this._profileButton('link', 'discord'), this._profileButton('signout'), byId('profile-popup-back')]
+      : [this._profileButton('signin', 'steam'), this._profileButton('signin', 'discord'), byId('profile-popup-signin-back')];
     // The QR's OPEN ON THIS COMPUTER sits just above CLOSE while the code is showing.
-    const box = document.getElementById('profile-popup-device');
-    if (box && !box.hidden) ids.splice(ids.length - 1, 0, 'profile-popup-open-browser');
-    return ids.map((id) => document.getElementById(id)).filter((el) => el && !el.hidden && el.style.display !== 'none');
+    const box = byId('profile-popup-device');
+    if (box && !box.hidden) items.splice(items.length - 1, 0, byId('profile-popup-open-browser'));
+    return items.filter((el) => el && !el.hidden && el.style.display !== 'none');
   }
 
   /**
@@ -4363,10 +4451,14 @@ export class Lobby {
 
   /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
   _setDiscordTriggersHidden(hide) {
-    for (const id of ['profile-popup-discord', 'profile-popup-link-discord']) {
-      const el = document.getElementById(id);
+    for (const el of [this._profileButton('signin', 'discord'), this._profileButton('link', 'discord')]) {
       if (el) el.hidden = hide;
     }
+  }
+
+  /** A popup button's name for the diag log (the shared elements' buttons have no id). */
+  _profileItemName(el) {
+    return el.id || [el.dataset.act || 'signin', el.dataset.provider].filter(Boolean).join(':');
   }
 
   /** The desktop app can open this computer's browser on a sign-in page. */
@@ -4917,26 +5009,6 @@ export class Lobby {
     if (this._permissionsChecked) return;
     this._permissionsChecked = true;
 
-    // Camera
-    if (this._mediaEnabled && navigator.permissions) {
-      navigator.permissions.query({ name: 'camera' }).then(r => {
-        if (r.state === 'granted') {
-          this._cameraPermitted = true;
-          this.cameraActive = true;
-          this._setToggleActive('camera', true);
-        }
-      }).catch(() => {});
-
-      // Microphone
-      navigator.permissions.query({ name: 'microphone' }).then(r => {
-        if (r.state === 'granted') {
-          this._audioPermitted = true;
-          this.audioActive = true;
-          this._setToggleActive('audio', true);
-        }
-      }).catch(() => {});
-    }
-
     // Motion — only show the toggle when a real sensor source exists.
     // Hidden by default (display:none in HTML).
     if (this.input && (this.input.motionEnabled || this.input.gyroConnected)) {
@@ -5098,7 +5170,7 @@ export class Lobby {
     const fullCode = RoomSession.autoJoinCode(window.location.search);
     if (!fullCode) { this._checkDailyLink(); return; }
 
-    // B4a: drop ?room= but keep demo/media so a reload stays in this edition.
+    // B4a: drop ?room= but keep demo so a reload stays in this edition.
     history.replaceState(null, '', window.location.pathname + carriedQuery(window.location.search));
 
     try { await this._requestMotion(); } catch (_) {}
@@ -5137,7 +5209,6 @@ export class Lobby {
     const el = (id) => document.getElementById(id);
     return {
       replaceNet: () => this._replaceNet(),
-      media: () => ({ camera: this.cameraActive, audio: this.audioActive, cameraPermitted: this._cameraPermitted, audioPermitted: this._audioPermitted }),
       newRoom: (kind) => {
         this._roomPartnerName = null; this._resetPartnerLook();   // a new room: no partner yet (the room bar, the host seat)
         // #563: set once the relay has us in the room. #694 (Pete): a rejoin matches create.
@@ -5377,8 +5448,6 @@ export class Lobby {
   async _openMoveNet(code, role) {
     const net = new NetworkManager();
     net._fallbackUrl = RELAY_URL;
-    net.cameraEnabled = this.cameraActive;
-    net.audioEnabled = this.audioActive;
     const moveNet = watchMoveNet(net);
     try { const t = await this.auth.getRelayToken(code, role); if (t) net._relayToken = t; } catch (e) { /* the relay takes no token */ }
     net.enterRoom(code, role);
@@ -5557,13 +5626,7 @@ export class Lobby {
     this._roomRole = role;
     this._pendingMode = 'multiplayer';
     this._partnerIdle.reset(); this._activity.mark();   // #694 F: a fresh baseline, and say we're here
-    this._partnerCameraOn = true; // assume on until cameraToggle received
 
-    // Set role labels on PiP circles
-    const selfieLabel = document.getElementById('selfie-pip-label');
-    const partnerLabel = document.getElementById('partner-pip-label');
-    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
-    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
     this._syncRoomSeats(role);
 
     if (role === 'captain') {
@@ -5572,9 +5635,6 @@ export class Lobby {
     } else {
       this._showRoomLevelsStep();
     }
-
-    // Start media
-    this._startRoomMedia();
 
     // Register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
@@ -5588,9 +5648,7 @@ export class Lobby {
     // Send profile with avatar + achievements so partner sees them in room
     this._sendRoomProfile();
 
-    // Notify partner of current camera state so they show video or avatar
-    const camUser = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-    this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, camUser && camUser.avatar));
+    this._sendNoCamera();
 
     // Handle partner disconnect while in room or levels
     const roomNet = this._watchRoomDrop();
@@ -5615,7 +5673,7 @@ export class Lobby {
       if (waitText) waitText.style.display = 'none';
     } else {
       startBtn.style.display = 'none';
-      if (waitText) waitText.style.display = '';
+      if (waitText) { waitText.style.display = ''; waitText.textContent = this._stokerWaitText(); }
     }
 
     // Build level cards into the shared container BEFORE _showStep
@@ -5634,6 +5692,26 @@ export class Lobby {
     // fire on the level step (A = confirm, B = back to room)
     this._gpPrevA = true;
     this._gpPrevB = true;
+  }
+
+  /** What the stoker's level screen says it is waiting for. */
+  _stokerWaitText() {
+    if (this._captainTouristPick) return 'The captain picked ' + this._captainTouristPick + '. Starting…';
+    if (this._captainChoosingTourist) return 'The captain is choosing a place on the map…';
+    return 'Waiting for captain...';
+  }
+
+  /** Stoker: the captain opened the Map Tourist places, or left them (or picked a place, or a level). */
+  _setCaptainTourist(choosing, pick = null) {
+    this._captainChoosingTourist = !!choosing;
+    this._captainTouristPick = choosing ? pick : null;
+    const container = document.getElementById('level-cards');
+    if (container && choosing) container.querySelectorAll('.level-card').forEach((c) => c.classList.toggle('selected', c.dataset.levelId === 'tourist'));
+    else if (container) { const t = container.querySelector('.level-card[data-level-id="tourist"]'); if (t) t.classList.remove('selected'); }
+    const waitText = document.getElementById('level-wait-text');
+    if (waitText && this._roomRole !== 'captain') waitText.textContent = this._stokerWaitText();
+    // (on a phone the list runs under the fold: bring the card into view)
+    if (choosing && container) { const t = container.querySelector('.level-card[data-level-id="tourist"]'); if (t && t.scrollIntoView) { try { t.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); } catch (_) {} } }
   }
 
   /** In an online room (hosting or joined): its level step lists what the room can ride. */
@@ -5667,167 +5745,13 @@ export class Lobby {
     });
   }
 
-  _updatePartnerPip() {
-    const partnerVideo = document.getElementById('partner-pip');
-    const partnerAvatar = document.getElementById('partner-pip-avatar');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (!partnerWrap) return;
-
-    const stream = partnerVideo && partnerVideo.srcObject;
-    const hasVideo = stream && stream.getVideoTracks().length > 0;
-    const hasLiveTrack = hasVideo && stream.getVideoTracks().some(t => t.readyState === 'live');
-
-    if (this._partnerCameraOn && hasVideo) {
-      partnerVideo.style.display = 'block';
-      partnerVideo.play().catch(() => {});
-      if (partnerAvatar) partnerAvatar.style.display = 'none';
-    } else if (!this._partnerCameraOn) {
-      // Partner explicitly turned off camera — show avatar
-      if (partnerVideo) partnerVideo.style.display = 'none';
-      if (partnerAvatar) {
-        partnerAvatar.src = this._partnerAvatarUrl
-          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-          : DEFAULT_AVATAR_SVG;
-        partnerAvatar.style.display = 'block';
-      }
-    } else if (!hasVideo && this._partnerCameraOn) {
-      // Camera on but stream not yet available — show avatar temporarily,
-      // then retry in case stream arrives shortly
-      if (partnerAvatar) {
-        partnerAvatar.src = this._partnerAvatarUrl
-          ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-          : DEFAULT_AVATAR_SVG;
-        partnerAvatar.style.display = 'block';
-      }
-      if (partnerVideo) partnerVideo.style.display = 'none';
-      // Retry to catch stream arriving after a delay
-      setTimeout(() => this._updatePartnerPip(), 2000);
-    }
-    partnerWrap.style.display = 'block';
-  }
-
-  async _startRoomMedia() {
-    if (!this.net) return;
-
-    // Register remote stream handler BEFORE acquiring local media so that
-    // an incoming call that arrives while getUserMedia is pending still
-    // gets its stream rendered in the partner PiP.
-    this.net.onRemoteStream = (remoteStream) => {
-      const partnerVideo = document.getElementById('partner-pip');
-      if (!partnerVideo || !remoteStream) return;
-
-      // Authoritative: always set srcObject, show video, call play.
-      // Don't delegate initial display to _updatePartnerPip — just show it.
-      partnerVideo.srcObject = remoteStream;
-      partnerVideo.style.display = 'block';
-      partnerVideo.play().catch(() => {});
-      const partnerAvatar = document.getElementById('partner-pip-avatar');
-      if (partnerAvatar) partnerAvatar.style.display = 'none';
-
-      // If partner camera is known to be off, switch to avatar
-      if (!this._partnerCameraOn) {
-        this._updatePartnerPip();
-      }
-
-      // Fall back to avatar if track ends
-      const vt = remoteStream.getVideoTracks()[0];
-      if (vt) {
-        vt.addEventListener('ended', () => this._updatePartnerPip(), { once: true });
-      }
-    };
-
-    // Acquire all permitted tracks so they can be toggled on/off in the room
-    await this.net.acquireLocalMedia(this._cameraPermitted, this._audioPermitted);
-
-    // Apply current toggle states to live tracks
-    if (this.net._localMediaStream) {
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      if (videoTrack) videoTrack.enabled = this.cameraActive;
-      const audioTrack = this.net._localMediaStream.getAudioTracks()[0];
-      if (audioTrack) audioTrack.enabled = this.audioActive;
-    }
-
-    // PiP class is managed by _showStep() — just get the element reference
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-
-    // Start selfie video from the acquired stream
-    const selfieVideo = document.getElementById('selfie-pip');
-    const selfieAvatar = document.getElementById('selfie-pip-avatar');
-    if (selfieVideo && this.net._localMediaStream) {
-      const videoTrack = this.net._localMediaStream.getVideoTracks()[0];
-      // Always bind the stream so toggling on later works immediately
-      if (videoTrack) selfieVideo.srcObject = this.net._localMediaStream;
-      if (videoTrack && this.cameraActive) {
-        selfieVideo.style.display = 'block';
-        selfieVideo.play().catch(() => {});
-        if (selfieAvatar) selfieAvatar.style.display = 'none';
-      } else {
-        selfieVideo.style.display = 'none';
-        // Show avatar fallback when camera is off (or default icon if not logged in)
-        if (selfieAvatar) {
-          const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-          selfieAvatar.src = (user && user.avatar)
-            ? (this._avatarCache.get(user.avatar) || user.avatar)
-            : DEFAULT_AVATAR_SVG;
-          selfieAvatar.style.display = 'block';
-        }
-      }
-      if (selfieWrap) selfieWrap.style.display = 'block';
-    } else {
-      // No stream at all — fallback to avatar or default icon
-      if (selfieAvatar && selfieWrap) {
-        const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-        selfieAvatar.src = (user && user.avatar)
-          ? (this._avatarCache.get(user.avatar) || user.avatar)
-          : DEFAULT_AVATAR_SVG;
-        selfieAvatar.style.display = 'block';
-        if (selfieVideo) selfieVideo.style.display = 'none';
-        selfieWrap.style.display = 'block';
-      }
-    }
-
-    // Show partner PiP in lobby mode (no appendChild — CSS handles positioning)
-    // PiP class is managed by _showStep() — no manual toggle needed here
-
-    // Room media off (#400 D7): no media call to place.
-    if (!this._mediaEnabled) return;
-
-    // Captain initiates media call first; stoker follows after a delay as fallback.
-    // Staggered to avoid cross-call interference that causes flickering.
-    // PeerJS media calls require P2P, so we wait for the upgrade first.
-    this._mediaCallRetries = 0;
-    this._mediaCallTimer = null;
-    const initialDelay = this._roomRole === 'captain' ? 0 : 4000;
-
-    const tryInitiateCall = () => {
-      if (!this.net || !this.net.peer || !this.net.conn) return;
-      // Skip if we already have a live partner stream
-      const pv = document.getElementById('partner-pip');
-      const hasLive = pv && pv.srcObject &&
-        pv.srcObject.getVideoTracks().some(t => t.readyState === 'live');
-      if (hasLive) return;
-      this.net.initiateCall();
-      this._mediaCallRetries++;
-      if (this._mediaCallRetries < 3) {
-        this._mediaCallTimer = setTimeout(() => {
-          tryInitiateCall();
-        }, 5000);
-      }
-    };
-
-    const onP2PReady = () => {
-      this._mediaCallTimer = setTimeout(() => tryInitiateCall(), initialDelay);
-    };
-
-    if (this.net.transport === 'p2p') {
-      onP2PReady();
-    } else {
-      const prevOnP2P = this.net.onP2PUpgrade;
-      this.net.onP2PUpgrade = () => {
-        onP2PReady();
-        if (prevOnP2P) prevOnP2P();
-      };
-    }
+  /**
+   * Builds from before the room camera was removed (2026-11-20) wait for this message before
+   * they stop expecting a partner video: without it their partner circle comes back mid-ride.
+   */
+  _sendNoCamera() {
+    const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
+    this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
   }
 
   /** Online room: leave level select, resetting its multiplayer bits. The
@@ -5853,10 +5777,9 @@ export class Lobby {
 
   /** The stoker backs out of the ride: leave the room for the role screen. */
   _leaveRoomAsStoker() {
+    this._captainChoosingTourist = false;
+    this._captainTouristPick = null;
     this._roomSession.leave();
-    this._removePipLobbyMode();
-    for (const id of ['selfie-pip', 'partner-pip']) { const v = /** @type {any} */ (document.getElementById(id)); if (v) v.srcObject = null; }
-    for (const id of ['selfie-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
     const waitText = document.getElementById('level-wait-text');
     if (waitText) waitText.style.display = 'none';
     this._showStep(this.roleStep);
@@ -5884,6 +5807,9 @@ export class Lobby {
     locBtn.disabled = !(local || botRide);
     step.classList.toggle('host-online-on', online);
     step.classList.toggle('host-local-on', local);
+    // (Pete, 2026-11-18: "Definitely need the experiences to match" — a phone's room offers the bot too)
+    step.classList.toggle('host-bot-on', botOn);
+    locBtn.textContent = botRide && !local ? 'RIDE WITH ' + BOTS[this._hostBot].name.toUpperCase() : 'CHOOSE LEVEL';
     const sto = /** @type {any} */ (document.getElementById('host-seat-stoker'));
     if (sto) {
       if (!sto._openHint) sto._openHint = sto.hint;
@@ -6070,17 +5996,13 @@ export class Lobby {
           this._roomStore.save(this.net.roomCode, this._roomRole, profile.name);
         }
       }
-      // Cache partner avatar URL for camera toggle
+      // The partner's picture, for their circle and their player card
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
       }
-      // Refresh partner PiP (avatar may have just arrived)
-      this._updatePartnerPip();
-      // Render partner achievement badges
+      // The partner's achievements, for their player card
       if (profile && profile.achievements) {
         this._partnerAchievements = profile.achievements;
-        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
-        updateBadgeDisplay('partner-badges', profile.achievements, shape);
         this._renderRoomPlayers();
       }
       if (profile) this._notePartnerRoom(profile);   // PR #397 M1
@@ -6101,8 +6023,11 @@ export class Lobby {
       // The captain's bike: the stoker's room row shows it and the ride rides it (Pete, 2026-11-09)
       this._roomBikeKey = typeof profile.presetKey === 'string' && this._presetKeys.includes(profile.presetKey) ? profile.presetKey : null;
       this._syncRoomBikeRows();
+    } else if (profile.type === ROOM_MSG.TOURIST_CHOOSING) {
+      this._setCaptainTourist(!!profile.open);
     } else if (profile.type === ROOM_MSG.LEVEL_SYNC) {
       // Stoker: highlight captain's level selection
+      if (this._captainChoosingTourist) this._setCaptainTourist(false);   // (a level, not the map)
       const picked = LEVELS.find(l => l.id === profile.levelId);
       // PR #397 m17: a level (or a Today's Road) this side's edition does not
       // offer is refused — the captain hears why, this side stays on the list.
@@ -6132,19 +6057,7 @@ export class Lobby {
       // side would force (e.g. a full stoker on a demo captain's road).
       if (typeof profile.difficulty === 'string' && profile.difficulty) this._adoptDifficulty(profile.difficulty);
     } else if (profile.type === ROOM_MSG.CAMERA_TOGGLE) {
-      // Partner toggled their camera — update state and refresh PiP
-      this._partnerCameraOn = !!profile.enabled;
-      if (!profile.enabled) {
-        const avatarUrl = profile.avatar || this._partnerAvatarUrl;
-        if (avatarUrl) this._partnerAvatarUrl = avatarUrl;
-      }
-      // When partner enables camera, the new media stream may not have arrived yet.
-      // Re-evaluate PiP after a delay to catch the stream/track becoming live.
-      if (profile.enabled) {
-        setTimeout(() => this._updatePartnerPip(), 1500);
-        setTimeout(() => this._updatePartnerPip(), 4000);
-      }
-      this._updatePartnerPip();
+      // An older build's camera on/off: there is no room camera any more, nothing to do.
     } else if (profile.type === ROOM_MSG.DIFFICULTY_SYNC) {
       // Stoker: update difficulty selection to match captain's choice
       this._adoptDifficulty(profile.difficulty);
@@ -6170,6 +6083,24 @@ export class Lobby {
       if (this._stokerTouristPlan && profile.anchor && Number.isFinite(profile.anchor.height)) {
         this._stokerTouristPlan.anchor = { height: profile.anchor.height, anchored: !!profile.anchor.anchored };
       }
+      // a long ride's far end (after its skip), and the kind of ride (a scenic one words its finish differently)
+      if (this._stokerTouristPlan && profile.toAnchor && Number.isFinite(profile.toAnchor.height)) {
+        this._stokerTouristPlan.toAnchor = { height: profile.toAnchor.height, anchored: !!profile.toAnchor.anchored };
+      }
+      if (this._stokerTouristPlan) {
+        const p = this._stokerTouristPlan;
+        const where = (profile.kind === 'scenic' && typeof profile.title === 'string' && profile.title) ? profile.title.slice(0, 80)
+          : (p.to ? shortPlace(p.to.label) : shortPlace(p.from && p.from.label));
+        this._setCaptainTourist(true, where || 'a place');
+      }
+      if (this._stokerTouristPlan && (profile.kind === 'scenic' || profile.kind === 'yours')) {
+        this._stokerTouristPlan.kind = profile.kind;
+        if (profile.kind === 'scenic' && typeof profile.title === 'string' && profile.title) {
+          this._stokerTouristPlan.title = profile.title.slice(0, 80);
+          this._stokerTouristPlan.headline = this._stokerTouristPlan.to
+            ? profile.title.slice(0, 80) + ' · ' + formatDistance(this._stokerTouristPlan.route.ridableM) : profile.title.slice(0, 80);
+        }
+      }
     } else if (profile.type === ROOM_MSG.START_RIDE) {
       // PR #397 m17: never ride a level this edition refused — stay on the list
       // and say so again (an old captain ignores it and rides alone).
@@ -6182,6 +6113,8 @@ export class Lobby {
       // a plan that cannot load), so the pair returns to the room together.
       this._roomTouristPlan = profile.tourist ? (this._stokerTouristPlan || { unusable: true }) : null;
       this._stokerTouristPlan = null;
+      this._captainChoosingTourist = false;   // (back from the ride, the list waits for the next pick)
+      this._captainTouristPick = null;
       // Stoker: captain started the ride. Take the captain's placement salt and
       // world seed — they are authoritative for what the road contains (B-4).
       this._placementSalt = profile.placementSalt || 0;
@@ -6317,12 +6250,8 @@ export class Lobby {
   }
 
   _transitionToGame() {
-    // Stop media call retry timer
-    if (this._mediaCallTimer) { clearTimeout(this._mediaCallTimer); this._mediaCallTimer = null; }
     // #672: the captain started while this side was still dressing; every pick is already saved.
     if (this._room) this._room.close('ride');
-    // Remove lobby mode from PiP elements
-    this._removePipLobbyMode();
     // Detect input method before hiding lobby
     this._detectAndSetInputMethod();
     // Hide lobby
@@ -8132,24 +8061,6 @@ export class Lobby {
     strip.rows = rows;
   }
 
-  _removePipLobbyMode() {
-    const selfieWrap = document.getElementById('selfie-pip-wrap');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    // Remove lobby/level classes and set inline display:block to prevent
-    // base CSS display:none from flashing the PiPs invisible before
-    // game-recorder shows them. Room media off (#400 D7): the in-ride
-    // selfie/partner PiP frames stay hidden.
-    const pipDisplay = this._mediaEnabled ? 'block' : 'none';
-    if (selfieWrap) {
-      selfieWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      selfieWrap.style.display = pipDisplay;
-    }
-    if (partnerWrap) {
-      partnerWrap.classList.remove('pip-lobby-mode', 'pip-level-mode');
-      partnerWrap.style.display = pipDisplay;
-    }
-  }
-
   /**
    * The room screen's handler for the partner (or this seat) dropping for good: say why, then
    * back to the role screen. Shared by the room step and the return from a ride. Returns the
@@ -8171,7 +8082,6 @@ export class Lobby {
       setTimeout(() => {
         // Only this room's transport, and only if the lobby is still on it (not a fresh room).
         if (!this._roomSession.dropIfCurrent(roomNet)) return;
-        this._removePipLobbyMode();
         this._showStep(this.roleStep);
       }, 2000);
     };
@@ -8188,11 +8098,6 @@ export class Lobby {
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
 
-    // Set role labels on PiP circles
-    const selfieLabel = document.getElementById('selfie-pip-label');
-    const partnerLabel = document.getElementById('partner-pip-label');
-    if (selfieLabel) selfieLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
-    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
     this._syncRoomSeats(role);
 
     // After a ride together both land on level select (Pete, 2026-10-23): the
@@ -8220,23 +8125,7 @@ export class Lobby {
     // Re-sync toggle button states after returning from ride
     this._checkPermissionStates();
 
-    // Return-to-room: the connection and media streams are still alive from the
-    // game session. Do NOT call _startRoomMedia() — that re-acquires media,
-    // Return to room: add lobby-mode class for CSS positioning.
-    // Return to room: video streams are already playing from room → game.
-    // Don't touch srcObject, don't initiate new calls, don't call play().
-    // Just switch the CSS class for lobby positioning.
-
-    // Re-register handlers (game.js replaced these during gameplay)
-    this.net.onRemoteStream = (remoteStream) => {
-      const pv = document.getElementById('partner-pip');
-      if (!pv || !remoteStream) return;
-      pv.srcObject = remoteStream;
-      pv.style.display = 'block';
-      pv.play().catch(() => {});
-      const pa = document.getElementById('partner-pip-avatar');
-      if (pa) pa.style.display = 'none';
-    };
+    // Re-register the room handler (game.js replaced it during gameplay)
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
 
     // Replay any messages buffered during the rejoin delay
@@ -8246,8 +8135,7 @@ export class Lobby {
     if (this.net.connected) {
       this.net.sendProfile(RoomProtocol.bikeSync(this.selectedPresetKey));
       this._sendRoomProfile();
-      const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-      this.net.sendProfile(RoomProtocol.cameraToggle(this.cameraActive, user && user.avatar));
+      this._sendNoCamera();
     }
 
     // Re-register disconnect handler for room
@@ -8672,13 +8560,13 @@ export class Lobby {
         this._activeModal = 'profile';
         this._modalBack = () => { this._profileDiag('closed by B'); this.profilePopup.classList.remove('visible'); };
         this._modalFocus.setItems(items);
-        this._profileDiag('pad list: ' + items.map((el) => el.id).join(', '));
+        this._profileDiag('pad list: ' + items.map((el) => this._profileItemName(el)).join(', '));
       }
       // Steam playtest (2026-11-07): RETURN TO LOBBY "did nothing" on the TV.
       // Log what the pad sends while the popup is open, to the diag file.
       if ((a && !this._profPrevA) || (b && !this._profPrevB)) {
         const f = items.find((el) => el.classList.contains('gamepad-focus'));
-        this._profileDiag((a ? 'A' : 'B') + ' down · focus ' + (f ? f.id : 'none') + ' · pad ' + (gp.id || '?'));
+        this._profileDiag((a ? 'A' : 'B') + ' down · focus ' + (f ? this._profileItemName(f) : 'none') + ' · pad ' + (gp.id || '?'));
       }
       this._profPrevA = a; this._profPrevB = b;
       this._modalFocus.poll();
@@ -8807,7 +8695,7 @@ export class Lobby {
     // controllers that connect async without a 'gamepadconnected' event (e.g.
     // a WebHID DualSense), which otherwise left the mode screen un-navigable
     // until the first _showStep.
-    if (this._stepFocus.items.length === 0) this._applyStepSpatialFocus(this._currentStep);
+    if (this._stepFocus.items.length === 0 && !this._sheetHoldsFocus()) this._applyStepSpatialFocus(this._currentStep);
     // Re-prime edges when returning from a modal (ranLast captured at the top
     // of this poll) so a held button across the transition isn't read as a
     // fresh press.
@@ -8885,6 +8773,8 @@ export class Lobby {
     const tvJoin = step === this.joinStep && document.getElementById('join-tv');
     const keypad = tvJoin && tvJoin.classList.contains('on') ? /** @type {any} */ (document.getElementById('join-keypad-tv')) : null;
     let centerItems = (keypad && keypad.focusables()) || this._stepCenterItems.get(step) || [];
+    // Map Tourist: its places, or its address form and on-screen keyboard, whichever is showing
+    if (step === this.touristStep) { this._syncTouristOsk(); this._wireTouristNav(); centerItems = this._touristFocusables(); }
     // #547: JOIN A RIDE's Rejoin cards come first, and focus starts on the newest.
     if (step === this.joinStep) centerItems = [...this._rejoinCards(), ...centerItems];
     // #694: a waiting room's buttons lead, and focus starts on the waiting choice (accent).
@@ -8922,6 +8812,11 @@ export class Lobby {
    * (matching the old _applyFocusHighlight gate). Called from _showStep and on
    * gamepad hot-connect. (#318)
    */
+  /** A kit sheet is up (result sheets stay [open] inside hidden screens): its focus is not the step's to take back. */
+  _sheetHoldsFocus() {
+    return [...document.querySelectorAll('uf-sheet[open]')].some((el) => el.getClientRects().length > 0);
+  }
+
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
@@ -9424,7 +9319,6 @@ export class Lobby {
     // a click or tap on the preview itself is the player taking the chooser too
     document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
     this._startChooserAttract();
-    this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
     prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
@@ -9592,6 +9486,7 @@ export class Lobby {
       });
     }
     this._hostBotPicked();   // (fills the default)
+    this._prefetchBot(this._hostBot);
     for (const b of this._hostBotButtons) {
       const on_ = b.dataset.bot === this._hostBot;
       b.classList.toggle('active', on_);
@@ -9703,10 +9598,14 @@ export class Lobby {
   _loadSpecialPreview(key, onReady) {
     this._specialPreviews = this._specialPreviews || {};
     const have = this._specialPreviews[key];
-    if (have) { if (have.model) onReady(have); return; }
+    // still loading: this caller is told too when it is ready (only the first one was)
+    if (have) { if (have.model) onReady(have); else have.waiting.push(onReady); return; }
     const def = SPECIAL_BIKES[key];
     const name = def ? def.name : (BIKE_NAMES[key] || key);
-    const sp = this._specialPreviews[key] = { model: null };
+    const sp = this._specialPreviews[key] = { model: null, waiting: [onReady] };
+    // its outfit geese start loading now, beside the bike (they used to start once the bike was up)
+    const giftNow = giftOutfit(key);
+    if (giftNow) prefetchOutfitGeese(giftNow, this._chooserGeeseLooks(true), getChooserGeese() === 'stand');
     showcaseLoader.loadAsync(def ? def.model : GOOSE_BIKE_MODEL_PATH).then(async (gltf) => {
       const model = gltf.scene;
       if (!def) {
@@ -9769,16 +9668,9 @@ export class Lobby {
       // its textures and shaders ready before it shows (the first draw used to freeze the chooser)
       await warmUp(this._previewRenderer, model, this._previewCamera, this._previewScene, { queue: this._previewWarm() });
       Object.assign(sp, { model, mats, mixer, fx, sparkle, dark: false, outfit, riders: null, crank: 0, geeseMode, gen: 0 });
-      onReady(sp);
+      for (const fn of sp.waiting.splice(0)) { try { fn(sp); } catch (e) { console.warn(e); } }
       if (!outfit) return;
-      let looks = null;
-      try {
-        // the outfit's pair: a gander and a goose, the captain in the player's body and the stoker in the other
-        // (solo's mirrored stoker is always the goose, so a player who rides as a goose got two; Pete, 2026-11-11)
-        const solo = getSeatLooks('solo');
-        const cap = solo.Captain.body === 'f' ? 'f' : 'm';
-        looks = { Captain: { ...solo.Captain, body: cap }, Stoker: { ...solo.Stoker, body: cap === 'f' ? 'm' : 'f' } };
-      } catch (e) { /* the outfit's own bodies */ }
+      const looks = this._chooserGeeseLooks();
       sp.geeseBodies = looks ? { Captain: looks.Captain.body, Stoker: looks.Stoker.body } : null;   // (smokes)
       if (geeseMode === 'stand') { this._standOutfitGeese(sp, looks, track, Math.max(size.x, size.z) * model.scale.x / 2); return; }
       seatOutfitRiders(model, gltf.animations, outfit, looks).then(async (riders) => {
@@ -9794,6 +9686,20 @@ export class Lobby {
         sp.riders = riders;
       }).catch((err) => console.warn(name + ' outfit geese failed to load:', err));
     }).catch((err) => console.warn(name + ' preview failed to load:', err));
+  }
+
+  /**
+   * The chooser's outfit pair: a gander and a goose, the captain in the player's body and the stoker in the
+   * other (solo's mirrored stoker is always the goose, so a player who rides as a goose got two; Pete,
+   * 2026-11-11). bodiesOnly: just { Captain, Stoker } as 'm' | 'f'. null: the outfit's own bodies.
+   */
+  _chooserGeeseLooks(bodiesOnly = false) {
+    try {
+      const solo = getSeatLooks('solo');
+      const cap = solo.Captain.body === 'f' ? 'f' : 'm';
+      const other = cap === 'f' ? 'm' : 'f';
+      return bodiesOnly ? { Captain: cap, Stoker: other } : { Captain: { ...solo.Captain, body: cap }, Stoker: { ...solo.Stoker, body: other } };
+    } catch (e) { return null; }
   }
 
   /**
@@ -9951,7 +9857,6 @@ export class Lobby {
     this.selectedPreset = null;
     hintEl.dataset.special = key;
     hintEl.classList.add('bike-hint-low');   // (Pete, 2026-11-10: every bike's line at the bottom, below the bike and its geese)
-    this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
       nameEl.style.color = '';                       // the logo-coloured name (index.html #bike-name), parchment while locked
@@ -9981,103 +9886,202 @@ export class Lobby {
     hintEl.style.display = 'none';
     hintEl.title = '';
     delete hintEl.dataset.special;
-    this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
     if (!this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });   // not the chooser's own show
   }
 
-  /**
-   * #644 · Solo Flight's bot picker: a row of the three player bots (Bolt, Rivet, Sprocket) under the bike. Mouse,
-   * touch or a pad (the buttons join the lobby's spatial focus, next to the chooser's ‹ ›) picks who rides the back
-   * seat on a solo ride. Each is its own partner for the partner achievements (js/player-bots.js).
-   */
-  _buildBotPicker() {
-    const el = document.getElementById('bot-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Seat';   // (the back seat: short, so the row fits between LB and RB on a TV)
-    el.appendChild(label);
-    // #644 step 2 · "Nobody" leaves the back seat empty: ride alone (and race a two-bot team alone: Underdog)
-    this._botButtons = [...BOT_IDS, NO_BOT].map((id) => {
+  // ── VERSUS BOTS (Pete, 2026-11-18) ───────────────────────────
+  // "A bot race is a versus race. ... let's call it 'versus bots' on mobile." The bot race used to be the Race row
+  // on the Solo Flight's card under SOLO; it is now its own entry beside VERSUS, the same on a phone and on a TV
+  // (Pete chose: one button on both, the Solo Flight only, shown from the start and shut until player bots are earned).
+
+  /** Is VERSUS BOTS open to this player? { ok, why } */
+  _versusBotsGate() {
+    if (!getEditionRules().versus) return { ok: false, why: 'In the full game' };
+    const p = playerBotsProgress(this._earnedAchievementIds());
+    if (!p.unlocked) {
+      const left = Math.max(1, p.need - p.have);
+      return { ok: false, why: left + ' more solo achievement' + (left === 1 ? '' : 's'), progress: p };
+    }
+    return { ok: true, why: '' };
+  }
+
+  _syncVersusBotsButton() {
+    const btn = document.getElementById('btn-versus-bots');
+    if (!btn) return;
+    const gate = this._versusBotsGate();
+    btn.classList.toggle('lobby-role-locked', !gate.ok);
+    btn.style.opacity = gate.ok ? '' : '0.55';
+    const desc = document.getElementById('versus-bots-desc');
+    if (desc) desc.textContent = gate.ok ? 'Race a robot tandem' : '🔒 ' + gate.why;
+  }
+
+  _initVersusBots() {
+    const btn = document.getElementById('btn-versus-bots');
+    if (!btn || !this.versusBotsStep) return;
+    this._syncVersusBotsButton();
+    btn.addEventListener('click', () => this._openVersusBots());
+    document.getElementById('btn-back-versus-bots')?.addEventListener('click', () => {
+      this._leaveVersusBots();
+      this._showStep(this.roleStep);
+    });
+    document.getElementById('btn-versus-bots-next')?.addEventListener('click', () => {
+      this._pendingMode = 'versusBots';
+      this._showStep(this.levelStep);
+    });
+  }
+
+  _openVersusBots() {
+    const gate = this._versusBotsGate();
+    if (!gate.ok) {
+      const p = gate.progress;
+      showInfoToast('🔒', 'Versus bots', gate.why === 'In the full game'
+        ? 'Race a robot tandem in the full game. Wishlist Tandemonium on Steam.'
+        : `Unlocks with the player bots: any ${p.need} of the ${p.total} solo achievements (you have ${p.have}).`);
+      try { analytics.trackEvent('versus_bots_locked', { why: gate.why }); } catch { /* offline */ }
+      return;
+    }
+    this._buildVersusBotsRows();
+    // the race is always on here: a choice of Off means Easy
+    if (!RACE_TIERS[this.selectedRace]) this.pickRace('easy');
+    // the Solo Flight, for this race (the player's own bike comes back on Back)
+    this._vbPrevMode = this._pendingMode;
+    if (this.selectedPresetKey !== SOLO_FLIGHT_BIKE_KEY) {
+      this._vbPrevBike = this.selectedPresetKey;
+      this.pickBike(SOLO_FLIGHT_BIKE_KEY);
+    }
+    this._syncVersusBots();
+    const items = [...this._vbSeatButtons, ...this._vbRaceButtons,
+      document.getElementById('btn-versus-bots-next'), document.getElementById('btn-back-versus-bots')].filter(Boolean);
+    this._stepItems.set(this.versusBotsStep, items);
+    this._stepCenterItems.set(this.versusBotsStep, items);
+    this._stepDefaultFocus.set(this.versusBotsStep, items.length - 2);   // (CHOOSE LEVEL)
+    try { analytics.trackEvent('versus_bots_opened', {}); } catch { /* offline */ }
+    this._showStep(this.versusBotsStep);
+  }
+
+  _leaveVersusBots() {
+    if (this._vbPrevBike) { this.pickBike(this._vbPrevBike); this._vbPrevBike = null; }
+    if (this._vbPrevMode) { this._pendingMode = this._vbPrevMode; this._vbPrevMode = null; }
+  }
+
+  /** The screen's two rows: who rides your back seat, and how fast the robot tandem is. Built once. */
+  _buildVersusBotsRows() {
+    if (this._vbSeatButtons) return;
+    const make = (parent, label, color, title, onPick, data) => {
       const b = document.createElement('button');
       b.className = 'bot-pick';
       b.type = 'button';
-      b.dataset.bot = id;
       b.setAttribute('role', 'radio');
-      const bot = BOTS[id];
-      b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
-      b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Nobody'}`;
-      b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as a partner)` : 'Ride alone: the back seat stays empty';
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
-      el.appendChild(b);
+      Object.assign(b.dataset, data);
+      b.style.setProperty('--bot-color', color);
+      b.innerHTML = '<span class="bot-dot"></span>' + label;
+      b.title = title;
+      b.addEventListener('click', (e) => { e.stopPropagation(); onPick(); this._syncVersusBots(); });
+      parent.appendChild(b);
       return b;
+    };
+    const seats = document.getElementById('vb-seat-picks');
+    this._vbSeatButtons = [...BOT_IDS, NO_BOT].map((id) => {
+      const bot = BOTS[id];
+      return make(seats, bot ? bot.name : 'Nobody', bot ? bot.color : 'rgba(255,255,255,0.6)',
+        bot ? `${bot.name} rides your back seat` : 'Nobody: race them on your own', () => this.pickBot(id), { bot: id });
     });
-    this._buildRacePicker();
-    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons, ...(this._raceButtons || []));
-    // a pad already driving the mode step picks them up now, not on the next step change
-    if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
-      this._stepFocus.refreshSpatial(this._stepNavItems());
-    }
-    this._syncBotPicker();
+    const races = document.getElementById('vb-race-picks');
+    this._vbRaceButtons = Object.values(RACE_TIERS).map((t) => make(races, t.name, '#ffc83d',
+      `They finish on ${t.medal} medal time`, () => this.pickRace(t.id), { race: t.id }));
+  }
+
+  _syncVersusBots() {
+    for (const b of this._vbSeatButtons || []) { const on = b.dataset.bot === this.selectedBot; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
+    for (const b of this._vbRaceButtons || []) { const on = b.dataset.race === this.selectedRace; b.classList.toggle('active', on); b.setAttribute('aria-checked', String(on)); }
+    this._showVbBot();
+    const line = document.getElementById('vb-race-line');
+    const tier = RACE_TIERS[this.selectedRace];
+    if (line) line.textContent = tier
+      ? `Racing ${botTeamName(botTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (this.selectedRace === 'easy' ? ' (earns versus achievements, except House Champion)' : '')
+      : '';
   }
 
   /**
-   * #644 step 2 · the Race row: race a bot ghost team (the two bots not on your back seat) on Easy, Medium or Hard,
-   * or not at all. Medium and Hard count as versus races (js/bot-race.js).
+   * The bot on your back seat, in 3D on the Solo Flight, in its own colours, with its name (Pete, 2026-11-18: "show
+   * the bot 3d model and the color/name selected as it is changed"). "Nobody" shows an empty seat's words instead.
    */
-  _buildRacePicker() {
-    const el = document.getElementById('race-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Race';
-    el.appendChild(label);
-    this._raceButtons = RACE_CHOICES.map((id) => {
-      const b = document.createElement('button');
-      b.className = 'bot-pick race-pick';
-      b.type = 'button';
-      b.dataset.race = id;
-      b.setAttribute('role', 'radio');
-      const tier = RACE_TIERS[id];
-      b.innerHTML = `<span class="bot-dot"></span>${tier ? tier.name : 'Off'}`;
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickRace(id); });
-      el.appendChild(b);
-      return b;
-    });
+  _showVbBot() {
+    const canvas = /** @type {HTMLCanvasElement|null} */ (document.getElementById('vb-bot-canvas'));
+    const nameEl = document.getElementById('vb-bot-name');
+    if (!canvas || !nameEl) return;
+    const bot = BOTS[this.selectedBot];
+    nameEl.textContent = bot ? bot.name : 'Nobody: you ride alone';
+    nameEl.style.color = bot ? bot.color : 'rgba(255,255,255,0.7)';
+    canvas.classList.toggle('vb-empty', !bot);
+    if (!bot) return;
+    if (!this._vbPreview) {
+      const def = SPECIAL_BIKES[SOLO_FLIGHT_BIKE_KEY];
+      this._vbPreview = new DressingRoomPreview({ bike: { path: def.model, preset: null } });
+    }
+    this._vbPreview.show('vb', canvas, 'Stoker', { ...botStokerLook(bot.id), bot: bot.id });
+    this._runVbPreview();
   }
 
-  /** Pick the bot race tier for Solo Flight, or 'off' (saved on this device). */
+  /** Draw the preview while the VERSUS BOTS screen is up (it stops by itself when it is not). */
+  _runVbPreview() {
+    if (this._vbPreviewRaf || !this._vbPreview) return;
+    const step = (now) => {
+      if (this._currentStep !== this.versusBotsStep || !this._vbPreview) { this._vbPreviewRaf = 0; return; }
+      try { this._vbPreview.tick(now); } catch (e) { /* the next frame tries again */ }
+      this._vbPreviewRaf = requestAnimationFrame(step);
+    };
+    this._vbPreviewRaf = requestAnimationFrame(step);
+  }
+
+  /** The race this ride has: VERSUS BOTS' tier, and none from anywhere else. */
+  rideRaceTier() {
+    return this._pendingMode === 'versusBots' && RACE_TIERS[this.selectedRace] ? this.selectedRace : 'off';
+  }
+
+  /** VERSUS BOTS' two teams: you (with the back seat's bot, if any) against the other two bots, all on the Solo Flight. */
+  _versusBotTeams() {
+    this._vbInputs = this._vbInputs || {};
+    const bot = (id) => {
+      this._vbInputs[id] = this._vbInputs[id] || new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false });
+      return { n: null, botId: id, input: this._vbInputs[id], type: 'bot', slotId: null, name: BOTS[id].name, label: BOTS[id].name, isP1: false };
+    };
+    const p1 = this._versusP1Descriptor();
+    const you = [{ n: 1, input: this.input, type: p1.type, slotId: 'P1', name: p1.name, label: null, isP1: true }];
+    if (BOTS[this.selectedBot]) you.push(bot(this.selectedBot));
+    return [
+      { id: 'A', bike: SOLO_FLIGHT_BIKE_KEY, members: you },
+      { id: 'B', bike: SOLO_FLIGHT_BIKE_KEY, members: botTeamFor(this.selectedBot).map(bot) },
+    ];
+  }
+
+  /** Pick the bot race tier for VERSUS BOTS (saved on this device). */
   pickRace(id) {
     this.selectedRace = saveRaceChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
     try { analytics.trackEvent('bot_race_pick', { race: this.selectedRace }); } catch { /* offline */ }
   }
 
-  /** Pick the player bot for Solo Flight (saved on this device). */
+  /** Pick the bot for the VERSUS BOTS back seat (saved on this device). */
   pickBot(id) {
     this.selectedBot = saveBotChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
+    this._prefetchBot(this.selectedBot);
     try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
   }
 
-  _syncBotPicker() {
-    for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
-    // the race buttons name who you'd race (the two bots not on your back seat)
-    const team = ghostTeamName(ghostTeamFor(this.selectedBot));
-    for (const b of this._raceButtons || []) {
-      const id = b.dataset.race, tier = RACE_TIERS[id];
-      b.setAttribute('aria-checked', String(id === this.selectedRace));
-      b.title = tier ? `Race ${team}'s ghost tandem: they finish on ${tier.medal} medal time`
-        + (tier.counts ? ' (a versus race)' : ' (a warm-up: no versus achievements)') : 'No race';
-    }
-  }
-
-  _showBotPicker(on) {
-    const el = document.getElementById('bot-picker');
-    if (el) el.style.display = on ? '' : 'none';
-    const race = document.getElementById('race-picker');
-    if (race) race.style.display = on ? '' : 'none';
-    if (on) this._syncBotPicker();
+  /**
+   * Fetch a bot's rider file as soon as it is picked, so the ride does not wait for it (Pete, 2026-11-18:
+   * "hesitation from the bot appearing"). Into the browser's cache only; once a bot.
+   */
+  _prefetchBot(id) {
+    if (!id || !BOTS[id]) return;
+    this._botFetched = this._botFetched || new Set();
+    if (this._botFetched.has(id)) return;
+    this._botFetched.add(id);
+    try {
+      const look = botStokerLook(id);
+      const path = resolveRider('Stoker', look.outfit, look.body).path;
+      if (path && typeof fetch === 'function') fetch(path, { cache: 'force-cache' }).catch(() => { this._botFetched.delete(id); });
+    } catch (e) { this._botFetched.delete(id); }
   }
 
   _applyPresetToPreview() {
@@ -10089,7 +10093,6 @@ export class Lobby {
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
     if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
-    this._showBotPicker(false);
     if (this._previewModel) this._previewModel.visible = true;
     this._hideSpecialPreviews();
     { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }

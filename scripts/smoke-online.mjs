@@ -15,8 +15,7 @@
 //   OC-07  a short relay drop mid-ride (< 2 s, the captain's socket closes and
 //          comes back) shows no pause on either side.
 //   OC-11  after a ride, BACK TO ROOM brings both back to level select on the
-//          same room, still connected. (Camera/mic go over PeerJS, which is
-//          unreachable offline: the media half stays a manual check.)
+//          same room, still connected.
 //   OC-13  co-op tutorial: the stoker waits for the captain's countdown, both
 //          ride, the tutorial completes on both, and both return to the room.
 //   OC-N   (#694) the relay names each side to the other as they meet ("Connected to Pete (your

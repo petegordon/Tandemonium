@@ -14,7 +14,7 @@ const browser=await puppeteer.launch({headless:'new',args:['--no-sandbox','--use
 async function open(withKey) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
   // SOLO must open the level list, not the first-run tutorial auto-start.
-  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); } catch {} });
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tutorial_done', 'smoke'); localStorage.setItem('tandemonium_tourist_note_off', '1'); } catch {} });
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
   page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
@@ -58,14 +58,14 @@ const flow = await page.evaluate(async () => {
   l._touristPlan = plan;
   l._saveRoute(from, to);
 
-  // E-8: the route comes back on the next visit.
+  // E-8: the route comes back on the next visit, as the first of YOUR PLACES (one press, no typing).
   const saved = l._loadSavedRoute();
-  l._prefillTouristForm();
+  try { localStorage.removeItem('tandemonium_tourist_places'); } catch {}
+  l._openTouristStep();
+  const mine = document.querySelector('#tourist-yours .tourist-yours-place');
   const prefilled = {
-    from: document.getElementById('tourist-from').value,
-    to: document.getElementById('tourist-to').value,
-    button: document.getElementById('btn-tourist-ride').textContent,
-    preview: document.getElementById('tourist-preview').textContent
+    yours: mine ? mine.textContent : null,
+    formHidden: document.getElementById('tourist-form').getBoundingClientRect().width === 0,
   };
 
   return {
@@ -135,7 +135,7 @@ console.log('the ride:', JSON.stringify(ride, null, 1));
 
 const ok = !hidden.visible && flow.shown && flow.stepShown && flow.savedOk
   && /1,8\d\d km/.test(flow.headline) && flow.capped && flow.ridableKm === 5
-  && flow.prefilled.from === 'Columbus, OH' && /RIDE IT AGAIN/.test(flow.prefilled.button)
+  && /Columbus → Denver/.test(flow.prefilled.yours || '') && flow.prefilled.formHidden
   && /2\.0 km to go/.test(ride.atStart)
   && ride.levelId === 'tourist' && ride.levelIsTourist && ride.timerEnabled === false
   && ride.finishesAtDestination

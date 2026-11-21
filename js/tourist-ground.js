@@ -60,6 +60,22 @@ export class TouristGround {
     this.groundY = tune.wheelOffset;
     /** True once a hit has ever been accepted. */
     this.hasGround = false;
+    /**
+     * Settling: from the first hit until the bike rides off. The first geometry to arrive at a place
+     * is coarse, and can sit hundreds of metres above or below the street (London came in 340 m high,
+     * Tokyo 350 m low, measured 2026-11-17). Taking that first hit as the ground left the bike in the
+     * sky or under the city, because the steady-state window then held it there. While settling, every
+     * frame chooses again as a spawn would, so the bike follows the ground down (or up) to the street
+     * as the detail streams in.
+     */
+    this.settling = true;
+    /** Seconds the chosen height has held still (within settleTolerance) while settling. */
+    this.stableFor = 0;
+    /** Where the ground is KNOWN to be (a measured place), as a local height: while arriving, a surface
+     *  far from it (the water under a bridge whose deck has not loaded yet) is stood on but not trusted. */
+    this.expectY = null;
+    this._settleX = 0; this._settleZ = 0;
+    this._settleFor = 0;
     /** World-space normal of the last accepted face (upward-facing). */
     this.normal = new THREE.Vector3(0, 1, 0);
     /** Seconds since the probe last hit ANYTHING (coverage notice). */
@@ -79,6 +95,16 @@ export class TouristGround {
     this.bump = null;
     /** A low obstacle ahead (car, kerb, hedge) the step window may climb onto. */
     this._rideOver = null;
+    /**
+     * #801 · a wall is coming: something too tall to ride over, wide enough to count, further off than
+     * a bump. {distance, point} — the world marks it and the game sounds the warning.
+     * @type {{distance:number, point:THREE.Vector3}|null}
+     */
+    this.warn = null;
+    /** #801 · where a thin thing (a pole, a sign) was last met: the bike rides through it. */
+    this._thinAt = null;
+    this._sideRay = new THREE.Raycaster();
+    this._sideRay.firstHitOnly = true;
   }
 
   /**
@@ -88,8 +114,9 @@ export class TouristGround {
    * @param {number} dt
    * @param {boolean} tilesStarted  false while tile streaming is still gated (mobile): no-hit time is not counted
    * @param {number} [heading]  bike yaw (x = sin, z = cos); when given, the forward probe runs
+   * @param {number} [speed]  bike speed in m/s: how far ahead a wall is worth a warning
    */
-  step(bikePos, dt, tilesStarted = true, heading = undefined) {
+  step(bikePos, dt, tilesStarted = true, heading = undefined, speed = 0) {
     const tune = this.tune;
     const g = tune.ground;
     const ray = this._raycaster;
@@ -97,7 +124,8 @@ export class TouristGround {
     // #402 §3 · look a few metres ahead BEFORE the ground probe, so a low
     // obstacle it finds widens this frame's step window.
     this.bump = null;
-    if (this.hasGround && Number.isFinite(heading)) this._probeAhead(bikePos, heading, g);
+    this.warn = null;
+    if (this.hasGround && Number.isFinite(heading)) this._probeAhead(bikePos, heading, g, speed);
 
     // The ray starts above the bike, but never below the anchor plane + probeUp.
     // Without that floor the probe is a one-way trapdoor: accept one bad hit far
@@ -137,8 +165,16 @@ export class TouristGround {
     const ease = Math.min(1, tune.groundLerp * dt);
     let chosen = null;
 
-    if (candidates.length && !this.hasGround) {
-      chosen = this._pickSpawn(candidates, g);
+    // riding off ends the settling (and so does a long wait: something is better than nothing)
+    if (this.settling && this.hasGround) {
+      this._settleFor += dt;
+      const moved = Math.hypot(bikePos.x - this._settleX, bikePos.z - this._settleZ);
+      const maxS = this.expectY != null ? (g.settleExpectMaxS || 20) : (g.settleMaxS || 30);
+      if (moved > (g.settleLeaveM || 4) || this._settleFor > maxS) this.settling = false;
+    }
+
+    if (candidates.length && (!this.hasGround || this.settling)) {
+      chosen = this._pickExpected(candidates, g) || this._pickSpawn(candidates, g);
     } else if (candidates.length) {
       chosen = this._pickStep(candidates, bikePos, g);
       result.rejected += candidates.length - (chosen ? 1 : 0);
@@ -151,8 +187,17 @@ export class TouristGround {
       // height becomes known, and for a custom location it can be a kilometre
       // from the guessed anchor — easing that would be a long visible fall.
       // It also means the anchor height never has to be looked up or tuned.
-      if (!this.hasGround) this.groundY = targetY;
-      else this.groundY += (targetY - this.groundY) * ease;
+      if (!this.hasGround) {
+        this.groundY = targetY;
+        this._settleX = bikePos.x; this._settleZ = bikePos.z;
+        this.stableFor = 0;
+      } else if (this.settling) {
+        // still arriving: go where the ground is now, and count how long it has held still
+        const moved = Math.abs(targetY - this.groundY);
+        const off = this.expectY != null && this._settleFor < (g.settleExpectMaxS || 20) && Math.abs(targetY - this.expectY) > (g.expectTolerance || 25);
+        this.stableFor = (moved > (g.settleTolerance || 1.5) || off) ? 0 : this.stableFor + dt;
+        this.groundY = targetY;
+      } else this.groundY += (targetY - this.groundY) * ease;
       this.hasGround = true;
       if (chosen.face) { this._worldNormal(chosen); this.normal.copy(this._tmpNormal); }
       this._refX = bikePos.x; this._refY = chosen.point.y; this._refZ = bikePos.z;
@@ -177,7 +222,10 @@ export class TouristGround {
     // few metres above the bike with no rideable ground under it (single-sided
     // meshes, which is what Google ships: from inside a closed shell an upward
     // ray only sees back faces, but the roof top is still a downward hit).
-    const ceiling = hits.length && (this._ceilingAbove(bikePos, g) ||
+    // (a thin thing being ridden through has sides overhead: that is not being inside a building)
+    const thin = !!this._thinAt && Math.hypot(bikePos.x - this._thinAt.x, bikePos.z - this._thinAt.z) < (g.thinPassM || 2.5);
+    if (this._thinAt && !thin) this._thinAt = null;
+    const ceiling = !thin && hits.length && (this._ceilingAbove(bikePos, g) ||
       hits.some((h) => h.point.y > bikePos.y + g.ceilingClearance &&
                        h.point.y < bikePos.y + g.ceilingProbe));
 
@@ -186,6 +234,23 @@ export class TouristGround {
       if (hits.length) result.blocked = true;
     }
     return result;
+  }
+
+  /** Has the ground under the bike been found and stopped moving (detail has streamed in)? */
+  get ready() {
+    return this.hasGround && (!this.settling || this.stableFor >= (this.tune.ground.settleStableS || 1.0));
+  }
+
+  /**
+   * A measured place: the surface nearest the height that was measured there, if one is within
+   * expectTolerance of it. (On a bridge the usual spawn rule, the lowest of the top cluster, is the water.)
+   */
+  _pickExpected(candidates, g) {
+    if (this.expectY == null) return null;
+    const want = this.expectY - this.tune.wheelOffset, tol = g.expectTolerance || 25;
+    let chosen = null, best = tol;
+    for (const h of candidates) { const d = Math.abs(h.point.y - want); if (d <= best) { best = d; chosen = h; } }
+    return chosen;
   }
 
   /**
@@ -270,12 +335,13 @@ export class TouristGround {
    * texture never register, and runs at the last ACCEPTED height so a bike
    * already on a car roof probes from the roof.
    */
-  _probeAhead(bikePos, heading, g) {
+  _probeAhead(bikePos, heading, g, speed = 0) {
     const sx = Math.sin(heading), cz = Math.cos(heading);
     this._tmpDir.set(sx, 0, cz);
     this._tmpOrigin.set(bikePos.x, this._refY + g.forwardLift, bikePos.z);
     this._fwdRay.set(this._tmpOrigin, this._tmpDir);
-    this._fwdRay.far = g.aheadDist;
+    // #801: look further the faster the bike goes, so a wall is announced warnSeconds before it
+    this._fwdRay.far = Math.max(g.aheadDist, Math.min(g.warnMaxDist || 0, (speed || 0) * (g.warnSeconds || 0)));
     const ahead = [];
     this.tiles.raycast(this._fwdRay, ahead);
     if (!ahead.length) return;
@@ -298,14 +364,122 @@ export class TouristGround {
     if (top !== null) {
       // Rideable (or thinner than aheadStepIn, in which case the ground beyond
       // is the top and the bike simply rolls through it).
-      this._rideOver = { x: bikePos.x, z: bikePos.z, top };
+      if (near.distance <= g.aheadDist) this._rideOver = { x: bikePos.x, z: bikePos.z, top };
       return;
     }
-    if (near.distance > g.bumpDist) return;   // too tall, but not close yet
+    // #801 (Pete, 2026-11-18): thin things are ridden through. A pole or a sign is a spike in the mesh,
+    // and nobody steering down a street expects one to count as a wall.
+    if (this._isThin(bikePos, near, sx, cz, g)) {
+      if (near.distance <= g.aheadDist) this._thinAt = { x: near.point.x, z: near.point.z };
+      return;
+    }
+    if (near.distance > g.bumpDist) {         // too tall, but not close yet: say so
+      this.warn = { distance: near.distance, point: near.point };
+      return;
+    }
     const back = (g.bumpDist + g.bumpClearance) - near.distance;
     bikePos.x -= sx * back;
     bikePos.z -= cz * back;
     this.bump = { distance: near.distance, point: near.point, top };
+  }
+
+  /**
+   * Is the thing the forward ray met narrow? Two more rays run alongside, thinHalfWidth to each side.
+   * If neither meets anything by a little past the face, it is a pole, a sign or a sapling.
+   */
+  _isThin(bikePos, near, sx, cz, g) {
+    const w = g.thinHalfWidth || 0;
+    if (!(w > 0)) return false;
+    for (const side of [1, -1]) {
+      this._tmpOrigin.set(bikePos.x + cz * w * side, this._refY + g.forwardLift, bikePos.z - sx * w * side);
+      this._sideRay.set(this._tmpOrigin, this._tmpDir);
+      this._sideRay.far = near.distance + (g.thinDepth || 1);
+      const hits = [];
+      this.tiles.raycast(this._sideRay, hits);
+      if (hits.length) return false;
+    }
+    return true;
+  }
+
+  /**
+   * #801 (Pete, 2026-11-18: "take them back 5 m before the crash"). Where the bike stands up after a
+   * crash at (x, z): backM back along the trail it rode in on, facing the way it was going. If a wall
+   * is right in front of that spot, it goes further back until the way is clear (or the trail ends).
+   * The trail past the spot is dropped, so nothing later puts the bike back at the wall.
+   * @returns {{x:number, y:number, z:number, heading:number}|null}  null when there is no trail
+   */
+  recoverySpot(x, z, backM, g = this.tune.ground) {
+    const trail = this.breadcrumbs;
+    if (!trail.length) return null;
+    // Is this trail the way the bike came here? After a restart (or anything else that puts the bike
+    // somewhere new) the crumbs are where it used to be, and "back along the trail" would be a jump there.
+    const reach = g.breadcrumbSpacing * 3 + g.bumpDist + g.bumpClearance;
+    const newest = trail[trail.length - 1];
+    if (Math.hypot(x - newest.x, z - newest.z) > reach) { trail.length = 0; return null; }
+    // the way back: the crash point, then the crumbs, newest first, for as long as they follow on
+    const path = [{ x, y: this._refY, z }];
+    for (let i = trail.length - 1; i >= 0; i--) {
+      const prev = path[path.length - 1];
+      if (path.length > 1 && Math.hypot(prev.x - trail[i].x, prev.z - trail[i].z) > reach) break;
+      path.push(trail[i]);
+    }
+    let want = backM, spot = null;
+    for (let tries = 0; tries < 6 && !spot; tries++) {
+      const at = this._alongPath(path, want);
+      if (at.end || !this._wallAhead(at, g)) spot = at;
+      else want += g.breadcrumbSpacing;
+    }
+    if (!spot) spot = this._alongPath(path, want);
+    while (trail.length > 1 && trail.length > spot.left) trail.pop();
+    this._refX = spot.x; this._refY = spot.y; this._refZ = spot.z;
+    this.groundY = spot.y + this.tune.wheelOffset;
+    this.noGroundElapsed = 0;
+    this._resnapTries = 0;
+    this._rideOver = null;
+    this._thinAt = null;
+    this.bump = null;
+    this.warn = null;
+    return { x: spot.x, y: spot.y, z: spot.z, heading: spot.heading };
+  }
+
+  /** The point `metres` along a path (newest first), the heading the bike had there, and how many crumbs are behind it. */
+  _alongPath(path, metres) {
+    let left = metres;
+    for (let i = 0; i < path.length - 1; i++) {
+      const a = path[i], b = path[i + 1];
+      const d = Math.hypot(a.x - b.x, a.z - b.z);
+      if (d <= 0) continue;
+      const heading = Math.atan2(a.x - b.x, a.z - b.z);   // riding from b toward a
+      if (left <= d) {
+        const t = left / d;
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t, heading, end: false, left: path.length - 1 - i };
+      }
+      left -= d;
+    }
+    const last = path[path.length - 1], prev = path[path.length - 2];
+    const heading = prev && Math.hypot(prev.x - last.x, prev.z - last.z) > 0 ? Math.atan2(prev.x - last.x, prev.z - last.z) : 0;
+    return { x: last.x, y: last.y, z: last.z, heading, end: true, left: 1 };
+  }
+
+  /** Is there something too tall to ride over within recoverClearM of a spot, the way it faces? */
+  _wallAhead(spot, g) {
+    const sx = Math.sin(spot.heading), cz = Math.cos(spot.heading);
+    this._tmpDir.set(sx, 0, cz);
+    this._tmpOrigin.set(spot.x, spot.y + g.forwardLift, spot.z);
+    this._fwdRay.set(this._tmpOrigin, this._tmpDir);
+    this._fwdRay.far = g.recoverClearM || 3;
+    const ahead = [];
+    this.tiles.raycast(this._fwdRay, ahead);
+    if (!ahead.length) return false;
+    let near = ahead[0];
+    for (const h of ahead) if (h.distance < near.distance) near = h;
+    this._tmpOrigin.set(near.point.x + sx * g.aheadStepIn, spot.y + g.rideOverHeight, near.point.z + cz * g.aheadStepIn);
+    this._topRay.set(this._tmpOrigin, DOWN);
+    this._topRay.far = g.rideOverHeight + g.stepDownBase;
+    const tops = [];
+    this.tiles.raycast(this._topRay, tops);
+    for (const h of tops) if (this._worldNormal(h) >= g.minNormalY) return false;
+    return true;
   }
 
   _ceilingAbove(bikePos, g) {

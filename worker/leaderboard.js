@@ -13,13 +13,14 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
   return allowed[0];
 }
 
+import { monthCost, GOOGLE_DAILY_CAPS } from '../js/tourist-costs.js';
 import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
   handleSteamWebBegin, handleSteamWebGo, handleSteamWebCallback, handleDiscordMembership,
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
-  resolveSession, firstLogin, ensureDeviceLogin,
+  resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
@@ -116,7 +117,9 @@ export default {
       return new Response(null, { headers: corsHeaders(corsOrigin) });
     }
 
-    try {
+    // Every route is awaited here, so a failure anywhere in one is answered below (and
+    // logged) instead of leaving the Worker with an unhandled rejection: Cloudflare's 1101 page.
+    const route = async () => {
       const path = url.pathname;
       const clientIP = request.headers.get('CF-Connecting-IP') || 'unknown';
       // Rate limits, one place for every route (see limitRequest).
@@ -268,9 +271,16 @@ export default {
       }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
+    };
+    try {
+      return await route();
     } catch (e) {
-      try { writeMetric(env, 'error', e.message); } catch (_) { /* don't mask original error */ }
-      return jsonResponse({ error: e.message }, 500, corsOrigin);
+      const message = (e && e.message) || String(e);
+      console.error('request failed', request.method, url.pathname, (e && e.stack) || message);
+      try { writeMetric(env, 'error', message); } catch (_) { /* don't mask original error */ }
+      // The pages a browser is sent to during sign-in get a page, not JSON.
+      if (SIGNIN_PAGES.has(url.pathname)) return signInErrorPage();
+      return jsonResponse({ error: message }, 500, corsOrigin);
     }
   }
 };
@@ -323,6 +333,9 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
+/** A Steam web-API auth ticket as the game sends it: hex (a few hundred characters). */
+const STEAM_TICKET_RE = /^[0-9a-fA-F]{16,8192}$/;
+
 async function handleSteamAuth(request, env, corsOrigin) {
   if (!env.STEAM_WEB_API_KEY) {
     return jsonResponse({ error: 'Steam authentication not configured' }, 503, corsOrigin);
@@ -331,6 +344,9 @@ async function handleSteamAuth(request, env, corsOrigin) {
   const body = await request.json();
   const { steamId, personaName, ticket } = body;
   if (!steamId || !ticket) return jsonResponse({ error: 'Missing steamId or ticket' }, 400, corsOrigin);
+  // A ticket is hex. Anything else is refused here, so nothing but a ticket is ever put
+  // into the address we ask Steam with.
+  if (typeof ticket !== 'string' || !STEAM_TICKET_RE.test(ticket)) return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
 
   // Verify the auth ticket via Steam Web API
   // Try both the playtest app ID and the main game app ID
@@ -341,7 +357,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   for (const appId of appIds) {
     try {
-      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${ticket}`;
+      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}`;
       const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
       if (!steamRes.ok) {
         lastError = `Steam API returned ${steamRes.status} for appId ${appId}`;
@@ -1371,6 +1387,9 @@ export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
   '/auth/link/complete', '/auth/link/combine', '/me/notices/undo']);
+// The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
+const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
+  '/auth/steam/go', '/auth/steam/callback']);
 
 /** Which per-player bucket a request writes to, or null (reads: the IP ceiling only). */
 export async function playerBucket(request, env, path, clientIP) {
@@ -1880,6 +1899,7 @@ async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
     players: () => dashPlayers(env, since, ex),
+    tourist_costs: () => dashTouristCosts(env, since),   // #824
   };
 
   // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
@@ -2213,6 +2233,63 @@ async function dashPairs(env, since, ex) {
 // never recorded a session's end. One session counts at most 2 hours, so a
 // window left open overnight doesn't read as a marathon.
 export const PLAYER_SESSION_CAP_MIN = 120;
+/**
+ * #824 · Tourist's Google use and our estimate of its cost. Counts every session (developers too), because the
+ * bill does. Google's billing report stays the source of truth.
+ */
+async function dashTouristCosts(env, since) {
+  const NAMES = ['tourist_tiles_session', 'tourist_session_reused', 'tourist_lookup', 'tourist_limit_hit', 'tourist_quota_refused'];
+  const marks = NAMES.map(() => '?').join(',');
+  const rows = (await env.DB.prepare(
+    `SELECT substr(e.created_at, 1, 10) AS day, e.event_type AS type, json_extract(e.event_data, '$.kind') AS kind,
+            json_extract(e.event_data, '$.ok') AS ok, COUNT(*) AS n
+     FROM events e WHERE e.created_at >= ? AND e.event_type IN (${marks}) GROUP BY day, type, kind, ok`
+  ).bind(since, ...NAMES).all()).results || [];
+  const players = (await env.DB.prepare(
+    `SELECT CASE WHEN s.google_uid IS NOT NULL THEN 'Account ' || CAST(s.google_uid AS INTEGER) ELSE 'Guest' END AS who,
+            CASE WHEN s.google_uid IS NOT NULL THEN 'a:' || CAST(s.google_uid AS INTEGER) ELSE 'g:' || COALESCE(s.device_id, s.ip_address, s.id) END AS id,
+            SUM(CASE WHEN e.event_type = 'tourist_tiles_session' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS sessions,
+            SUM(CASE WHEN e.event_type = 'tourist_lookup' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS lookups
+     FROM events e JOIN sessions s ON s.id = e.session_id
+     WHERE e.created_at >= ? AND e.event_type IN ('tourist_tiles_session', 'tourist_lookup')
+     GROUP BY id ORDER BY sessions DESC, lookups DESC LIMIT 200`
+  ).bind(since).all()).results || [];
+  const blank = () => ({ tiles: 0, geocode: 0, elevation: 0, reused: 0, failed: 0, limit_sessions: 0, limit_addresses: 0, refused: 0 });
+  const days = new Map();
+  for (const r of rows) {
+    if (!days.has(r.day)) days.set(r.day, blank());
+    const d = days.get(r.day);
+    const ok = r.ok === 1 || r.ok === true;
+    if (r.type === 'tourist_tiles_session') { if (ok) d.tiles += r.n; else d.failed += r.n; }
+    else if (r.type === 'tourist_session_reused') d.reused += r.n;
+    else if (r.type === 'tourist_lookup') { if (!ok) d.failed += r.n; else if (r.kind === 'geocode') d.geocode += r.n; else if (r.kind === 'elevation') d.elevation += r.n; }
+    else if (r.type === 'tourist_limit_hit') { if (r.kind === 'addresses') d.limit_addresses += r.n; else d.limit_sessions += r.n; }
+    else if (r.type === 'tourist_quota_refused') d.refused += r.n;
+  }
+  const byMonth = new Map();
+  for (const [day, d] of days) {
+    const m = day.slice(0, 7);
+    if (!byMonth.has(m)) byMonth.set(m, blank());
+    const t = byMonth.get(m);
+    for (const k of Object.keys(t)) t[k] += d[k];
+  }
+  const active = players.filter((p) => p.sessions > 0 || p.lookups > 0).length;
+  const months = [...byMonth].sort().map(([month, c]) => ({ month, ...c, cost: monthCost(month, c) }));
+  const total = months.reduce((a, m) => a + m.cost.total, 0);
+  const today = days.get(new Date().toISOString().slice(0, 10)) || blank();
+  return {
+    days: [...days].sort().reverse().map(([day, c]) => ({ day, ...c })),
+    months, total_usd: total, active_players: active, cost_per_player: active ? total / active : 0,
+    top_players: players.slice(0, 10).map(({ who, sessions, lookups }) => ({ who, sessions, lookups })),
+    today_of_cap: {
+      tiles: pct0(today.tiles, GOOGLE_DAILY_CAPS.tiles), geocode: pct0(today.geocode, GOOGLE_DAILY_CAPS.geocode),
+      elevation: pct0(today.elevation, GOOGLE_DAILY_CAPS.elevation),
+    },
+    caps: GOOGLE_DAILY_CAPS,
+  };
+}
+const pct0 = (n, of) => (of > 0 ? Math.round((n * 100) / of) : 0);
+
 async function dashPlayers(env, since, ex) {
   const sf = sessionFilter(ex, 's');
   const rows = await env.DB.prepare(
@@ -2847,7 +2924,11 @@ async function createJWT(payload, secret, ttlSeconds) {
   const now = Math.floor(Date.now() / 1000);
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const body = btoa(JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) }))
+  // A name can hold any character, and btoa takes only Latin-1: write the rest as \uXXXX,
+  // so the token is plain ASCII and every reader's JSON.parse gives the name back.
+  const json = JSON.stringify({ ...payload, iat: now, exp: now + (ttlSeconds || 86400 * 30) })
+    .replace(/[\u0080-￿]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
+  const body = btoa(json)
     .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
   const data = `${header}.${body}`;
 

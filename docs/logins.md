@@ -72,6 +72,17 @@ under the account's Discord login.
   (`tandemonium-api-staging`, `--env staging`) and its own secrets. No Discord or Steam
   secrets are set there: test with tokens signed by staging's `JWT_SECRET`.
 
+**Staging is a full copy of production, analytics included** (Pete, 2026-11-17), so a
+rehearsal sees the same tables, sizes and query costs that production will.
+
+**Staging and production share the account's D1 allowance.** Cloudflare counts rows written
+and read per account, across all its databases. A full import is about 320,000 rows and, with
+index entries and a migration on top, about 1.6 million rows written. The account is on
+Workers Paid (50 million rows written a month included, then $1 per million), so a full
+import costs nothing extra a few times a month. On the free plan (100,000 rows a day) one
+import stopped production sign-ins until midnight UTC; that happened on 2026-11-17, before
+the upgrade. `npx wrangler d1 info <database>` shows each database's last 24 hours.
+
 ## Shipping migration 0021
 
 The new code needs the new tables, and the old code needs the old ones, so the migration and

@@ -96,11 +96,21 @@ const pill = (page) => page.evaluate(() => {
   return Array.from(b.children).map((c) => c.tagName === 'IMG' ? 'img:' + c.dataset.provider : c.tagName.toLowerCase());
 });
 const popupState = (page) => page.evaluate(() => {
-  const vis = (id) => { const e = document.getElementById(id); return !!e && e.offsetParent !== null && getComputedStyle(e).display !== "none"; };
+  const visEl = (e) => !!e && e.offsetParent !== null && getComputedStyle(e).display !== "none";
+  const vis = (id) => visEl(document.getElementById(id));
+  const text = (e) => (visEl(e) ? e.textContent.trim() : '');
+  // lab #146 · the sign-in buttons, the login lines, Link and Sign out are the shared elements'
+  const signin = document.querySelector('#profile-popup-providers [data-provider="discord"]'), link = document.querySelector('#profile-popup-card button[data-act="link"][data-provider="discord"]');
+  const steam = document.querySelector('#profile-popup-providers [data-provider="steam"]');
+  const out = document.querySelector('#profile-popup-card button[data-act="signout"]');
+  const focus = document.querySelector('#profile-popup .gamepad-focus');
   return {
     open: document.getElementById('profile-popup').classList.contains('visible'),
-    discordBtn: vis('profile-popup-discord'),
-    linkBtn: vis('profile-popup-link-discord'),
+    discordBtn: visEl(signin), discordText: text(signin), steamText: text(steam),
+    linkBtn: visEl(link), linkText: text(link), signOut: text(out),
+    lines: Array.from(document.querySelectorAll('#profile-popup-card li[data-linked="true"]')).map((li) => li.dataset.provider + ':' + li.querySelector('.uf-id-login-name').textContent + ':' + (li.querySelector('img.uf-id-login-pic') ? 'pic' : 'nopic')),
+    pad: window._game.lobby._profileItems().map((e) => window._game.lobby._profileItemName(e)),
+    focus: focus ? window._game.lobby._profileItemName(focus) : null,
     qr: !!document.querySelector('#profile-popup-qr svg') && vis('profile-popup-device'),
     code: document.getElementById('profile-popup-code').textContent,
     status: document.getElementById('profile-popup-device-status').textContent,
@@ -128,6 +138,13 @@ const popupState = (page) => page.evaluate(() => {
   s = await popupState(page);
   check(!s.open, 'A: the popup closes on sign-in', s);
   await h.shot(page, 'A2-tv-signed-in');
+  // lab #146 · the signed-in card in a TV browser: the Discord line, Sign out (pad starts there), CLOSE
+  await page.evaluate(() => document.getElementById('bar-profile').click());
+  await sleep(300);
+  s = await popupState(page);
+  check(s.open && JSON.stringify(s.lines) === JSON.stringify(['discord:Pete:pic']) && !s.linkBtn && s.signOut === 'Sign out', 'A: signed in on a TV browser, the card shows the Discord login and Sign out', s);
+  check(JSON.stringify(s.pad) === JSON.stringify(['signout', 'profile-popup-back']) && s.focus === 'signout', 'A: the pad reaches Sign out and CLOSE, and starts on Sign out', s);
+  await h.shot(page, 'A3-tv-profile');
   await page.close();
 }
 
@@ -153,9 +170,11 @@ const popupState = (page) => page.evaluate(() => {
   await page.evaluate(() => document.getElementById('bar-profile').click());
   await sleep(300);
   let s = await popupState(page);
-  check(s.open && s.linkBtn && !s.qr, 'B: Profile offers LINK DISCORD to a Steam player', s);
+  check(s.open && s.linkBtn && s.linkText === 'Link Discord' && !s.qr, 'B: Profile offers Link Discord to a Steam player', s);
+  check(JSON.stringify(s.lines) === JSON.stringify(['steam:pete_steam:pic']) && !s.signOut, 'B: the card has a line for the Steam login (name and picture), and no Sign out on Steam', s);
+  check(JSON.stringify(s.pad) === JSON.stringify(['link:discord', 'profile-popup-back']) && s.focus === 'link:discord', 'B: the pad reaches Link Discord and CLOSE, and starts on Link Discord', s);
   await h.shot(page, 'B1-steam-profile');
-  await page.evaluate(() => document.getElementById('profile-popup-link-discord').click());
+  await page.evaluate(() => document.querySelector('#profile-popup-card button[data-act="link"][data-provider="discord"]').click());
   await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
   s = await popupState(page);
   check(s.qr && s.code === 'K7QF' && !s.linkBtn, 'B: linking shows the QR steps and the code, and LINK DISCORD steps aside', s);
@@ -182,8 +201,8 @@ const popupState = (page) => page.evaluate(() => {
   await sleep(300);
   s = await popupState(page);
   check(s.open && !s.linkBtn, 'B: LINK DISCORD is gone once Discord is linked', s);
-  const avatars = await page.evaluate(() => Array.from(document.querySelectorAll('#profile-popup-avatars img')).map((i) => i.dataset.provider));
-  check(JSON.stringify(avatars) === JSON.stringify(['discord', 'steam']), 'B: the popup shows both pictures', avatars);
+  check(JSON.stringify(s.lines) === JSON.stringify(['discord:Pete:pic', 'steam:pete_steam:pic']), 'B: the popup shows both logins, Discord first, each with its name and picture', s.lines);
+  check(JSON.stringify(s.pad) === JSON.stringify(['profile-popup-back']), 'B: once linked the pad has CLOSE only (no Sign out on Steam)', s.pad);
   await h.shot(page, 'B3-steam-linked');
   await page.close();
 }
@@ -211,10 +230,15 @@ const popupState = (page) => page.evaluate(() => {
   await page.evaluate(() => document.getElementById('toggle-profile').click());
   await sleep(300);
   const s = await popupState(page);
-  check(s.open && s.discordBtn && !s.qr, 'C: a phone gets the Discord button, no QR', s);
+  check(s.open && s.discordBtn && s.discordText === 'Sign in with Discord' && !s.steamText && !s.qr, 'C: a phone gets the Sign in with Discord button, no Steam button, no QR', s);
+  const fits = await page.evaluate(() => {
+    const p = document.getElementById('profile-popup').getBoundingClientRect(), b = document.querySelector('#profile-popup-providers [data-provider="discord"]').getBoundingClientRect();
+    return { popup: [Math.round(p.left), Math.round(p.right)], button: [Math.round(b.left), Math.round(b.right)], height: Math.round(b.height), vw: innerWidth };
+  });
+  check(fits.popup[0] >= 0 && fits.popup[1] <= fits.vw && fits.button[0] >= fits.popup[0] && fits.button[1] <= fits.popup[1] && fits.height >= 32, 'C: the button sits inside the popup, the popup inside the screen, and it is tall enough to tap', fits);
   await h.shot(page, 'C1-phone-signin');
   const nav = page.waitForNavigation({ timeout: 15000 }).catch(() => null);
-  await page.evaluate(() => document.getElementById('profile-popup-discord').click());
+  await page.evaluate(() => document.querySelector('#profile-popup-providers [data-provider="discord"]').click());
   await nav;
   await page.waitForFunction(() => !!window._game && !!window._game.lobby, { timeout: 90000 });
   await page.waitForFunction(() => { try { return !!localStorage.getItem('tandemonium_auth_token') && !!JSON.parse(localStorage.getItem('tandemonium_auth_user')).identities.discord; } catch { return false; } }, { timeout: 15000 }).catch(() => {});
@@ -227,6 +251,16 @@ const popupState = (page) => page.evaluate(() => {
   check(!after.hash.includes('ht_auth'), 'C: the token is taken off the URL', after.hash);
   check(after.toggleImg, 'C: the round Profile toggle shows the picture');
   await h.shot(page, 'C2-phone-signed-in');
+  // lab #146 · the signed-in card on a phone: the Discord line, Sign out, CLOSE
+  await page.evaluate(() => document.getElementById('toggle-profile').click());
+  await sleep(300);
+  const c = await popupState(page);
+  check(c.open && JSON.stringify(c.lines) === JSON.stringify(['discord:Pete:pic']) && !c.linkBtn && c.signOut === 'Sign out', 'C: signed in, the card shows the Discord login (name and picture) and Sign out', c);
+  await h.shot(page, 'C3-phone-profile');
+  await page.evaluate(() => document.querySelector('#profile-popup-card button[data-act="signout"]').click());
+  await page.waitForFunction(() => !localStorage.getItem('tandemonium_auth_token'), { timeout: 10000 }).catch(() => {});
+  const out = await page.evaluate(() => ({ token: !!localStorage.getItem('tandemonium_auth_token'), open: document.getElementById('profile-popup').classList.contains('visible'), toggleImg: !!document.querySelector('#toggle-profile img') }));
+  check(!out.token && !out.open && !out.toggleImg, 'C: Sign out signs out and closes the card', out);
   await page.close();
 }
 
@@ -254,7 +288,7 @@ const steamPage = (scenario) => h.gamePage({
   await page.waitForFunction(() => document.getElementById('bar-profile').querySelector('img[data-provider="steam"]'), { timeout: 15000 }).catch(() => {});
   await page.evaluate(() => document.getElementById('bar-profile').click());
   await sleep(300);
-  await page.evaluate(() => document.getElementById('profile-popup-link-discord').click());
+  await page.evaluate(() => document.querySelector('#profile-popup-card button[data-act="link"][data-provider="discord"]').click());
   await page.waitForFunction(() => document.getElementById('profile-popup-code').textContent === 'K7QF', { timeout: 10000 }).catch(() => {});
   const api = await page.evaluate(() => window.__api);
   check(api.begins.length === 2 && api.begins.every((b) => b.authed) && api.steamLogins >= 2,

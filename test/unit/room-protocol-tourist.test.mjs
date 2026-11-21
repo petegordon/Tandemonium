@@ -33,3 +33,12 @@ test('touristReady is a boolean either way', () => {
   assert.deepEqual(RoomProtocol.touristReady(1), { type: ROOM_MSG.TOURIST_READY, ok: true });
   assert.deepEqual(RoomProtocol.touristReady(undefined), { type: ROOM_MSG.TOURIST_READY, ok: false });
 });
+
+// Pete, 2026-11-18: the stoker could not see Map Tourist at all. The captain now says when it opens the
+// places (and leaves them), so the stoker's list can mark the card and say the captain is choosing.
+test('touristChoosing: open and closed, as booleans, on its own message type', async () => {
+  const { RoomProtocol: P, ROOM_MSG: M } = await import('../../js/lobby/room-protocol.js');
+  assert.deepEqual(P.touristChoosing(true), { type: M.TOURIST_CHOOSING, open: true });
+  assert.deepEqual(P.touristChoosing(0), { type: M.TOURIST_CHOOSING, open: false });
+  assert.ok(!Object.entries(M).some(([k, v]) => k !== 'TOURIST_CHOOSING' && v === M.TOURIST_CHOOSING), 'a type of its own');
+});

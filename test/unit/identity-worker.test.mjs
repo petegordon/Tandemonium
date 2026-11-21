@@ -187,7 +187,7 @@ test('redirect sign-in goes back to the game with the session in the fragment; f
   } finally { restore(); }
 });
 
-const steamTicket = (env) => call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } }).then((r) => r.json());
+const steamTicket = (env) => call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } }).then((r) => r.json());
 
 test('Steam player links a new Discord from the TV: one account, both pictures, a notice', async () => {
   const db = freshDb();
@@ -345,7 +345,7 @@ test('#783 · an account that had no login row gets one from the migration, and 
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const res = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const res = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     assert.equal(res.user.id, before);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
     assert.deepEqual(Object.keys(res.user.identities), ['steam']);
@@ -357,7 +357,7 @@ test('couch co-op: the ride saves for Player 1 and, by their own sign-in, Player
   const env = { ...envFor(db), SCORE_LIMITER: allow };
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     const p2 = await deviceSignIn(env);   // Sam's own Discord sign-in on the Wardrobe card
     db.prepare("INSERT INTO users (provider, provider_id, display_name) VALUES ('discord', 'stranger', 'Stranger')").run();
     const stranger = db.prepare("SELECT id FROM users WHERE provider_id = 'stranger'").get().id;
@@ -400,7 +400,7 @@ test('#609 couch pairs: both signed in → one pair both can read; P1 signed out
   const env = { ...envFor(db), SCORE_LIMITER: allow };
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     const p2 = await deviceSignIn(env);
     const base = { levelId: 'grandma', distance: 1200, timeMs: 200000 };
     const contributions = { captain: { overallPct: 55 }, stoker: { overallPct: 45 } };
@@ -634,7 +634,7 @@ test('Steam sign-in on the web finds the account the Steam game made; linking fr
   const { checks, restore } = mockSteamOpenId(true);
   try {
     // The Steam build signed in by ticket first.
-    const game = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const game = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     const cb = await steamWebSignIn(env);
     assert.equal(cb.status, 302);
     const loc = cb.headers.get('Location');
@@ -707,7 +707,7 @@ test('deleting an account removes every record on it; the partner keeps their ow
   const env = { ...envFor(db), SCORE_LIMITER: allow };
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     await deviceSignIn(env, p1.token);   // Pete links Discord: two sign-ins on one account
     // Sam, the couch partner, has their own account.
     const sam = Number(account(db, 'sam', 'Sam'));
@@ -759,7 +759,7 @@ test('deleting an account removes every record on it; the partner keeps their ow
     const me = await call(env, '/me', { token: p1.token });
     assert.equal(me.status, 401);
     assert.equal((await me.json()).code, 'account_gone');
-    const again = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' } })).json();
+    const again = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
     assert.notEqual(again.user.id, id);
     assert.deepEqual(Object.keys(again.user.identities), ['steam'], 'a fresh account: Discord is not brought back');
   } finally { restore(); }
@@ -778,7 +778,7 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
     return inner(input, init);
   };
   try {
-    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 'a1b2c3d4e5f60718' } })).json();
     let r = await (await call(env, '/me/discord', { token: steam.token })).json();
     assert.deepEqual(r, { linked: false, member: null, said_hello: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
 
@@ -874,7 +874,7 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
   const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_logins WHERE provider = 'discord'").get();
   try {
     // The Steam game made its own account first, with a ride on it.
-    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: STEAM_ID, personaName: 'p', ticket: 't' } })).json();
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: STEAM_ID, personaName: 'p', ticket: 'a1b2c3d4e5f60718' } })).json();
     const steamUser = db.prepare("SELECT user_id FROM user_logins WHERE provider = 'steam'").get().user_id;
 
     let r = await signIn(['guilds.join', 'email', 'connections', 'bogus']);
@@ -1003,7 +1003,7 @@ test('handoff: a signed-in link opens another site signed in, once, within a min
 
 // ── #678 · a guest's pairs move to the account when that device signs in ──
 
-const STEAM_PETE = { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 't' };
+const STEAM_PETE = { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' };
 const pairRows = (db) => db.prepare('SELECT login_lo, login_hi, user_lo, user_hi, rides, distance, best_json, last_ride FROM pairs ORDER BY login_lo, login_hi').all();
 /** #783 · one side of a pair: an account id (its first login), or 'guest:<device key>' (a device login). */
 const pairSide = (db, x) => (typeof x === 'string' && x.startsWith('guest:')
@@ -1145,13 +1145,13 @@ test('the Steam sign-in attaches its analytics session to the account, before or
     const early = '44444444-5555-4666-8777-888888888888';   // sign-in lands first
     const late = '55555555-6666-4777-8888-999999999999';    // session row already there
     db.prepare("INSERT INTO sessions (id, started_at, platform) VALUES (?, '2026-11-09T10:00:00.000Z', 'steam')").run(late);
-    const a = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: early } })).json();
-    await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: late } });
+    const a = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 'a1b2c3d4e5f60718', session_id: early } })).json();
+    await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 'a1b2c3d4e5f60718', session_id: late } });
     const uid = (id) => db.prepare('SELECT google_uid FROM sessions WHERE id = ?').get(id).google_uid;
     assert.equal(uid(early), String(a.user.id));
     assert.equal(uid(late), String(a.user.id));
     // A bad session id never fails the sign-in.
-    const bad = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 't', session_id: 'nope' } });
+    const bad = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'wolf', ticket: 'a1b2c3d4e5f60718', session_id: 'nope' } });
     assert.equal(bad.status, 200);
   } finally { restore(); }
 });
@@ -1181,7 +1181,7 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
   };
   const hello = async (token) => (await (await call(env, '/me/discord', { token })).json()).said_hello;
   try {
-    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 't' } })).json();
+    const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 'a1b2c3d4e5f60718' } })).json();
     const d = await deviceSignIn(env, steam.token);
     assert.equal(await hello(d.token), false, 'no post yet');
     pages = [[{ ...msg(10, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 7 }]];
@@ -1477,4 +1477,71 @@ test('Daily: a partner is kept only with the room’s proof or the partner’s o
     const c = db.prepare('SELECT role, contribution_pct p, pedal_taps t FROM score_contributions ORDER BY id DESC LIMIT 2').all().map((r) => ({ ...r }));
     assert.deepEqual(c, [{ role: 'solo', p: 0, t: 1e6 }], 'junk becomes numbers in range; unknown roles are dropped');
   } finally { restore(); }
+});
+
+test('a name outside Latin-1 signs in, and its session reads back with the name intact', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const name = '“Pétè” 山口 🚲';
+  const restore = mockFetch({ ...DISCORD_PETE, global_name: name });
+  try {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
+    assert.equal(cb.status, 302);
+    const token = decodeURIComponent(cb.headers.get('Location').split('#ht_auth=')[1]);
+    assert.match(token, /^[A-Za-z0-9_.-]+$/);
+    const claims = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    assert.equal(claims.name, name, 'a plain atob + JSON.parse reader gets the name');
+    const me = await call(env, '/me', { token });
+    assert.equal(me.status, 200);
+  } finally { restore(); }
+});
+
+test('a failure inside a sign-in page is answered with a page and logged, never left unhandled', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  const logged = [];
+  const realError = console.error;
+  console.error = (...a) => logged.push(a.join(' '));
+  try {
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const realPrepare = env.DB.prepare;
+    // The first sign-in makes the account (an INSERT); the second updates it, and that fails.
+    await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
+    const again = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    env.DB.prepare = (sql) => { if (/^UPDATE users SET/.test(sql)) throw new Error('database said no'); return realPrepare(sql); };
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(again.id)}`);
+    assert.equal(cb.status, 500);
+    assert.match(cb.headers.get('Content-Type'), /text\/html/);
+    const html = await cb.text();
+    assert.ok(html.includes('Something went wrong'));
+    assert.ok(html.includes('try again later'), 'a problem on our side may last: say so');
+    assert.ok(html.includes('mailto:hello@housetandem.com'), 'and who to write to');
+    assert.ok(!html.includes('database said no'), 'the page does not show the cause');
+    assert.ok(logged.some((l) => l.includes('/auth/discord/callback') && l.includes('database said no')), 'the log does');
+    // A script's route answers in JSON.
+    env.DB.prepare = () => { throw new Error('database said no'); };
+    const api = await call(env, '/auth/poll', { method: 'POST', body: { id: again.id, secret: again.secret } });
+    assert.equal(api.status, 500);
+    assert.equal((await api.json()).error, 'database said no');
+  } finally { console.error = realError; restore(); }
+});
+
+test('a Steam ticket is hex: anything else is refused before Steam is asked', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const real = globalThis.fetch;
+  const asked = [];
+  globalThis.fetch = async (input) => { asked.push(String(input && input.url ? input.url : input)); return Response.json({ response: { params: { steamid: '76561190000000001' } } }); };
+  try {
+    for (const ticket of ['t', 'abc&appid=480', 'a1b2c3d4e5f60718&key=x', 'zz'.repeat(20), 12345678901234567890, { a: 1 }]) {
+      const res = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'P', ticket } });
+      assert.equal(res.status, 401, JSON.stringify(ticket));
+    }
+    assert.equal(asked.length, 0, 'Steam was never asked');
+    const ok = await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'P', ticket: 'A1B2C3D4E5F60718' } });
+    assert.equal(ok.status, 200);
+    assert.ok(asked.some((u) => u.includes('ticket=A1B2C3D4E5F60718')));
+  } finally { globalThis.fetch = real; }
 });

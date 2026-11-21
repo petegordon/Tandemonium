@@ -190,7 +190,7 @@ export const ACTIVITY_RULES = Object.freeze({
 ```
 
 It's turned on by `?activity=1` (and later by the Discord wrapper), carried
-across join links like `demo`/`media` via `CARRIED_PARAMS`.
+across join links like `demo` via `CARRIED_PARAMS`.
 
 ## 7. Discord Activity (P5): what the dice/roulette Activities taught us
 

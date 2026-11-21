@@ -9,6 +9,8 @@
 // import it; the cached getters at the bottom touch window/location.
 // ============================================================
 
+import { BUILD_EDITION } from './edition-build.js';
+
 /**
  * What the full game allows. Everything on.
  */
@@ -97,7 +99,9 @@ export function dailyRideGate(rules, started, earnedIds = []) {
  * appends when launched with --demo or TANDEMONIUM_DEMO=1), or an explicit
  * flag from the Steam side.
  */
-export function resolveIsDemo(search, steamFlag) {
+export function resolveIsDemo(search, steamFlag, build = BUILD_EDITION) {
+  // a demo build is the demo, whatever the address or the launch options say (js/edition-build.js)
+  if (build === 'demo') return true;
   let demo = false;
   try { demo = new URLSearchParams(search || '').get('demo') === '1'; } catch { /* bad input */ }
   return demo || !!steamFlag;
@@ -135,23 +139,13 @@ export function nextAllowedLevel(levels, currentId, rules, isLocked = () => fals
 }
 
 /**
- * Room camera + microphone (WebRTC media) — #400 D7. Multiplayer itself is
- * NOT behind this: rooms, data channels, co-op and versus always work. Off in
- * every edition unless `?media=1` is passed, so nothing ever prompts for a
- * camera or mic by default.
- */
-export function resolveMediaEnabled(search) {
-  try { return new URLSearchParams(search || '').get('media') === '1'; } catch { return false; }
-}
-
-/**
  * URL params that define the edition/session and must survive URL tidying and
  * travel in every invite link (PR #397 B4a): without them a reload or an
  * invite drops a demo player into the full game.
  */
-export const CARRIED_PARAMS = Object.freeze(['demo', 'media']);
+export const CARRIED_PARAMS = Object.freeze(['demo']);
 
-/** `search` reduced to the carried params, as '?demo=1&media=1' or ''. */
+/** `search` reduced to the carried params, as '?demo=1' or ''. */
 export function carriedQuery(search) {
   const out = new URLSearchParams();
   try {
@@ -163,14 +157,13 @@ export function carriedQuery(search) {
 }
 
 /**
- * Room join link: `${base}?room=CODE` plus demo=1 / media=1 when this side is
- * on the demo / has room media on, so the partner opens the same edition.
+ * Room join link: `${base}?room=CODE` plus demo=1 when this side is on the
+ * demo, so the partner opens the same edition.
  */
-export function buildJoinUrl(base, code, { demo = false, media = false } = {}) {
+export function buildJoinUrl(base, code, { demo = false } = {}) {
   const p = new URLSearchParams();
   p.set('room', code);
   if (demo) p.set('demo', '1');
-  if (media) p.set('media', '1');
   return base + '?' + p.toString();
 }
 
@@ -291,7 +284,6 @@ export function levelSyncVerdict(rules, level, msg = {}) {
 // ── cached, browser-facing ──────────────────────────────────
 
 let _rules = null;
-let _media = null;
 
 export function getEditionRules() {
   if (_rules) return _rules;
@@ -304,10 +296,4 @@ export function getEditionRules() {
 
 export function isDemoEdition() {
   return getEditionRules().isDemo;
-}
-
-export function isMediaEnabled() {
-  if (_media !== null) return _media;
-  _media = resolveMediaEnabled(typeof location !== 'undefined' ? location.search : '');
-  return _media;
 }

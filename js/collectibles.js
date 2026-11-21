@@ -409,7 +409,7 @@ export class CollectibleManager {
 
       // FCFS collection — first team within radius takes it
       const radius = this._tutorialRadius || COLLECT_RADIUS;
-      let taken = false;
+      let got = false;
       for (let a = 0; a < anchors.length; a++) {
         const dx = anchors[a].position.x - worldX;
         const dz = anchors[a].position.z - worldZ;
@@ -423,11 +423,11 @@ export class CollectibleManager {
             this._pool[item.poolIdx].itemIdx = -1;
             item.poolIdx = -1;
           }
-          taken = true;
+          got = true;
           break;
         }
       }
-      if (taken) continue;
+      if (got) continue;
 
       // Assign pool mesh if not already assigned
       if (item.poolIdx < 0) {

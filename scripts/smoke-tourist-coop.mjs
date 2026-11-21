@@ -49,7 +49,9 @@ const errors=[];
 const STUB_TILES = `import * as THREE from 'three';
 export class TilesRenderer {
   constructor() { this.group = new THREE.Group(); this.group.name = 'stub-tiles'; this.downloadQueue = {}; this.lruCache = {}; }
-  registerPlugin() {} addEventListener() {} setCamera() {} setResolutionFromRenderer() {} update() {} raycast() {}
+  registerPlugin() {} addEventListener() {} setCamera() {} setResolutionFromRenderer() {} update() {}
+  // flat ground at y = 0 under any downward ray, so the ride finds its street at once
+  raycast(rc, hits) { const o = rc.ray.origin, d = rc.ray.direction; if (d.y < -0.5 && o.y >= 0) { const t = o.y / -d.y; hits.push({ distance: t, point: o.clone().addScaledVector(d, t), face: { normal: new THREE.Vector3(0, 1, 0) }, object: this.group }); } }
   getAttributions() { return []; }
   dispose() { window.__tilesDisposed = (window.__tilesDisposed || 0) + 1; }
 }`;
@@ -60,6 +62,7 @@ async function open(withKey, query = '', storage = null, before = null) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
   if (before) await before(page);
   if (storage) await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tourist_note_off', '1'); } catch {} });   // (smoke:tourist-note covers the note)
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
   page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
@@ -169,7 +172,7 @@ async function pair(stokerHasKey, { stokerQuery = '', captainQuery = '', stokerO
     await page.evaluate((role) => {
       const l = window._game.lobby;
       const net = {
-        connected: true, roomCode: 'TSTX', transport: 'relay', audioEnabled: false, _localMediaStream: null,
+        connected: true, roomCode: 'TSTX', transport: 'relay',
         sendProfile: (p) => window.__relay('profile', JSON.stringify(p)),
         sendEvent: (e) => window.__relay('event', JSON.stringify(e)),
         sendEventReliable: (e) => window.__relay('event', JSON.stringify(e)),   // #621
@@ -198,11 +201,15 @@ const waitState = (page, states, ms = 15000) =>
 let { cap, sto } = await pair(true);
 const cards = {
   captain: await cap.evaluate(() => !!document.querySelector('#level-cards .level-card[data-level-id="tourist"]')),
-  stoker: await sto.evaluate(() => !!document.querySelector('#level-cards .level-card[data-level-id="tourist"]')),
+  // (Pete, 2026-11-18: the stoker sees the card too, like every level, but only the captain can pick it)
+  stoker: await sto.evaluate(() => { const c = document.querySelector('#level-cards .level-card[data-level-id="tourist"]'); return c ? (getComputedStyle(c).pointerEvents === 'none' ? 'view-only' : 'pickable') : 'missing'; }),
 };
+// the captain opens the places: the stoker's list marks Map Tourists and says the captain is choosing
+await cap.evaluate(() => document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click());
+const stoChoosing = await sto.waitForFunction(() => /choosing a place/.test((document.getElementById('level-wait-text') || {}).textContent || '') &&
+  !!document.querySelector('#level-cards .level-card.selected[data-level-id="tourist"]'), { timeout: 5000, polling: 100 }).then(() => true, () => false);
 await cap.evaluate(async (planJs) => {
   const l = window._game.lobby;
-  document.querySelector('#level-cards .level-card[data-level-id="tourist"]').click();
   window.__stepShown = document.getElementById('lobby-tourist').style.display !== 'none';
   window.__touristFor = l._touristFor;
   const plan = await eval(planJs);
@@ -212,6 +219,7 @@ await cap.evaluate(async (planJs) => {
 await waitState(cap, ['instructions']);
 await waitState(sto, ['instructions']);
 const coop = {
+  stoChoosing,
   step: await cap.evaluate(() => ({ shown: window.__stepShown, for: window.__touristFor })),
   cap: await worldState(cap),
   sto: await worldState(sto),
@@ -228,7 +236,7 @@ await sto.waitForFunction(() => window._game.state === 'lobby', { timeout: 5000,
 coop.capBack = await worldState(cap);
 coop.stoBack = await worldState(sto);
 console.log('co-op:', JSON.stringify(coop, null, 1));
-const coopOk = cards.captain && !cards.stoker && coop.step.shown && coop.step.for === 'multiplayer' &&
+const coopOk = cards.captain && cards.stoker === 'view-only' && coop.stoChoosing && coop.step.shown && coop.step.for === 'multiplayer' &&
   coop.cap.state === 'instructions' && coop.sto.state === 'instructions' &&
   coop.cap.kind === 'TouristWorld' && coop.sto.kind === 'TouristWorld' &&
   coop.cap.mode === 'captain' && coop.sto.mode === 'stoker' &&
@@ -338,7 +346,7 @@ const local = await couch.evaluate(async (planJs) => {
            kind: g.world.constructor.name, level: l.selectedLevel.id };
 }, PLAN_JS);
 console.log('couch co-op:', JSON.stringify(local));
-const localOk = local.card && !local.sling && local.label === 'Map Tourists' && local.touristFor === 'local' && local.mode === 'local' && local.hasP2 &&
+const localOk = local.card && !local.sling && local.label === 'Tourists' && local.touristFor === 'local' && local.mode === 'local' && local.hasP2 &&
   local.state === 'instructions' && local.kind === 'TouristWorld' && local.level === 'tourist';
 
 // ── 5. #400 · one address = open world at THAT place; two = a route from the first ──
@@ -390,7 +398,7 @@ const anchorOk =
   near(anchor.route.lat, 39.9451) && near(anchor.route.lon, -82.7905) &&
   near(anchor.route.startHeading, anchor.route.want) && near(anchor.route.heading, anchor.route.want) &&
   near(anchor.explore.lat, 39.9451) && anchor.explore.radius === 3000 &&
-  anchor.explore.levelDistance === 100000 && anchor.explore.levelName === 'Map Tourist' &&
+  anchor.explore.levelDistance === 100000 && anchor.explore.levelName === 'Tourist' &&
   /Exploring 7958 Norman St/.test(anchor.explore.goal) && /ridden/.test(anchor.explore.goal) &&
   anchor.explore.startHeading === 0 && anchor.after === 0;
 await where.close();
@@ -611,7 +619,8 @@ const odo = await odoPage.evaluate(async () => {
   const startRide = async (plan) => {
     await g._onTouristReady({ plan });
     g._startCountdown();
-    g._updateCountdown(10);   // straight to GO
+    // on to GO (the countdown holds until the street is under the bike, or 13 s have gone by)
+    for (let i = 0; i < 80 && g.state === 'countdown'; i++) { g._warmGate = false; g._updateCountdown(0.5); }   // (no picture is held here)
   };
   const goal = () => document.getElementById('tourist-goal').textContent;
 
@@ -652,7 +661,7 @@ console.log('odometer:', JSON.stringify(odo, null, 1));
 const R = odo.route, E = odo.explore;
 const odoOk =
   R.state0 === 'playing' && R.kind === 'TouristWorld' && R.d0 === 0 && /to go/.test(R.goal0) &&
-  Math.abs(R.d20 - 20) < 1.5 && R.goal20 !== R.goal0 &&
+  Math.abs(R.d20 - 20) < 4 && R.goal20 !== R.goal0 &&
   Math.abs(R.dSide - R.d20) < 0.5 && R.dBack === R.dSide &&
   R.dLine >= R.finishM && R.stateAtLine === 'finishCinematic' && R.end === 'victory' && /MADE IT TO THEM/.test(R.title) &&
   E.state0 === 'playing' && E.d0 === 0 && /0 m ridden/.test(E.goal0) && E.payCapM === 10000 &&

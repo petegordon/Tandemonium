@@ -204,7 +204,8 @@ npm run smoke:phone-pad      # phone remote end to end (wrangler dev relay + two
 npm run smoke:economy        # one Tandem Token wallet: tokens on the road, ride payouts, garage, stage gates
 npm run smoke:achievements   # achievements wired end to end, badge screen
 npm run smoke:helping-hand   # repeated checkpoint failures get easier, visibly
-npm run smoke:no-media       # room camera/mic stays off unless ?media=1
+npm run smoke:no-media       # no room camera/mic: nothing asks for one, with or without ?media=1
+npm run smoke:preview        # a PR preview holds only the heavy files the PR changed; the rest come from the live game (#760)
 npm run smoke:clip-share     # iPhone clip share: full / short (10 s) choice, Save Video hint (#408)
 npm run smoke:physics        # the Rapier physics sidecar
 npm run smoke:controller-overlay  # the controller overlay HUD scenarios

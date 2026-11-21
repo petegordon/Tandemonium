@@ -159,8 +159,11 @@ uf-system-bar#lobby-bar { display: none; }
   body > #profile-popup.bar-popup .profile-popup-name { font-size: var(--uf-size-md) !important; }
   /* "Signed in with Steam + Discord": readable from the couch (was xs at 45%). */
   body > #profile-popup.bar-popup .profile-popup-email { font-size: var(--uf-size-sm) !important; color: rgba(255,255,255,0.8) !important; }
-  body > #profile-popup.bar-popup button { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
+  /* (not the shared elements' buttons, [data-part]: those are sized by their element, lab #152) */
+  body > #profile-popup.bar-popup button:not([data-part]) { display: block; width: 100%; box-sizing: border-box; font-size: var(--uf-size-sm) !important; padding: .6em 1em !important; margin: var(--uf-space-2) 0 0 !important; border-radius: var(--uf-radius-md) !important; }
   body > #profile-popup.bar-popup #profile-popup-signin { padding: 0 !important; }
+  /* lab #152 · the shared elements at the TV's size: one font-size, everything inside is em */
+  body > #profile-popup.bar-popup uf-signin, body > #profile-popup.bar-popup uf-profile-card { font-size: var(--uf-size-sm); }
   /* The pad's ring sits inside the button here: the default ring is drawn 3px
      outside it with a glow, which covered the "Signed in with…" line above and
      ran over the system bar below. */
@@ -224,8 +227,18 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-host.host-online-on #host-local > h3, #lobby-host.host-online-on #host-local > p,
   #lobby-host.host-online-on #host-roster, #lobby-host.host-online-on #btn-host-local-next { opacity: .4; }
 }
-/* Narrow layouts have no local seats: the Local button never shows there. */
-@media (max-width: 1023px) { #btn-host-local-next { display: none; } }
+/* Narrow layouts have no local seats: the Local button never shows there... */
+@media (max-width: 1023px) {
+  #btn-host-local-next { display: none; }
+  /* ...except for a bot. A phone's room offers the same back seat as the TV's (Pete, 2026-11-18):
+     the Back seat row and RIDE WITH <BOT>, under the room code; the rest of the Local column stays away. */
+  /* (first on the screen: someone who wants the bot should not have to scroll past a greyed CHOOSE LEVEL to find it) */
+  #lobby-host[active].host-bot-on { display: flex !important; flex-direction: column; align-items: center; }
+  #lobby-host[active].host-bot-on #host-local { order: -1; display: grid; gap: 8px; justify-items: center; margin: 0 0 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,.14); width: 100%; }
+  #lobby-host[active].host-bot-on #host-local > :not(#host-bot-row):not(#btn-host-local-next) { display: none !important; }
+  #lobby-host[active].host-bot-on #btn-host-local-next { display: inline-flex; }
+  #lobby-host.host-online-on #host-local { display: none !important; }
+}
 
 /* ── Join with a code: kit keypad (#428 round 3) ── */
 .join-tv { display: none; }

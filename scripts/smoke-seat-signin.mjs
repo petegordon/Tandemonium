@@ -336,9 +336,9 @@ const cardClick = (page, n, sel) => page.evaluate(([k, s]) => { const b = docume
     open: document.getElementById('profile-popup').classList.contains('visible'),
     prompt: !document.getElementById('profile-popup-prompt').hidden,
     back: document.getElementById('profile-popup-back').textContent,
-    focus: document.querySelector('#profile-popup .gamepad-focus')?.id || null,
+    focus: (() => { const f = document.querySelector('#profile-popup .gamepad-focus'); return f ? window._game.lobby._profileItemName(f) : null; })(),
   }));
-  check(shown && pop.open && pop.prompt && pop.back === 'NOT NOW' && pop.focus === 'profile-popup-link-discord', 'SS-05: after a ride, the Profile card asks once: reason, LINK DISCORD focused, NOT NOW', pop);
+  check(shown && pop.open && pop.prompt && pop.back === 'NOT NOW' && pop.focus === 'link:discord', 'SS-05: after a ride, the Profile card asks once: reason, LINK DISCORD focused, NOT NOW', pop);
   await h.shot(page, 'ss05-link-prompt');
   await page.evaluate(() => document.getElementById('profile-popup-back').click());
   const again = await page.evaluate(() => { const l = window._game.lobby; l._linkPromptDue = true; return l.maybePromptLinkDiscord(); });

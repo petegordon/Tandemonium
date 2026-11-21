@@ -11,7 +11,7 @@
 
 import qrcode from '../../shared/ui/third_party/qrcode-generator.js';
 import { SITE_URL } from '../config.js';
-import { buildJoinUrl, isDemoEdition, isMediaEnabled } from '../edition.js';
+import { buildJoinUrl, isDemoEdition } from '../edition.js';
 
 /**
  * The shareable join URL for a room code. In Electron we use the production
@@ -23,8 +23,8 @@ export function joinUrl(code) {
   const baseUrl = isDesktop
     ? SITE_URL
     : window.location.origin + window.location.pathname;
-  // B4a: the partner opens the same edition (demo) and media setting.
-  return buildJoinUrl(baseUrl, code, { demo: isDemoEdition(), media: isMediaEnabled() });
+  // B4a: the partner opens the same edition (demo).
+  return buildJoinUrl(baseUrl, code, { demo: isDemoEdition() });
 }
 
 /** Render the room QR + URL and wire long-press-to-copy. Returns the URL. */

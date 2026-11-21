@@ -259,9 +259,12 @@ async function loadAll() {
       // A panel the worker doesn't know yet (deploy lag) must not blank the page.
       fetchJSON('players').catch(() => null),
     ]);
+    const touristCosts = await fetchJSON('tourist_costs').catch(() => null);   // #824
 
     renderDashboard(overview, daily, funnel, rides, crashes, conversions, network, devices, dda,
                     retention, dropoff, pairs, players);
+    const tc = document.getElementById('tourist-costs');
+    if (tc) tc.innerHTML = renderTouristCosts(touristCosts);
     document.getElementById('status').textContent = 'Updated ' + new Date().toLocaleTimeString();
   } catch (e) {
     document.getElementById('status').textContent = 'Error: ' + e.message;
@@ -308,6 +311,12 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
         </label>
         <div id="players-table" style="margin-top:8px">${renderPlayers(players)}</div>
       </div>
+    </div>
+
+    <!-- #824 · Tourist's Google use -->
+    <div class="section">
+      <h2>Tourist costs</h2>
+      <div class="card" id="tourist-costs"></div>
     </div>
 
     <!-- C-1 · Retention, drop-off, pairs -->
@@ -863,6 +872,29 @@ function fmtMinutes(m) {
   m = Math.round(m || 0);
   return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`;
 }
+/** #824 · an estimate from counts: the Google Cloud billing report is the source of truth. */
+function renderTouristCosts(c) {
+  if (!c) return '<p style="color:#888">No Tourist cost data yet.</p>';
+  const usd = (n) => '$' + Number(n || 0).toFixed(2);
+  const esc = (s) => String(s).replace(/[&<>"]/g, (x) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[x]));
+  const table = (heads, rows) => '<table style="width:100%;font-size:0.85em;margin-top:8px"><thead><tr>'
+    + heads.map((h) => '<th style="text-align:left">' + h + '</th>').join('') + '</tr></thead><tbody>'
+    + (rows.length ? rows.map((r) => '<tr>' + r.map((x) => '<td>' + esc(x) + '</td>').join('') + '</tr>').join('')
+      : '<tr><td colspan="' + heads.length + '" style="color:#888">None yet</td></tr>') + '</tbody></table>';
+  return '<p>Estimated cost: <b>' + usd(c.total_usd) + '</b> · ' + fmt(c.active_players) + ' active players · '
+    + usd(c.cost_per_player) + ' per player. Today of the Google caps: sessions ' + c.today_of_cap.tiles + '% of ' + c.caps.tiles
+    + ', geocoding ' + c.today_of_cap.geocode + '% of ' + c.caps.geocode + ', elevation ' + c.today_of_cap.elevation + '% of ' + c.caps.elevation
+    + '. <span style="color:#888">Compare with the Google Cloud billing report each month.</span></p>'
+    + '<h3 style="font-size:0.9em;margin-top:10px">By month</h3>'
+    + table(['Month', 'Sessions', 'Reused', 'Geocodes', 'Elevations', 'Failed', 'Limit hits', 'Refused', 'Est. cost'],
+      c.months.map((m) => [m.month, fmt(m.tiles), fmt(m.reused), fmt(m.geocode), fmt(m.elevation), fmt(m.failed), fmt(m.limit_sessions + m.limit_addresses), fmt(m.refused), usd(m.cost.total)]))
+    + '<h3 style="font-size:0.9em;margin-top:10px">By day</h3>'
+    + table(['Day', 'Sessions', 'Reused', 'Geocodes', 'Elevations', 'Failed', 'Limit hits', 'Refused'],
+      c.days.slice(0, 31).map((d) => [d.day, fmt(d.tiles), fmt(d.reused), fmt(d.geocode), fmt(d.elevation), fmt(d.failed), fmt(d.limit_sessions + d.limit_addresses), fmt(d.refused)]))
+    + '<h3 style="font-size:0.9em;margin-top:10px">Top players</h3>'
+    + table(['Player', 'Sessions', 'Lookups'], c.top_players.map((p) => [p.who, fmt(p.sessions), fmt(p.lookups)]));
+}
+
 function renderPlayers(p) {
   if (!p) return '<p class="muted">Players needs the latest worker.</p>';
   const filter = playersFilter();

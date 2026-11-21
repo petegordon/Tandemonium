@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FULL_RULES, DEMO_RULES, resolveIsDemo, rulesFor, levelAllowed, resolveMediaEnabled,
+  FULL_RULES, DEMO_RULES, resolveIsDemo, rulesFor, levelAllowed,
   dailyRideGate, bikeAllowed, achievementAllowed
 } from '../../js/edition.js';
 
@@ -53,12 +53,6 @@ test('#641 Daily Ride gate: the demo opens it after the Tutorial and Grandma\'s,
   assert.deepEqual(dailyRideGate(FULL_RULES, 50, []), { ok: true, left: null });
 });
 
-test('room camera/mic is off unless ?media=1', () => {
-  assert.equal(resolveMediaEnabled(''), false);
-  assert.equal(resolveMediaEnabled('?demo=1'), false);
-  assert.equal(resolveMediaEnabled('?media=1'), true);
-});
-
 test('NEXT LEVEL skips levels the edition does not offer, and locked ones', async () => {
   const { nextAllowedLevel } = await import('../../js/edition.js');
   const levels = [
@@ -72,4 +66,16 @@ test('NEXT LEVEL skips levels the edition does not offer, and locked ones', asyn
   assert.equal(nextAllowedLevel(levels, 'grandma', FULL_RULES).id, 'castle');
   assert.equal(nextAllowedLevel(levels, 'grandma', FULL_RULES, l => l.id === 'castle').id, 'daily');
   assert.equal(nextAllowedLevel(levels, 'unknown', FULL_RULES), null);
+});
+
+test('a demo build is the demo whatever the address or launch options say; the repo holds the full game', async () => {
+  // (a full build still shows the demo on request, for trying it)
+  assert.equal(resolveIsDemo('?demo=1', false, 'full'), true);
+  assert.equal(resolveIsDemo('', false, 'full'), false);
+  // no switch turns a demo build into the full game
+  assert.equal(resolveIsDemo('', false, 'demo'), true);
+  assert.equal(resolveIsDemo('?demo=0', false, 'demo'), true);
+  assert.equal(resolveIsDemo('?demo=0&full=1', undefined, 'demo'), true);
+  const { BUILD_EDITION } = await import('../../js/edition-build.js');
+  assert.equal(BUILD_EDITION, 'full', "never commit a demo stamp: `node scripts/set-build-edition.js full` puts it back");
 });

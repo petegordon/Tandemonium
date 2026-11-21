@@ -96,25 +96,12 @@ export class FrontViewCamera {
   }
 
   /** Square sized relative to the smaller screen dimension. Returns the
-   *  top-left CSS position + size. In multiplayer, if the partner webcam PiP is
-   *  on screen (it shares the front-view's lower-right corner), the front view
-   *  stacks directly ABOVE it, right-aligned and taken live from its rect, so
-   *  the two never overlap. Otherwise it sits lower-right, above the pedal bar. */
+   *  top-left CSS position + size: lower-right, above the pedal bar. */
   _computeRect() {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const size = Math.round(Math.min(w, h) * 0.28);
     const margin = Math.round(Math.min(w, h) * 0.035);
-
-    const pip = this._partnerPipRect();
-    if (pip) {
-      const gap = Math.round(Math.min(w, h) * 0.02);
-      // Right edges aligned to the PiP (match its own edge margin); only clamp
-      // enough to keep the square fully on-screen.
-      let cssLeft = Math.max(0, Math.min(pip.right - size, w - size));
-      let cssTop = Math.max(0, pip.top - size - gap);  // parked just above the PiP
-      return { size, cssLeft, cssTop };
-    }
 
     // Clear the bottom pedal bar if it's visible (touch / portrait layout).
     let bottomClear = margin;
@@ -126,20 +113,6 @@ export class FrontViewCamera {
     }
 
     return { size, cssLeft: w - size - margin, cssTop: h - size - bottomClear };
-  }
-
-  /** The partner webcam PiP's on-screen rect when it's actually visible with
-   *  content, else null. The recorder toggles its display when the partner has
-   *  a camera/avatar, so this is how we detect "multiplayer has video there". */
-  _partnerPipRect() {
-    const el = document.getElementById('partner-pip-wrap');
-    if (!el) return null;
-    const cs = getComputedStyle(el);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return null;
-    const r = el.getBoundingClientRect();
-    if (r.width < 4 || r.height < 4) return null;
-    if (r.bottom <= 0 || r.top >= window.innerHeight) return null; // off-screen
-    return r;
   }
 
   _applyRectToFrame(r) {
@@ -297,7 +270,7 @@ export class FrontViewCamera {
 
     const w = window.innerWidth;
     const h = window.innerHeight;
-    // Re-measure on a throttle so the PiP still tracks the partner webcam
+    // Re-measure on a throttle so the PiP still tracks the partner's circle
     // appearing/leaving mid-ride (resize/orientation re-measure immediately),
     // but steady-state frames do no layout reads (#390).
     const now = performance.now();

@@ -18,6 +18,18 @@ const VIEW = { width: 1280, height: 800 };
 const STORAGE = { tandemonium_tutorial_done: 'smoke' };
 
 const ready = (page) => page.waitForFunction(() => !!window._game && !!window._game.lobby && !!window._game.renderer, { timeout: 120000 });
+/**
+ * #736 locked the holiday outfits behind their bikes, so a fresh profile refuses Cyclists and Georgian.
+ * This smoke is about options applying and surviving a restart, so the locks are opened, on every load
+ * (smoke:wardrobe covers the locks).
+ */
+const openOutfitLocks = async (page) => {
+  const stub = () => { const t = setInterval(() => { if (window._game) { window._game._lockedOutfits = () => new Set(); clearInterval(t); } }, 20); };
+  await page.evaluateOnNewDocument(stub);
+  await page.evaluate(stub);
+  await page.waitForFunction(() => window._game && window._game._lockedOutfits().size === 0, { timeout: 30000 }).catch(() => {});
+};
+
 /** Click an Options button that reloads the page, and wait for the new game. */
 async function clickAndReload(page, id) {
   await Promise.all([
@@ -69,6 +81,7 @@ console.log('BL-03 build badge');
 console.log('OP-04 / OP-05 live options');
 {
   const page = await h.gamePage({ viewport: VIEW, storage: STORAGE });
+  await openOutfitLocks(page);
   await openOptions(page);
 
   // FPS readout: on shows it, off hides it, no reload.
@@ -88,6 +101,10 @@ console.log('OP-04 / OP-05 live options');
   await page.waitForFunction(() => window._game.bike && window._game.bike.goose && window._game.bike.goose.riders && window._game.bike.goose.riders.Captain, { timeout: 120000 }).catch(() => {});
   let r = await riders();
   check(r.on && r.goose && r.tone !== 0 && r.front, 'OP-05 boot: riders on (goose tandem, tone mapping, front camera)', r);
+  // #365 · a fresh profile steers controller gyro by the lab's level
+  await page.evaluate(() => window._game._updateOptionsGyroRollUI());
+  const gy = await active(page, ['opt-gyro-zero', 'opt-gyro-gravity', 'opt-gyro-euler']);
+  check(gy['opt-gyro-zero'] && !gy['opt-gyro-gravity'] && !gy['opt-gyro-euler'], 'OP-05 Gyro Steering starts on Level', gy);
   await clickId(page, 'opt-riders-off');
   await page.waitForFunction(() => !window._game._showRiders && !(window._game.bike && window._game.bike.goose), { timeout: 120000 }).catch(() => {});
   r = await riders();
@@ -198,6 +215,7 @@ console.log('OP-07 display testing');
 console.log('OP-08 restart');
 {
   const page = await h.gamePage({ viewport: VIEW, storage: STORAGE });
+  await openOutfitLocks(page);
   await openOptions(page);
   for (const id of ['opt-medium', 'opt-fps-on', 'opt-gyro-gravity', 'opt-physics-off', 'opt-solo-off', 'opt-outfit-georgian']) {
     await clickId(page, id);
