@@ -9,6 +9,8 @@
 // import it; the cached getters at the bottom touch window/location.
 // ============================================================
 
+import { BUILD_EDITION } from './edition-build.js';
+
 /**
  * What the full game allows. Everything on.
  */
@@ -97,7 +99,9 @@ export function dailyRideGate(rules, started, earnedIds = []) {
  * appends when launched with --demo or TANDEMONIUM_DEMO=1), or an explicit
  * flag from the Steam side.
  */
-export function resolveIsDemo(search, steamFlag) {
+export function resolveIsDemo(search, steamFlag, build = BUILD_EDITION) {
+  // a demo build is the demo, whatever the address or the launch options say (js/edition-build.js)
+  if (build === 'demo') return true;
   let demo = false;
   try { demo = new URLSearchParams(search || '').get('demo') === '1'; } catch { /* bad input */ }
   return demo || !!steamFlag;
