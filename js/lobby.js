@@ -3752,7 +3752,7 @@ export class Lobby {
     if (count && this._achievements) {
       if (!this._achTotal) this._achTotal = this._achievements.getAllDefinitions().length;
       const earned = this._achievements.getEarnedIds();
-      const text = `${earned.length} of ${this._achTotal}`;
+      const text = `${this._achievements.earnedCount()} of ${this._achTotal}`;
       if (count.textContent !== text) count.textContent = text;
       if (this._achGoalFor !== text) {
         this._achGoalFor = text;
