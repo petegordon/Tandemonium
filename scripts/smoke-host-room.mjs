@@ -51,11 +51,10 @@ async function link(cap, sto) {
     await page.evaluate((role) => {
       const l = window._game.lobby;
       const net = {
-        connected: false, roomCode: 'TNDM-TSTX', transport: 'relay', audioEnabled: false, _localMediaStream: null,
+        connected: false, roomCode: 'TNDM-TSTX', transport: 'relay',
         sendProfile: (p) => window.__relay('profile', JSON.stringify(p)), sendEvent() {},
         sendState() {}, sendLean() {}, sendPedal() {}, getQualityStats: () => null,
         destroy() { window.__netDestroyed = (window.__netDestroyed || 0) + 1; this.connected = false; },
-        acquireLocalMedia: async () => {}, getRemoteStream: () => null,
       };
       window.__fakeNet = net;
       l.net = net;

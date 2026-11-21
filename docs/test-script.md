@@ -263,7 +263,7 @@ Two devices on different networks for the M rows.
 |---|---|---|---|
 | OC-01 | Captain hosts and gets a room code; the stoker joins with it; both connected over the real relay; the partner shows on the host step | A | `smoke:online` |
 | OC-02 | Room step: both players shown, seat labels right, Start enabled for captain | A | `smoke:host-room` |
-| OC-03 | Camera and mic off by default; turning them on shows PiP both sides | A / M | `smoke:no-media` / — |
+| OC-03 | No room camera or mic (removed 2026-11-20): nothing asks for one, with or without `?media=1`; an older build's camera message and media call are ignored | A | `smoke:no-media` |
 | OC-04 | Ride stays in sync: stoker sees the captain's bike, no rubber-banding | M | `test/unit/remote-bike-state` |
 | OC-05 | Stoker lookahead shows road past the captain view; Chill turns it off | A | `smoke:lookahead` |
 | OC-06 | Sync sprint and emotes reach the other seat | A | `smoke:ping` |
@@ -273,7 +273,6 @@ Two devices on different networks for the M rows.
 | OC-09 | Drop > 20 s: captain "Ride on alone", stoker "Take over the bike"; ride becomes solo | A | `smoke:disconnect` |
 | OC-10 | OC-07 to OC-09 on two real devices (pull the network on one) | M | — |
 | OC-11 | BACK TO ROOM after a ride returns both to level select on the same room, still connected; captain picks, stoker waits | A | `smoke:online` |
-| OC-11h | Camera/mic PiP keep flowing across the return (PeerJS: needs its CDN and signalling server) | M | — |
 | OC-12 | Rejoin after closing the tab | M | — |
 | OC-12b | Rejoin from JOIN A RIDE (#547): RIDE TOGETHER goes straight to Choose your seat (no Recent Rooms pop-up); JOIN A RIDE shows one Rejoin card per room from the last 5 minutes (newest first, code · partner · seat · age), pad focus starts on the newest, and a pick rejoins in the seat you had (back seat → connecting on JOIN A RIDE, front seat → host step); no recent rooms, no row; the row and the keypad fit 1080p and 720p above the bar | A | `smoke:rejoin` |
 | OC-13 | Co-op tutorial: the stoker waits for the captain's countdown, both ride, it completes on both, both return to the room | A | `smoke:online` |

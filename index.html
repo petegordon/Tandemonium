@@ -1537,7 +1537,7 @@
   /* ── Level selector ── */
   #lobby-level {
     /* visibility is uf-flow's (uf-step[active]); no display here */
-    padding: 70px 0 6px;  /* top: space for pip-level-mode circles; bottom: gamepad outline */
+    padding: 70px 0 6px;  /* bottom: gamepad outline */
   }
 
   /* Online room bar on the Level screen: the two seats, compact, above the cards. */
@@ -3589,99 +3589,6 @@
     font-weight: 700;
   }
 
-  /* ── PiP lobby/level modes ──
-     Elements stay in <body> permanently (no appendChild) to avoid iOS
-     video playback death. Positioned via CSS classes toggled by _showStep(). */
-
-  /* ── pip-lobby-mode: ROOM step — hero circles, centered ── */
-  .pip-wrap.pip-lobby-mode {
-    position: fixed !important;
-    z-index: 56;
-    display: block !important;
-    pointer-events: auto;
-  }
-  #selfie-pip-wrap.pip-lobby-mode {
-    top: auto !important;
-    right: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    left: calc(50% - 20vw) !important;
-    transform: translateX(-100%);
-  }
-  #partner-pip-wrap.pip-lobby-mode {
-    top: auto !important;
-    right: auto !important;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px) !important;
-    /* #167: capped by JS so circle + badges stay clear of the right toggle column */
-    left: min(calc(50% + 20vw), var(--pip-partner-max-left, 100vw)) !important;
-    transform: none;
-  }
-  .pip-wrap.pip-lobby-mode .pip-label {
-    font-size: 10px;
-    white-space: nowrap;
-  }
-
-  /* ── pip-level-mode: LEVEL step — scaled down, top-center ── */
-  .pip-wrap.pip-level-mode {
-    position: fixed !important;
-    z-index: 56;
-    display: block !important;
-    pointer-events: auto;
-  }
-  #selfie-pip-wrap.pip-level-mode {
-    bottom: auto !important;
-    right: auto !important;
-    left: 50% !important;
-    top: calc(env(safe-area-inset-top, 0px) + 8px);
-    transform: translate(calc(-100% - 6px), 0) scale(0.75);
-    transform-origin: top right;
-  }
-  #partner-pip-wrap.pip-level-mode {
-    bottom: auto !important;
-    right: auto !important;
-    left: 50% !important;
-    top: calc(env(safe-area-inset-top, 0px) + 8px);
-    transform: translate(6px, 0) scale(0.75);
-    transform-origin: top left;
-  }
-  .pip-wrap.pip-level-mode .pip-label {
-    font-size: 8px;
-    white-space: nowrap;
-  }
-
-  /* Smooth transition between ROOM ↔ LEVEL positions */
-  .pip-wrap.pip-lobby-mode,
-  .pip-wrap.pip-level-mode {
-    transition: top 0.3s ease, transform 0.3s ease;
-  }
-
-  #room-video-area {
-    /* Spacer — PiP elements are fixed-positioned, not children */
-    min-height: 0;
-    margin: 0;
-  }
-
-  /* Mobile ROOM step: collapse center column so toggles are close together.
-     Room code is repositioned fixed between the PiP circles.
-     These are mobile-only — desktop shows them normally via media query override. */
-  /* class-scoped (not #lobby-room #…) so the desktop .lobby-card.room-active rules outrank them without !important */
-  .lobby-step #room-video-area { display: none; }
-
-  /* Mobile room code — body-level element positioned between PiP circles */
-  #mobile-room-code {
-    position: fixed;
-    z-index: 57;
-    /* Same bottom as PiP circles + half circle height (40px) to vertically center */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 14vh + 60px + 40px + var(--pip-room-code-lift, 0px));
-    left: var(--pip-room-code-left, 50%); /* #167: follows the capped partner circle */
-    transform: translateX(-50%);
-    font-size: 10px;
-    color: var(--uf-color-accent);
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-shadow: 0 0 8px rgba(68,255,102,0.4);
-    pointer-events: none;
-    white-space: nowrap;
-  }
   .level-card.selected {
     border-color: rgba(60,200,80,0.7);
     background: rgba(60,200,80,0.15);
@@ -4187,7 +4094,7 @@
     color: var(--uf-color-accent);
   }
 
-  /* ── Selfie / Partner PiP ── */
+  /* ── The room's two picture circles (mine, my partner's) ── */
   .pip-wrap {
     position: fixed;
     z-index: 11;
@@ -4195,7 +4102,7 @@
     pointer-events: none;
     text-align: center;
   }
-  #selfie-pip-wrap {
+  #self-pip-wrap {
     bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
     left: 14px;
   }
@@ -4473,7 +4380,7 @@
     border-radius: 50%;
     border: 2.5px solid #fff;
     object-fit: cover;
-    object-position: center 25%; /* shift crop down — face is usually in lower portion when phone held upright */
+    object-position: center 25%;
     display: block;
     background: #000;
   }
@@ -5035,52 +4942,7 @@
     #lobby-join { gap: calc(4 * var(--ls)); padding-top: calc(8 * var(--ls)); }
 
 
-    /* Desktop ROOM: video as rectangles with small rounded corners */
-    .pip-wrap.pip-lobby-mode .pip-video {
-      width: calc(55 * var(--ls));
-      height: calc(70 * var(--ls));
-      border-radius: calc(4 * var(--ls));
-      border-width: calc(1.5 * var(--ls));
-    }
-    .pip-wrap.pip-lobby-mode .pip-badges {
-      width: calc(55 * var(--ls));
-      height: calc(70 * var(--ls));
-    }
-    .pip-wrap.pip-lobby-mode .pip-badge {
-      width: calc(10 * var(--ls));
-      height: calc(10 * var(--ls));
-      font-size: calc(6 * var(--ls));
-      line-height: calc(9 * var(--ls));
-      top: calc(30 * var(--ls));
-      left: calc(22.5 * var(--ls));
-    }
     #level-wait-text { font-size: calc(14 * var(--ls)); }
-    /* Hide mobile room code overlay on desktop (created by JS when isMobile is true on Mac trackpad) */
-    #mobile-room-code { display: none !important; }
-    /* ROOM step — each PiP positioned over its slot container via per-slot CSS vars */
-    #selfie-pip-wrap.pip-lobby-mode {
-      bottom: auto !important;
-      top: var(--pip-captain-top, 50%) !important;
-      left: var(--pip-captain-left, 50%) !important;
-      transform: translate(-50%, -50%);
-    }
-    #partner-pip-wrap.pip-lobby-mode {
-      bottom: auto !important;
-      top: var(--pip-stoker-top, 50%) !important;
-      left: var(--pip-stoker-left, 50%) !important;
-      transform: translate(-50%, -50%);
-    }
-    .pip-wrap.pip-lobby-mode .pip-label { display: none; }
-    /* LEVEL step — scaled down circles above cards */
-    #selfie-pip-wrap.pip-level-mode {
-      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
-      transform: translate(calc(-100% - 6 * var(--ls)), 0) scale(0.7);
-    }
-    #partner-pip-wrap.pip-level-mode {
-      top: calc(env(safe-area-inset-top, 0px) + 8 * var(--ls));
-      transform: translate(calc(6 * var(--ls)), 0) scale(0.7);
-    }
-    .pip-wrap.pip-level-mode .pip-label { font-size: calc(8 * var(--ls)); }
 
     /* Auth / user info */
     .lobby-auth-btn {
@@ -5420,20 +5282,17 @@
   </svg>
 </button>
 
-<!-- Selfie & partner PiP videos -->
-<div id="selfie-pip-wrap" class="pip-wrap">
-  <video id="selfie-pip" class="pip-video" playsinline muted></video>
-  <img id="selfie-pip-avatar" class="pip-video" style="display:none;" alt="">
-  <span class="pip-label" id="selfie-pip-label"></span>
-  <div class="pip-badges" id="selfie-badges"></div>
+<!-- The online room's two picture circles: my picture and my partner's -->
+<div id="self-pip-wrap" class="pip-wrap">
+  <img id="self-pip-avatar" class="pip-video" style="display:none;" alt="">
+  <span class="pip-label" id="self-pip-label"></span>
+  <div class="pip-badges" id="self-badges"></div>
 </div>
 <div id="partner-pip-wrap" class="pip-wrap">
-  <video id="partner-pip" class="pip-video" playsinline muted></video>
   <img id="partner-pip-avatar" class="pip-video" style="display:none;" alt="">
   <span class="pip-label" id="partner-pip-label"></span>
   <div class="pip-badges" id="partner-badges"></div>
 </div>
-<audio id="partner-audio" playsinline style="display:none;"></audio>
 
 <div id="status"></div>
 <div id="checkpoint-flash">CHECK POINT</div>
@@ -6306,25 +6165,11 @@ ON</button>
       </div>
 
       <!-- ── COMPONENT: Right Toggle Column ──
-           Camera / Audio / Joystick / Motion / Music permission toggles.
+           ALL / Joystick / Motion / Music toggles.
            Persistent across steps, hidden on join step. -->
       <div class="lobby-toggles lobby-right-col">
         <div class="lobby-toggle-col">
           <button class="lobby-toggle" id="toggle-all" title="All permissions" style="font-size:10px;font-weight:700;letter-spacing:0.5px">ALL</button>
-          <button class="lobby-toggle" id="toggle-camera" title="Camera">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="2" y="5" width="11" height="10" rx="1.5"/>
-              <path d="M13 8.5l5-2.5v8l-5-2.5"/>
-            </svg>
-          </button>
-          <button class="lobby-toggle" id="toggle-audio" title="Audio">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="7.5" y="2" width="5" height="10" rx="2.5"/>
-              <path d="M5 9a5 5 0 0 0 10 0"/>
-              <line x1="10" y1="14" x2="10" y2="18"/>
-              <line x1="7" y1="18" x2="13" y2="18"/>
-            </svg>
-          </button>
         </div>
         <div class="lobby-toggle-col">
           <div style="position:relative">

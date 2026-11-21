@@ -28,9 +28,6 @@ module.exports = {
     // halves; let them through as-is.
     osxUniversal: { x64ArchFiles: '**/{koffi,steamworks_sdk}/**' },
     extendInfo: {
-      NSCameraUsageDescription: 'Tandemonium uses your camera for the partner video in online rides and for ride clips.',
-      NSMicrophoneUsageDescription: 'Tandemonium uses your microphone for voice in online rides and for ride clips.',
-      NSCameraUseContinuityCameraDeviceType: true,
       NSBluetoothAlwaysUsageDescription: 'Tandemonium reads Bluetooth controllers for steering and gyro.',
       LSMinimumSystemVersion: '11.0',
     },

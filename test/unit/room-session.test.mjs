@@ -17,13 +17,11 @@ class FakeNet {
     this.roomCode = null;
     this._destroyed = false;
     this.destroyCount = 0;
-    this.media = null;
     for (const k of FakeNet.CALLBACKS) this[k] = null;
   }
   generateRoomCode() { return 'TNDM-' + 'ABCDEFGH'.slice(codeSeq % 5, codeSeq++ % 5 + 4); }
   enterRoom(code, role) { this.roomCode = code; this.role = role; this.entered.push([code, role]); }
   retryWithToken(t) { this.retried.push(t); }
-  async acquireLocalMedia(cam, mic) { this.media = [cam, mic]; }
   destroy() { this._destroyed = true; this.destroyCount++; this.connected = false; }
   // relay events, as RoomTransport fires them
   open() { if (this.onRoomJoined) this.onRoomJoined(); }
@@ -32,7 +30,7 @@ class FakeNet {
   profile(p) { if (this.onProfileReceived) this.onProfileReceived(p); }
 }
 FakeNet.CALLBACKS = ['onRoomJoined', 'onConnected', 'onDisconnected', 'onAuthError', 'onProfileReceived', 'onPartnerLeft',
-  'onReconnecting', 'onRemoteStream', 'onP2PUpgrade', 'onPedalReceived', 'onStateReceived', 'onLeanReceived', 'onEventReceived'];
+  'onReconnecting', 'onP2PUpgrade', 'onPedalReceived', 'onStateReceived', 'onLeanReceived', 'onEventReceived'];
 
 class FakeStore {
   constructor(now = () => 0) { this.rooms = new Map(); this.log = []; this.now = now; }
@@ -78,7 +76,6 @@ function setup({ step = 'host', token = null } = {}) {
   const host = {
     step,
     replaceNet: () => { calls.push(['replaceNet']); return ns.replace(); },
-    media: () => ({ camera: true, audio: false, cameraPermitted: true, audioPermitted: false }),
     newRoom: (kind) => calls.push(['newRoom', kind]),
     status: (seat, text, cls) => statuses[seat].push([text, cls]),
     showCode: (text) => calls.push(['showCode', text]),
@@ -124,8 +121,8 @@ test('create: opens a captain room, saves it once the relay has us, opens the ro
   const net = ns.net;
   assert.deepEqual(net.entered, [[code, 'captain']]);
   assert.equal(net._fallbackUrl, 'ws://relay');
-  assert.equal(net.cameraEnabled, true);
-  assert.equal(net.audioEnabled, false);
+  assert.equal('cameraEnabled' in net, false);   // no room camera/mic settings on the transport
+  assert.equal('audioEnabled' in net, false);
   assert.equal(net._relayToken, 'tok');
   assert.deepEqual(calls.slice(0, 3), [['replaceNet'], ['newRoom', 'create'], ['showCode', '----']]);
   assert.ok(events.some((e) => e[0] === 'room_create'));
@@ -182,11 +179,10 @@ test('auth refusal: the stoker retries and, on the join step only, queues the co
   assert.equal(rs.pendingJoinCode, 'TNDM-WXYZ');
 });
 
-test('rejoin: same seat and code, media first, the partner\'s early messages buffered for the room screen', async () => {
+test('rejoin: same seat and code, the partner\'s early messages buffered for the room screen', async () => {
   const { rs, ns, store, calls, last, t } = setup();
   await rs.rejoin({ roomCode: 'TNDM-ABCD', role: 'stoker' });
   const net = ns.net;
-  assert.deepEqual(net.media, [true, false]);
   assert.deepEqual(net.entered, [['TNDM-ABCD', 'stoker']]);
   assert.deepEqual(calls[1], ['newRoom', 'rejoin']);
   assert.deepEqual(last('join'), ['Rejoining room...', '']);

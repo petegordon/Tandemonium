@@ -48,7 +48,6 @@ await page.evaluate(() => {
   l._replaceNet = () => {
     const n = orig();
     l.net.enterRoom = (code, role) => { l.net.roomCode = code; l.net.role = role; window.__entered.push([code, role]); };
-    l.net.acquireLocalMedia = async () => {};
     l.net.retryWithToken = () => { window.__retried++; };
     return n;
   };

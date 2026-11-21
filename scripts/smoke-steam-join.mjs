@@ -38,7 +38,6 @@ const stubRooms = (page) => page.evaluate(() => {
       net.roomCode = code; net.role = role; window.__entered.push([code, role]);
       if (role === 'captain') setTimeout(() => net.onRoomJoined && net.onRoomJoined(), 50);
     };
-    net.acquireLocalMedia = async () => {};
     net.retryWithToken = () => {};
     return n;
   };
