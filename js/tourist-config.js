@@ -166,7 +166,7 @@ function lookupFrame() {
   if (_lookupFailedAt && Date.now() - _lookupFailedAt < 60000) return Promise.reject(new Error('lookup page did not load'));
   _lookupFrame = new Promise((resolve, reject) => {
     const frame = document.createElement('iframe');
-    frame.title = 'Map Tourist lookups';
+    frame.title = 'Tourist lookups';
     frame.setAttribute('aria-hidden', 'true');
     frame.tabIndex = -1;
     frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10px;top:-10px;border:0;opacity:0;pointer-events:none';

@@ -62,6 +62,7 @@ async function open(withKey, query = '', storage = null, before = null) {
   const page=await browser.newPage(); await page.setViewport({width:1280,height:800});
   if (before) await before(page);
   if (storage) await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, storage);
+  await page.evaluateOnNewDocument(() => { try { localStorage.setItem('tandemonium_tourist_note_off', '1'); } catch {} });   // (smoke:tourist-note covers the note)
   if (withKey) await page.evaluateOnNewDocument(() => { window.__TOURIST_MAPS_KEY__ = 'test-key-not-real'; });
   await page.setRequestInterception(true);
   page.on('request',(req)=>{const u=req.url(); if(u.startsWith(`http://127.0.0.1:${PORT}`))return req.continue();
@@ -345,7 +346,7 @@ const local = await couch.evaluate(async (planJs) => {
            kind: g.world.constructor.name, level: l.selectedLevel.id };
 }, PLAN_JS);
 console.log('couch co-op:', JSON.stringify(local));
-const localOk = local.card && !local.sling && local.label === 'Map Tourists' && local.touristFor === 'local' && local.mode === 'local' && local.hasP2 &&
+const localOk = local.card && !local.sling && local.label === 'Tourists' && local.touristFor === 'local' && local.mode === 'local' && local.hasP2 &&
   local.state === 'instructions' && local.kind === 'TouristWorld' && local.level === 'tourist';
 
 // ── 5. #400 · one address = open world at THAT place; two = a route from the first ──
@@ -397,7 +398,7 @@ const anchorOk =
   near(anchor.route.lat, 39.9451) && near(anchor.route.lon, -82.7905) &&
   near(anchor.route.startHeading, anchor.route.want) && near(anchor.route.heading, anchor.route.want) &&
   near(anchor.explore.lat, 39.9451) && anchor.explore.radius === 3000 &&
-  anchor.explore.levelDistance === 100000 && anchor.explore.levelName === 'Map Tourist' &&
+  anchor.explore.levelDistance === 100000 && anchor.explore.levelName === 'Tourist' &&
   /Exploring 7958 Norman St/.test(anchor.explore.goal) && /ridden/.test(anchor.explore.goal) &&
   anchor.explore.startHeading === 0 && anchor.after === 0;
 await where.close();
