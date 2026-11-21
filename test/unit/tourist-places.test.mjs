@@ -54,8 +54,8 @@ test('a scenic place becomes a plan with its anchor, so nothing is looked up', (
   assert.match(yours.headline, /of real streets$/);
 });
 
-test('the limit: 6 new places a week, counted from Monday on the player\'s own calendar', () => {
-  assert.deepEqual({ ...NEW_PLACE_LIMIT }, { count: 6, days: 7 });
+test('the limit: 5 new places a week, counted from Monday on the player\'s own calendar', () => {
+  assert.deepEqual({ ...NEW_PLACE_LIMIT }, { count: 5, days: 7 });
   // 2026-11-17 is a Tuesday
   assert.equal(periodStart(at(2026, 11, 17)), '2026-11-16');
   assert.equal(periodStart(at(2026, 11, 16, 0)), '2026-11-16', 'Monday itself');
@@ -65,15 +65,15 @@ test('the limit: 6 new places a week, counted from Monday on the player\'s own c
 
   let store = emptyStore();
   const tue = at(2026, 11, 17);
-  assert.deepEqual(newPlaceGate(store, tue), { limit: 6, used: 0, left: 6, allowed: true, resetsAt: new Date(2026, 10, 23).getTime() });
+  assert.deepEqual(newPlaceGate(store, tue), { limit: 5, used: 0, left: 5, allowed: true, resetsAt: new Date(2026, 10, 23).getTime() });
   store = countNewPlaces(store, 2, tue);
   store = countNewPlaces(store, 1, tue);
-  assert.equal(newPlaceGate(store, tue).left, 3);
+  assert.equal(newPlaceGate(store, tue).left, 2);
   store = countNewPlaces(store, 5, tue);
-  assert.deepEqual([newPlaceGate(store, tue).left, newPlaceGate(store, tue).allowed, store.used], [0, false, 6], 'never past the limit');
+  assert.deepEqual([newPlaceGate(store, tue).left, newPlaceGate(store, tue).allowed, store.used], [0, false, 5], 'never past the limit');
   // next Monday it is a new week
   const mon = at(2026, 11, 23, 8);
-  assert.equal(newPlaceGate(store, mon).left, 6);
+  assert.equal(newPlaceGate(store, mon).left, 5);
   store = countNewPlaces(store, 1, mon);
   assert.deepEqual([store.week, store.used], ['2026-11-23', 1]);
 });
@@ -81,13 +81,13 @@ test('the limit: 6 new places a week, counted from Monday on the player\'s own c
 test('the limit is said plainly, with what never counts and when more come', () => {
   const tue = at(2026, 11, 17);
   const some = limitText(newPlaceGate(countNewPlaces(emptyStore(), 2, tue), tue), tue, 'en-US');
-  assert.equal(some.headline, 'New places this week: 4 of 6 left');
+  assert.equal(some.headline, 'New places this week: 3 of 5 left');
   assert.equal(some.detail, 'Scenic rides and places you have ridden before never count.');
-  const none = limitText(newPlaceGate(countNewPlaces(emptyStore(), 6, tue), tue), tue, 'en-US');
-  assert.equal(none.headline, 'You have looked up this week’s 6 new places');
+  const none = limitText(newPlaceGate(countNewPlaces(emptyStore(), 5, tue), tue), tue, 'en-US');
+  assert.equal(none.headline, 'You have looked up this week’s 5 new places');
   assert.equal(none.detail, 'More on Monday. Scenic rides and your own places are still open.');
   const sun = at(2026, 11, 22);
-  assert.equal(limitText(newPlaceGate(countNewPlaces(emptyStore(), 6, sun), sun), sun, 'en-US').detail,
+  assert.equal(limitText(newPlaceGate(countNewPlaces(emptyStore(), 5, sun), sun), sun, 'en-US').detail,
     'More tomorrow. Scenic rides and your own places are still open.');
   assert.equal(resetDayName(new Date(2026, 10, 23).getTime(), tue, 'en-US'), 'Monday');
 });
