@@ -68,6 +68,12 @@ const TRACKPAD_MODE_NONE = 0x00;
 const FEATURE_REPORT_ID_PRIMARY = 0x01;
 const FEATURE_REPORT_ID_FALLBACK = 0x02;
 
+// The IMU timestamp's clock. Not 1 MHz: five real Puck captures (May-July 2026)
+// all measure 934 ticks per ms against arrival time, and a gyro integrated at
+// this rate matches the accelerometer's tilt (gain 0.99-1.01), where 1 MHz
+// under-rotates by about 7% (#822).
+const IMU_TICKS_PER_MS = 934;
+
 export class SteamControllerDriver extends ControllerDriver {
 
   // The Puck exposes 5 same-vid:pid HID interfaces on ONE physical unit and only
@@ -484,7 +490,7 @@ export class SteamControllerDriver extends ControllerDriver {
     // analysis of a real Test Report capture (see issue #8). The
     // 53-byte STATE report's IMU layout is:
     //
-    //   bytes 29-32 = uint32 LE timestamp (~1 MHz clock tick)
+    //   bytes 29-32 = uint32 LE timestamp (934 ticks per ms, see IMU_TICKS_PER_MS)
     //   bytes 33-38 = 3-axis accelerometer (int16 LE per axis, ±2g full scale)
     //   bytes 39-44 = 3-axis gyroscope    (int16 LE per axis, ±2000 dps)
     //   bytes 45+   = always-zero padding
@@ -534,6 +540,8 @@ export class SteamControllerDriver extends ControllerDriver {
       accel,
       gyroScale: 2000.0 / 32768.0,  // ±2000 dps, 16-bit
       accelScale: 1.0 / 16384.0,    // ±2g, 16-bit (gravity ≈ 16384)
+      imuTicks: data.getUint32(29, true),
+      imuTicksPerMs: IMU_TICKS_PER_MS,
     };
   }
 

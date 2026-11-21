@@ -400,6 +400,8 @@ class HidEntry {
         parsed.gyroScale || (2000 / 32768),
         parsed.accelScale || (1 / 8192),
         performance.now(),
+        parsed.imuTicks,
+        parsed.imuTicksPerMs,
       );
     }
     if (this.slot) this.slot._emit('hid-report', parsed);
