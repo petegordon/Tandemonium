@@ -55,7 +55,7 @@ import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
 import { resolveRider } from './goose-outfits.js';
-import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
+import { RACE_TIERS, botTeamFor, botTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -735,7 +735,6 @@ export class Lobby {
       if (this._previewModel) this._applyPresetToPreview();
     }
     this._syncRoomBikeRows();
-    if (this._botPickerAsked !== undefined) this._showBotPicker(this._botPickerAsked);   // (only where it means something)
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
@@ -1256,6 +1255,12 @@ export class Lobby {
         });
         this._hideLobby();
         this.onVersusReady({ teams: this._versusTeams() });
+      } else if (this._pendingMode === 'versusBots') {
+        // Pete, 2026-11-21: the real couch race, split screen, against a bot team
+        const teams = this._versusBotTeams();
+        analytics.trackEvent('versus_start', { team_a: teams[0].members.length, team_b: 2, bots: this.selectedRace });
+        this._hideLobby();
+        this.onVersusReady({ teams, botTier: this.rideRaceTier() });
       } else {
         // Solo: start game directly
         this._hideLobby();
@@ -9203,7 +9208,6 @@ export class Lobby {
     // a click or tap on the preview itself is the player taking the chooser too
     document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
     this._startChooserAttract();
-    this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
     prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
@@ -9742,7 +9746,6 @@ export class Lobby {
     this.selectedPreset = null;
     hintEl.dataset.special = key;
     hintEl.classList.add('bike-hint-low');   // (Pete, 2026-11-10: every bike's line at the bottom, below the bike and its geese)
-    this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
       nameEl.style.color = '';                       // the logo-coloured name (index.html #bike-name), parchment while locked
@@ -9772,69 +9775,7 @@ export class Lobby {
     hintEl.style.display = 'none';
     hintEl.title = '';
     delete hintEl.dataset.special;
-    this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
     if (!this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });   // not the chooser's own show
-  }
-
-  /**
-   * #644 · Solo Flight's bot picker: a row of the three player bots (Bolt, Rivet, Sprocket) under the bike. Mouse,
-   * touch or a pad (the buttons join the lobby's spatial focus, next to the chooser's ‹ ›) picks who rides the back
-   * seat on a solo ride. Each is its own partner for the partner achievements (js/player-bots.js).
-   */
-  _buildBotPicker() {
-    const el = document.getElementById('bot-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Seat';   // (the back seat: short, so the row fits between LB and RB on a TV)
-    el.appendChild(label);
-    // #644 step 2 · "Nobody" leaves the back seat empty: ride alone (and race a two-bot team alone: Underdog)
-    this._botButtons = [...BOT_IDS, NO_BOT].map((id) => {
-      const b = document.createElement('button');
-      b.className = 'bot-pick';
-      b.type = 'button';
-      b.dataset.bot = id;
-      b.setAttribute('role', 'radio');
-      const bot = BOTS[id];
-      b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
-      b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Nobody'}`;
-      b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as a partner)` : 'Ride alone: the back seat stays empty';
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
-      el.appendChild(b);
-      return b;
-    });
-    this._buildRacePicker();
-    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
-    // a pad already driving the mode step picks them up now, not on the next step change
-    if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
-      this._stepFocus.refreshSpatial(this._stepNavItems());
-    }
-    this._syncBotPicker();
-  }
-
-  /**
-   * #644 step 2 · the Race row: race a bot ghost team (the two bots not on your back seat) on Easy, Medium or Hard,
-   * or not at all. Medium and Hard count as versus races (js/bot-race.js).
-   */
-  _buildRacePicker() {
-    const el = document.getElementById('race-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Race';
-    el.appendChild(label);
-    this._raceButtons = RACE_CHOICES.map((id) => {
-      const b = document.createElement('button');
-      b.className = 'bot-pick race-pick';
-      b.type = 'button';
-      b.dataset.race = id;
-      b.setAttribute('role', 'radio');
-      const tier = RACE_TIERS[id];
-      b.innerHTML = `<span class="bot-dot"></span>${tier ? tier.name : 'Off'}`;
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickRace(id); });
-      el.appendChild(b);
-      return b;
-    });
   }
 
   // ── VERSUS BOTS (Pete, 2026-11-18) ───────────────────────────
@@ -9946,7 +9887,7 @@ export class Lobby {
     const line = document.getElementById('vb-race-line');
     const tier = RACE_TIERS[this.selectedRace];
     if (line) line.textContent = tier
-      ? `Racing ${ghostTeamName(ghostTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (tier.counts ? '' : ' (a warm-up: no versus achievements)')
+      ? `Racing ${botTeamName(botTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (this.selectedRace === 'easy' ? ' (earns versus achievements, except House Champion)' : '')
       : '';
   }
 
@@ -9987,31 +9928,33 @@ export class Lobby {
     return this._pendingMode === 'versusBots' && RACE_TIERS[this.selectedRace] ? this.selectedRace : 'off';
   }
 
-  /** Pick the bot race tier for Solo Flight, or 'off' (saved on this device). */
+  /** VERSUS BOTS' two teams: you (with the back seat's bot, if any) against the other two bots, all on the Solo Flight. */
+  _versusBotTeams() {
+    this._vbInputs = this._vbInputs || {};
+    const bot = (id) => {
+      this._vbInputs[id] = this._vbInputs[id] || new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false });
+      return { n: null, botId: id, input: this._vbInputs[id], type: 'bot', slotId: null, name: BOTS[id].name, label: BOTS[id].name, isP1: false };
+    };
+    const p1 = this._versusP1Descriptor();
+    const you = [{ n: 1, input: this.input, type: p1.type, slotId: 'P1', name: p1.name, label: null, isP1: true }];
+    if (BOTS[this.selectedBot]) you.push(bot(this.selectedBot));
+    return [
+      { id: 'A', bike: SOLO_FLIGHT_BIKE_KEY, members: you },
+      { id: 'B', bike: SOLO_FLIGHT_BIKE_KEY, members: botTeamFor(this.selectedBot).map(bot) },
+    ];
+  }
+
+  /** Pick the bot race tier for VERSUS BOTS (saved on this device). */
   pickRace(id) {
     this.selectedRace = saveRaceChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
     try { analytics.trackEvent('bot_race_pick', { race: this.selectedRace }); } catch { /* offline */ }
   }
 
-  /** Pick the player bot for Solo Flight (saved on this device). */
+  /** Pick the bot for the VERSUS BOTS back seat (saved on this device). */
   pickBot(id) {
     this.selectedBot = saveBotChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
-    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
-  }
-
-  _syncBotPicker() {
     this._prefetchBot(this.selectedBot);
-    for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
-    // the race buttons name who you'd race (the two bots not on your back seat)
-    const team = ghostTeamName(ghostTeamFor(this.selectedBot));
-    for (const b of this._raceButtons || []) {
-      const id = b.dataset.race, tier = RACE_TIERS[id];
-      b.setAttribute('aria-checked', String(id === this.selectedRace));
-      b.title = tier ? `Race ${team}'s ghost tandem: they finish on ${tier.medal} medal time`
-        + (tier.counts ? ' (a versus race)' : ' (a warm-up: no versus achievements)') : 'No race';
-    }
+    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
   }
 
   /**
@@ -10030,27 +9973,6 @@ export class Lobby {
     } catch (e) { this._botFetched.delete(id); }
   }
 
-  _showBotPicker(on) {
-    this._botPickerAsked = !!on;
-    on = on && this._botPickerHere();
-    const el = document.getElementById('bot-picker');
-    if (el) el.style.display = on ? '' : 'none';
-    const race = document.getElementById('race-picker');
-    if (race) race.style.display = 'none';   // (Pete, 2026-11-18: a bot race is a versus race: VERSUS BOTS has it)
-    if (on) this._syncBotPicker();
-  }
-
-  /**
-   * Solo Flight's Seat and Race rows only mean something on the way to a SOLO ride: the main menu and the SOLO
-   * level list. On RIDE TOGETHER's screens they did nothing (Pete, 2026-11-18, on a phone: CHOOSE LEVEL stayed
-   * off with Sprocket picked); a room's bot is its Back seat row.
-   */
-  _botPickerHere() {
-    const s = this._currentStep;
-    if (!s || s === this.modeStep) return true;
-    return s === this.levelStep && (this._pendingMode === 'solo' || this._pendingMode === 'tourist') && !this._hostBotRide;
-  }
-
   _applyPresetToPreview() {
     try { this._applyPresetToPreviewInner(); } finally { this._syncRoomBikeRows(); }
   }
@@ -10060,7 +9982,6 @@ export class Lobby {
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
     if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
-    this._showBotPicker(false);
     if (this._previewModel) this._previewModel.visible = true;
     this._hideSpecialPreviews();
     { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }

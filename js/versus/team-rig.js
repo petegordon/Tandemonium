@@ -109,6 +109,12 @@ export class TeamRig {
 
   get isDuo() { return this.members.length > 1; }
 
+  /** VERSUS BOTS: nobody human on this bike, so the bots pedal and steer it (js/versus/bot-pace.js). */
+  get isBotRiders() { return this.members.every((m) => !!m.botId); }
+
+  /** Two people share the pedals and the lean. A player bot on the back seat only rides along. */
+  get sharesPedals() { return this.members.filter((m) => !m.botId).length > 1; }
+
   /**
    * Pin every arch part to this team's render layer. Called each frame
    * after archIndicator.update() — the arch rebuilds its parts (on the
@@ -127,7 +133,7 @@ export class TeamRig {
     // Solo team: PedalController does its own edge detection off the input.
     // Duo team: SharedPedalController consumes edge-detected taps (captain =
     // first member, stoker = second) and rewards 180°-offset pedaling.
-    this.pedalCtrl = this.isDuo
+    this.pedalCtrl = this.sharesPedals
       ? new SharedPedalController()
       : new PedalController(this.members[0].input);
   }
@@ -140,6 +146,8 @@ export class TeamRig {
     this.collectibles = 0;
     this.tokens = 0;         // #512 · Tandem Tokens this team took (contested)
     this.tokenValue = 0;
+    this.botClockMs = 0;
+    this.botCrank = 0;
     this.bike.resetToDistance(0);
     this._applyStartOffset();
     this.chaseCamera.initialized = false;
