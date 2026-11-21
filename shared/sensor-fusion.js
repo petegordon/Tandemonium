@@ -341,6 +341,16 @@ export class SensorFusion {
   }
 
   /**
+   * The bias a calibration settled on, in degrees per second. A window taken while the controller was moving
+   * commits a wrong bias, which turns into heading drift, so a diagnostic log has to be able to show it (#822).
+   * A warning, because the desktop build's diagnostic log keeps warnings and errors only.
+   */
+  _logCalibCommit(kind, stddev, gyroScale) {
+    const dps = (v) => (v * gyroScale).toFixed(2);
+    console.warn(`Fusion calib committed ${kind} (stddev ${stddev.toFixed(0)}): bias ${dps(this.bias.x)}, ${dps(this.bias.y)}, ${dps(this.bias.z)} deg/s`);
+  }
+
+  /**
    * Ingest one HID report's worth of IMU data. Caller is responsible for
    * unit scales (gyroScale: deg/sec per raw unit; accelScale: g per raw
    * unit — typical values 2000/32768 * π/180 after conversion for gyro,
@@ -394,6 +404,7 @@ export class SensorFusion {
           this.bias.x = meanX;
           this.bias.y = meanY;
           this.bias.z = meanZ;
+          this._logCalibCommit('clean', maxStd, gyroScale);
           this._calibSamples = [];
           this._calibrating = false;
           this._calibBest = null;
@@ -412,7 +423,7 @@ export class SensorFusion {
             this.bias.x = best.meanX;
             this.bias.y = best.meanY;
             this.bias.z = best.meanZ;
-            console.warn(`Fusion calib committed best-of-${FUSION_CALIB_MAX_RETRIES + 1} (stddev ${best.stddev.toFixed(0)})`);
+            this._logCalibCommit(`best-of-${FUSION_CALIB_MAX_RETRIES + 1}`, best.stddev, gyroScale);
           } else {
             console.warn(`Fusion calib aborted — all ${FUSION_CALIB_MAX_RETRIES + 1} captures too noisy (best stddev ${best.stddev.toFixed(0)}); keeping previous bias, letting continuous calibration refine`);
           }
