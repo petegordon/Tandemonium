@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><script>/* PR preview only (scripts/stage-preview.mjs): unchanged heavy files come from the live game through preview-sw.js */(function(){
+var S="/pr-preview/pr-825/",K='preview-sw-reloaded:'+S,sw=navigator.serviceWorker;
+if(!sw){console.warn('[preview] no service worker support: files this preview shares with the live game will be missing');return;}
+function reloadOnce(why){
+try{if(Date.now()-Number(sessionStorage.getItem(K)||0)<10000){console.warn('[preview] not reloading again ('+why+')');return;}sessionStorage.setItem(K,String(Date.now()));}catch(e){return;}
+location.reload();}
+var controlled=!!sw.controller;
+sw.register(S+"preview-sw.js",{scope:S,updateViaCache:'none'}).then(function(r){if(controlled)return r.update();}).catch(function(e){console.warn('[preview] service worker failed to register or update',e);});
+if(controlled)sw.addEventListener('controllerchange',function(){if(performance.now()<20000)reloadOnce('a newer build took over');else console.warn('[preview] a newer build took over; reload to be sure every file is from it');});
+else sw.ready.then(function(){reloadOnce('the service worker is still not in control');});
+})();</script>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<title>Tandemonium · Map Tourist lookups</title>
+<!--
+  Map Tourist's address and ground-height lookups for the DESKTOP build (js/tourist-config.js,
+  "The desktop build's lookups"). Google's Maps JavaScript API authorises the Maps key by the address
+  of the page that loads it; the desktop game's page is tandemonium://app, which the key does not
+  cover, so the desktop game loads this page of the game's own website in a hidden frame and asks it.
+
+  It answers two questions, to the desktop game only:
+    { tt: 'lookup', id, kind: 'geocode',   address }   →  { lat, lon, label }
+    { tt: 'lookup', id, kind: 'elevation', lat, lon }  →  { elevation, source }
+  Nothing else is done with a message, and nothing is kept.
+-->
+</head>
+<body>
+<script src="js/tourist-key.local.js"></script>
+<script type="module">
+  import { geocodeAddress, lookupElevation } from './js/tourist-config.js';
+
+  // Who may ask: the desktop game. (A web page has no use for this: it can load the Maps API itself.)
+  const ASKERS = ['tandemonium://app'];
+  const allowed = (origin) => ASKERS.includes(origin);
+
+  // A frame is a cheap thing to hammer: one answer at a time, and a ceiling per page load.
+  let busy = false;
+  let answered = 0;
+  const MAX_ANSWERS = 60;
+
+  window.addEventListener('message', async (e) => {
+    const m = e.data;
+    if (!allowed(e.origin) || !m || typeof m !== 'object' || m.tt !== 'lookup' || !e.source) return;
+    const reply = (ok, value, error) => e.source.postMessage({ tt: 'lookup-result', id: m.id, ok, value, error }, e.origin);
+    if (busy) { reply(false, null, 'busy'); return; }
+    if (answered >= MAX_ANSWERS) { reply(false, null, 'too many lookups'); return; }
+    busy = true;
+    answered++;
+    try {
+      if (m.kind === 'geocode' && typeof m.address === 'string' && m.address.length <= 200) {
+        reply(true, await geocodeAddress(m.address));
+      } else if (m.kind === 'elevation' && Number.isFinite(m.lat) && Number.isFinite(m.lon) && Math.abs(m.lat) <= 90 && Math.abs(m.lon) <= 180) {
+        reply(true, await lookupElevation(m.lat, m.lon));
+      } else {
+        reply(false, null, 'bad request');
+      }
+    } catch (err) {
+      reply(false, null, String((err && err.message) || err).slice(0, 200));
+    } finally {
+      busy = false;
+    }
+  });
+
+  // tell whoever framed this page that it is listening (only the desktop game acts on it)
+  if (window.parent !== window) {
+    for (const origin of ASKERS) { try { window.parent.postMessage({ tt: 'lookup-ready' }, origin); } catch (e) { /* not that parent */ } }
+  }
+</script>
+</body>
+</html>
