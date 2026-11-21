@@ -8,8 +8,9 @@
 // over the bike's polished gold, each with its own phase and pace, so a glint runs over the frame now and then.
 //
 // Each star sits on a vertex of a gold part and is parented to that part's parent node, so it rides with the
-// part (the frame, the fork, a spinning wheel, a crank) and survives the bike's batching (bike-batch.js hides
+// part (the frame, the fork) and survives the bike's batching (bike-batch.js hides
 // the meshes it merges, never their parents). One draw per parent node; the clock lives in the material.
+// Pete, 2026-11-21: none on the wheels, cranks or pedals, where a glint whirls round with the part.
 
 import * as THREE from 'three';
 import { isMirrorMaterial } from './mirror-env.js';
@@ -46,6 +47,12 @@ const FRAG = /* glsl */`
   }
 `;
 
+/** Is this mesh on a part that spins with the ride (a wheel, a crank, a pedal)? */
+export function isSpinningPart(o, root) {
+  for (let n = o; n && n !== root; n = n.parent) if (/(^|_)(wheel|crank|pedal)/i.test(n.name || '')) return true;
+  return false;
+}
+
 /** Small deterministic random (the same stars every load). */
 function rng(seed) {
   let a = seed >>> 0;
@@ -68,7 +75,7 @@ function rng(seed) {
  */
 export function addBikeSparkle(model, { count = 64, size = 0.1, glow = 1.8, seed = 611 } = {}) {
   const gold = [];
-  model.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && isMirrorMaterial(o.material)) gold.push(o); });
+  model.traverse((o) => { if (o.isMesh && !o.isSkinnedMesh && isMirrorMaterial(o.material) && !isSpinningPart(o, model)) gold.push(o); });
   const material = new THREE.ShaderMaterial({
     uniforms: { uTime: { value: 0 }, uSize: { value: size }, uGlow: { value: glow } },
     vertexShader: VERT,

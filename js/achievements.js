@@ -533,6 +533,12 @@ export class AchievementManager {
     });
   }
 
+  /** How many of today's achievements are earned. Retired ones stay saved but are not counted. */
+  earnedCount() {
+    const current = new Set(ACHIEVEMENTS.map((a) => a.id));
+    return this.getEarnedIds().filter((id) => current.has(id)).length;
+  }
+
   getEarnedIds() {
     return [...this._earned.keys()];
   }
