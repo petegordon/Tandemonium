@@ -80,6 +80,7 @@ function maxedLifetime() {
   const L = emptyStats();
   for (const [k, v] of Object.entries(L)) {
     if (typeof v === 'number' && k !== 'v') L[k] = 1e6;
+    if (k === 'versusEasyWins') L[k] = 0;   // (Easy wins don't count toward House Champion)
     if (typeof v === 'boolean') L[k] = true;
   }
   L.golds = [...MEDAL_LEVELS];
