@@ -4,18 +4,18 @@
 //
 //   SFB-01  locked (under 80 of the 81 solo achievements): a dark silhouette with "n of 80", no bot picker, and the
 //           ride stays on the default bike
-//   SFB-02  unlocked: Solo Flight in colour is the pick; the bot picker shows Bolt, Rivet and Sprocket; the mouse
-//           picks one; a pad moves along the row (D-pad) and picks with A; the choice is saved
-//   SFB-03  a solo ride loads solo_flight_tandem.glb sized like the goose tandem: the player's goose on Seat_Captain,
+//   SFB-02  unlocked: Solo Flight in colour is the pick; the chooser has no bot picker (Pete, 2026-11-21: VERSUS BOTS
+//           and the couch room only) and a SOLO ride leaves the back seat empty, whatever bot was saved
+//   SFB-03  a couch-room bot ride loads solo_flight_tandem.glb sized like the goose tandem: the player's goose on Seat_Captain,
 //           the picked bot (a robot goose, in its colour) on Seat_Stoker; the bike's Ride clip and both geese's
 //           Pedal_PF clips turn with the crank (the stoker's reversed); the wheels/cranks are not merged into the frame
 //   SFB-04  the bot only rides along: the stoker's lean stays 0 and Show Solo never hides it
 //   SFB-05  finishing credits the bot as the partner: rides with Bolt, Rivet and Sprocket earn Social Goose (3
 //           partners) and The Two of Us; each bot's pair stats count on this device; the ride pays Tandem Tokens
 //   SFB-06  co-op modes ride the goose tandem with no bot; a paint preset rides the goose tandem again
-// Screenshots at 1920x1080: the chooser with the bot picker, a ride from the side and from the chase camera.
+// Screenshots at 1920x1080: the chooser, a ride from the side and from the chase camera.
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
-import { installFakeGamepads, fakePads } from './lib/fake-gamepads.mjs';
+import { installFakeGamepads } from './lib/fake-gamepads.mjs';
 import { soloAchievementIds } from '../js/rewards.js';
 
 const h = await startHarness({ port: 8977, outDir: 'tandemonium-solo-flight' });
@@ -52,7 +52,7 @@ check(!c.picker, 'SFB-01: no bot picker while locked', c);
 await locked.close();
 
 // ── SFB-02 unlocked: the picker, by mouse and by pad ──
-console.log('SFB-02 unlocked: the bot picker by mouse and pad');
+console.log('SFB-02 unlocked: no bot picker on the chooser; SOLO rides alone');
 const page = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before: (p) => installFakeGamepads(p, { atBoot: ['xbox'] }),
   // (#736: the Solo Flight's "New bike!" screen already seen, so it doesn't cover the chooser)
   storage: { ...BASE, tandemonium_achievements: earned(solo.slice(1)),
@@ -62,50 +62,22 @@ await toSoloFlight(page);
 await until(page, () => { const sp = (window._game.lobby._specialPreviews || {}).solo_flight; return !!(sp && sp.model && sp.model.visible && !sp.dark); });
 c = await chooser(page);
 check(c.picked === 'solo_flight' && !c.dark && !c.name.startsWith('🔒') && !/Coming soon/.test(c.hint), 'SFB-02: unlocked, Solo Flight in colour is the pick', c);
-check(c.picker && c.bots.map(b => b.text).join(',') === 'Bolt,Rivet,Sprocket,Nobody' && c.bots.filter(b => b.on).length === 1 && c.bot === 'bolt',
-  'SFB-02: the bot picker shows Bolt, Rivet and Sprocket, and Nobody (Bolt by default)', c.bots);
-const rivetBox = await page.evaluate(() => { const r = document.querySelector('.bot-pick[data-bot="rivet"]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
-await page.mouse.click(rivetBox.x, rivetBox.y);
-c = await chooser(page);
-const saved = await page.evaluate(() => localStorage.getItem('tandemonium_player_bot'));
-check(c.bot === 'rivet' && c.bots.find(b => b.on).id === 'rivet' && saved === 'rivet' && c.picked === 'solo_flight', 'SFB-02: a mouse click picks Rivet (saved)', { bot: c.bot, saved });
-await h.shot(page, 'sf-chooser-bot-picker-1080p');
-
-const pads = fakePads(page);
-const pi = 0;   // (plugged at boot: a pad plugged mid-smoke was sometimes never seen headless)
-await until(page, () => window._game.lobby.input && window._game.lobby.input.gamepadConnected, null, 30000);
-// the pad hands the mode step's focusables (the bot buttons among them) to the spatial focus
-const padReady = await until(page, () => window._game.lobby._stepFocus.items.some(e => e.classList && e.classList.contains('bot-pick')), null, 30000);
-if (!padReady) console.log('  (pad focus)', await page.evaluate(() => { const l = window._game.lobby, fc = l._stepFocus;
-  return JSON.stringify({ step: l._currentStep && l._currentStep.id, gp: l.input.gamepadConnected, items: fc.items.map(e => e.id || (e.dataset && e.dataset.bot) || e.tagName), modal: l._activeModal }); }));
-await sleep(800);
-// start on Bolt, D-pad right twice, A
-await page.evaluate(() => {
-  const fc = window._game.lobby._stepFocus, el = document.querySelector('.bot-pick[data-bot="bolt"]');
-  fc._clearSpatialFocus(); fc.focusedEl = el; el.classList.add(fc.focusClass);
+check(!c.picker && c.bots.length === 0, 'SFB-02: the chooser has no bot picker', c.bots);
+const alone = await page.evaluate(() => {
+  const g = window._game, l = g.lobby;
+  l.pickBot('rivet'); l._pendingMode = 'solo'; g.mode = 'solo'; g._applyBikeChoice();
+  return { bot: g._botRide, id: g._botRideId() };
 });
-const inFocus = await page.evaluate(() => window._game.lobby._stepFocus.items.filter(e => e.classList.contains('bot-pick') && e.dataset.bot).length);
-await pads.press(pi, 'RIGHT');
-await sleep(250);
-await pads.press(pi, 'RIGHT');
-await sleep(250);
-const focused = await page.evaluate(() => { const f = window._game.lobby._stepFocus.focusedEl; return f && f.dataset ? f.dataset.bot || f.id : null; });
-await pads.press(pi, 'A');
-await until(page, () => window._game.lobby.selectedBot === 'sprocket', null, 5000);
-c = await chooser(page);
-check(inFocus === 4 && focused === 'sprocket' && c.bot === 'sprocket', 'SFB-02: a pad walks the row with the D-pad and A picks Sprocket', { inFocus, focused, bot: c.bot });
-await pads.press(pi, 'LB');   // LB / RB still cycle the bikes from here
-await sleep(300);
-const afterLb = await page.evaluate(() => window._game.lobby._presetKeys[window._game.lobby._presetIndex]);
-check(afterLb !== 'solo_flight' && !(await chooser(page)).picker, 'SFB-02: LB moves off Solo Flight and the picker goes', afterLb);
-await pads.unplug(pi);
-await toSoloFlight(page);
+check(alone.bot === null && alone.id === null, 'SFB-02: a SOLO ride on the Solo Flight has no bot, even with Rivet saved', alone);
+await h.shot(page, 'sf-chooser-1080p');
 
 // ── SFB-03 a ride ──
 const lobbyRide = async (bot) => {
-  await page.evaluate((b) => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); l.pickBot(b); }, bot);
+  // (the couch room's Back seat row is where a co-op bot is picked)
+  await page.evaluate(() => { const l = window._game.lobby; l._presetIndex = l._presetKeys.indexOf('solo_flight'); l._applyPresetToPreview(); l._showStep(l.modeStep); });
   await page.evaluate(() => document.getElementById('btn-solo').click());
   await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card[data-level-id="grandma"]'), { timeout: 20000 });
+  await page.evaluate((b) => { const l = window._game.lobby; l._hostBotRide = true; l._hostBot = b; }, bot);
   await page.evaluate(() => {
     document.querySelector('#level-cards .level-card[data-level-id="grandma"]').click();
     const d = Array.from(document.querySelectorAll('.difficulty-btn')).find(x => x.dataset.difficulty === 'chill'); d && d.click();
@@ -122,7 +94,7 @@ const seated = (bot) => until(page, (b) => {
   return robot;
 }, bot, 180000);
 
-console.log('SFB-03 a solo ride on Solo Flight with Rivet on the back');
+console.log('SFB-03 a couch-room bot ride on Solo Flight with Rivet on the back');
 await page.evaluate(() => { localStorage.removeItem('tandemonium_bot_pairs'); });
 await lobbyRide('rivet');
 check(await seated('rivet'), 'SFB-03: the ride loads the Penny-Farthing with a robot goose on the back', await page.evaluate(() => ({ path: window._game.bike._modelPath, stoker: (window._game.bike._gooseRiderPaths || {}).Stoker })));
@@ -238,6 +210,7 @@ check(s3.pairs.bolt?.rides === 1 && s3.pairs.sprocket?.rides === 1 && s3.pairs.r
 
 // ── SFB-06 co-op: the Penny-Farthing with two players, no bot (Pete, 2026-11-09); versus keeps the tandem ──
 console.log('SFB-06 co-op rides the Solo Flight with two players; versus and a paint preset ride the tandem');
+await page.evaluate(() => { const l = window._game.lobby; l._hostBotRide = false; l._hostBot = null; });   // (the bot rides above were the couch room's)
 const other = await page.evaluate(() => {
   const g = window._game;
   g.mode = 'local'; g._applyBikeChoice();

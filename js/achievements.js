@@ -490,14 +490,21 @@ export class AchievementManager {
   }
 
   /** Versus: the race is won. */
-  versusFinish(winner, loser, raceDistance) {
+  versusFinish(winner, loser, raceDistance, { easy = false } = {}) {
     if (!winner || !loser) return [];
     const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed, crashes: r.crashCount || 0 });
     const halfLeader = this._versus && this._versus.key === winner.raceManager ? this._versus.halfLeader
       : (this._versus && this._versus.key === loser.raceManager ? this._versus.halfLeader : null);
     const res = versusResult({ winner: team(winner), loser: team(loser), raceDistance, halfLeader });
     this._versus = null;
-    return this.record('versus', res);
+    return this.record('versus', { ...res, easy });
+  }
+
+  /** VERSUS BOTS: the back seat's bot rode a race with you. pair: its {rides, distance (m)} on this device. */
+  botPartner(partnerKey, pair) {
+    this._stats = applyEvent(this._stats, 'botPartner', { partnerKey }, playDayKey());
+    this._saveStats();
+    return this._evaluate({ pairRides: pair.rides, pairDistanceKm: pair.distance / 1000 });
   }
 
   getEarned() {
