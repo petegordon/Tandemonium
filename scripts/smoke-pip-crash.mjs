@@ -35,7 +35,6 @@ async function ride(page, preset) {
   await page.evaluate((p) => {
     const l = window._game.lobby;
     l._presetIndex = Math.max(0, l._presetKeys.indexOf(p)); l._applyPresetToPreview();
-    if (p === 'solo_flight' && l.pickBot) l.pickBot('bolt');
   }, preset);
   await page.evaluate(() => document.getElementById('btn-solo').click());
   await page.waitForFunction(() => !!document.querySelector('#level-cards .level-card[data-level-id="grandma"]'), { timeout: 20000 });
