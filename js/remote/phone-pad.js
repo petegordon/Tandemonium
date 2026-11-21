@@ -445,6 +445,11 @@ function connect() {
     else if (m.type === 'host-left' || m.type === 'waiting') { state.hostHere = false; forgetHost(); setStatus('Waiting for the game…'); }
     else if (m.type === 'seat' && m.label) {
       $('seat-label').textContent = m.label;
+      // #848 · which player this phone is, always on screen, in that player's colour
+      const badge = $('seat-badge');
+      badge.textContent = m.label;
+      badge.hidden = false;
+      badge.style.setProperty('--seat-color', typeof m.color === 'string' && /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#ffffff');
       // #562: an extra seat is told where the game is ("watch the TV").
       if (m.note) setStatus(m.note, true);
     }
@@ -483,7 +488,7 @@ function connect() {
     if (!opened && shared && state.keyIdx + 1 >= state.keys.length) {
       const wrapped = nextSeat();
       if (wrapped) state.failed = (state.failed || 0) + 1;
-      if (wrapped) setStatus('No free seat on the TV right now. Retrying…');
+      if (wrapped) setStatus('All player seats are taken. Retrying…');
       const delay = wrapped ? Math.min(8000, 500 * 2 ** state.retry++) : NEXT_SEAT_MS;
       state.retryTimer = setTimeout(connect, delay);
       return;
