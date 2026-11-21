@@ -14,7 +14,8 @@
 // this and adds the bike codec + protocol.
 // ============================================================
 
-import { RoomTransport as SharedRoomTransport } from '../../shared/rooms/room-transport.js';
+// (rooms 0.2: the relay, the P2P upgrade and camera/mic calls are separate layers; this is all three)
+import { MediaRoomTransport as SharedRoomTransport } from '../../shared/rooms/index.js';
 import {
   MSG_HEARTBEAT,
   TURN_CREDENTIALS_URL, PEERJS_HOST, PEERJS_PORT, PEERJS_PATH, PEERJS_SECURE
