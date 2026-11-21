@@ -55,9 +55,14 @@ export class GyroTip {
     });
     // The sheet starts on its first body item, which here is the option: an A press
     // must dismiss rather than opt out. This frame runs after the sheet's own.
-    sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => {
-      if (sheet.open) focus.setSpatial(sheet.focusables(), ok);
-    }));
+    // (the first time it opens, its controls can take a frame or two to lay out)
+    const land = (tries = 0) => {
+      if (!sheet.open) return;
+      const items = sheet.focusables();
+      if (items.includes(ok)) focus.setSpatial(items, ok);
+      else if (tries < 20) requestAnimationFrame(() => land(tries + 1));
+    };
+    sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => land()));
   }
 
   get _optedOut() {

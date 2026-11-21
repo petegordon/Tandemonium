@@ -8641,7 +8641,7 @@ export class Lobby {
     // controllers that connect async without a 'gamepadconnected' event (e.g.
     // a WebHID DualSense), which otherwise left the mode screen un-navigable
     // until the first _showStep.
-    if (this._stepFocus.items.length === 0) this._applyStepSpatialFocus(this._currentStep);
+    if (this._stepFocus.items.length === 0 && !this._sheetHoldsFocus()) this._applyStepSpatialFocus(this._currentStep);
     // Re-prime edges when returning from a modal (ranLast captured at the top
     // of this poll) so a held button across the transition isn't read as a
     // fresh press.
@@ -8758,6 +8758,11 @@ export class Lobby {
    * (matching the old _applyFocusHighlight gate). Called from _showStep and on
    * gamepad hot-connect. (#318)
    */
+  /** A kit sheet is up (result sheets stay [open] inside hidden screens): its focus is not the step's to take back. */
+  _sheetHoldsFocus() {
+    return [...document.querySelectorAll('uf-sheet[open]')].some((el) => el.getClientRects().length > 0);
+  }
+
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
