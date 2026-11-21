@@ -6,8 +6,8 @@
 //   - Solo Flight (the Penny-Farthing tandem) is the "player bots" reward: any 80 of the 81 solo achievements
 //     (js/rewards.js playerBotsProgress). The player rides captain; a bot rides the back seat.
 //   - The bot JUST RIDES ALONG: it doesn't pedal for the player, doesn't balance, doesn't steer and can't crash the
-//     bike. It rides only on Solo Flight (no versus bot; races are against a bot ghost team, js/bot-race.js).
-//   - Three named bots, each a robot goose in its own colour, picked on the Solo Flight card. Each one counts as a
+//     bike. A player picks one in VERSUS BOTS or the couch room's Back seat row (Pete, 2026-11-21).
+//   - Three named bots, each a robot goose in its own colour. Each one counts as a
 //     separate partner for the partner achievements (Social Goose, Regulars, 5K Together, the co-op six), and a bot
 //     ride pays Tandem Tokens like any multiplayer ride.
 //

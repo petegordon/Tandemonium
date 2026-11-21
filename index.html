@@ -2767,13 +2767,7 @@
   .room-bike-note { font: 600 11px/1 system-ui, sans-serif; color: rgba(255,255,255,0.55); }
   .room-bike-note:empty { display: none; }
   #bike-name.locked { color: #d8c6a4; }   /* a reward bike not earned yet: parchment, same outline */
-  /* #644 · Solo Flight's bot picker: Bolt, Rivet, Sprocket */
-  #bot-picker {
-    display: flex;
-    gap: 6px;
-    justify-content: center;
-    margin-top: 2px;
-  }
+  /* #644 · a bot or race choice (VERSUS BOTS, the couch room's back seat) */
   .bot-pick {
     display: inline-flex;
     align-items: center;
@@ -2796,69 +2790,6 @@
     border-color: var(--bot-color);
     color: #fff;
     background: color-mix(in srgb, var(--bot-color) 28%, rgba(0,0,0,0.6));
-  }
-  /* #644 step 2 · the bot race line during a ride: who you race, and the gap */
-  #bot-race-hud {
-    position: fixed;
-    /* top right, clear of the HUD panel (top left) and of the road ahead, where the ghost rides */
-    top: clamp(10px, 1.4vh, 28px);
-    right: clamp(12px, 1.4vw, 32px);
-    z-index: 30;
-    pointer-events: none;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 2px;
-    padding: clamp(5px, 0.6vw, 10px) clamp(12px, 1.2vw, 22px);
-    border-radius: 999px;
-    background: rgba(10, 14, 24, 0.62);
-    border: 1.5px solid rgba(255,255,255,0.18);
-    color: #fff;
-    font: 700 clamp(13px, 1.25vw, 26px)/1.15 system-ui, sans-serif;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-    white-space: nowrap;
-  }
-  #bot-race-hud[hidden] { display: none; }
-  #bot-race-hud .brh-team { display: flex; align-items: center; gap: 0.35em; }
-  #bot-race-hud .brh-dot {
-    width: 0.62em; height: 0.62em; border-radius: 50%;
-    background: var(--bot-color); box-shadow: 0 0 0.4em var(--bot-color);
-  }
-  #bot-race-hud .brh-name { margin-left: 0.15em; }
-  #bot-race-hud .brh-tier {
-    margin-left: 0.4em; padding: 0.05em 0.5em; border-radius: 999px;
-    background: rgba(255, 211, 77, 0.22); color: #ffd34d; font-size: 0.75em; letter-spacing: 0.04em;
-  }
-  #bot-race-hud .brh-gap { font-size: 1.15em; letter-spacing: 0.02em; }
-  #bot-race-hud[data-state="ahead"] .brh-gap { color: #7dff8a; }
-  #bot-race-hud[data-state="behind"] .brh-gap { color: #ff8a7a; }
-  #bot-race-hud[data-state="even"] .brh-gap { color: #ffd34d; }
-  /* the results screen's race line */
-  .victory-stat.bot-race-result {
-    display: flex; flex-direction: column; align-items: center; gap: 2px; text-align: center;
-  }
-  .victory-stat.bot-race-result strong { font-size: 1.1em; }
-  .victory-stat.bot-race-result[data-won="yes"] strong { color: #ffd34d; }
-  .victory-stat.bot-race-result span { font-size: 0.8em; opacity: 0.8; font-weight: 600; }
-  /* #644 step 2 · the Race row under it: Off, Easy, Medium, Hard */
-  #race-picker {
-    display: flex;
-    gap: 6px;
-    justify-content: center;
-    margin-top: 4px;
-  }
-  .race-pick { --bot-color: #ffd34d; }
-  .race-pick[data-race="off"] { --bot-color: rgba(255,255,255,0.6); }
-  #bot-picker .bot-label, #race-picker .bot-label {
-    min-width: 58px;
-    text-align: right;
-  }
-  #bot-picker .bot-label, #race-picker .bot-label {
-    align-self: center;
-    font: 600 10px/1 system-ui, sans-serif;
-    color: rgba(255,255,255,0.55);
-    margin-right: 2px;
-    white-space: nowrap;
   }
   #bike-hint {
     position: absolute;
@@ -4095,42 +4026,6 @@
   }
 
   /* ── The room's two picture circles (mine, my partner's) ── */
-  .pip-wrap {
-    position: fixed;
-    z-index: 11;
-    display: none;
-    pointer-events: none;
-    text-align: center;
-  }
-  #self-pip-wrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
-    left: 14px;
-  }
-  #partner-pip-wrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
-    right: 14px;
-  }
-
-  /* ── Achievement badges around PiP ── */
-  .pip-badges {
-    position: absolute;
-    width: 80px; height: 80px;
-    top: 0; left: 0;
-    pointer-events: none;
-  }
-  .pip-badge {
-    position: absolute;
-    width: 20px; height: 20px;
-    top: 30px; left: 30px;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.6);
-    border: 1.5px solid #ffcc00;
-    font-size: 11px;
-    line-height: 18px;
-    text-align: center;
-    pointer-events: none;
-  }
-
   /* ── Achievement toast ── */
   #achievement-toast-container {
     position: fixed;
@@ -4374,25 +4269,6 @@
     min-width: 200px;
   }
   #options-close-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
-  .pip-video {
-    width: 80px;
-    height: 80px;
-    border-radius: 50%;
-    border: 2.5px solid #fff;
-    object-fit: cover;
-    object-position: center 25%;
-    display: block;
-    background: #000;
-  }
-  .pip-label {
-    display: block;
-    font-size: 9px;
-    font-weight: bold;
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-    margin-top: 3px;
-    letter-spacing: 0.5px;
-  }
 
   /* ── Clip preview modal ── */
   #clip-preview-modal {
@@ -4598,16 +4474,6 @@
       font-size: calc(14 * var(--ls));
       line-height: calc(18 * var(--ls));
     }
-    #bot-picker {
-      position: absolute;
-      bottom: calc(5 * var(--ls));
-      left: 50%;
-      transform: translateX(-50%);
-      gap: calc(4 * var(--ls));
-      margin: 0;
-      white-space: nowrap;
-    }
-    /* #644 step 2 · two rows under the bike (Seat, Race), sized to fit between LB and RB */
     .bot-pick {
       padding: calc(2 * var(--ls)) calc(4.5 * var(--ls));
       font-size: calc(7 * var(--ls));
@@ -4615,19 +4481,6 @@
       border-width: calc(1.2 * var(--ls));
     }
     .bot-pick .bot-dot { width: calc(6 * var(--ls)); height: calc(6 * var(--ls)); }
-    #bot-picker .bot-label { font-size: calc(7 * var(--ls)); }
-    #bike-preview-wrap #bot-picker { bottom: calc(20 * var(--ls)); gap: calc(3 * var(--ls)); }
-    #race-picker {
-      position: absolute;
-      bottom: calc(5 * var(--ls));
-      left: 50%;
-      transform: translateX(-50%);
-      gap: calc(3 * var(--ls));
-      margin: 0;
-      white-space: nowrap;
-    }
-    #race-picker .bot-label { font-size: calc(7 * var(--ls)); }
-    #bot-picker .bot-label, #race-picker .bot-label { min-width: calc(20 * var(--ls)); }
     #bike-hint {
       position: absolute !important;
       top: calc(12 * var(--ls));
@@ -5282,17 +5135,6 @@
   </svg>
 </button>
 
-<!-- The online room's two picture circles: my picture and my partner's -->
-<div id="self-pip-wrap" class="pip-wrap">
-  <img id="self-pip-avatar" class="pip-video" style="display:none;" alt="">
-  <span class="pip-label" id="self-pip-label"></span>
-  <div class="pip-badges" id="self-badges"></div>
-</div>
-<div id="partner-pip-wrap" class="pip-wrap">
-  <img id="partner-pip-avatar" class="pip-video" style="display:none;" alt="">
-  <span class="pip-label" id="partner-pip-label"></span>
-  <div class="pip-badges" id="partner-badges"></div>
-</div>
 
 <div id="status"></div>
 <div id="checkpoint-flash">CHECK POINT</div>
@@ -5726,10 +5568,6 @@ ON</button>
     <div id="bike-preview-wrap">
       <canvas id="bike-preview-canvas"></canvas>
       <div id="bike-name">Default</div>
-      <!-- #644 · Solo Flight: the player bot who rides the back seat (filled by lobby.js) -->
-      <div id="bot-picker" role="radiogroup" aria-label="Bot on the back seat" style="display:none"></div>
-      <!-- #644 step 2 · Solo Flight: race a bot ghost team (filled by lobby.js) -->
-      <div id="race-picker" role="radiogroup" aria-label="Race a bot team" style="display:none"></div>
     </div>
     <button id="bike-next" class="bike-carousel-nav" aria-label="Next bike"><span class="bike-nav-arrow">&#8250;</span><uf-controller-glyph button="rb" size="lg" class="pad-only"></uf-controller-glyph></button>
   </div>
@@ -6254,7 +6092,7 @@ ON</button>
     <div id="gamepad-back-hint" class="gamepad-back-hint" style="visibility:hidden;">
       <span id="gamepad-back-icon"></span> Back
     </div>
-    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a18975a | 11-21-2026 13:44</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
+    <p class="lobby-credits"><a href="https://games.usersfirst.com" target="_blank" rel="noopener" style="color:inherit;text-decoration:none;">Users First (Games)</a> <button class="lobby-credits-btn" id="credits-btn">&copy;</button> <span id="lobby-license-icon"></span> <span class="lobby-version" id="lobby-version">v.a0e1740 | 11-21-2026 13:45</span> <button class="lobby-credits-btn" id="ctrl-test-btn" title="Controller test — Steam Input live diagnostic">🎮</button> <button class="lobby-credits-btn" id="ctrl-settings-btn" title="Settings">⚙️</button></p>
   </div>
   <img id="lobby-banner-bottom" src="images/tandemonium_three_actions.png?v=geese" alt="Tandemonium Actions">
   <img id="lobby-img-left" class="lobby-desktop-img" src="images/large_action_behind.png?v=geese" alt="">
@@ -6307,6 +6145,12 @@ ON</button>
   <uf-sheet id="steam-join-sheet" heading="Join your Steam friend?" size="sm">
     <p id="steam-join-text" style="margin:0;color:var(--uf-color-fg-muted);"></p>
     <div slot="actions"><uf-button variant="accent" id="steam-join-confirm">JOIN</uf-button><uf-button id="steam-join-cancel">STAY HERE</uf-button></div>
+  </uf-sheet>
+  <!-- #820 · Steam build, no gyro controller or phone seen (js/gyro-tip.js). GOT IT takes the first focus. -->
+  <uf-sheet id="gyro-tip-sheet" heading="Best with motion control" size="sm">
+    <p style="margin:0;color:var(--uf-color-fg-muted);">No gyro controller found. Tandemonium is best played with a gyro controller, or your phone with gyro motion control.</p>
+    <uf-setting id="gyro-tip-never" label="Don't show this again"></uf-setting>
+    <div slot="actions"><uf-button variant="accent" id="gyro-tip-ok">GOT IT</uf-button></div>
   </uf-sheet>
   <uf-sheet id="quit-sheet" heading="Quit Tandemonium?" size="sm" tone="danger">
     <p style="margin:0;color:var(--uf-color-fg-muted);">Close the game and go back to the desktop.</p>

@@ -8,9 +8,8 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './special-bikes.js';
-import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
-import { BotRace, raceableLevel, RACE_TIERS } from './bot-race.js';
-import { BOT_GHOST_RUNS } from './bot-ghost-runs.js';
+import { BotSync, botPartnerKey, recordBotRide, NO_BOT } from './player-bots.js';
+import { botTargetMs } from './bot-race.js';
 import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
@@ -55,7 +54,7 @@ import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
-import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { AchievementManager, showAchievementToast, showInfoToast } from './achievements.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer, lastCheckpointM } from './achievement-defs.js';
@@ -118,6 +117,7 @@ import { TeamRig, TEAM_COLORS } from './versus/team-rig.js';
 import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
+import { botPush, botLean, botWantSpeed } from './versus/bot-pace.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel, dailyRideGate } from './edition.js';
 import { nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';   // #736
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
@@ -1297,7 +1297,8 @@ class Game {
     // Pete, 2026-11-09 · the couch room with one controller and a bot on the back seat: that bot rides along, any bike
     const roomBot = this.mode === 'solo' && this.lobby && this.lobby._hostBotRide && this.lobby._hostBot && this.lobby._hostBot !== NO_BOT
       ? this.lobby._hostBot : null;
-    const seat = roomBot || (this.lobby && this.lobby.selectedBot) || 'bolt';
+    // Pete, 2026-11-21 · a SOLO ride on the Solo Flight rides alone; a bot is picked in VERSUS BOTS or the couch room
+    const seat = roomBot || NO_BOT;
     const soloFlight = plain && ridesWithBot(key, this.mode);
     const flight = soloFlight || (plain && !!roomBot);
     this._botRide = flight && seat !== NO_BOT ? seat : null;
@@ -1305,179 +1306,12 @@ class Game {
     this._bikeWaitS = 0;
     this.bike.setBotStoker(this._botRide);
     this.bike.setEmptySeat(flight && seat === NO_BOT);   // #644 step 2 · "Nobody": the back seat stays empty
-    // #644 step 2 · race a bot ghost team (the Solo Flight card's Race row); the level decides at the countdown
-    // (VERSUS BOTS only, Pete 2026-11-18: a SOLO ride on the Solo Flight never races)
-    const raceTier = this.lobby && this.lobby.rideRaceTier ? this.lobby.rideRaceTier() : 'off';
-    this._botRaceTier = soloFlight && !roomBot && RACE_TIERS[raceTier] ? raceTier : null;
     if (this.mode === 'solo' && this.hud) this.hud.setSeat('captain', !!this._botRide);   // the sync row: you and the bot
   }
 
   /** #644 · the player bot riding this solo ride's back seat ('bolt' | 'rivet' | 'sprocket'), or null. */
   _botRideId() {
     return this.mode === 'solo' && !this.isSlingshot && !this.isTourist && !this._touristRoute ? (this._botRide || null) : null;
-  }
-
-  // ============================================================
-  // #644 step 2 · THE BOT GHOST TEAM RACE (js/bot-race.js)
-  // ============================================================
-  //
-  // On Solo Flight the player can race a ghost tandem ridden by the two other player bots: a clone of the player's
-  // Penny-Farthing, see-through, driven straight from a recorded ride stretched to the tier's medal time. No physics,
-  // no collisions. Finishing before it wins a versus race (Medium / Hard).
-
-  /** At the countdown: a race for this ride, or none. A retry of the first segment races again from the line. */
-  _startBotRace(level, difficultyName) {
-    this._endBotRace();
-    this._botRaceOutcome = null;
-    const tier = this.mode === 'solo' && !this.isSlingshot && !this.isTourist && !this._touristRoute ? this._botRaceTier : null;
-    if (!tier || !raceableLevel(level)) return;
-    const race = new BotRace({ level, difficulty: level.fixedDifficulty || difficultyName, tier,
-      seatBot: this._botRide || NO_BOT, runs: BOT_GHOST_RUNS });
-    if (!race.ok) return;
-    this._botRace = race;
-    this._showBotRaceHud(true);
-  }
-
-  /** The ghost team's bike: a clone of the player's loaded Solo Flight, two bots on it, see-through. */
-  _ensureBotGhost() {
-    const src = this.bike;
-    const model = src && src.group.children[0];
-    if (this._botGhost && this._botGhostSource === model) return this._botGhost;
-    if (this._botGhost) this._disposeBotGhost();
-    if (!src || !src.modelLoaded || !src.goose || !src.goose.pf || !model) return null;   // (the Penny-Farthing still loading)
-    try {
-      const ghost = new BikeModel(this.scene, null, src);
-      ghost.roadPath = this.world.roadPath;
-      this._botGhost = ghost;
-      this._botGhostSource = model;
-      this._botGhostReady = false;
-      ghost.group.visible = false;   // shown once its bots are seated and it is see-through
-      const [cap, sto] = this._botRace.team;
-      Promise.resolve(ghost.setGhostBots(cap, sto)).then(() => {
-        if (this._botGhost !== ghost) return;
-        this._ghostMaterials(ghost.group);
-        this._botGhostReady = true;
-      });
-    } catch (err) {
-      // a ghost is a nicety: the race still runs on the HUD
-      console.warn('bot race: could not build the ghost team', err);
-      this._botGhost = null;
-    }
-    return this._botGhost;
-  }
-
-  /** Every material on the ghost its own see-through copy (the frame's are shared with the player's bike). */
-  _ghostMaterials(root) {
-    root.traverse((o) => {
-      if (!o.isMesh || !o.material) return;
-      const mats = (Array.isArray(o.material) ? o.material : [o.material]).map((m) => {
-        const g = m.clone();
-        g.transparent = true;
-        g.opacity = 0.55;
-        g.userData.botGhost = true;
-        return g;
-      });
-      o.material = mats.length === 1 ? mats[0] : mats;
-      o.castShadow = false;
-    });
-  }
-
-  _disposeBotGhost() {
-    const ghost = this._botGhost;
-    this._botGhost = null;
-    this._botGhostSource = null;
-    this._botGhostReady = false;
-    if (!ghost) return;
-    this.scene.remove(ghost.group);
-    ghost.disposeOwnGeese();
-    ghost.group.traverse((o) => {
-      if (!o.isMesh) return;
-      for (const m of [].concat(o.material)) if (m && m.userData && m.userData.botGhost) m.dispose();
-    });
-  }
-
-  /** Each frame (countdown and ride): move the ghost team, note who leads at halfway, update the race line. */
-  _updateBotRace(dt) {
-    const race = this._botRace;
-    if (!race || !this.raceManager || !this.bike || this._botRaceOutcome) return;   // (decided: the ghost has gone)
-    const secs = this.raceManager.getElapsedMs() / 1000;
-    const gap = race.frame(secs, this.bike.distanceTraveled);
-    const g = race.at(secs);
-    const ghost = this._ensureBotGhost();
-    const path = this.world && this.world.roadPath;
-    if (ghost && g && path) {
-      const pt = path.getPointAtDistance(g.roadD % path.loopLength);
-      const rx = Math.cos(pt.heading), rz = -Math.sin(pt.heading);
-      ghost.applyGhostState({ x: pt.x + rx * g.lateral, y: pt.y, z: pt.z + rz * g.lateral, heading: pt.heading,
-        lean: g.lean, speed: g.speed, distance: g.roadD }, dt || 1 / 60);
-      // it crosses the line and is gone: the result says by how much
-      ghost.group.visible = this._botGhostReady && !g.finished;
-    }
-    this._renderBotRaceHud(race, gap, secs);
-  }
-
-  /** On the line: the result (the ghost always finishes on its target time). */
-  _finishBotRace() {
-    const race = this._botRace;
-    if (!race || !this.raceManager || this._botRaceOutcome) return;
-    this._botRaceOutcome = race.result({ timeMs: Math.round(this.raceManager.getElapsedMs()),
-      crashes: this.raceManager.crashCount || 0, speed: this.bike ? this.bike.speed : 0 });
-    this._botRaceOutcome.team = race.teamName;
-    if (this._botGhost) this._botGhost.group.visible = false;
-    this._showBotRaceHud(false);
-  }
-
-  /** The race is over or abandoned: the ghost goes. (The outcome stays for the results screen.) */
-  _endBotRace() {
-    this._botRace = null;
-    this._disposeBotGhost();
-    this._showBotRaceHud(false);
-  }
-
-  _showBotRaceHud(on) {
-    let el = document.getElementById('bot-race-hud');
-    if (!el && on) {
-      el = document.createElement('div');
-      el.id = 'bot-race-hud';
-      el.setAttribute('aria-live', 'polite');
-      document.body.appendChild(el);
-    }
-    if (!el) return;
-    el.hidden = !on;
-    if (on && this._botRace) {
-      const race = this._botRace;
-      const dots = race.team.map(id => `<span class="brh-dot" style="--bot-color:${BOTS[id].color}"></span>`).join('');
-      el.innerHTML = `<div class="brh-team">${dots}<span class="brh-name">vs ${race.teamName}</span>`
-        + `<span class="brh-tier">${RACE_TIERS[race.tier].name}</span></div><div class="brh-gap"></div>`;
-      el.dataset.state = '';
-    }
-  }
-
-  _renderBotRaceHud(race, gap, secs) {
-    const el = document.getElementById('bot-race-hud');
-    const line = el && el.querySelector('.brh-gap');
-    if (!line) return;
-    let text, state;
-    if (race.ghostFinished(secs)) { text = `They finished in ${(race.targetMs / 1000).toFixed(1)} s`; state = 'behind'; }
-    else if (secs <= 0) { text = 'First to the finish wins'; state = ''; }
-    else if (Math.abs(gap) < 1) { text = 'Neck and neck'; state = 'even'; }
-    else { text = `${Math.round(Math.abs(gap))} m ${gap > 0 ? 'ahead' : 'behind'}`; state = gap > 0 ? 'ahead' : 'behind'; }
-    if (line.textContent !== text) line.textContent = text;
-    if (el.dataset.state !== state) el.dataset.state = state;
-  }
-
-  /** The results screen's race line. */
-  _botRaceVictoryHtml() {
-    const o = this._botRaceOutcome;
-    if (!o) return '';
-    const by = (o.marginMs / 1000).toFixed(1) + ' s';
-    const head = o.won ? `🏆 You beat ${o.team} by ${by}` : `🤖 ${o.team} won by ${by}`;
-    const why = !o.counts ? 'Easy is a warm-up. Race on Medium or Hard for the versus achievements.'
-      : o.won ? [o.twoVtwo ? '2v2 win' : o.oneVtwo ? 'Alone against a two-goose tandem' : null,
-        o.comeback ? 'Comeback after trailing at halfway' : null].filter(Boolean).join(' · ')
-        : 'It counts as a versus race. Win one to take the crown.';
-    return `<div class="victory-stat bot-race-result" data-won="${o.won ? 'yes' : 'no'}"><strong>${head}</strong>`
-      + (why ? `<span>${why}</span>` : '') + '</div>';
   }
 
   _onMultiplayerReady(net, mode) {
@@ -1713,8 +1547,6 @@ class Game {
 
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
-      this.lobby.hidePartnerPip();
-      updateBadgeDisplay('partner-badges', []);
       analytics.trackEvent('room_disconnect', {
         disconnected_role: this.mode === 'captain' ? 'stoker' : 'captain',
         during_ride: this.state === 'playing',
@@ -1791,10 +1623,6 @@ class Game {
       }
       // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync, an older build's cameraToggle)
       if (profile && profile.type) return;
-      // Render partner achievement badges
-      if (profile.achievements) {
-        updateBadgeDisplay('partner-badges', profile.achievements);
-      }
       // PR #397 M1: the partner's edition and capabilities (null caps = old build).
       if (this.lobby) this.lobby._partnerRoom = partnerFromProfile(profile);
       // Capture partner server ID for score attribution
@@ -1940,8 +1768,9 @@ class Game {
    * @param {Object} opts
    * @param {Array<{id: 'A'|'B', members: Array<{input, type, slotId, name, label?: string|null, isP1}>}>} opts.teams
    */
-  _onVersusReady({ teams }) {
+  _onVersusReady({ teams, botTier = null }) {
     this.mode = 'versus';
+    this._botVersus = botTier ? { tier: botTier, targetMs: 0 } : null;   // VERSUS BOTS: a real race against a bot team
     this.net = null;
     this._versusTeams = teams;
     this._lobbyBtn.textContent = 'LOBBY';
@@ -1987,6 +1816,9 @@ class Game {
       });
       rig.bike.applyPreset(special ? null : (presets[teamBike] || null));
       rig.bike.setGooseLook(teamLooks(t));
+      const bots = t.members.filter((m) => m.botId).map((m) => m.botId);
+      if (bots.length === 2) rig.bike.setGhostBots(bots[0], bots[1]);
+      else if (bots.length === 1) rig.bike.setBotStoker(bots[0]);
       rig.camera.aspect = (window.innerWidth / 2) / window.innerHeight;
       rig.camera.updateProjectionMatrix();
       rig.resetForRace();
@@ -2012,7 +1844,7 @@ class Game {
     this.versusPedalHuds = this.versusRigs.map((rig, i) =>
       new VersusPedalHud(
         document.getElementById(i === 0 ? 'versus-pedals-a' : 'versus-pedals-b'),
-        rig.isDuo
+        rig.sharesPedals
       )
     );
 
@@ -2722,9 +2554,6 @@ class Game {
     if (this._rideSystemOn('disruptions') && !level.isTourist) this._startDisruptions(level, difficultyName);
     else this._disruptions = [];
 
-    // #644 step 2 · the bot ghost team, if this Solo Flight ride races one
-    this._startBotRace(level, difficultyName);
-
 
     // Tutorial: place all items from all phases so they're visible ahead
     if (level.isTutorial && this._tutorialActive) {
@@ -2815,6 +2644,10 @@ class Game {
     const difficultyName = this.lobby.selectedDifficulty || 'adventurous';
     applyDifficulty(difficultyName);
     this.ddaManager = null; // no dynamic help in versus — fair race
+    if (this._botVersus) {
+      const lv = this.lobby.selectedLevel;
+      this._botVersus.targetMs = botTargetMs(lv.id, lv.fixedDifficulty || difficultyName, this._botVersus.tier);
+    }
     if (TUNE.autoSpeed != null) {
       this.autoSpeed = TUNE.autoSpeed;
       this.speedBtn.className = 'side-btn ' + (this.autoSpeed ? 'speed-on' : 'speed-off');
@@ -2870,7 +2703,7 @@ class Game {
     for (const rig of this.versusRigs) {
       const hasTilt = rig.members.some((m) => m.input.motionEnabled || m.input.gyroConnected);
       if (hasTilt) {
-        rig.archIndicator.setup(rig.isDuo ? 'local' : 'solo', rig.color.hex, '#ffd24c');
+        rig.archIndicator.setup(rig.sharesPedals ? 'local' : 'solo', rig.color.hex, '#ffd24c');
         rig.applyArchLayer();
       } else {
         rig.archIndicator.hide();
@@ -2918,7 +2751,10 @@ class Game {
     // (Pete, 2026-11-18: "There was hesitation from the bot appearing". The Solo Flight and its bot are files of
     // their own, loaded when the ride is set up: the clock waits for them, for as long as 6 s, so the bot is on the
     // bike, and drawn once by the warm-up, before GO.)
-    if (this.bike && !this.bike.ridersSettled && this.mode !== 'versus' && (this._bikeWaitS || 0) < 6) {
+    const bikesWaiting = this.mode === 'versus'
+      ? !!this._botVersus && !!this.versusRigs && this.versusRigs.some((r) => !r.bike.ridersSettled)
+      : !!this.bike && !this.bike.ridersSettled;
+    if (bikesWaiting && (this._bikeWaitS || 0) < 6) {
       this._bikeWaitS = (this._bikeWaitS || 0) + dt;
       dt = 0;
     }
@@ -2937,7 +2773,6 @@ class Game {
       }
     }
     this.countdownTimer -= dt;
-    this._updateBotRace(dt);   // #644 step 2 · the ghost team waits on the line beside you
     const flavorNum = document.getElementById('countdown-flavor-num');
 
     if (this.countdownTimer <= 0) {
@@ -3578,8 +3413,6 @@ class Game {
     if (this.net) {
       this.net.destroy();
       this.net = null;
-      this.lobby.hidePartnerPip();
-      updateBadgeDisplay('partner-badges', []);
       document.getElementById('conn-badge').style.display = 'none';
     }
     this._hideReconnecting();
@@ -5077,7 +4910,6 @@ class Game {
     if (!auth || !auth.isLoggedIn()) return;      // a local result is still kept
     if (!DAILY_BOARD_ENABLED) return;
     if (this._botRideId()) return;   // #644 · a Solo Flight ride (a bot on the back) posts no board time
-    if (this._botRace) return;       // #644 step 2 · nor a bot race (the back seat empty too)
 
     try {
       const res = await auth.submitDaily({
@@ -5538,9 +5370,6 @@ class Game {
       if (this._tutorialActive) return;
       hapticFinish();
 
-      // #644 step 2 · the bot race is decided on the line
-      this._finishBotRace();
-
       // Kick off the cinematic finish camera; victory overlay reveals
       // when the swing-and-zoom sequence completes.
       this._startFinishCinematic();
@@ -5735,14 +5564,6 @@ class Game {
     state.gyroOnly = [this.balanceCtrl, this.mode === 'local' ? this.balanceCtrlP2 : null]
       .some(bc => !!bc && gyroOnlySteer(bc.steerFrames));
     this.achievements.finish(state);
-    // #644 step 2 · a bot race on Medium or Hard is a versus race: the same versus result a couch race records
-    // (js/bot-race.js), so Rivals, Crown the Goose, Royal Court, Underdog, Comeback Geese, House Champion,
-    // Clean Sweep and Full House's versus read it unchanged
-    const race = this._botRaceOutcome;
-    if (race && race.counts && !race.recorded) {
-      race.recorded = true;
-      this.achievements.record('versus', race);
-    }
     this._seatFinish();
     if (this.lobby) this.lobby._linkPromptDue = true;   // #612: back in the lobby, maybe "Link Discord"
   }
@@ -5848,7 +5669,6 @@ class Game {
   }
 
   _updateBadges() {
-    updateBadgeDisplay('self-badges', this.achievements.getEarned());
     this._sendProfile();
   }
 
@@ -6193,8 +6013,6 @@ class Game {
       victoryTitle.textContent = 'YOU BOTH MADE IT!';
     } else if (this.mode === 'captain' || this.mode === 'stoker') {
       victoryTitle.textContent = 'YOU MADE IT ' + this.mode.toUpperCase() + '!';
-    } else if (this._botRaceOutcome) {
-      victoryTitle.textContent = this._botRaceOutcome.won ? 'YOU WON THE RACE!' : 'THE BOTS WON!';   // #644 step 2
     } else {
       victoryTitle.textContent = 'YOU MADE IT!';
     }
@@ -6300,7 +6118,6 @@ class Game {
       }
       // B-3 \u00B7 the ride you just did, measured against the rides you have done
       // before. This is the whole reason to press START RIDE a second time.
-      html += this._botRaceVictoryHtml();   // #644 step 2 · the bot race, won or lost
       html += this._buildRecordHtml(summary, fromRemote);
       // D-3 · and, on Today's Road, the thing you can send to someone.
       html += this._buildDailyStripHtml(summary, level);
@@ -6787,7 +6604,6 @@ class Game {
   }
 
   _returnToLobby() {
-    this._endBotRace();   // #644 step 2 · no ghost team left on the empty road
     if (this._drop) this._endDropPause();
     this._waitingForCaptain = false;
     this._closePause();   // #459
@@ -6844,8 +6660,6 @@ class Game {
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
-    this.lobby.hideRoomPips();
-    updateBadgeDisplay('partner-badges', []);
     // The lobby holds the same transport: leaving the ride leaves the session there too
     // (the captain kept a dead session and later said "partner lost connection", #623).
     if (this.net) { if (this.lobby.net === this.net) this.lobby.net = null; this.net.destroy(); this.net = null; }
@@ -6905,6 +6719,7 @@ class Game {
    * singleton bike + full-frame rendering, and re-enables P1 keyboard.
    */
   _teardownVersus() {
+    this._botVersus = null;
     document.body.classList.remove('mode-versus');
     document.body.classList.remove('versus-fullframe');
     // Cinematic may be mid-orbit (options → LOBBY during the fly-around)
@@ -8926,7 +8741,6 @@ class Game {
     this._updatePing(dt);         // E-3
     this._updateDisruptions(dt);  // E-2
     if (this._touristRoute) this._updateTouristGoal();   // E-7
-    this._updateBotRace(dt);      // #644 step 2
 
     // Background motion adaptation (skip when level config disables it)
     const adaptLevel = this.lobby.selectedLevel;
@@ -9370,7 +9184,7 @@ class Game {
     for (const rig of rigs) { rig._dt = dt * this._crashScale(rig.bike); this._stepTeam(rig, rig._dt); }
     this.achievements.ride.frame(dt, { ref: null, playing: true });   // #401 False Start: the clock since GO runs in versus too
     // m19: a race against the ?versusbot=1 rider earns no achievements.
-    if (!rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
+    if (this._botVersus || !rigs.some(isBotTeam)) this.achievements.versusFrame(rigs, this.lobby.selectedLevel ? this.lobby.selectedLevel.distance : 0);   // #401 comeback
 
     // Bike-vs-bike contact: bumping knocks both around a little.
     this._resolveVersusBikeContact(dt);
@@ -9452,7 +9266,7 @@ class Game {
     for (const m of rig.members) {
       m.input.bikeSpeed = bike.speed;
       m.input.bikeMaxSpeed = TUNE.maxSpeed || 19;
-      if (m.type === 'bot') {
+      if (m.type === 'bot' && !m.botId) {
         m.botTimer = (m.botTimer || 0) + dt;
         if (m.botTimer >= 0.45) {
           m.botTimer = 0;
@@ -9464,7 +9278,7 @@ class Game {
     }
 
     // Pedals: duo teams edge-detect taps into the shared controller
-    if (rig.isDuo) {
+    if (rig.sharesPedals) {
       const roles = ['captain', 'stoker'];
       for (let i = 0; i < rig.members.length; i++) {
         const m = rig.members[i];
@@ -9476,13 +9290,27 @@ class Game {
         m.prevDown = down;
       }
     }
-    const pedalResult = rig.pedalCtrl.update(dt);
+    let pedalResult;
+    if (rig.isBotRiders && this._botVersus) {
+      rig.botCrank = (rig.botCrank || 0) + bike.speed * dt * (Math.PI / 4);
+      rig.botClockMs += dt * 1000;   // the game's own clock: a pause or a slow machine holds the bots too
+      pedalResult = { wobble: 0, braking: false, crankAngle: rig.botCrank,
+        acceleration: botPush({ elapsedMs: rig.botClockMs, targetMs: this._botVersus.targetMs,
+          distance: bike.distanceTraveled, raceDistance: rig.raceManager ? rig.raceManager.raceDistance : 0, speed: bike.speed, dt }) };
+    } else {
+      pedalResult = rig.pedalCtrl.update(dt);
+    }
 
     // Lean: average all members (same merge rule as co-op captain+stoker).
     // Bot teams ride with full balance assist — no human is steering them.
     // Per-member (pre-merge) leans are stashed for the HUD tilt gauge.
-    const assist = rig.members.some((m) => m.type === 'bot') ? 1 : 0;
+    const assist = rig.members.every((m) => m.type === 'bot') ? 1 : 0;   // (a bot on your back seat doesn't steer for you)
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
+    if (rig.isBotRiders && this._botVersus) {
+      const lean = botLean(bike, TUNE, this.obstacleManager ? this.obstacleManager._items : []);
+      balanceResult.leanInput = lean;
+      balanceResult.visualLean = lean;
+    }
     // #581: the geese lean by the look-only lean (visualLean: the rider's own
     // tilt before TUNE.motionGain), as the solo captain and the co-op riders
     // do. By the steering lean (gain 0.3, then the assist blend) they barely
@@ -9491,7 +9319,7 @@ class Game {
     const riderLeans = [riderLeanOf(balanceResult), 0];
     rig.hudLeans[0] = balanceResult.leanInput;
     rig.hudLeans[1] = 0;
-    if (rig.balanceCtrls.length > 1) {
+    if (rig.sharesPedals) {
       const second = rig.balanceCtrls[1].update(bike, assist, this.collectibleManager, this.obstacleManager);
       rig.hudLeans[1] = second.leanInput;
       riderLeans[1] = riderLeanOf(second);
@@ -9509,6 +9337,11 @@ class Game {
 
     const wasFallen = bike.fallen;
     bike.update(pedalResult, balanceResult, dt, this.safetyMode, this.autoSpeed);
+    if (rig.isBotRiders && this._botVersus && rig.raceManager) {
+      const cap = botWantSpeed({ elapsedMs: rig.botClockMs, targetMs: this._botVersus.targetMs,
+        distance: bike.distanceTraveled, raceDistance: rig.raceManager.raceDistance }) * 1.06;
+      if (bike.speed > cap) bike.speed = Math.max(cap, bike.speed - 5 * dt);
+    }
     this._checkTreeCollision(bike, rig.chaseCamera, rig.inputs);
 
     // Any new fall (balance or collision) counts against the team. Crash
@@ -9618,6 +9451,17 @@ class Game {
     }
   }
 
+  /** VERSUS BOTS: the bot on your back seat rode this race with you, so it counts as your co-op partner. */
+  _creditVersusBot() {
+    const rig = this.versusRigs.find((r) => !r.isBotRiders);
+    const id = rig && rig.members.find((m) => m.botId)?.botId;
+    if (!id) return;
+    const metres = Math.min(rig.bike.distanceTraveled, rig.raceManager.raceDistance);
+    let pair;
+    try { pair = recordBotRide(localStorage, id, metres); } catch { pair = { rides: 1, distance: metres }; }   // storage blocked
+    this.achievements.botPartner(botPartnerKey(id), pair);
+  }
+
   /** A team grabbed collectible(s): count + 3s boost, FCFS attribution. */
   _onVersusCollect(rig, count) {
     rig.collectibles += count;
@@ -9653,7 +9497,8 @@ class Game {
    */
   _finishVersusRace(winner) {
     const loser = this.versusRigs.find((r) => r !== winner);
-    if (!isBotTeam(winner) && !isBotTeam(loser)) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance);   // #401 (m19: not vs the bot)
+    if (this._botVersus || (!isBotTeam(winner) && !isBotTeam(loser))) this.achievements.versusFinish(winner, loser, winner.raceManager.raceDistance, { easy: this._botVersus?.tier === 'easy' });
+    if (this._botVersus) this._creditVersusBot();   // #401 (m19: not vs the bot)
     this._versusWinner = winner;
     this._versusLoser = loser;
     this.state = 'versusCinematic';

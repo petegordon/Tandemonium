@@ -34,7 +34,7 @@ export const ADD_KEYS = Object.freeze([
   'coinsEarned', 'coinsSpent', 'upgrades', 'slingLaunches', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
   'straightShots', 'medalKeys', 'dailyPractice', 'shares',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
-  'versus1v2Wins', 'versusClean', 'touristDistance',
+  'versus1v2Wins', 'versusClean', 'versusEasyWins', 'touristDistance',
 ]);
 /**
  * Highest wins. `days` is a max, not a counter: the same day ridden on two
