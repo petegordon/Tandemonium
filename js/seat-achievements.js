@@ -68,12 +68,13 @@ export class SeatAchievements {
     for (let i = 0; i < Math.min(50, Math.max(0, Math.floor(Number(state.crashes) || 0))); i++) L = applyEvent(L, 'crash', {}, today);
     L = applyEvent(L, 'finish', state, today);
     const have = new Set(e.earned);
+    const check = { ...state, earnedIds: new Set(e.earned) };   // #819 · one medal per run
     const fresh = [];
     for (const a of ACHIEVEMENTS) {
       if (have.has(a.id)) continue;
       if (demo && !a.demo) continue;
       try {
-        if (a.condition(state, L)) { fresh.push({ id: a.id, name: a.name, icon: a.icon, desc: a.desc }); have.add(a.id); }
+        if (a.condition(check, L)) { fresh.push({ id: a.id, name: a.name, icon: a.icon, desc: a.desc }); have.add(a.id); }
       } catch (err) { /* a condition that needs a frame field: not earned */ }
     }
     all[String(userId)] = { stats: L, earned: [...have] };

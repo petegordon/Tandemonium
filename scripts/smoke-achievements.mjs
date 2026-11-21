@@ -88,15 +88,15 @@ const { toastBg, toastAlpha } = await page.evaluate(() => {
 });
 check(toastAlpha >= 0.95, `the toast's badge is a solid panel over the road (${toastBg}, alpha ${toastAlpha.toFixed(2)})`);
 
-// 3. Finish → Made It + Home Sweet Home; the victory payout → Pocket Change.
+// 3. Finish → the victory payout earns Pocket Change (#819: Made It and Home Sweet Home come on later rides).
 await page.evaluate(() => { const g = window._game; g.bike.distanceTraveled = g.lobby.selectedLevel.distance - 0.5; g.bike.speed = 10; });
 await waitState('victory', 240000);
 await new Promise(r => setTimeout(r, 1200));
 const afterRide = await earned();
 const st1 = await stats();
-for (const id of ['first_finish', 'home_sweet', 'coin_first']) {
-  check(afterRide.includes(id), `the ride earns ${id}`);
-}
+check(afterRide.includes('coin_first'), 'the ride earns coin_first');
+// #819 · Made It takes 2 finishes and Home Sweet Home takes 3
+for (const id of ['first_finish', 'home_sweet']) check(!afterRide.includes(id), `one ride does not earn ${id} yet`);
 check(st1.v === 2 && st1.rides === 1 && st1.finishes === 1 && st1.coinsEarned > 0 && st1.cumulativeDistance >= 240,
   `the stats count it: v${st1.v}, ${st1.rides} ride, ${st1.finishes} finish, ${st1.coinsEarned} coins, ${Math.round(st1.cumulativeDistance)} m`);
 await shot('1-victory');
@@ -114,7 +114,7 @@ const screen = await page.evaluate(() => {
     count: root.querySelector('.uag-count')?.textContent || '',
     hidden: item('false_start')?.querySelector('.uag-name')?.textContent,
     hiddenIcon: item('false_start')?.querySelector('.uag-icon')?.textContent,
-    earned: item('first_finish')?.classList.contains('earned'),
+    earned: item('coin_first')?.classList.contains('earned'),
     colour: !!item('grandma_default'),
     progress: item('rides_10')?.querySelector('.uag-progress')?.textContent || '',
   };

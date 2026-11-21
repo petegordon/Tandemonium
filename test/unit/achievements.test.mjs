@@ -103,6 +103,8 @@ const CANDIDATES = [
   { ...finishBase, finishedLevel: 'daily' },
   { ...finishBase, finishedLevel: 'grandma', crashes: 0, bikeKey: 'default' },
   { ...finishBase, finishedLevel: 'grandma', difficulty: 'daredevil' },
+  { ...finishBase, finishedLevel: 'grandma', earnedIds: ['grandma_gold'] },   // #819 · one medal per run
+  { ...finishBase, finishedLevel: 'grandma', earnedIds: ['grandma_gold', 'grandma_silver'] },
   { ...finishBase, finishedLevel: 'grandma', gyroOnly: true },   // #500 Look, No Thumbs
   ...['orange', 'magenta', 'red', 'blue', 'green', 'yellow'].map(c => ({ ...finishBase, finishedLevel: 'grandma', bikeKey: 'bike_' + c })),
 ];
@@ -535,9 +537,11 @@ test('manager: the stoker (and local co-op) ride tracker earns ride-scoped achie
   const ids = [];
   for (let i = 0; i < 62; i++) ids.push(...m.check({ dt: 1, speed: 8, ...m.rideFrame(1, game) }).map(a => a.id));
   assert.ok(ids.includes('steady_hands') && ids.includes('centerline'), ids.join(','));
-  // A clean finish: Stayed on the Road and No Trees.
+  // A clean finish: No Trees, and the third one is Stayed on the Road (#819).
   const clean = m.finish({ ref: rm, finishedLevel: 'daily', crashes: 0, restarts: 0 }).map(a => a.id);
-  assert.ok(clean.includes('no_offroad') && clean.includes('no_trees_daily'), clean.join(','));
+  assert.ok(clean.includes('no_trees_daily'), clean.join(','));
+  m.finish({ ref: rm, finishedLevel: 'daily', crashes: 0, restarts: 0 });
+  assert.ok(m.finish({ ref: rm, finishedLevel: 'daily', crashes: 0, restarts: 0 }).some(a => a.id === 'no_offroad'));
   // A stoker crash has no cause: it counts as a crash and against No Trees.
   const m2 = new AchievementManager();
   m2.demo = false;
