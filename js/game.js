@@ -8,7 +8,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './special-bikes.js';
-import { BotSync, botPartnerKey, recordBotRide, NO_BOT } from './player-bots.js';
+import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { botTargetMs } from './bot-race.js';
 import { withGrandmaFinished } from './achievement-defs.js';
 import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
@@ -4984,6 +4984,17 @@ class Game {
    * The server user id when both are signed in, otherwise the display name —
    * good enough for a local streak, and D-7/D-9 replace it server-side.
    */
+  /** The name to show for this ride's partner: a bot, the couch's Player 2, or the room's partner. */
+  _partnerLabel() {
+    const bot = this._botRideId();
+    if (bot) return BOTS[bot] ? BOTS[bot].name : null;
+    if (this.mode === 'local') {
+      const acc = this._seatAccount();
+      return (acc && acc.user && acc.user.name) || 'Player 2';
+    }
+    return this._partnerName || null;
+  }
+
   _partnerKey() {
     if (this._botRideId()) return botPartnerKey(this._botRideId());   // #644 · 'bot:bolt'
     if (this._partnerServerId) return String(this._partnerServerId);
@@ -5595,6 +5606,7 @@ class Game {
       difficulty: level.fixedDifficulty || this.lobby.selectedDifficulty,
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local' || !!bot,
       partnerKey,
+      partnerLabel: this._partnerLabel(),   // shown on Regulars and 5K Together
       touristFinished: !!(this.isTourist || this._touristRoute),
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || playDayKey()).current : 0,
     });
@@ -9498,7 +9510,7 @@ class Game {
     const metres = Math.min(rig.bike.distanceTraveled, rig.raceManager.raceDistance);
     let pair;
     try { pair = recordBotRide(localStorage, id, metres); } catch { pair = { rides: 1, distance: metres }; }   // storage blocked
-    this.achievements.botPartner(botPartnerKey(id), pair);
+    this.achievements.botPartner(botPartnerKey(id), pair, BOTS[id] ? BOTS[id].name : null);
   }
 
   /** A team grabbed collectible(s): count + 3s boost, FCFS attribution. */

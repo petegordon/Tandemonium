@@ -53,6 +53,11 @@ export const PLAYER_COLORS = { P1: '#44ff66', P2: '#ff4560', P3: '#6ea8ff', P4: 
 const HIDDEN_STATES = new Set(['finishCinematic', 'versusCinematic', 'gameover', 'victory', 'versusResults']);
 const LAYOUT_INTERVAL_MS = 250; // re-measure obstacles at ~4Hz (plus on resize / roster change)
 
+/** Is this seat steering and pedalling from a phone? (A phone seat, or P1 with a phone paired.) */
+export function isPhoneInput(input) {
+  return !!(input && (input.remoteOnly || input._remoteTilt || input._remoteMenu));
+}
+
 const intersects = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 
 // Tile styling lives with the module (injected once, like the front view's
@@ -91,6 +96,16 @@ const STYLE = `
 .cohud-kb .cohud-glyph { font-size: 30px; line-height: 1; }
 .cohud-tile.cohud-keyboard canvas { display: none; }
 .cohud-tile.cohud-keyboard .cohud-kb { display: flex; }
+.cohud-phone { position: absolute; inset: 24px 0 4px; display: none; align-items: center; justify-content: center; }
+.cohud-tile.cohud-phone-seat canvas { display: none; }
+.cohud-tile.cohud-phone-seat .cohud-phone { display: flex; }
+.cohud-phone-body {
+  box-sizing: border-box; height: 88%; aspect-ratio: 1 / 2; padding: 5px; display: flex; gap: 3px;
+  border: 2px solid var(--cohud-color, #fff); border-radius: 10px; background: rgba(12,14,22,0.9);
+  transition: transform 60ms linear;
+}
+.cohud-phone-pedal { flex: 1; border-radius: 4px; background: rgba(255,255,255,0.14); }
+.cohud-phone-pedal.on { background: var(--cohud-color, #fff); }
 `;
 
 function ensureStyle() {
@@ -302,16 +317,17 @@ export class ControllerOverlayHud {
         const band = i === 0 ? { left: 0, right: w / 2 } : { left: w / 2, right: w };
         const anchor = i === 0 ? 'bl' : 'br';
         (rig.members || []).forEach((m, j) => {
-          const gamepad = m.type === 'gamepad';
+          const phone = isPhoneInput(m.input);
+          const gamepad = !phone && m.type === 'gamepad';
           entries.push({
             key: `${rig.id}:${m.slotId || 'kb'}:${j}`,
             label: rig.color ? rig.color.name : `TEAM ${rig.id}`,
-            seat: m.slotId || (gamepad ? '' : 'KEYBOARD'),
+            seat: phone ? 'PHONE' : m.slotId || (gamepad ? '' : 'KEYBOARD'),
             color: rig.color ? rig.color.hex : '#ffffff',
             anchor, band,
-            kind: gamepad ? 'gamepad' : 'keyboard',
+            kind: phone ? 'phone' : gamepad ? 'gamepad' : 'keyboard',
             slot: gamepad ? slotOf(m.slotId) : null,
-            input: gamepad ? (m.input || null) : null,
+            input: gamepad || phone ? (m.input || null) : null,
           });
         });
       });
@@ -330,7 +346,7 @@ export class ControllerOverlayHud {
     if (ctx.state === 'lobby' && mgr) {
       // Every claimed slot.
       const p1 = this._playerEntry('P1', slotOf('P1'), 'br', ctx.input);
-      if (p1.kind === 'gamepad') entries.push(p1);
+      if (p1.kind !== 'keyboard') entries.push(p1);
       for (const s of mgr.slots || []) {
         if (s.id === 'P1' || s.state === 'empty') continue;
         entries.push(this._playerEntry(s.id, s, 'br'));
@@ -345,11 +361,13 @@ export class ControllerOverlayHud {
   }
 
   _playerEntry(id, slot, anchor, input = null) {
-    const live = !!slot && slot.state !== 'empty';
+    // A paired phone is what this seat is using, even with an idle controller still claimed on the slot.
+    const phone = isPhoneInput(input);
+    const live = !phone && !!slot && slot.state !== 'empty';
     return {
       key: id, label: id, seat: '', color: PLAYER_COLORS[id] || '#ffffff',
       anchor, band: null,
-      kind: live ? 'gamepad' : 'keyboard',
+      kind: phone ? 'phone' : live ? 'gamepad' : 'keyboard',
       slot: live ? slot : null,
       input: input || null,
     };
@@ -527,12 +545,15 @@ class Tile {
     el.innerHTML =
       '<canvas class="cohud-canvas"></canvas>' +
       '<div class="cohud-head"><span class="cohud-label"></span><span class="cohud-seat"></span><span class="cohud-sub"></span></div>' +
-      '<div class="cohud-kb"><span class="cohud-glyph">&#x2328;&#xFE0F;</span><span>KEYBOARD</span></div>';
+      '<div class="cohud-kb"><span class="cohud-glyph">&#x2328;&#xFE0F;</span><span>KEYBOARD</span></div>' +
+      '<div class="cohud-phone"><div class="cohud-phone-body"><span class="cohud-phone-pedal"></span><span class="cohud-phone-pedal"></span></div></div>';
     this.el = el;
     this.canvas = el.querySelector('canvas');
     this.labelEl = el.querySelector('.cohud-label');
     this.seatEl = el.querySelector('.cohud-seat');
     this.subEl = el.querySelector('.cohud-sub');
+    this.phoneEl = el.querySelector('.cohud-phone-body');
+    this.phonePedals = el.querySelectorAll('.cohud-phone-pedal');
     this.setEntry(entry);
   }
 
@@ -550,13 +571,17 @@ class Tile {
     }
     if (!prev || prev.label !== entry.label) this.labelEl.textContent = entry.label;
     if (!prev || prev.seat !== entry.seat) this.seatEl.textContent = entry.seat;
-    const keyboard = entry.kind !== 'gamepad';
+    const keyboard = entry.kind === 'keyboard';
+    const phone = entry.kind === 'phone';
     if (this.el.classList.contains('cohud-keyboard') !== keyboard) {
       this.el.classList.toggle('cohud-keyboard', keyboard);
     }
+    if (this.el.classList.contains('cohud-phone-seat') !== phone) {
+      this.el.classList.toggle('cohud-phone-seat', phone);
+    }
     if (entry.slot !== this.slot) this._bindSlot(entry.slot);
     if ((entry.input || null) !== this.input) { this.input = entry.input || null; this._identityKey = null; }
-    if (keyboard) { this.subEl.textContent = ''; this._destroyOverlay(); }
+    if (keyboard || phone) { this.subEl.textContent = phone ? 'Phone' : ''; this._destroyOverlay(); }
     return layoutChanged;
   }
 
@@ -647,7 +672,20 @@ class Tile {
     this._creating = false;
   }
 
+  /** The phone seat: the phone leans with the rider, and its two halves light with the pedals. */
+  _tickPhone() {
+    const input = this.input;
+    if (!input) return;
+    const lean = input.getMotionLeanVisual ? input.getMotionLeanVisual() : 0;
+    const deg = Math.max(-45, Math.min(45, (Number.isFinite(lean) ? lean : 0) * 45));
+    const transform = `rotate(${deg.toFixed(1)}deg)`;
+    if (transform !== this._phoneTransform) { this._phoneTransform = transform; this.phoneEl.style.transform = transform; }
+    this.phonePedals[0].classList.toggle('on', !!input._remoteLeft);
+    this.phonePedals[1].classList.toggle('on', !!input._remoteRight);
+  }
+
   tick(pads) {
+    if (this.entry.kind === 'phone') { this._tickPhone(); return; }
     if (!this._hasSource()) return;
     if (!this.overlay) {
       if (this.hud._viz && !this._creating && this._size.width > 0 && performance.now() >= this._retryAt) this._createOverlay();
