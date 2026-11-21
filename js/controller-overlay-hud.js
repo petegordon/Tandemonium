@@ -500,6 +500,10 @@ function releaseOverlay(overlay) {
   try { if (overlay.renderer) overlay.renderer.forceContextLoss(); } catch (e) {}
 }
 
+/** After a failed tile init, wait this long before trying again, doubling up to the cap (ms). */
+const INIT_RETRY_MS = 1000;
+const INIT_RETRY_MAX_MS = 30000;
+
 class Tile {
   constructor(hud, entry) {
     this.hud = hud;
@@ -511,6 +515,8 @@ class Tile {
     this.profile = null;       // visualizer profile key currently loaded
     this._creating = false;
     this._seq = 0;
+    this._initFails = 0;
+    this._retryAt = 0;
     this._unsub = null;
     this._identityKey = null;  // slotIdentity().key the title + profile were derived from
     this._size = { width: 0, height: 0 };
@@ -579,13 +585,26 @@ class Tile {
     return type;
   }
 
+  /**
+   * #821 · a canvas whose context was released can never draw again, so the tile gets a new one.
+   * Only when `used` is still the tile's canvas (a newer overlay may already be on a fresh one).
+   */
+  _renewCanvas(used) {
+    if (used !== this.canvas) return;
+    const fresh = document.createElement('canvas');
+    fresh.className = used.className;
+    used.replaceWith(fresh);
+    this.canvas = fresh;
+  }
+
   async _createOverlay() {
     const viz = this.hud._viz;
     const seq = ++this._seq;
     this._creating = true;
     const type = this._profileFor();
+    const canvas = this.canvas;
     const overlay = new viz.ControllerOverlay({
-      canvas: this.canvas,
+      canvas,
       transparent: true,
       controllerType: type,
       assetBase: this.hud.assetBase,
@@ -593,12 +612,23 @@ class Tile {
     try {
       await overlay.init();
     } catch (err) {
-      console.warn('[controller-overlay] tile init failed:', err);
+      // #821 · never every frame: a failing tile once ran this 101,000 times in one session
+      if (this._initFails === 0) console.warn('[controller-overlay] tile init failed:', err);
+      this._retryAt = performance.now() + Math.min(INIT_RETRY_MAX_MS, INIT_RETRY_MS * 2 ** this._initFails);
+      this._initFails++;
       releaseOverlay(overlay);
-      this._creating = false;
+      this._renewCanvas(canvas);
+      if (seq === this._seq) this._creating = false;
       return;
     }
-    if (seq !== this._seq || this._disposed || !this._hasSource()) { releaseOverlay(overlay); this._creating = false; return; }
+    if (seq !== this._seq || this._disposed || !this._hasSource()) {
+      releaseOverlay(overlay);
+      this._renewCanvas(canvas);
+      if (seq === this._seq) this._creating = false;
+      return;
+    }
+    this._initFails = 0;
+    this._retryAt = 0;
     overlay.setCameraPreset('player');
     overlay.setPressColor(this.entry.color);
     this.overlay = overlay;
@@ -609,6 +639,8 @@ class Tile {
 
   _destroyOverlay() {
     this._seq++; // cancels an in-flight init
+    // the canvas is finished once its overlay is released, or while a cancelled init still holds it
+    if (this.overlay || this._creating) this._renewCanvas(this.canvas);
     releaseOverlay(this.overlay);
     this.overlay = null;
     this.profile = null;
@@ -618,7 +650,7 @@ class Tile {
   tick(pads) {
     if (!this._hasSource()) return;
     if (!this.overlay) {
-      if (this.hud._viz && !this._creating && this._size.width > 0) this._createOverlay();
+      if (this.hud._viz && !this._creating && this._size.width > 0 && performance.now() >= this._retryAt) this._createOverlay();
       return;
     }
     const slot = this.slot;
