@@ -77,7 +77,7 @@ function settledParts(L) {
   for (const [id, v] of Object.entries(L.bests || {})) {
     if (!num(v)) continue;
     const at = L.bestsAt && L.bestsAt[id];
-    d.maxmap.bests[id] = at ? [v, typeof at.level === 'string' ? at.level : null, fin(at.at) ? at.at : null] : [v];
+    d.maxmap.bests[id] = at ? [v, typeof at.level === 'string' ? at.level : null, fin(at.at) ? at.at : null, ...(typeof at.partner === 'string' && at.partner ? [at.partner] : [])] : [v];
   }
   for (const op of Object.keys(d)) if (op !== 'maxmap' && !Object.keys(d[op]).length) delete d[op];
   if (!Object.keys(d.maxmap.bests).length) delete d.maxmap;
@@ -119,7 +119,10 @@ export function fromAccount(T) {
     for (const [id, e] of Object.entries(t.bests)) {
       if (!Array.isArray(e) || !num(e[0])) continue;
       raw.bests[id] = e[0];
-      if (fin(e[2])) raw.bestsAt[id] = { level: typeof e[1] === 'string' ? e[1] : null, at: e[2] };
+      if (fin(e[2])) {
+        raw.bestsAt[id] = { level: typeof e[1] === 'string' ? e[1] : null, at: e[2] };
+        if (typeof e[3] === 'string' && e[3]) raw.bestsAt[id].partner = e[3];
+      }
     }
   }
   return migrateStats(raw);

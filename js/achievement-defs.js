@@ -445,6 +445,10 @@ export function foldBests(L, state, earned = new Set(), now = Date.now()) {
     out.bests[a.id] = Math.round(Math.min(v, a.goal * 10) * 10) / 10;
     // Pete 2026-11-07: "record top speed, what ride and date time" — where and when each best was set
     out.bestsAt[a.id] = { level, at: now };
+    // Pete, 2026-11-21: who a together best was ridden with
+    if (a.section === 'together' && state && typeof state.partnerLabel === 'string' && state.partnerLabel) {
+      out.bestsAt[a.id].partner = state.partnerLabel.slice(0, 40);
+    }
   }
   return out || L;
 }
@@ -470,7 +474,10 @@ export function migrateStats(raw) {
   }
   if (raw.bestsAt && typeof raw.bestsAt === 'object') {
     for (const [k, v] of Object.entries(raw.bestsAt)) {
-      if (v && Number.isFinite(v.at) && L.bests[k]) L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+      if (v && Number.isFinite(v.at) && L.bests[k]) {
+        L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+        if (typeof v.partner === 'string' && v.partner) L.bestsAt[k].partner = v.partner;
+      }
     }
   }
   L.days = Math.max(L.days, L.dayList.length);

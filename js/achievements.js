@@ -518,10 +518,10 @@ export class AchievementManager {
   }
 
   /** VERSUS BOTS: the back seat's bot rode a race with you. pair: its {rides, distance (m)} on this device. */
-  botPartner(partnerKey, pair) {
+  botPartner(partnerKey, pair, partnerLabel = null) {
     this._stats = applyEvent(this._stats, 'botPartner', { partnerKey }, playDayKey());
     this._saveStats();
-    return this._evaluate({ pairRides: pair.rides, pairDistanceKm: pair.distance / 1000 });
+    return this._evaluate({ pairRides: pair.rides, pairDistanceKm: pair.distance / 1000, partnerLabel });
   }
 
   getEarned() {
@@ -586,7 +586,7 @@ export class AchievementManager {
           demoLocked: demo && !a.demo,
           held: earned && demo && !a.demo,             // #666: earned with a friend, claimed by the full game
           medal: a.medal || null,
-          bestAt,                                      // { level, at }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
+          bestAt,                                      // { level, at, partner? }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
         };
       });
   }
