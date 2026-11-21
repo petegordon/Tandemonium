@@ -201,6 +201,7 @@ export class BikeModel {
     this._soloRider = false;     // Show Solo: only the captain goose is shown
     this._botStoker = null;      // #644 · a player bot (js/player-bots.js id) riding the Solo Flight's back seat
     this._botCaptain = null;     // #644 step 2 · a player bot captaining a bot ghost team's tandem (setGhostBots)
+    this.contactLength = 4.4;    // #839 · how long this bike really is, for bike-to-bike contact
     this._emptySeat = false;     // #644 step 2 · the Solo Flight's back seat left empty ("Nobody")
     this._rigMovers = [];        // #644 · the Penny-Farthing's clip-driven nodes (no bones: rebatch keeps them apart)
     this.frontViewAhead = 0;     // #644 · how much further ahead the captain sits than on the goose tandem (the selfie cam)
@@ -212,6 +213,7 @@ export class BikeModel {
     // so the clone gets its OWN Skeleton (a plain clone() shares the source's, so
     // every bike would pose/lean together); the plain frame uses the fast clone.
     if (cloneSource && cloneSource.modelLoaded) {
+      this.contactLength = cloneSource.contactLength;
       if (cloneSource.goose) this._initFromCloneGoose(cloneSource);
       else if (cloneSource.riderMixer) this._initFromCloneSkinned(cloneSource);
       else this._initFromClone(cloneSource);
@@ -405,6 +407,12 @@ export class BikeModel {
       // recentering happens in the final orientation.
       if (isRiders) model.rotation.y = BikeModel.RIDER_MODEL_YAW;
 
+      // #837 · measure with the group at the origin. A versus bike that loads after its team was placed would
+      // otherwise take its road position as part of the model and be drawn off its physics.
+      const placedAt = this.group.position.clone();
+      const placedQuat = this.group.quaternion.clone();
+      this.group.position.set(0, 0, 0);
+      this.group.quaternion.identity();
       this.group.add(model);
       this.group.updateMatrixWorld(true);
 
@@ -435,6 +443,10 @@ export class BikeModel {
       model.position.y -= minY;
       model.position.x -= centerX;
       model.position.z -= centerZ;
+      this.contactLength = maxZ - minZ;   // #839
+      this.group.position.copy(placedAt);
+      this.group.quaternion.copy(placedQuat);
+      this.group.updateMatrixWorld(true);
 
       const finish = () => {
         // Swap path: retire the previous model now, so the new one is
@@ -474,7 +486,7 @@ export class BikeModel {
         this.applyGooseColours();
         goose.update();
         model.updateMatrixWorld(true);
-        const top = new THREE.Box3().setFromObject(model).max.y - model.position.y;
+        const top = new THREE.Box3().setFromObject(model).max.y - model.getWorldPosition(new THREE.Vector3()).y;
         // the fused riders model stood 3.24 m tall on its 4.4 m bike
         this.riderViewScale = Math.max(0.5, Math.min(2, top / 3.24));
         if (goose.pf) {

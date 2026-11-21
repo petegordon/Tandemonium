@@ -317,6 +317,7 @@ export class ControllerOverlayHud {
         const band = i === 0 ? { left: 0, right: w / 2 } : { left: w / 2, right: w };
         const anchor = i === 0 ? 'bl' : 'br';
         (rig.members || []).forEach((m, j) => {
+          if (m.type === 'bot') return;   // #838 · a bot has no controller to show
           const phone = isPhoneInput(m.input);
           const gamepad = !phone && m.type === 'gamepad';
           entries.push({

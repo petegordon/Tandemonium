@@ -155,7 +155,7 @@ export class TeamRig {
     for (const m of this.members) { m.prevUp = false; m.prevDown = false; }
   }
 
-  /** Nudge the bike sideways (road-right) so the teams stagger at the line. */
+  /** Put the bike on its team's side of the road (#837): at the line, and again after a remount. */
   _applyStartOffset() {
     if (!this.lateralOffset || !this.bike.roadPath) return;
     const pt = this.bike.roadPath.getPointAtDistance(this.bike.roadD);

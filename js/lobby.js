@@ -747,6 +747,7 @@ export class Lobby {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
+    if (step === this.levelStep) this._paintWarpRow();   // #840 · the day may have been warped from the Slingshot
     if (step === this.levelStep && !this._inOnlineRoom() && this._pendingMode !== 'versus') {
       const want = this._pendingMode === 'versusBots' ? 'versusBots' : 'solo';
       if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
