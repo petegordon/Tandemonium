@@ -1,0 +1,775 @@
+{
+ "game": "tandemonium",
+ "sections": [
+  {
+   "id": "first",
+   "title": "First rides"
+  },
+  {
+   "id": "distance",
+   "title": "Distance"
+  },
+  {
+   "id": "back",
+   "title": "Coming back"
+  },
+  {
+   "id": "medals",
+   "title": "Levels and medals"
+  },
+  {
+   "id": "clean",
+   "title": "Clean riding"
+  },
+  {
+   "id": "speed",
+   "title": "Speed and boost"
+  },
+  {
+   "id": "collect",
+   "title": "Collecting"
+  },
+  {
+   "id": "sling",
+   "title": "Slingshot"
+  },
+  {
+   "id": "coins",
+   "title": "Tandem Tokens"
+  },
+  {
+   "id": "daily",
+   "title": "Daily Ride"
+  },
+  {
+   "id": "together",
+   "title": "Riding together"
+  },
+  {
+   "id": "versus",
+   "title": "Versus"
+  },
+  {
+   "id": "chaos",
+   "title": "Chaos"
+  },
+  {
+   "id": "explore",
+   "title": "Exploring"
+  },
+  {
+   "id": "colours",
+   "title": "Grandma's in every colour"
+  }
+ ],
+ "achievements": [
+  {
+   "id": "first_pedal",
+   "name": "Kick Off",
+   "description": "Pedal for the first time",
+   "icon": "🦶",
+   "group": "first"
+  },
+  {
+   "id": "tutorial_done",
+   "name": "Learner's Permit",
+   "description": "Finish the Tutorial",
+   "icon": "🎓",
+   "group": "first"
+  },
+  {
+   "id": "tutorial_clean",
+   "name": "Natural",
+   "description": "Finish the Tutorial without a single retry",
+   "icon": "🌱",
+   "group": "first"
+  },
+  {
+   "id": "first_finish",
+   "name": "Made It",
+   "description": "Finish 2 rides",
+   "icon": "🏁",
+   "group": "first"
+  },
+  {
+   "id": "first_crash",
+   "name": "Goose Down",
+   "description": "Crash for the first time",
+   "icon": "🪶",
+   "group": "first"
+  },
+  {
+   "id": "first_remount",
+   "name": "Back in the Saddle",
+   "description": "Crash, get back on, and finish that same ride",
+   "icon": "🩹",
+   "group": "first"
+  },
+  {
+   "id": "first_boost",
+   "name": "Turbo Goose",
+   "description": "Trigger 3 boosts in a row without missing a present",
+   "icon": "🚀",
+   "group": "first"
+  },
+  {
+   "id": "first_500m",
+   "name": "First 500m",
+   "description": "Ride 500 m in total",
+   "icon": "👟",
+   "group": "distance"
+  },
+  {
+   "id": "first_km",
+   "name": "1K Club",
+   "description": "Ride 1 km in total",
+   "icon": "🏅",
+   "group": "distance"
+  },
+  {
+   "id": "five_k",
+   "name": "5K Champion",
+   "description": "Ride 5 km in total",
+   "icon": "🏆",
+   "group": "distance"
+  },
+  {
+   "id": "ten_k",
+   "name": "Ten-K Tandem",
+   "description": "Ride 10 km in total",
+   "icon": "🔟",
+   "group": "distance"
+  },
+  {
+   "id": "half_marathon",
+   "name": "Half Marathon",
+   "description": "Ride 21.1 km in total",
+   "icon": "🎽",
+   "group": "distance"
+  },
+  {
+   "id": "marathon",
+   "name": "Marathon Geese",
+   "description": "Ride 42.2 km in total",
+   "icon": "🏃",
+   "group": "distance"
+  },
+  {
+   "id": "rides_10",
+   "name": "Regular Rider",
+   "description": "Go on 10 rides of any kind",
+   "icon": "🚲",
+   "group": "back"
+  },
+  {
+   "id": "days_3",
+   "name": "Coming Back",
+   "description": "Ride on 3 different days",
+   "icon": "📆",
+   "group": "back"
+  },
+  {
+   "id": "days_7",
+   "name": "Habit Forming",
+   "description": "Ride on 7 different days",
+   "icon": "🗓️",
+   "group": "back"
+  },
+  {
+   "id": "days_30",
+   "name": "Lifer",
+   "description": "Go on 100 rides of any kind",
+   "icon": "🪺",
+   "group": "back"
+  },
+  {
+   "id": "home_sweet",
+   "name": "Home Sweet Home",
+   "description": "Finish Grandma's 3 times",
+   "icon": "🏠",
+   "group": "medals"
+  },
+  {
+   "id": "perfect_1k",
+   "name": "Flawless",
+   "description": "Finish Grandma's with no crashes or restarts",
+   "icon": "💮",
+   "group": "medals"
+  },
+  {
+   "id": "grandma_bronze",
+   "name": "Cookie",
+   "description": "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own. One medal per run",
+   "icon": "🍪",
+   "group": "medals"
+  },
+  {
+   "id": "grandma_silver",
+   "name": "Tea and Biscuits",
+   "description": "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own. One medal per run",
+   "icon": "🫖",
+   "group": "medals"
+  },
+  {
+   "id": "grandma_gold",
+   "name": "Grandma's Favourite",
+   "description": "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own. One medal per run",
+   "icon": "🥇",
+   "group": "medals"
+  },
+  {
+   "id": "daily_gold",
+   "name": "Road Scholar",
+   "description": "Finish the Daily Ride inside its gold time, on any day; each difficulty has its own",
+   "icon": "📜",
+   "group": "medals"
+  },
+  {
+   "id": "all_gold",
+   "name": "Gilded Goose",
+   "description": "Win gold on both timed roads: Grandma's and the Daily Ride",
+   "icon": "👑",
+   "group": "medals"
+  },
+  {
+   "id": "adventurer",
+   "name": "Adventurer",
+   "description": "Finish 3 rides on Adventurous",
+   "icon": "🧭",
+   "group": "medals"
+  },
+  {
+   "id": "daredevil",
+   "name": "Daredevil",
+   "description": "Finish any level on Daredevil",
+   "icon": "😈",
+   "group": "medals"
+  },
+  {
+   "id": "steady_hands",
+   "name": "Steady Hands",
+   "description": "Ride 60 s without the bike shaking from leaning too far",
+   "icon": "🧘",
+   "group": "clean"
+  },
+  {
+   "id": "centerline",
+   "name": "On the Line",
+   "description": "Stay on the road's centre strip for 30 s straight",
+   "icon": "🎯",
+   "group": "clean"
+  },
+  {
+   "id": "no_offroad",
+   "name": "Stayed on the Road",
+   "description": "Finish 3 rides without going off-road",
+   "icon": "🛤️",
+   "group": "clean"
+  },
+  {
+   "id": "no_trees_daily",
+   "name": "No Trees Were Harmed",
+   "description": "Finish the Daily Ride without hitting a tree",
+   "icon": "🌳",
+   "group": "clean"
+  },
+  {
+   "id": "new_best",
+   "name": "Personal Best",
+   "description": "Set a new personal best",
+   "icon": "⭐",
+   "group": "clean"
+  },
+  {
+   "id": "assist_free",
+   "name": "Did It Myself",
+   "description": "Crash three times at one checkpoint, then finish without the helping hand or the Royal Shortcut",
+   "icon": "💪",
+   "group": "clean"
+  },
+  {
+   "id": "speed_demon",
+   "name": "Speed Demon",
+   "description": "Hit 40 km/h on a ride",
+   "icon": "⚡",
+   "group": "speed"
+  },
+  {
+   "id": "terminal_goose",
+   "name": "Terminal Goose",
+   "description": "Hit 50 km/h on a ride",
+   "icon": "☄️",
+   "group": "speed"
+  },
+  {
+   "id": "boost_25",
+   "name": "Boost Junkie",
+   "description": "Trigger 25 boosts",
+   "icon": "🔋",
+   "group": "speed"
+  },
+  {
+   "id": "afterburner",
+   "name": "Afterburner",
+   "description": "Chain pickups to keep boosting for 10 s straight",
+   "icon": "🔥",
+   "group": "speed"
+  },
+  {
+   "id": "collector",
+   "name": "Collector",
+   "description": "Collect 10 items in one ride",
+   "icon": "🌟",
+   "group": "collect"
+  },
+  {
+   "id": "hoarder",
+   "name": "Hoarder",
+   "description": "Collect every item in one ride",
+   "icon": "👑",
+   "group": "collect"
+  },
+  {
+   "id": "presents_100",
+   "name": "Special Delivery",
+   "description": "Collect 100 presents in total",
+   "icon": "🎁",
+   "group": "collect"
+  },
+  {
+   "id": "daily_haul",
+   "name": "Daily Haul",
+   "description": "Collect every present on the Daily Ride",
+   "icon": "🧺",
+   "group": "collect"
+  },
+  {
+   "id": "sling_first",
+   "name": "Fire!",
+   "description": "Launch from the slingshot",
+   "icon": "🪃",
+   "group": "sling"
+  },
+  {
+   "id": "sling_stage1",
+   "name": "Stage One",
+   "description": "Clear Slingshot stage 1 (300 m)",
+   "icon": "1️⃣",
+   "group": "sling"
+  },
+  {
+   "id": "sling_stage3",
+   "name": "Getting the Hang of It",
+   "description": "Clear Slingshot stage 3",
+   "icon": "3️⃣",
+   "group": "sling"
+  },
+  {
+   "id": "sling_25",
+   "name": "Flung",
+   "description": "Hit 25 km/h in a Slingshot launch",
+   "icon": "💨",
+   "group": "sling"
+  },
+  {
+   "id": "sling_40",
+   "name": "Goose Cannonball",
+   "description": "Hit 40 km/h in a Slingshot launch",
+   "icon": "🚀",
+   "group": "sling"
+  },
+  {
+   "id": "sling_1000",
+   "name": "Long Fling",
+   "description": "600 m in one launch",
+   "icon": "🛫",
+   "group": "sling"
+  },
+  {
+   "id": "big_air",
+   "name": "Big Air",
+   "description": "Land a Big Air off a ramp",
+   "icon": "🪂",
+   "group": "sling"
+  },
+  {
+   "id": "frequent_flyer",
+   "name": "Frequent Flyer",
+   "description": "Land 25 Big Airs",
+   "icon": "✈️",
+   "group": "sling"
+  },
+  {
+   "id": "jackpot",
+   "name": "Pot of Gold",
+   "description": "Collect the pot of gold",
+   "icon": "💰",
+   "group": "sling"
+  },
+  {
+   "id": "double_down",
+   "name": "Double Down",
+   "description": "Collect the pot of gold on a run that also beats your best distance",
+   "icon": "🎲",
+   "group": "sling"
+  },
+  {
+   "id": "full_trail",
+   "name": "Full Trail",
+   "description": "Grab all 5 coins in a trail",
+   "icon": "🪙",
+   "group": "sling"
+  },
+  {
+   "id": "straight_shooter",
+   "name": "Straight Shooter",
+   "description": "Go 300 m without steering after launch",
+   "icon": "📐",
+   "group": "sling"
+  },
+  {
+   "id": "medal_key",
+   "name": "Medal Key",
+   "description": "Win the medal that opens a Slingshot stage: bronze on Grandma's for stage 4, gold for stage 7",
+   "icon": "🗝️",
+   "group": "sling"
+  },
+  {
+   "id": "daily_launch",
+   "name": "Daily Launch",
+   "description": "Fly the Daily Launch (the Slingshot's daily course)",
+   "icon": "🌅",
+   "group": "sling"
+  },
+  {
+   "id": "launch_week",
+   "name": "Launch Week",
+   "description": "Fly the Daily Launch on 7 different days",
+   "icon": "📅",
+   "group": "sling"
+  },
+  {
+   "id": "coin_first",
+   "name": "Pocket Change",
+   "description": "Collect your first Tandem Token",
+   "icon": "🪙",
+   "group": "coins"
+  },
+  {
+   "id": "coins_1000",
+   "name": "Token Purse",
+   "description": "Earn 1,000 Tandem Tokens in total",
+   "icon": "👛",
+   "group": "coins"
+  },
+  {
+   "id": "coins_10000",
+   "name": "Goose Egg Nest",
+   "description": "Earn 10,000 Tandem Tokens in total",
+   "icon": "🥚",
+   "group": "coins"
+  },
+  {
+   "id": "payday",
+   "name": "Payday",
+   "description": "Earn 300 Tandem Tokens from one regular (non-Slingshot) ride",
+   "icon": "💰",
+   "group": "coins"
+  },
+  {
+   "id": "first_upgrade",
+   "name": "Tinkerer",
+   "description": "Buy your first garage upgrade",
+   "icon": "🔧",
+   "group": "coins"
+  },
+  {
+   "id": "max_upgrade",
+   "name": "Fully Tuned",
+   "description": "Max out any one upgrade",
+   "icon": "🔩",
+   "group": "coins"
+  },
+  {
+   "id": "garage_royalty",
+   "name": "Garage Royalty",
+   "description": "Max out every upgrade",
+   "icon": "🏰",
+   "group": "coins"
+  },
+  {
+   "id": "big_spender",
+   "name": "Big Spender",
+   "description": "Spend 1,000 Tandem Tokens in the garage",
+   "icon": "💸",
+   "group": "coins"
+  },
+  {
+   "id": "rebuilt",
+   "name": "Rebuilt",
+   "description": "Rebuild the bike (prestige) for the first time",
+   "icon": "♻️",
+   "group": "coins"
+  },
+  {
+   "id": "ship_of_theseus",
+   "name": "Ship of Theseus",
+   "description": "Rebuild the bike 3 times (the rebuild bonus is Slingshot pay)",
+   "icon": "⛵",
+   "group": "coins"
+  },
+  {
+   "id": "daily_first",
+   "name": "Daily Ride",
+   "description": "Finish your first Daily Ride",
+   "icon": "📅",
+   "group": "daily"
+  },
+  {
+   "id": "daily_streak_3",
+   "name": "Three in a Row",
+   "description": "Take the Daily Ride on 3 days running",
+   "icon": "🔁",
+   "group": "daily"
+  },
+  {
+   "id": "daily_streak_7",
+   "name": "A Week of Roads",
+   "description": "Take the Daily Ride 7 days running",
+   "icon": "🔥",
+   "group": "daily"
+  },
+  {
+   "id": "daily_share",
+   "name": "Show-Off",
+   "description": "Share a Daily Ride result",
+   "icon": "📣",
+   "group": "daily"
+  },
+  {
+   "id": "daily_practice_10",
+   "name": "Practice Makes Perfect",
+   "description": "Finish 10 Daily Rides",
+   "icon": "🔂",
+   "group": "daily"
+  },
+  {
+   "id": "perfect_sync",
+   "name": "Perfect Sync",
+   "description": "Stay in sync for 10 s",
+   "icon": "🤝",
+   "group": "together"
+  },
+  {
+   "id": "team_player",
+   "name": "Team Player",
+   "description": "80% or more safe-riding contribution in co-op",
+   "icon": "🤜",
+   "group": "together"
+  },
+  {
+   "id": "pair_10_rides",
+   "name": "Regulars",
+   "description": "Ride 10 times with the same partner",
+   "icon": "👫",
+   "group": "together"
+  },
+  {
+   "id": "pair_100km",
+   "name": "5K Together",
+   "description": "Ride 5 km with the same partner",
+   "icon": "🛣️",
+   "group": "together"
+  },
+  {
+   "id": "coop_first",
+   "name": "The Two of Us",
+   "description": "Finish a co-op ride",
+   "icon": "💞",
+   "group": "together"
+  },
+  {
+   "id": "social_goose",
+   "name": "Social Goose",
+   "description": "Finish co-op rides with 3 different partners",
+   "icon": "🦢",
+   "group": "together"
+  },
+  {
+   "id": "versus_first",
+   "name": "Rivals",
+   "description": "Finish a versus race",
+   "icon": "⚔️",
+   "group": "versus"
+  },
+  {
+   "id": "versus_win",
+   "name": "Crown the Goose",
+   "description": "Win a versus race",
+   "icon": "🏆",
+   "group": "versus"
+  },
+  {
+   "id": "versus_2v2",
+   "name": "Royal Court",
+   "description": "Win a 2v2 versus race",
+   "icon": "🤴",
+   "group": "versus"
+  },
+  {
+   "id": "versus_comeback",
+   "name": "Comeback Geese",
+   "description": "Win a versus race after trailing at halfway",
+   "icon": "↩️",
+   "group": "versus"
+  },
+  {
+   "id": "versus_10",
+   "name": "House Champion",
+   "description": "Win 10 versus races",
+   "icon": "🏅",
+   "group": "versus"
+  },
+  {
+   "id": "versus_underdog",
+   "name": "Underdog",
+   "description": "Win a versus race riding alone against a two-goose tandem",
+   "icon": "🐣",
+   "group": "versus"
+  },
+  {
+   "id": "versus_clean",
+   "name": "Clean Sweep",
+   "description": "Win a versus race without crashing",
+   "icon": "🧹",
+   "group": "versus"
+  },
+  {
+   "id": "crashes_10",
+   "name": "Frequent Faller",
+   "description": "Crash 10 times in total",
+   "icon": "🤕",
+   "group": "chaos",
+   "hidden": true
+  },
+  {
+   "id": "false_start",
+   "name": "False Start",
+   "description": "Crash within 3 s of GO",
+   "icon": "🚦",
+   "group": "chaos",
+   "hidden": true
+  },
+  {
+   "id": "so_close",
+   "name": "So Close",
+   "description": "Crash after the last checkpoint",
+   "icon": "🤏",
+   "group": "chaos",
+   "hidden": true
+  },
+  {
+   "id": "weathered",
+   "name": "Weathered",
+   "description": "Ride through a gust without crashing",
+   "icon": "🌬️",
+   "group": "chaos",
+   "hidden": true
+  },
+  {
+   "id": "gone_with_wind",
+   "name": "Gone With the Wind",
+   "description": "Get pushed by 10 gusts",
+   "icon": "🌪️",
+   "group": "chaos",
+   "hidden": true
+  },
+  {
+   "id": "distance_between_us",
+   "name": "The Distance Between Us",
+   "description": "Finish a Tourist ride",
+   "icon": "📍",
+   "group": "explore"
+  },
+  {
+   "id": "grand_tour",
+   "name": "Grand Tour",
+   "description": "Ride 5 km in total in Tourist",
+   "icon": "🗺️",
+   "group": "explore"
+  },
+  {
+   "id": "full_house",
+   "name": "Full House",
+   "description": "Finish a ride in every mode: Grandma's, the Daily Ride, Slingshot, co-op, versus and Tourist",
+   "icon": "🎪",
+   "group": "explore"
+  },
+  {
+   "id": "grandma_default",
+   "name": "Grandma's Classic",
+   "description": "Finish Grandma's 5 times on the default bike",
+   "icon": "🚲",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_orange",
+   "name": "Marmalade Delivery",
+   "description": "Finish Grandma's on the orange bike",
+   "icon": "🍊",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_magenta",
+   "name": "Berry Special Visit",
+   "description": "Finish Grandma's on the magenta bike",
+   "icon": "🫐",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_red",
+   "name": "Cherry on Top",
+   "description": "Finish Grandma's on the red bike",
+   "icon": "🍒",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_blue",
+   "name": "Ocean to Grandma's",
+   "description": "Finish Grandma's on the blue bike",
+   "icon": "🌊",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_green",
+   "name": "Jungle Express",
+   "description": "Finish Grandma's on the green bike",
+   "icon": "🌿",
+   "group": "colours"
+  },
+  {
+   "id": "grandma_yellow",
+   "name": "Banana Delivery",
+   "description": "Finish Grandma's on the yellow bike",
+   "icon": "🍌",
+   "group": "colours"
+  },
+  {
+   "id": "rainbow_gold",
+   "name": "Rainbow Gold",
+   "description": "Win gold on Grandma's on every bike colour (all 7)",
+   "icon": "🌈",
+   "group": "colours"
+  },
+  {
+   "id": "look_no_thumbs",
+   "name": "Look, No Thumbs",
+   "description": "Finish a ride steering only by tilting your controller",
+   "icon": "🎮",
+   "group": "clean"
+  }
+ ],
+ "renamed": {
+  "todays_launch": "daily_launch"
+ }
+}
