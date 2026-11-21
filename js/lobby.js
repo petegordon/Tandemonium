@@ -747,6 +747,7 @@ export class Lobby {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
+    if (step === this.levelStep) this._paintWarpRow();   // #840 · the day may have been warped from the Slingshot
     if (step === this.levelStep && !this._inOnlineRoom() && this._pendingMode !== 'versus') {
       const want = this._pendingMode === 'versusBots' ? 'versusBots' : 'solo';
       if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
@@ -4853,10 +4854,10 @@ export class Lobby {
     if (!card) return;
     let bestLine = '';
     // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
-    if (!d.earned && !d.secret && !d.demoLocked && d.progress && d.progress[0] > 0 && d.bestAt && d.bestAt.at) {
+    if (!d.secret && !d.demoLocked && d.bestAt && d.bestAt.at && (d.bestAt.partner || (!d.earned && d.progress && d.progress[0] > 0))) {
       const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
       const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
+      bestLine = (d.bestAt.partner ? 'Best with ' + d.bestAt.partner + ': ' : 'Best: ') + (lv ? lv.name + ' · ' : '') + when;
     }
     card.achievement = this._achItem(d);
     card.number = d.n;

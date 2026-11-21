@@ -8,7 +8,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { colourwaysFor } from './goose-colourways.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './special-bikes.js';
-import { BotSync, botPartnerKey, recordBotRide, NO_BOT } from './player-bots.js';
+import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { botTargetMs } from './bot-race.js';
 import { withGrandmaFinished } from './achievement-defs.js';
 import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
@@ -119,6 +119,10 @@ import { VersusHud } from './versus/versus-hud.js';
 import { VersusPedalHud } from './versus/versus-pedal-hud.js';
 import { isBotTeam } from './versus/versus-bot.js';
 import { botPush, botLean, botWantSpeed } from './versus/bot-pace.js';
+import { bikeContact } from './versus/bike-contact.js';
+
+/** #837 · how far each versus team starts from the road's centre (the road is 5 m wide). */
+const VERSUS_LANE_M = 1.1;
 import { isDemoEdition, getEditionRules, nextAllowedLevel, dailyRideGate } from './edition.js';
 import { nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';   // #736
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
@@ -1811,7 +1815,8 @@ class Game {
         members: t.members,
         scene: this.scene,
         world: this.world,
-        lateralOffset: i === 0 ? -0.8 : 0.8,
+        // #837 · each team on the side of its half of the split screen. Facing down the road, +x is the screen's left.
+        lateralOffset: i === 0 ? VERSUS_LANE_M : -VERSUS_LANE_M,
         // boot bike's GLB is loaded — clone, don't re-fetch; a special bike (#611) has no team paint, so
         // versus loads the goose tandem fresh instead
         bikeCloneSource: isRigTwin(this.bike._modelPath) ? null : this.bike,
@@ -3121,7 +3126,7 @@ class Game {
     // Re-show the segment timer (hidden by _onTimerExpired / _showGameOver)
     if (this.raceManager) {
       this.hud.initTimer();
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
+      this._showsSegmentTimer() && this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     this._playBeep(400, 0.15);
@@ -4984,6 +4989,17 @@ class Game {
    * The server user id when both are signed in, otherwise the display name —
    * good enough for a local streak, and D-7/D-9 replace it server-side.
    */
+  /** The name to show for this ride's partner: a bot, the couch's Player 2, or the room's partner. */
+  _partnerLabel() {
+    const bot = this._botRideId();
+    if (bot) return BOTS[bot] ? BOTS[bot].name : null;
+    if (this.mode === 'local') {
+      const acc = this._seatAccount();
+      return (acc && acc.user && acc.user.name) || 'Player 2';
+    }
+    return this._partnerName || null;
+  }
+
   _partnerKey() {
     if (this._botRideId()) return botPartnerKey(this._botRideId());   // #644 · 'bot:bolt'
     if (this._partnerServerId) return String(this._partnerServerId);
@@ -5595,6 +5611,7 @@ class Game {
       difficulty: level.fixedDifficulty || this.lobby.selectedDifficulty,
       isCoop: this.mode === 'captain' || this.mode === 'stoker' || this.mode === 'local' || !!bot,
       partnerKey,
+      partnerLabel: this._partnerLabel(),   // shown on Regulars and 5K Together
       touristFinished: !!(this.isTourist || this._touristRoute),
       pairWeekStreak: partnerKey ? computePairStreak(browserStore(), partnerKey, level.key || playDayKey()).current : 0,
     });
@@ -8764,7 +8781,7 @@ class Game {
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
+      this._showsSegmentTimer() && this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, balanceResult.leanInput, 0, this.pedalCtrl.stats);
@@ -8870,7 +8887,7 @@ class Game {
         this._handleRaceEvent(raceEvent);
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
+      this._showsSegmentTimer() && this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
     if (this.contributionTracker) {
       this.contributionTracker.update(dt, this.bike, captainLean, this.remoteLean, this.sharedPedal.stats);
@@ -9346,7 +9363,7 @@ class Game {
     const assist = rig.members.every((m) => m.type === 'bot') ? 1 : 0;   // (a bot on your back seat doesn't steer for you)
     const balanceResult = rig.balanceCtrls[0].update(bike, assist, this.collectibleManager, this.obstacleManager);
     if (rig.isBotRiders && this._botVersus) {
-      const lean = botLean(bike, TUNE, this.obstacleManager ? this.obstacleManager._items : []);
+      const lean = botLean(bike, TUNE, this.obstacleManager ? this.obstacleManager._items : [], rig.lateralOffset);
       balanceResult.leanInput = lean;
       balanceResult.visualLean = lean;
     }
@@ -9400,6 +9417,7 @@ class Game {
     // part of the crash cost.
     if (wasFallen && !bike.fallen) {
       bike.resetToDistance(Math.max(0, bike.roadD - 6));
+      rig._applyStartOffset();   // #837 · back on the team's side
     }
 
     // Off-road scrape haptic for this team's controllers only
@@ -9419,8 +9437,8 @@ class Game {
   }
 
   /**
-   * Bike-vs-bike contact (versus only). Each tandem is approximated by
-   * three circles (rear / center / front, r=0.5m) along its heading; on
+   * Bike-vs-bike contact (versus, with or without bots). Each bike is a capsule
+   * as long as its model (js/versus/bike-contact.js); on
    * overlap the bikes are pushed apart, destabilized with a lean-velocity
    * impulse away from the contact, and scrubbed of some speed — enough to
    * "knock each other around a little" without instant crashes. Fresh
@@ -9433,33 +9451,14 @@ class Game {
     const b = rb.bike;
     if (a.fallen || b.fallen) return;
 
-    const R = 1.0;          // combined contact radius (0.5m per circle)
-    const HALF_LEN = 1.4;   // circle offsets along the frame
     const fax = Math.sin(a.heading), faz = Math.cos(a.heading);
     const fbx = Math.sin(b.heading), fbz = Math.cos(b.heading);
-
-    // Closest circle pair between the two frames
-    let best = Infinity, bnx = 0, bnz = 0;
-    for (const ta of [-HALF_LEN, 0, HALF_LEN]) {
-      const pax = a.position.x + fax * ta;
-      const paz = a.position.z + faz * ta;
-      for (const tb of [-HALF_LEN, 0, HALF_LEN]) {
-        const dx = pax - (b.position.x + fbx * tb);
-        const dz = paz - (b.position.z + fbz * tb);
-        const d2 = dx * dx + dz * dz;
-        if (d2 < best) {
-          best = d2;
-          const d = Math.sqrt(d2) || 1e-6;
-          bnx = dx / d;
-          bnz = dz / d;
-        }
-      }
-    }
-    const dist = Math.sqrt(best);
-    if (dist >= R) return;
+    const contact = bikeContact(a, b);
+    if (!contact.touching) return;
+    const bnx = contact.nx, bnz = contact.nz;
 
     // Push apart, half each (n points from B toward A)
-    const push = (R - dist) * 0.5;
+    const push = contact.overlap * 0.5;
     a.position.x += bnx * push;
     a.position.z += bnz * push;
     b.position.x -= bnx * push;
@@ -9498,7 +9497,15 @@ class Game {
     const metres = Math.min(rig.bike.distanceTraveled, rig.raceManager.raceDistance);
     let pair;
     try { pair = recordBotRide(localStorage, id, metres); } catch { pair = { rides: 1, distance: metres }; }   // storage blocked
-    this.achievements.botPartner(botPartnerKey(id), pair);
+    this.achievements.botPartner(botPartnerKey(id), pair, BOTS[id] ? BOTS[id].name : null);
+  }
+
+  /** #843 · a ride with no clock (Tourist) shows no countdown, and clears one left on the HUD. */
+  _showsSegmentTimer() {
+    const level = this.lobby && this.lobby.selectedLevel;
+    if (!this.isTourist && !(level && level.timerEnabled === false)) return true;
+    if (this.hud.timerEl.textContent) this.hud.timerEl.textContent = '';
+    return false;
   }
 
   /** A team grabbed collectible(s): count + 3s boost, FCFS attribution. */
@@ -9835,7 +9842,7 @@ class Game {
         if (this.net && this.net.connected) document.getElementById('btn-try-reconnect').hidden = true;
       }
       this.hud.updateProgress(this.bike.distanceTraveled, this.raceManager.raceDistance, this.raceManager.passedCheckpoints);
-      this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
+      this._showsSegmentTimer() && this.hud.updateTimer(this.raceManager.segmentTimeRemaining, this.raceManager.segmentTimeTotal, this.raceManager.timerHeld);
     }
 
     // Tutorial coaching UI for stoker (phase prompts, dodge arrows, collect indicators)

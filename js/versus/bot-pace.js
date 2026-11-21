@@ -30,14 +30,15 @@ export function botPush({ elapsedMs, targetMs, distance, raceDistance, speed, dt
 const angle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /**
- * This frame's lean input (-1..1): head for the road ahead, back toward the middle, around the next pylon. A positive
+ * This frame's lean input (-1..1): head for the road ahead, back toward its team's side, around the next pylon. A positive
  * lean turns the bike toward a smaller heading (js/bike-model.js), so the wanted turn is converted into a lean to hold.
  * @param {any} bike @param {{turnRate: number, leanForce: number, damping: number}} tune @param {any[]} [obstacles]
+ * @param {number} [lane] the team's side of the road, as a lateral offset (#837)
  */
-export function botLean(bike, tune, obstacles = []) {
+export function botLean(bike, tune, obstacles = [], lane = 0) {
   const speed = Math.max(2, bike.speed);
   const ahead = bike.roadPath.getPointAtDistance(bike.roadD + 2 + speed * 0.6);
-  let want = angle(ahead.heading - bike.heading) + Math.max(-0.5, Math.min(0.5, -(bike._lateralOffset || 0) * 0.25));
+  let want = angle(ahead.heading - bike.heading) + Math.max(-0.5, Math.min(0.5, -((bike._lateralOffset || 0) - lane) * 0.25));
   const rx = Math.cos(bike.heading), rz = -Math.sin(bike.heading);
   for (const o of obstacles) {
     if (o._worldX === undefined) continue;

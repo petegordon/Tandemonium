@@ -107,6 +107,21 @@ export function renderGarage(save, wallet, opts = {}) {
     t.addEventListener('click', () => opts.onToday && opts.onToday());
     top.appendChild(t);
     buttons.push(t);
+    if (todays.warpOffered) {   // #840 · Launch Week: the day can be warped from here too
+      const fwd = btn('primary', todays.warpMore ? '⏩ Warp to tomorrow' : `⏳ Limit: ${todays.warpMax} days ahead`);
+      fwd.dataset.warp = 'forward';
+      fwd.setAttribute('aria-disabled', todays.warpMore ? 'false' : 'true');
+      fwd.addEventListener('click', () => opts.onWarp && opts.onWarp(true));
+      top.appendChild(fwd);
+      buttons.push(fwd);
+      if (todays.warp > 0) {
+        const back = btn('primary', '↩ Back to today');
+        back.dataset.warp = 'back';
+        back.addEventListener('click', () => opts.onWarp && opts.onWarp(false));
+        top.appendChild(back);
+        buttons.push(back);
+      }
+    }
   }
   if (top.childNodes.length) root.appendChild(top);
 

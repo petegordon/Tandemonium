@@ -110,6 +110,29 @@ try {
     .catch(() => note(false, 're-enable: tiles did not come back'));
   note(true, 're-enable: tiles rebuilt');
 
+  // A paired phone shows the phone, not the idle controller still claimed on the seat
+  const phone = await page.evaluate(async () => {
+    window.__setScenario('solo');
+    await new Promise((r) => setTimeout(r, 600));
+    window.__wasInput = window.__ctx.input;
+    window.__ctx.input = { _remoteTilt: true, _remoteLeft: true, _remoteRight: false, getMotionLeanVisual: () => 0.5 };
+    await new Promise((r) => setTimeout(r, 400));
+    const t = window.__hud.tiles.get('P1');
+    const out = t && { kind: t.entry.kind, name: t.subEl.textContent, model: !!t.overlay,
+      canvas: getComputedStyle(t.canvas).display, shown: getComputedStyle(t.el.querySelector('.cohud-phone')).display,
+      turn: t.phoneEl.style.transform, left: t.phonePedals[0].classList.contains('on'), right: t.phonePedals[1].classList.contains('on') };
+    return out || {};
+  });
+  await page.screenshot({ path: path.join(OUT, 'phone-tile.png') });
+  phone.back = await page.evaluate(async () => {
+    window.__ctx.input = window.__wasInput;
+    await new Promise((r) => setTimeout(r, 400));
+    return window.__hud.tiles.get('P1')?.entry.kind;
+  });
+  note(phone.kind === 'phone' && phone.name === 'Phone' && !phone.model && phone.canvas === 'none' && phone.shown === 'flex'
+    && phone.turn === 'rotate(22.5deg)' && phone.left && !phone.right, `a phone seat draws the phone, its lean and its pedals ${JSON.stringify(phone)}`);
+  note(phone.back !== 'phone', `the seat goes back when the phone leaves (${phone.back})`);
+
   // #821 · a controller that drops and returns draws again, on a canvas with a live context
   const back = await page.evaluate(async () => {
     const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
