@@ -55,7 +55,7 @@ import { CollectibleManager } from './collectibles.js';
 import { ObstacleManager } from './obstacles.js';
 import { GeeseManager } from './geese.js';
 import { PhysicsFx } from './physics/physics-fx.js';
-import { AchievementManager, showAchievementToast, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { AchievementManager, showAchievementToast, showInfoToast } from './achievements.js';
 import { GOOSE_OUTFITS } from './goose-outfits.js';
 import { lockedOutfits, outfitLockHint } from './rewards.js';
 import { gyroOnlySteer, lastCheckpointM } from './achievement-defs.js';
@@ -1713,8 +1713,6 @@ class Game {
 
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
-      this.lobby.hidePartnerPip();
-      updateBadgeDisplay('partner-badges', []);
       analytics.trackEvent('room_disconnect', {
         disconnected_role: this.mode === 'captain' ? 'stoker' : 'captain',
         during_ride: this.state === 'playing',
@@ -1791,10 +1789,6 @@ class Game {
       }
       // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync, an older build's cameraToggle)
       if (profile && profile.type) return;
-      // Render partner achievement badges
-      if (profile.achievements) {
-        updateBadgeDisplay('partner-badges', profile.achievements);
-      }
       // PR #397 M1: the partner's edition and capabilities (null caps = old build).
       if (this.lobby) this.lobby._partnerRoom = partnerFromProfile(profile);
       // Capture partner server ID for score attribution
@@ -3578,8 +3572,6 @@ class Game {
     if (this.net) {
       this.net.destroy();
       this.net = null;
-      this.lobby.hidePartnerPip();
-      updateBadgeDisplay('partner-badges', []);
       document.getElementById('conn-badge').style.display = 'none';
     }
     this._hideReconnecting();
@@ -5848,7 +5840,6 @@ class Game {
   }
 
   _updateBadges() {
-    updateBadgeDisplay('self-badges', this.achievements.getEarned());
     this._sendProfile();
   }
 
@@ -6844,8 +6835,6 @@ class Game {
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
-    this.lobby.hideRoomPips();
-    updateBadgeDisplay('partner-badges', []);
     // The lobby holds the same transport: leaving the ride leaves the session there too
     // (the captain kept a dead session and later said "partner lost connection", #623).
     if (this.net) { if (this.lobby.net === this.net) this.lobby.net = null; this.net.destroy(); this.net = null; }

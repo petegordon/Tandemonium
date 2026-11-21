@@ -90,7 +90,7 @@ import { API_BASE } from './config.js';
 const LINK_PROMPT_SNOOZE_KEY = 'tandemonium_link_discord_prompt_until';
 const LINK_PROMPT_SNOOZE_MS = 7 * 24 * 3600 * 1000;
 import { LicenseManager } from './license.js';
-import { AchievementManager, updateBadgeDisplay, showInfoToast } from './achievements.js';
+import { AchievementManager, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { SteamJoin } from './steam-join.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
@@ -5477,7 +5477,6 @@ export class Lobby {
     this._pendingMode = 'multiplayer';
     this._partnerIdle.reset(); this._activity.mark();   // #694 F: a fresh baseline, and say we're here
 
-    this._setPipLabels(role);
     this._syncRoomSeats(role);
 
     if (role === 'captain') {
@@ -5486,9 +5485,6 @@ export class Lobby {
     } else {
       this._showRoomLevelsStep();
     }
-
-    // My picture in my circle
-    this._showSelfPip();
 
     // Register room message handler
     this.net.onProfileReceived = (profile) => this._handleRoomMessage(profile);
@@ -5599,41 +5595,6 @@ export class Lobby {
     });
   }
 
-  /** The role labels under the two picture circles. */
-  _setPipLabels(role) {
-    const selfLabel = document.getElementById('self-pip-label');
-    const partnerLabel = document.getElementById('partner-pip-label');
-    if (selfLabel) selfLabel.textContent = role === 'captain' ? 'CAPTAIN' : 'STOKER';
-    if (partnerLabel) partnerLabel.textContent = role === 'captain' ? 'STOKER' : 'CAPTAIN';
-  }
-
-  /** The partner's picture (or the default icon) in the partner circle. */
-  _updatePartnerPip() {
-    const partnerAvatar = document.getElementById('partner-pip-avatar');
-    const partnerWrap = document.getElementById('partner-pip-wrap');
-    if (!partnerWrap) return;
-    if (partnerAvatar) {
-      partnerAvatar.src = this._partnerAvatarUrl
-        ? (this._avatarCache.get(this._partnerAvatarUrl) || this._partnerAvatarUrl)
-        : DEFAULT_AVATAR_SVG;
-      partnerAvatar.style.display = 'block';
-    }
-    partnerWrap.style.display = 'block';
-  }
-
-  /** My picture (or the default icon when not signed in) in my circle. */
-  _showSelfPip() {
-    const selfAvatar = document.getElementById('self-pip-avatar');
-    const selfWrap = document.getElementById('self-pip-wrap');
-    if (!this.net || !selfAvatar || !selfWrap) return;
-    const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
-    selfAvatar.src = (user && user.avatar)
-      ? (this._avatarCache.get(user.avatar) || user.avatar)
-      : DEFAULT_AVATAR_SVG;
-    selfAvatar.style.display = 'block';
-    selfWrap.style.display = 'block';
-  }
-
   /**
    * Builds from before the room camera was removed (2026-11-20) wait for this message before
    * they stop expecting a partner video: without it their partner circle comes back mid-ride.
@@ -5642,20 +5603,6 @@ export class Lobby {
     const user = this.auth && this.auth.isLoggedIn() && this.auth.getUser();
     this.net.sendProfile(RoomProtocol.cameraToggle(false, user && user.avatar));
   }
-
-  /** Hide both picture circles (a ride is starting, or the room is left). */
-  _hideRoomPips() {
-    for (const id of ['self-pip-wrap', 'partner-pip-wrap']) { const w = document.getElementById(id); if (w) w.style.display = 'none'; }
-  }
-
-  /** Hide the partner's circle (they left, or the ride is over). */
-  hidePartnerPip() {
-    const w = document.getElementById('partner-pip-wrap');
-    if (w) w.style.display = 'none';
-  }
-
-  /** Hide both circles from outside the lobby (game.js, leaving a ride for the menu). */
-  hideRoomPips() { this._hideRoomPips(); }
 
   /** Online room: leave level select, resetting its multiplayer bits. The
    *  captain goes back to the host step (partner still shown); the stoker's
@@ -5683,7 +5630,6 @@ export class Lobby {
     this._captainChoosingTourist = false;
     this._captainTouristPick = null;
     this._roomSession.leave();
-    this._hideRoomPips();
     const waitText = document.getElementById('level-wait-text');
     if (waitText) waitText.style.display = 'none';
     this._showStep(this.roleStep);
@@ -5904,13 +5850,9 @@ export class Lobby {
       if (profile && profile.avatar) {
         this._partnerAvatarUrl = this._avatarCache.get(profile.avatar) || profile.avatar;
       }
-      // Refresh partner PiP (avatar may have just arrived)
-      this._updatePartnerPip();
-      // Render partner achievement badges
+      // The partner's achievements, for their player card
       if (profile && profile.achievements) {
         this._partnerAchievements = profile.achievements;
-        const shape = window.matchMedia('(min-width: 1024px)').matches ? 'rect' : undefined;
-        updateBadgeDisplay('partner-badges', profile.achievements, shape);
         this._renderRoomPlayers();
       }
       if (profile) this._notePartnerRoom(profile);   // PR #397 M1
@@ -6160,8 +6102,6 @@ export class Lobby {
   _transitionToGame() {
     // #672: the captain started while this side was still dressing; every pick is already saved.
     if (this._room) this._room.close('ride');
-    // No picture circles in the ride
-    this._hideRoomPips();
     // Detect input method before hiding lobby
     this._detectAndSetInputMethod();
     // Hide lobby
@@ -7992,7 +7932,6 @@ export class Lobby {
       setTimeout(() => {
         // Only this room's transport, and only if the lobby is still on it (not a fresh room).
         if (!this._roomSession.dropIfCurrent(roomNet)) return;
-        this._hideRoomPips();
         this._showStep(this.roleStep);
       }, 2000);
     };
@@ -8009,7 +7948,6 @@ export class Lobby {
     this.lobbyEl.style.display = '';
     if (this._previewModel) this._startPreviewLoop();
 
-    this._setPipLabels(role);
     this._syncRoomSeats(role);
 
     // After a ride together both land on level select (Pete, 2026-10-23): the

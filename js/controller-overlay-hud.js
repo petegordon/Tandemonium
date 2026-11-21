@@ -444,8 +444,6 @@ export class ControllerOverlayHud {
     for (const el of document.querySelectorAll('.front-view-frame')) {
       const r = this._visibleRect(el); if (r) obstacles.push(r);
     }
-    const pip = this._visibleRect(document.getElementById('partner-pip-wrap'));
-    if (pip) obstacles.push(pip);
     const bars = [];
     for (const el of [document.getElementById('pedal-bar'), ...document.querySelectorAll('.versus-pedals')]) {
       const r = this._visibleRect(el); if (r) bars.push(r);
