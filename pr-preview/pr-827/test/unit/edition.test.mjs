@@ -67,3 +67,15 @@ test('NEXT LEVEL skips levels the edition does not offer, and locked ones', asyn
   assert.equal(nextAllowedLevel(levels, 'grandma', FULL_RULES, l => l.id === 'castle').id, 'daily');
   assert.equal(nextAllowedLevel(levels, 'unknown', FULL_RULES), null);
 });
+
+test('a demo build is the demo whatever the address or launch options say; the repo holds the full game', async () => {
+  // (a full build still shows the demo on request, for trying it)
+  assert.equal(resolveIsDemo('?demo=1', false, 'full'), true);
+  assert.equal(resolveIsDemo('', false, 'full'), false);
+  // no switch turns a demo build into the full game
+  assert.equal(resolveIsDemo('', false, 'demo'), true);
+  assert.equal(resolveIsDemo('?demo=0', false, 'demo'), true);
+  assert.equal(resolveIsDemo('?demo=0&full=1', undefined, 'demo'), true);
+  const { BUILD_EDITION } = await import('../../js/edition-build.js');
+  assert.equal(BUILD_EDITION, 'full', "never commit a demo stamp: `node scripts/set-build-edition.js full` puts it back");
+});
