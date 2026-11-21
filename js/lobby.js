@@ -1589,9 +1589,14 @@ export class Lobby {
       document.getElementById('tourist-note-return')?.addEventListener('click', () => sheet.close());
       fun?.addEventListener('click', () => { this._touristNoteGo = true; sheet.close(); });
       // the sheet starts on its first body item, the option: A should mean Have Fun!, not opt out
-      sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => {
-        if (sheet.open) this._stepFocus.setSpatial(sheet.focusables(), fun);
-      }));
+      // (the first time it opens, its controls can take a frame or two to lay out)
+      const land = (tries = 0) => {
+        if (!sheet.open) return;
+        const items = sheet.focusables();
+        if (items.includes(fun)) this._stepFocus.setSpatial(items, fun);
+        else if (tries < 20) requestAnimationFrame(() => land(tries + 1));
+      };
+      sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => land()));
       // every way out keeps the choice; only Have Fun! goes on (the sheet hands the focus back first)
       sheet.addEventListener('uf-sheet:close', () => {
         if (never.checked) { try { localStorage.setItem(TOURIST_NOTE_OFF_KEY, '1'); } catch { /* this session only */ } }
