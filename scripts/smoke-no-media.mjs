@@ -1,23 +1,27 @@
 #!/usr/bin/env node
 // ============================================================
-// smoke-no-media.mjs — room camera/mic stays off by default (#400 D7)
+// smoke-no-media.mjs — the room camera and microphone are gone
 // ============================================================
 //
-// Multiplayer stays in the demo; only the room's camera + microphone (WebRTC
-// media) goes behind ?media=1. This drives the real game in headless Chrome:
+// Tandemonium had a room camera + microphone (WebRTC media). It was switched
+// off for every player by #400 D7 (only ?media=1 turned it on) and removed on
+// 2026-11-20. This drives the real game in headless Chrome:
 //
 //   boot → lobby (press ALL) → SOLO → Grandma's ride → SAVE CLIP → back to the
-//   lobby → RIDE TOGETHER → START A RIDE (room created) → transport probes
+//   lobby → RIDE TOGETHER → START A RIDE (room created) → an older build's
+//   camera message and media call arrive
 //
-// and counts every navigator.mediaDevices.getUserMedia / enumerateDevices call
-// and every PeerJS peer.call(). Without ?media=1 all of them must be zero, the
-// camera/audio toggles hidden, and an incoming media call closed unanswered.
-// A second pass with ?media=1 checks the feature is still there when asked for.
+// and counts every navigator.mediaDevices.getUserMedia / enumerateDevices call,
+// every camera / microphone permission query and every PeerJS peer.call(). All
+// of them must be zero, no camera or microphone control may exist in the lobby
+// or the room screen, and the media call must be closed unanswered. It runs
+// twice, without and with ?media=1: an old link that still says media=1 must
+// change nothing.
 //
 // No network needed: the relay WebSocket and PeerJS are stubbed in the page
 // (a fake relay that opens immediately, a fake Peer that counts .call()), so
-// "room created" means the lobby reached "Waiting for partner…" with a code —
-// a real two-browser co-op ride is NOT exercised here.
+// "room created" means the lobby shows a code and is waiting for a partner —
+// a real two-browser co-op ride is NOT exercised here (that is smoke:online).
 //
 //   node scripts/smoke-no-media.mjs            # both passes
 //   node scripts/smoke-no-media.mjs --no-ride  # skip the solo ride + clip
@@ -59,7 +63,7 @@ const browser = await puppeteer.launch({
 // Installed before any page script: counts media calls, fakes the relay and
 // PeerJS so a room can be created with no network.
 function instrument() {
-  const m = window.__media = { gum: 0, enumerate: 0, legacyGum: 0, peerCalls: 0, relayOpens: 0 };
+  const m = window.__media = { gum: 0, enumerate: 0, legacyGum: 0, permissionQueries: 0, peerCalls: 0, relayOpens: 0 };
   const md = navigator.mediaDevices;
   if (md) {
     md.getUserMedia = () => { m.gum++; return Promise.reject(new DOMException('blocked by smoke', 'NotAllowedError')); };
@@ -70,6 +74,14 @@ function instrument() {
   }
   for (const k of ['getUserMedia', 'webkitGetUserMedia']) {
     try { navigator[k] = function () { m.legacyGum++; }; } catch (e) { /* read-only */ }
+  }
+  // "granted", so code that only looks before asking would go on to ask.
+  if (navigator.permissions && navigator.permissions.query) {
+    const realQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = (d) => {
+      if (d && (d.name === 'camera' || d.name === 'microphone')) { m.permissionQueries++; return Promise.resolve({ state: 'granted' }); }
+      return realQuery(d);
+    };
   }
 
   // Fake relay: opens straight away, swallows sends.
@@ -94,6 +106,26 @@ function instrument() {
   };
 }
 
+// Every camera / microphone control on the page, shown or not: a button-like
+// element that says so in its id, title, label or text, any <video> but the
+// saved clip's own player, and any <audio> made for a partner's voice. (The rider camera is a 3D camera drawn on
+// a canvas, with no control of its own; the Options checkboxes are not buttons.)
+function mediaControls() {
+  const WORDS = /\b(camera|webcam|mic|microphone|video call|voice chat)\b/i;
+  const found = [];
+  for (const el of document.querySelectorAll('button, uf-button, uf-pill, [role="button"], .lobby-toggle')) {
+    const says = [el.id, el.getAttribute('title'), el.getAttribute('aria-label'), el.getAttribute('label'), (el.textContent || '').trim().slice(0, 60)]
+      .filter(Boolean).join(' | ').replace(/-/g, ' ');
+    if (WORDS.test(says)) found.push(`${el.tagName.toLowerCase()}#${el.id || '?'} (${says.slice(0, 80)})`);
+  }
+  for (const v of document.querySelectorAll('video')) if (v.id !== 'clip-preview') found.push(`video#${v.id || '?'}`);
+  for (const a of document.querySelectorAll('audio')) if (/partner|voice|remote/i.test(a.id)) found.push(`audio#${a.id}`);
+  for (const id of ['toggle-camera', 'toggle-audio', 'partner-audio', 'selfie-pip', 'partner-pip']) {
+    if (document.getElementById(id)) found.push(`#${id}`);
+  }
+  return found;
+}
+
 const LOCAL = [
   [/cdn\.jsdelivr\.net\/npm\/three@[^/]+\/build\/three\.module\.js/, 'node_modules/three/build/three.module.js'],
   [/cdn\.jsdelivr\.net\/npm\/three@[^/]+\/examples\/jsm\/(.+)$/, 'node_modules/three/examples/jsm/$1']
@@ -101,8 +133,8 @@ const LOCAL = [
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-async function runPass(media) {
-  const label = media ? '?media=1' : 'default (media off)';
+async function runPass(mediaParam) {
+  const label = mediaParam ? '?media=1 (an old link)' : 'default';
   console.log(`\n=== pass: ${label} ===`);
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
@@ -130,8 +162,13 @@ async function runPass(media) {
   const fails = [];
   const check = (ok, msg) => { console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) fails.push(msg); };
   const counts = () => page.evaluate(() => ({ ...window.__media }));
+  const noMediaYet = async (where) => {
+    const c = await counts();
+    check(c.gum === 0 && c.legacyGum === 0 && c.enumerate === 0 && c.permissionQueries === 0 && c.peerCalls === 0,
+      `${where}: no camera/mic request of any kind (${JSON.stringify(c)})`);
+  };
 
-  await page.goto(`http://127.0.0.1:${PORT}/index.html${media ? '?media=1' : ''}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(`http://127.0.0.1:${PORT}/index.html${mediaParam ? '?media=1' : ''}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForFunction(() => !!window._game && !!window._game.lobby, { timeout: 45000 });
   await page.click('#tap-to-start').catch(() => {});
   await page.waitForFunction(() => {
@@ -139,33 +176,30 @@ async function runPass(media) {
   }, { timeout: 20000 });
   await sleep(500);
 
-  // ── lobby toggles ──
-  const vis = await page.evaluate(() => {
-    const shown = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== 'none'; };
-    return { camera: shown('toggle-camera'), audio: shown('toggle-audio'), all: shown('toggle-all') };
-  });
-  check(vis.camera === media, `camera toggle ${media ? 'visible' : 'hidden'} (${vis.camera})`);
-  check(vis.audio === media, `audio toggle ${media ? 'visible' : 'hidden'} (${vis.audio})`);
-  check(vis.all, 'ALL toggle still shown (covers motion + music)');
+  // ── lobby: no camera / microphone control, ALL is motion + music ──
+  const lobbyControls = await page.evaluate(mediaControls);
+  check(lobbyControls.length === 0, `lobby: no camera/mic control exists (${JSON.stringify(lobbyControls)})`);
+  const allShown = await page.evaluate(() => { const el = document.getElementById('toggle-all'); return !!el && getComputedStyle(el).display !== 'none'; });
+  check(allShown, 'ALL toggle still shown (covers motion + music)');
 
-  // Press ALL like a player would — with media on this is what prompts.
-  // Music starts on, so with media off ALL begins "all on" and flips it off.
+  // Press ALL like a player would. Music starts on, so ALL begins "all on" and flips it off.
   const allState = () => page.evaluate(() => ({
     music: window._game.lobby.musicActive,
     allActive: document.getElementById('toggle-all').classList.contains('active')
   }));
   const before = await allState();
-  if (!media) check(before.allActive === before.music, `ALL active tracks music+motion only (${JSON.stringify(before)})`);
+  check(before.allActive === before.music, `ALL active tracks music+motion only (${JSON.stringify(before)})`);
   await page.evaluate(() => document.getElementById('toggle-all').click());
   await sleep(400);
   const once = await allState();
-  if (!media) check(once.music !== before.music && once.allActive === once.music, `ALL flips music (${JSON.stringify(once)})`);
+  check(once.music !== before.music && once.allActive === once.music, `ALL flips music (${JSON.stringify(once)})`);
   await page.evaluate(() => document.getElementById('toggle-all').click());
   await sleep(400);
   const twice = await allState();
-  if (!media) check(twice.music === before.music && twice.allActive === twice.music, `ALL again restores it (${JSON.stringify(twice)})`);
+  check(twice.music === before.music && twice.allActive === twice.music, `ALL again restores it (${JSON.stringify(twice)})`);
   // leave music on (as a player normally would)
   if (!twice.music) { await page.evaluate(() => window._game.lobby._toggleMusic()); }
+  await noMediaYet('lobby, ALL pressed twice');
 
   // ── solo ride + clip ──
   if (WANT_RIDE) {
@@ -191,14 +225,12 @@ async function runPass(media) {
       await sleep(3000);
       const pip = await page.evaluate(() => {
         const shown = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== 'none'; };
-        return { selfie: shown('selfie-pip-wrap'), partner: shown('partner-pip-wrap'),
-          selfieActive: window._game.recorder.selfieActive, supported: window._game.recorder.supported,
-          buffering: window._game.recorder.buffering };
+        return { self: shown('self-pip-wrap'), partner: shown('partner-pip-wrap'),
+          supported: window._game.recorder.supported, buffering: window._game.recorder.buffering };
       });
-      if (!media) {
-        check(!pip.selfie && !pip.partner, `selfie/partner PiP frames hidden in ride (selfie=${pip.selfie} partner=${pip.partner})`);
-        check(!pip.selfieActive, 'no selfie camera in the ride');
-      }
+      check(!pip.self && !pip.partner, `the room's picture circles are hidden in a ride (self=${pip.self} partner=${pip.partner})`);
+      const rideControls = await page.evaluate(mediaControls);
+      check(rideControls.length === 0, `ride: no camera/mic control exists (${JSON.stringify(rideControls)})`);
       if (!pip.supported || !pip.buffering) {
         // Swiftshader trips the recorder's low-end GPU probe, which disables
         // clips. Force the standard MediaRecorder path exactly as the ride
@@ -206,18 +238,22 @@ async function runPass(media) {
         await page.evaluate(async () => {
           const g = window._game, r = g.recorder;
           r.supported = r._checkSupport(); r._gpuProbe = Promise.resolve();
-          if (r.supported) await r.startBuffer(g.audioCtx, g.lobby.audioActive, g.audioEngine);
+          if (r.supported) await r.startBuffer(g.audioCtx, g.audioEngine);
         });
         await sleep(4000);
         Object.assign(pip, await page.evaluate(() => ({ supported: window._game.recorder.supported, buffering: window._game.recorder.buffering })));
         console.log(`  note recorder forced on (headless low-end probe): supported=${pip.supported} buffering=${pip.buffering}`);
       }
       if (pip.supported && pip.buffering) {
-        const tracks = await page.evaluate(() => {
+        const clipSources = await page.evaluate(() => {
           const r = window._game.recorder;
-          return { mic: !!r._micStream, partner: !!r.partnerStream, selfie: !!r.selfieStream };
+          const tracks = r._stream ? r._stream.getTracks().map(t => t.kind).sort() : [];
+          return { tracks, hasGameAudio: !!r._audioDestination,
+            mediaMembers: ['_micStream', 'partnerStream', 'selfieStream', 'startSelfie', 'setPartnerStream', 'addAudioStreams'].filter(k => k in r) };
         });
-        if (!media) check(!tracks.mic && !tracks.partner && !tracks.selfie, `clip sources are game only (${JSON.stringify(tracks)})`);
+        check(clipSources.mediaMembers.length === 0, `the recorder has no camera/mic/partner source (${JSON.stringify(clipSources.mediaMembers)})`);
+        check(clipSources.tracks.join(',') === 'audio,video' && clipSources.hasGameAudio,
+          `the clip is the game's picture + the game's own sound (${JSON.stringify(clipSources)})`);
         await page.evaluate(() => window._game.recorder.saveClip());
         let clip = true;
         await page.waitForFunction(() => !!window._game.recorder._clipBlob ||
@@ -228,6 +264,7 @@ async function runPass(media) {
       } else {
         console.log(`  skip SAVE CLIP — recorder not buffering headlessly (supported=${pip.supported}, buffering=${pip.buffering})`);
       }
+      await noMediaYet('solo ride + clip');
     }
     await page.evaluate(() => window._game._returnToLobby());
     await page.waitForFunction(() => {
@@ -245,53 +282,63 @@ async function runPass(media) {
   await page.waitForFunction(() => document.getElementById('lobby-flow')?.current === 'lobby-host', { timeout: 15000 }).catch(() => {});
   await page.evaluate(() => document.getElementById('btn-host-room-code')?.click());
   let roomUp = true;
-  await page.waitForFunction(() => /waiting for partner/i.test(document.getElementById('host-status')?.textContent || ''),
+  // (the relay has us in the room: "Waiting for partner...", then the room-wait line "You're the only one in room …")
+  await page.waitForFunction(() => /waiting for partner|the only one in room/i.test(document.getElementById('host-status')?.textContent || ''),
     { timeout: 20000 }).catch(() => { roomUp = false; });
   const room = await page.evaluate(() => ({
     code: document.getElementById('room-code-display')?.textContent,
     status: document.getElementById('host-status')?.textContent,
-    mediaEnabled: window._game.lobby.net?.mediaEnabled
+    link: (document.querySelector('#lobby-host .room-url')?.textContent || '').trim(),
+    search: location.search,
   }));
   check(roomUp && /^[A-Z0-9-]{4,}$/.test(room.code || ''), `START A RIDE created a room (code=${room.code}, status="${room.status}")`);
-  check(room.mediaEnabled === media, `room transport mediaEnabled=${room.mediaEnabled}`);
+  check(/[?&]room=/.test(room.link) && !/media/i.test(room.link), `the join link carries the room and no media setting ("${room.link}")`);
+  const roomControls = await page.evaluate(mediaControls);
+  check(roomControls.length === 0, `room screen: no camera/mic control exists (${JSON.stringify(roomControls)})`);
 
-  // ── transport probes: what happens once P2P is up ──
+  // ── what an older build (camera still in it) can send ──
   const probe = await page.evaluate(async () => {
-    const net = window._game.lobby.net;
+    const l = window._game.lobby, net = l.net;
     if (!net) return null;
+    const r = { members: ['acquireLocalMedia', 'initiateCall', 'onRemoteStream', 'mediaEnabled', '_localMediaStream', '_mediaCall'].filter(k => k in net) };
+    // its "camera on" / "camera off" room messages
+    try {
+      l._handleRoomMessage({ type: 'cameraToggle', enabled: true });
+      l._handleRoomMessage({ type: 'cameraToggle', enabled: false, avatar: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' });
+      r.messageError = null;
+    } catch (e) { r.messageError = String(e && e.message || e); }
+    // its media call, once P2P is up
     const savedPeer = net.peer, savedConn = net.conn;
     net.peer = new window.Peer('probe');
     net.conn = { peer: 'remote-peer', close() {} };
-    net.initiateCall();
     const incoming = { closed: false, answered: false, on() {}, close() { this.closed = true; }, answer() { this.answered = true; } };
     net._handleIncomingCall(incoming);
-    await net.acquireLocalMedia(true, true);
-    const r = { closed: incoming.closed, answered: incoming.answered, hasLocalStream: !!net._localMediaStream };
-    if (net._mediaCall) { try { net._mediaCall.close(); } catch (e) {} net._mediaCall = null; }
     net.peer = savedPeer; net.conn = savedConn;
+    await new Promise((res) => setTimeout(res, 2500));   // past the old partner-video retry timers
+    r.closed = incoming.closed; r.answered = incoming.answered;
+    r.videos = document.querySelectorAll('video:not(#clip-preview)').length;
     return r;
   });
+  check(probe && probe.members.length === 0, `the room transport has no media members (${JSON.stringify(probe && probe.members)})`);
+  check(probe && probe.messageError === null && probe.videos === 0, `an older build's camera messages are ignored without error (${JSON.stringify(probe)})`);
+  check(probe && probe.closed && !probe.answered, `an incoming media call is closed, not answered (${JSON.stringify(probe)})`);
+  const afterControls = await page.evaluate(mediaControls);
+  check(afterControls.length === 0, `room screen after those: still no camera/mic control (${JSON.stringify(afterControls)})`);
+
   const c = await counts();
   console.log(`  counts: ${JSON.stringify(c)}`);
-  if (!media) {
-    check(probe && probe.closed && !probe.answered, `incoming media call closed, not answered (${JSON.stringify(probe)})`);
-    check(c.peerCalls === 0, `peer.call never called (${c.peerCalls})`);
-    check(c.gum === 0 && c.legacyGum === 0, `getUserMedia never called (${c.gum}/${c.legacyGum})`);
-    check(c.enumerate === 0, `enumerateDevices never called (${c.enumerate})`);
-  } else {
-    check(probe && probe.answered && !probe.closed, `incoming media call answered (${JSON.stringify(probe)})`);
-    check(c.peerCalls >= 1, `peer.call placed (${c.peerCalls})`);
-    check(c.enumerate >= 1, `enumerateDevices used for the camera check (${c.enumerate})`);
-    check(c.gum >= 1, `getUserMedia requested when ALL pressed (${c.gum})`);
-  }
-  if (pageErrors.length) console.log('  page errors (not failing):\n    ' + pageErrors.slice(0, 5).join('\n    '));
+  check(c.gum === 0 && c.legacyGum === 0, `getUserMedia never called (${c.gum}/${c.legacyGum})`);
+  check(c.enumerate === 0, `enumerateDevices never called (${c.enumerate})`);
+  check(c.permissionQueries === 0, `camera/microphone permission never queried (${c.permissionQueries})`);
+  check(c.peerCalls === 0, `peer.call never called (${c.peerCalls})`);
+  check(pageErrors.length === 0, `no page errors (${pageErrors.slice(0, 3).join(' · ')})`);
   await page.close();
   return fails;
 }
 
 let fails = [];
 try {
-  fails = fails.concat((await runPass(false)).map(f => `[media off] ${f}`));
+  fails = fails.concat((await runPass(false)).map(f => `[default] ${f}`));
   fails = fails.concat((await runPass(true)).map(f => `[?media=1] ${f}`));
 } finally {
   await browser.close();

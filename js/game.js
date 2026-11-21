@@ -121,7 +121,6 @@ import { isBotTeam } from './versus/versus-bot.js';
 import { isDemoEdition, getEditionRules, nextAllowedLevel, dailyRideGate } from './edition.js';
 import { nextBikeGoal, nextBikeGoalText } from './bike-unlocks.js';   // #736
 import { mergeRoomRules, partnerFromProfile } from './edition.js'; // PR #397 M1
-import { isMediaEnabled } from './edition.js'; // room camera/mic (#400 D7)
 import { installPhonePadUI } from './remote/phone-pad-ui.js'; // phone remote (#421)
 import { installPhonePoolUI } from './remote/phone-pool-ui.js'; // more phones for co-op / versus (#562)
 import { cleanRemote } from './remote-safe.js'; // partner data: no markup, real numbers (security)
@@ -1693,27 +1692,10 @@ class Game {
       if (this._partnerPaused) this._endPartnerPause();   // re-sent below by the partner if still paused
       if (this._onlineCoop() && this._pause) this.net.sendEvent(EVT_PAUSE);   // a pause the drop hid
       this._resendTouristBarrier();   // PR #397 m15
-      // Re-establish media call after data reconnection (only if P2P is already up)
-      if (this.mode === 'captain' && this.net.transport === 'p2p') {
-        this._initiateMediaCall();
-      }
     };
 
-    // P2P upgrade: the captain places the media call and the stoker answers
-    // (answers are two-way, so both get video). Having both sides call at once
-    // made each incoming call close the other's outgoing one, renegotiating
-    // mid-ride (issue #390). The stoker only calls as a late fallback if no
-    // partner video has arrived — the same stagger the lobby uses.
+    // P2P upgrade (the bike state's fast lane): just count it
     this.net.onP2PUpgrade = () => {
-      this._mediaRetryCount = 0;
-      clearTimeout(this._mediaRetryTimeout);
-      if (this.mode === 'captain') {
-        this._initiateMediaCall();
-      } else {
-        this._mediaRetryTimeout = setTimeout(() => {
-          if (!this.recorder.partnerActive) this._initiateMediaCall();
-        }, 6000);
-      }
       analytics.trackEvent('room_p2p_upgrade', { succeeded: true });
       if (this.net.roomCode) {
         analytics.trackRoomUpdate(this.net.roomCode, { p2p_upgrade_succeeded: 1 });
@@ -1731,7 +1713,7 @@ class Game {
 
     this.net.onDisconnected = (reason) => {
       this._hideReconnecting();
-      this.recorder.clearPartnerStream();
+      this.lobby.hidePartnerPip();
       updateBadgeDisplay('partner-badges', []);
       analytics.trackEvent('room_disconnect', {
         disconnected_role: this.mode === 'captain' ? 'stoker' : 'captain',
@@ -1747,27 +1729,6 @@ class Game {
         if (this._drop) this._renderDropOverlay();
       } else if (this.state !== 'lobby') {
         this._showDisconnect(reason);
-      }
-    };
-
-    // Set audio enabled from lobby toggle
-    this.net.audioEnabled = this.lobby.audioActive;
-
-    // Media call: when partner's stream arrives (video + audio)
-    this.net.onRemoteStream = (remoteStream) => {
-      if (!isMediaEnabled()) return; // no partner video/voice without room media
-      this.recorder.setPartnerStream(remoteStream);
-      // If partner camera is off, show avatar instead of black video
-      if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
-        this.recorder.showPartnerAvatar(
-          this.lobby._avatarCache.get(this.lobby._partnerAvatarUrl) || this.lobby._partnerAvatarUrl
-        );
-      }
-      // Mix remote audio into clip recording (stoker side)
-      if (this.net._localMediaStream) {
-        this.recorder.addAudioStreams(this.net._localMediaStream, remoteStream);
-      } else {
-        this.recorder.addAudioStreams(null, remoteStream);
       }
     };
 
@@ -1822,35 +1783,14 @@ class Game {
         if (this._onStokerReady) this._onStokerReady();
         return;
       }
-      // Handle camera toggle from partner during gameplay
-      if (profile && profile.type === ROOM_MSG.CAMERA_TOGGLE) {
-        if (profile.enabled) {
-          // Partner turned camera on — show video if stream exists
-          if (this.recorder.partnerVideo && this.recorder.partnerVideo.srcObject) {
-            this.recorder.partnerVideo.style.display = 'block';
-            this.recorder.partnerVideo.play().catch(() => {});
-            if (this.recorder.partnerAvatar) this.recorder.partnerAvatar.style.display = 'none';
-            this.recorder.partnerActive = true;
-          }
-        } else {
-          // Partner turned camera off — show avatar
-          const avatarUrl = profile.avatar || this.lobby._partnerAvatarUrl;
-          if (avatarUrl) this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(avatarUrl) || avatarUrl);
-        }
-        return;
-      }
       // PR #397 m11: the captain's NEXT LEVEL — adopt its level (and road and
       // difficulty); the EVT_RESET that follows rebuilds the ride on it.
       if (profile && profile.type === ROOM_MSG.LEVEL_SYNC && this.mode === 'stoker') {
         this.lobby._handleRoomMessage(profile);
         return;
       }
-      // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync)
+      // Ignore room sync messages (bikeSync, levelSync, startRide, playGame, difficultySync, an older build's cameraToggle)
       if (profile && profile.type) return;
-      // Show partner avatar if no active video stream
-      if (profile.avatar && !this.recorder.partnerActive) {
-        this.recorder.showPartnerAvatar(this.lobby._avatarCache.get(profile.avatar) || profile.avatar);
-      }
       // Render partner achievement badges
       if (profile.achievements) {
         updateBadgeDisplay('partner-badges', profile.achievements);
@@ -1876,19 +1816,6 @@ class Game {
         this.archIndicator.updatePartnerColor(profile.bikeColor);
       }
     };
-
-    // Media call is already established from the room — don't re-initiate.
-    // Re-initiating closes the existing call, which kills the working streams
-    // and breaks video playback on iOS.
-    // The onRemoteStream handler above will handle any new streams if the
-    // call is renegotiated.
-
-    // Show partner avatar immediately if their camera is known to be off
-    if (!this.lobby._partnerCameraOn && this.lobby._partnerAvatarUrl) {
-      this.recorder.showPartnerAvatar(
-        this.lobby._avatarCache.get(this.lobby._partnerAvatarUrl) || this.lobby._partnerAvatarUrl
-      );
-    }
 
     // Store room role for return-to-room
     this._roomRole = mode;
@@ -2830,16 +2757,9 @@ class Game {
     this.audioEngine.warmup();
     this.audioCtx = this.audioEngine.ctx; // kept as an alias for the recorder
 
-    // Start recording + selfie immediately so they're visible during countdown.
+    // Start recording immediately so the countdown is in the clip.
     // Passing the engine lets startBuffer attach its mix destination directly.
-    this.recorder.setLabels(this.mode);
-    this.recorder.startBuffer(this.audioCtx, this.lobby.audioActive, this.audioEngine);
-    if (this.lobby.cameraActive && isMediaEnabled()) {
-      this.recorder.startSelfie(this.net && this.net._localMediaStream);
-    } else if (this.lobby.auth && this.lobby.auth.isLoggedIn()) {
-      const user = this.lobby.auth.getUser();
-      if (user && user.avatar) this.recorder.showAvatarPip(this.lobby._avatarCache.get(user.avatar) || user.avatar);
-    }
+    this.recorder.startBuffer(this.audioCtx, this.audioEngine);
 
     // Route background music through the shared audio engine so it lands on
     // the music bus (duckable + captured by the recorder automatically).
@@ -3658,7 +3578,7 @@ class Game {
     if (this.net) {
       this.net.destroy();
       this.net = null;
-      this.recorder.clearPartnerStream();
+      this.lobby.hidePartnerPip();
       updateBadgeDisplay('partner-badges', []);
       document.getElementById('conn-badge').style.display = 'none';
     }
@@ -5928,7 +5848,7 @@ class Game {
   }
 
   _updateBadges() {
-    updateBadgeDisplay('selfie-badges', this.achievements.getEarned());
+    updateBadgeDisplay('self-badges', this.achievements.getEarned());
     this._sendProfile();
   }
 
@@ -6924,8 +6844,7 @@ class Game {
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
-    this.recorder.stopSelfie();
-    this.recorder.clearPartnerStream();
+    this.lobby.hideRoomPips();
     updateBadgeDisplay('partner-badges', []);
     // The lobby holds the same transport: leaving the ride leaves the session there too
     // (the captain kept a dead session and later said "partner lost connection", #623).
@@ -7093,7 +7012,6 @@ class Game {
     this.hud.hideTimer();
     this.world.clearRaceMarkers();
     this.recorder.stopBuffer();
-    // Don't stop selfie or clear partner stream — keep media alive
     this.archIndicator.hide();
 
     // Reset bike + camera
@@ -7118,36 +7036,6 @@ class Game {
     // Transition to lobby room step
     this.state = 'lobby';
     this.lobby.showRoom(this.net, this._roomRole);
-  }
-
-  async _acquireLocalMedia() {
-    if (!isMediaEnabled()) return;
-    if (this.net._localMediaStream) return;
-    const constraints = {};
-    if (this.lobby.cameraActive) constraints.video = { facingMode: 'user', width: 240, height: 240 };
-    if (this.lobby.audioActive) constraints.audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
-    if (!constraints.video && !constraints.audio) return;
-    try {
-      this.net._localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch (e) {
-      // Camera/mic denied — continue without media
-    }
-  }
-
-  _initiateMediaCall() {
-    if (!isMediaEnabled()) return;
-    if (!this.net || !this.net.peer) return;
-    clearTimeout(this._mediaRetryTimeout);
-    if (!this._mediaRetryCount) this._mediaRetryCount = 0;
-    // Use network manager's initiateCall to properly track _mediaCall
-    this.net.initiateCall();
-    // Retry up to 3 times if partner stream doesn't arrive
-    this._mediaRetryCount++;
-    if (this._mediaRetryCount < 3) {
-      this._mediaRetryTimeout = setTimeout(() => {
-        if (!this.recorder.partnerActive) this._initiateMediaCall();
-      }, 5000);
-    }
   }
 
   _buildRecordState(pedalCtrl, remoteData) {

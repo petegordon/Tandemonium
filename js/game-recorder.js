@@ -1,5 +1,5 @@
 // ============================================================
-// GAME RECORDER — rolling buffer, compositing, selfie/partner PiP
+// GAME RECORDER — rolling buffer, compositing, clip save and share
 // ============================================================
 
 // iOS Safari: canvas.captureStream() produces blank video (WebKit bugs 229611, 181663).
@@ -11,7 +11,6 @@ import { clipToGif, GIF_SECONDS, windowStart } from './clip-gif.js';
 /** EARLIER / LATER move the GIF's window by this many seconds. */
 const CLIP_WINDOW_STEP_S = 2;
 import { clipDiscordLabel, discordMemberState, postClipGifToDiscord, HOUSE_TANDEM_DISCORD_URL } from './share-result.js';
-import { isMediaEnabled } from './edition.js';
 import { CLIP_SLOW_KEY } from './quality.js';
 
 const _isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
@@ -319,26 +318,6 @@ export class GameRecorder {
     this._wcTargetFps = 20;       // encode at 20fps to keep buffer small
     this._wcLastFrameTime = 0;
     this._wcMp4Muxer = null;      // loaded dynamically
-
-    // Room camera/mic (#400 D7). Off: clips are game video + game audio only —
-    // no selfie camera, no mic narration, no partner video/voice, no PiPs.
-    this.mediaEnabled = isMediaEnabled();
-
-    // Selfie camera
-    this.selfieStream = null;
-    this.selfieVideo = document.getElementById('selfie-pip');
-    this.selfieWrap = document.getElementById('selfie-pip-wrap');
-    this.selfieLabel = document.getElementById('selfie-pip-label');
-    this.selfieAvatar = document.getElementById('selfie-pip-avatar');
-    this.selfieActive = false;
-
-    // Partner video
-    this.partnerStream = null;
-    this.partnerVideo = document.getElementById('partner-pip');
-    this.partnerWrap = document.getElementById('partner-pip-wrap');
-    this.partnerLabel = document.getElementById('partner-pip-label');
-    this.partnerAvatar = document.getElementById('partner-pip-avatar');
-    this.partnerActive = false;
 
     // Audio mixing for clip recording
     this._audioCtx = null;
@@ -721,146 +700,13 @@ export class GameRecorder {
     this.compCanvas.height = h;
   }
 
-  // ── Selfie camera (Phase 2) ──
-
-  async startSelfie(existingStream) {
-    if (!this.mediaEnabled) return;
-    if (this.selfieActive) return;
-    // Hide avatar fallback when real camera starts
-    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
-    if (this.selfieVideo) this.selfieVideo.style.display = 'block';
-    try {
-      // Reuse existing stream from network manager instead of creating a
-      // duplicate getUserMedia. On iOS, two camera streams simultaneously
-      // doubles memory pressure and can crash the tab.
-      if (existingStream) {
-        this.selfieStream = existingStream;
-        this._sharedSelfieStream = true;
-      } else {
-        this.selfieStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'user', width: 240, height: 240 },
-          audio: false
-        });
-      }
-      if (this.selfieVideo) {
-        // Only reassign if different stream — avoids killing iOS playback
-        if (this.selfieVideo.srcObject !== this.selfieStream) {
-          this.selfieVideo.srcObject = this.selfieStream;
-        }
-        this.selfieVideo.play().catch(() => {});
-        if (this.selfieWrap) this.selfieWrap.style.display = 'block';
-      }
-      this.selfieActive = true;
-    } catch (e) {
-      // Permission denied or no camera — silent fallback
-      this.selfieActive = false;
-    }
-  }
-
-  showAvatarPip(avatarUrl) {
-    if (!this.mediaEnabled) return;
-    if (!avatarUrl || !this.selfieAvatar || !this.selfieWrap) return;
-    this.selfieAvatar.src = avatarUrl;
-    this.selfieAvatar.style.display = 'block';
-    if (this.selfieVideo) this.selfieVideo.style.display = 'none';
-    this.selfieWrap.style.display = 'block';
-  }
-
-  stopSelfie() {
-    if (this.selfieStream) {
-      // Only stop tracks if this is a recorder-owned stream (not shared with network manager)
-      if (!this._sharedSelfieStream) {
-        this.selfieStream.getTracks().forEach(t => t.stop());
-      }
-      this.selfieStream = null;
-      this._sharedSelfieStream = false;
-    }
-    if (this.selfieVideo) {
-      this.selfieVideo.srcObject = null;
-    }
-    if (this.selfieAvatar) this.selfieAvatar.style.display = 'none';
-    if (this.selfieWrap) this.selfieWrap.style.display = 'none';
-    this.selfieActive = false;
-  }
-
-  // ── Partner video (Phase 3) ──
-
-  setPartnerStream(stream) {
-    if (!this.mediaEnabled) return;
-    this.partnerStream = stream;
-    if (this.partnerVideo && stream) {
-      // Only reassign if different stream — avoids killing iOS playback
-      if (this.partnerVideo.srcObject !== stream) {
-        this.partnerVideo.srcObject = stream;
-      }
-      this.partnerVideo.style.display = 'block';
-      this.partnerVideo.play().catch(() => {});
-      if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
-      if (this.partnerWrap) this.partnerWrap.style.display = 'block';
-      this.partnerActive = true;
-    }
-  }
-
-  showPartnerAvatar(avatarUrl) {
-    if (!this.mediaEnabled) return;
-    if (!avatarUrl || !this.partnerAvatar || !this.partnerWrap) return;
-    this.partnerAvatar.src = avatarUrl;
-    this.partnerAvatar.style.display = 'block';
-    if (this.partnerVideo) this.partnerVideo.style.display = 'none';
-    this.partnerWrap.style.display = 'block';
-    this.partnerActive = false;
-  }
-
-  clearPartnerStream() {
-    this.partnerStream = null;
-    if (this.partnerVideo) {
-      this.partnerVideo.srcObject = null;
-    }
-    if (this.partnerAvatar) this.partnerAvatar.style.display = 'none';
-    if (this.partnerWrap) this.partnerWrap.style.display = 'none';
-    this.partnerActive = false;
-  }
-
-  setLabels(mode) {
-    const selfieText = mode === 'captain' ? 'CAPTAIN' : (mode === 'stoker' ? 'STOKER' : 'YOU');
-    const partnerText = mode === 'captain' ? 'STOKER' : 'CAPTAIN';
-    if (this.selfieLabel) this.selfieLabel.textContent = selfieText;
-    if (this.partnerLabel) this.partnerLabel.textContent = partnerText;
-  }
-
-  // ── Audio mixing for clip recording ──
-
-  addAudioStreams(localStream, remoteStream) {
-    if (!this.mediaEnabled) return;
-    // Use the existing audio destination set up by startBuffer()
-    if (!this._audioCtx || !this._audioDestination) return;
-    try {
-      if (localStream) {
-        const localAudio = localStream.getAudioTracks();
-        if (localAudio.length > 0) {
-          this._audioCtx.createMediaStreamSource(new MediaStream(localAudio))
-            .connect(this._audioDestination);
-        }
-      }
-      if (remoteStream) {
-        const remoteAudio = remoteStream.getAudioTracks();
-        if (remoteAudio.length > 0) {
-          this._audioCtx.createMediaStreamSource(new MediaStream(remoteAudio))
-            .connect(this._audioDestination);
-        }
-      }
-    } catch (e) {
-      console.warn('Audio mix for recording failed:', e);
-    }
-  }
-
   // ── Rolling buffer ──
   // Strategy: single continuous MediaRecorder with 1s timeslice.
   // (MediaRecorder path: the recordings take turns, see ROLL_MAX_SECONDS. What follows is the old note.)
   // Chunks accumulate in _chunks[]; we keep only the last bufferDuration
   // seconds worth. On save: stop recorder, assemble kept chunks into one blob.
 
-  async startBuffer(audioCtx, micEnabled = false, audioEngine = null) {
+  async startBuffer(audioCtx, audioEngine = null) {
     // Wait for GPU readback probe to finish before deciding whether to buffer
     await this._gpuProbe;
     if (!this.supported || this.buffering) return;
@@ -924,19 +770,6 @@ export class GameRecorder {
 
     // Show share button
     if (this.shareBtn) this.shareBtn.style.display = 'block';
-
-    // Request mic in background (non-blocking) — game beeps still recorded without it
-    if (audioCtx && micEnabled && this.mediaEnabled) {
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((micStream) => {
-        this._micStream = micStream;
-        if (this._audioCtx && this._audioDestination) {
-          this._audioCtx.createMediaStreamSource(micStream)
-            .connect(this._audioDestination);
-        }
-      }).catch(() => {
-        // Mic denied — silently continue (game beeps still captured)
-      });
-    }
   }
 
   /** A MediaRecorder on the clip stream, its chunks going into `chunks`. null when one cannot be made. */
@@ -1023,11 +856,7 @@ export class GameRecorder {
     this._chunks = [];
     this._saving = false;
 
-    // Stop mic stream (AudioContext is owned by game.js, don't close it)
-    if (this._micStream) {
-      this._micStream.getTracks().forEach(t => t.stop());
-      this._micStream = null;
-    }
+    // (the AudioContext is owned by game.js, don't close it)
     this._audioDestination = null;
     this._audioCtx = null;
 
@@ -1099,18 +928,6 @@ export class GameRecorder {
     // ── Partner pedal indicators (just above the pedal buttons) ──
     if (state.hasPartner) {
       this._drawPartnerIndicators(ctx, w, h, s, state);
-    }
-
-    // ── Selfie PiP (top-right corner of recording) ──
-    if (this.selfieActive && this.selfieVideo && this.selfieVideo.readyState >= 2) {
-      const selfieLabel = state.mode === 'captain' ? 'CAPTAIN' : (state.mode === 'stoker' ? 'STOKER' : 'YOU');
-      this._drawCircularPiP(ctx, this.selfieVideo, w, h, 'right', selfieLabel);
-    }
-
-    // ── Partner PiP (left of selfie, top-right area) ──
-    if (this.partnerActive && this.partnerVideo && this.partnerVideo.readyState >= 2) {
-      const partnerLabel = state.mode === 'captain' ? 'STOKER' : 'CAPTAIN';
-      this._drawCircularPiP(ctx, this.partnerVideo, w, h, 'left', partnerLabel);
     }
 
     // ── Role label at bottom center ──
@@ -1650,60 +1467,6 @@ export class GameRecorder {
     ctx.closePath();
   }
 
-  _drawCircularPiP(ctx, videoEl, canvasW, canvasH, side, label) {
-    const sc = canvasW / 375;
-    const size = Math.round(80 * sc);
-    const margin = Math.round(14 * sc);
-    const borderWidth = 2.5 * sc;
-    // Position at top-right of canvas (selfie right, partner left of selfie)
-    const topPad = 14 * sc;
-    const x = side === 'left' ? canvasW - margin - size - 6 * sc - size / 2 : canvasW - margin - size / 2;
-    const y = topPad + size / 2;
-
-    ctx.save();
-
-    // Circular clip
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.closePath();
-    ctx.clip();
-
-    // Draw video scaled to fill circle, shifted down 25% to center on face
-    // (phone held upright → camera captures above head; offset compensates)
-    const vw = videoEl.videoWidth || size;
-    const vh = videoEl.videoHeight || size;
-    const scale = Math.max(size / vw, size / vh);
-    const dw = vw * scale;
-    const dh = vh * scale;
-    const faceOffset = (dh - size) * 0.25; // shift crop downward
-    ctx.drawImage(videoEl, x - dw / 2, y - dh / 2 + faceOffset, dw, dh);
-
-    ctx.restore();
-
-    // White border ring
-    ctx.save();
-    ctx.beginPath();
-    ctx.arc(x, y, size / 2, 0, Math.PI * 2);
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = borderWidth;
-    ctx.stroke();
-    ctx.restore();
-
-    // Role label below circle
-    if (label) {
-      ctx.save();
-      const fontSize = Math.round(9 * sc);
-      ctx.font = 'bold ' + fontSize + 'px Helvetica Neue, Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'top';
-      ctx.fillStyle = 'rgba(0,0,0,0.5)';
-      ctx.fillText(label, x + 1, y + size / 2 + 4 * sc + 1);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(label, x, y + size / 2 + 4 * sc);
-      ctx.restore();
-    }
-  }
-
   // ── Save clip ──
 
   /**
@@ -2098,13 +1861,7 @@ export class GameRecorder {
   // ── Cleanup ──
 
   destroy() {
-    if (this._micStream) {
-      this._micStream.getTracks().forEach(t => t.stop());
-      this._micStream = null;
-    }
     this.stopBuffer();
-    this.stopSelfie();
-    this.clearPartnerStream();
     this._discardClip();
   }
 }

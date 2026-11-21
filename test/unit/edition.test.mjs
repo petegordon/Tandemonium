@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  FULL_RULES, DEMO_RULES, resolveIsDemo, rulesFor, levelAllowed, resolveMediaEnabled,
+  FULL_RULES, DEMO_RULES, resolveIsDemo, rulesFor, levelAllowed,
   dailyRideGate, bikeAllowed, achievementAllowed
 } from '../../js/edition.js';
 
@@ -51,12 +51,6 @@ test('#641 Daily Ride gate: the demo opens it after the Tutorial and Grandma\'s,
   // The full game: open from the start, no limit.
   assert.deepEqual(dailyRideGate(FULL_RULES, 0, []), { ok: true, left: null });
   assert.deepEqual(dailyRideGate(FULL_RULES, 50, []), { ok: true, left: null });
-});
-
-test('room camera/mic is off unless ?media=1', () => {
-  assert.equal(resolveMediaEnabled(''), false);
-  assert.equal(resolveMediaEnabled('?demo=1'), false);
-  assert.equal(resolveMediaEnabled('?media=1'), true);
 });
 
 test('NEXT LEVEL skips levels the edition does not offer, and locked ones', async () => {

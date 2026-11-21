@@ -4,20 +4,15 @@
 // Run from browser console:  await window.perfProbe()
 //
 // Builds everything it needs internally — no game state, no
-// multiplayer connection, no prior permissions required (it will
-// prompt for camera/mic and gracefully skip if denied).
+// multiplayer connection, no permissions.
 //
 // Escalating steps, each layering one more subsystem:
 //   Step 1: GPU render + 2D readback
-//   Step 2: + camera capture (getUserMedia video)
-//   Step 3: + audio DSP (echoCancellation + noiseSuppression)
-//   Step 4: + simulated partner video decode
-//   Step 5: + full composite (PiP + HUD overlay)
+//   Step 2: + a video stream decoded and composited each frame
+//   Step 3: + full composite (video + HUD overlay)
 //
 // Output: per-step timing with deltas, GPU string, lowEnd boolean.
 // ============================================================
-
-import { isMediaEnabled } from './edition.js';
 
 const ITERATIONS = 30;
 const WARMUP = 5;
@@ -65,56 +60,11 @@ export async function perfProbe() {
     compCtx.drawImage(glCanvas, 0, 0, W, H);
   });
 
-  // ── Step 2: + camera capture ──
-  let cameraStream = null;
-  let cameraVideo = null;
-  try {
-    if (!isMediaEnabled()) throw new Error('room media off (?media=1 to enable)');
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: 240, height: 240 },
-      audio: false
-    });
-    cameraVideo = _createVideo(cameraStream);
-    await cameraVideo.play();
-    await _delay(500);
-
-    measure('2-+camera', () => {
-      renderFrame();
-      compCtx.drawImage(glCanvas, 0, 0, W, H);
-      if (cameraVideo.readyState >= 2) {
-        compCtx.drawImage(cameraVideo, 0, 0, 120, 120);
-      }
-    });
-  } catch (e) {
-    _skip(results, '2-+camera', e.message);
-  }
-
-  // ── Step 3: + audio DSP ──
-  let audioStream = null;
-  try {
-    if (!isMediaEnabled()) throw new Error('room media off (?media=1 to enable)');
-    audioStream = await navigator.mediaDevices.getUserMedia({
-      video: false,
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
-    await _delay(500);
-
-    measure('3-+audioDSP', () => {
-      renderFrame();
-      compCtx.drawImage(glCanvas, 0, 0, W, H);
-      if (cameraVideo && cameraVideo.readyState >= 2) {
-        compCtx.drawImage(cameraVideo, 0, 0, 120, 120);
-      }
-    });
-  } catch (e) {
-    _skip(results, '3-+audioDSP', e.message);
-  }
-
-  // ── Step 4: + simulated partner video decode ──
-  // Create a fake video stream from a canvas to simulate incoming WebRTC video
-  // decode without needing an actual peer connection.
-  let fakePartnerVideo = null;
-  let fakePartnerStream = null;
+  // ── Step 2: + video decode ──
+  // A video stream made from a canvas: real decode work each frame, no camera
+  // and no connection.
+  let fakeVideo = null;
+  let fakeStream = null;
   try {
     const fakeCanvas = document.createElement('canvas');
     fakeCanvas.width = 240;
@@ -131,38 +81,32 @@ export async function perfProbe() {
       }
     };
     drawFake();
-    fakePartnerStream = fakeCanvas.captureStream(30);
-    fakePartnerVideo = _createVideo(fakePartnerStream);
-    await fakePartnerVideo.play();
+    fakeStream = fakeCanvas.captureStream(30);
+    fakeVideo = _createVideo(fakeStream);
+    await fakeVideo.play();
     // Keep the fake canvas animating so the video stream has new frames
     const fakeInterval = setInterval(drawFake, 33);
     await _delay(500);
 
-    measure('4-+partnerVideo', () => {
+    measure('2-+videoDecode', () => {
       renderFrame();
       compCtx.drawImage(glCanvas, 0, 0, W, H);
-      if (cameraVideo && cameraVideo.readyState >= 2) {
-        compCtx.drawImage(cameraVideo, 0, 0, 120, 120);
-      }
-      if (fakePartnerVideo.readyState >= 2) {
-        compCtx.drawImage(fakePartnerVideo, W - 120, 0, 120, 120);
+      if (fakeVideo.readyState >= 2) {
+        compCtx.drawImage(fakeVideo, W - 120, 0, 120, 120);
       }
     });
 
     clearInterval(fakeInterval);
   } catch (e) {
-    _skip(results, '4-+partnerVideo', e.message);
+    _skip(results, '2-+videoDecode', e.message);
   }
 
-  // ── Step 5: + full composite (HUD overlay) ──
-  measure('5-+fullHUD', () => {
+  // ── Step 3: + full composite (HUD overlay) ──
+  measure('3-+fullHUD', () => {
     renderFrame();
     compCtx.drawImage(glCanvas, 0, 0, W, H);
-    if (cameraVideo && cameraVideo.readyState >= 2) {
-      compCtx.drawImage(cameraVideo, 0, 0, 120, 120);
-    }
-    if (fakePartnerVideo && fakePartnerVideo.readyState >= 2) {
-      compCtx.drawImage(fakePartnerVideo, W - 120, 0, 120, 120);
+    if (fakeVideo && fakeVideo.readyState >= 2) {
+      compCtx.drawImage(fakeVideo, W - 120, 0, 120, 120);
     }
     // HUD: progress bar, speed, timer, text labels
     compCtx.save();
@@ -191,9 +135,7 @@ export async function perfProbe() {
   });
 
   // ── Cleanup ──
-  if (cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-  if (audioStream) audioStream.getTracks().forEach(t => t.stop());
-  if (fakePartnerStream) fakePartnerStream.getTracks().forEach(t => t.stop());
+  if (fakeStream) fakeStream.getTracks().forEach(t => t.stop());
   cleanupGL();
 
   // ── Analysis: compute deltas ──

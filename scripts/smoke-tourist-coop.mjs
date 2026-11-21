@@ -171,7 +171,7 @@ async function pair(stokerHasKey, { stokerQuery = '', captainQuery = '', stokerO
     await page.evaluate((role) => {
       const l = window._game.lobby;
       const net = {
-        connected: true, roomCode: 'TSTX', transport: 'relay', audioEnabled: false, _localMediaStream: null,
+        connected: true, roomCode: 'TSTX', transport: 'relay',
         sendProfile: (p) => window.__relay('profile', JSON.stringify(p)),
         sendEvent: (e) => window.__relay('event', JSON.stringify(e)),
         sendEventReliable: (e) => window.__relay('event', JSON.stringify(e)),   // #621
