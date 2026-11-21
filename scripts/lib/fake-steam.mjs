@@ -24,6 +24,8 @@
 // '1' Steam Controller, '14' Steam Deck / 2026 Steam Controller, '3' Xbox One.
 
 function browserFake(init) {
+  // #820 · the no-gyro popup would sit over every other Steam smoke; smoke:gyro-tip asks for it.
+  if (!init.gyroTip) { try { localStorage.setItem('tandemonium_gyro_tip_off', '1'); } catch (e) {} }
   const state = {
     xinput: init.xinput || [],
     available: init.available !== false,

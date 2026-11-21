@@ -42,7 +42,7 @@ const SCENARIOS = {
     { label: 'TEAM RED', seat: 'P3', anchor: 'br', kind: 'gamepad' },  { label: 'TEAM RED', seat: 'KEYBOARD', anchor: 'br', kind: 'keyboard' },
   ] },
 };
-const OBSTACLE_SETS = [[], ['frontview'], ['frontview', 'pedals'], ['frontview', 'pip', 'pedals']];
+const OBSTACLE_SETS = [[], ['frontview'], ['frontview', 'pedals']];
 
 const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 const failures = [];
@@ -85,7 +85,7 @@ try {
       if (t.kind === 'gamepad') note(t.finiteQuat, `${name}: ${t.label} ${t.seat || ''} orientation still finite after animating`);
     }
     for (const set of OBSTACLE_SETS) {
-      for (const k of ['frontview', 'pip', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
+      for (const k of ['frontview', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
       await sleep(400); // > LAYOUT_INTERVAL_MS so the tiles re-measure
       const rects = await page.evaluate(() => window.__tiles().map((t) => ({ id: `${t.label} ${t.seat}`.trim(), ...t.rect, right: t.rect.left + t.rect.width, bottom: t.rect.top + t.rect.height })));
       const obs = await page.evaluate(() => window.__obstacles());
@@ -109,6 +109,33 @@ try {
   await page.waitForFunction(() => window.__tiles().length > 0 && window.__tiles().every((t) => t.kind !== 'gamepad' || t.hasModel), { timeout: 30000 })
     .catch(() => note(false, 're-enable: tiles did not come back'));
   note(true, 're-enable: tiles rebuilt');
+
+  // #821 · a controller that drops and returns draws again, on a canvas with a live context
+  const back = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return { ok: false };
+    const old = t.canvas;
+    t._destroyOverlay();
+    const end = performance.now() + 20000;
+    while (!t.overlay && performance.now() < end) await new Promise(requestAnimationFrame);
+    return { ok: !!t.overlay, fresh: t.canvas !== old, inTile: t.el.contains(t.canvas), oldGone: !t.el.contains(old),
+      live: !!t.overlay && !t.overlay.renderer.getContext().isContextLost() };
+  });
+  note(back.ok && back.fresh && back.inTile && back.oldGone && back.live, `#821: a returned controller redraws on a fresh canvas ${JSON.stringify(back)}`);
+
+  // #821 · a tile that cannot start retries with a back-off, not every frame
+  const retries = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return -1;
+    const proto = t.hud._viz.ControllerOverlay.prototype, init = proto.init;
+    let calls = 0;
+    proto.init = async function () { calls++; throw new Error('smoke: no context'); };
+    t._destroyOverlay();
+    await new Promise((r) => setTimeout(r, 2500));
+    proto.init = init;
+    return calls;
+  });
+  note(retries >= 1 && retries <= 3, `#821: a failing tile backs off (${retries} tries in 2.5 s)`);
 
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   note(real.length === 0, `console errors: ${real.length}${real.length ? '\n    ' + real.join('\n    ') : ''}`);

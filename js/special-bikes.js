@@ -8,7 +8,7 @@
 //   solo_flight  the Penny-Farthing tandem (claude-3d make_pf_tandem.py), the player-bots reward: any 80
 //                of the 81 solo achievements (rewards.js playerBotsProgress). Its own rig (one Ride clip, hub
 //                cranks; the geese pedal it with their Pedal_PF clips, js/goose-rider-clips.js). #644: on a SOLO
-//                ride the player rides captain and a player bot (js/player-bots.js) rides the back seat. Pete,
+//                ride the player rides captain; VERSUS BOTS or the couch room can seat a player bot (js/player-bots.js). Pete,
 //                2026-11-09: once earned it rides co-op too (couch and online), two players and no bot.
 //   time_warp    Pete's steampunk time-travel tandem: four rockets, a fast clock, blue flames with
 //                orange pops (its TimeWarpFX clip). Unlocks at any 90 of the 95 non-calendar
@@ -62,7 +62,7 @@ export function bikeModelPathFor(showRiders, bikeKey, ridersPath = BIKE_MODEL_PA
   if (ridersPath !== GOOSE_BIKE_MODEL_PATH) return ridersPath;
   if (bikeKey === TIME_WARP_BIKE_KEY) return TIME_WARP_BIKE_MODEL_PATH;
   if (bikeKey === GOLD_STANDARD_BIKE_KEY) return GOLD_STANDARD_BIKE_MODEL_PATH;
-  if (bikeKey === SOLO_FLIGHT_BIKE_KEY && mode !== 'versus') return SOLO_FLIGHT_BIKE_MODEL_PATH;   // solo with a bot; co-op, two players
+  if (bikeKey === SOLO_FLIGHT_BIKE_KEY && mode !== 'versus') return SOLO_FLIGHT_BIKE_MODEL_PATH;   // solo, with or without a bot; co-op, two players
   return ridersPath;
 }
 

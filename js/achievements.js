@@ -505,14 +505,21 @@ export class AchievementManager {
   }
 
   /** Versus: the race is won. */
-  versusFinish(winner, loser, raceDistance) {
+  versusFinish(winner, loser, raceDistance, { easy = false } = {}) {
     if (!winner || !loser) return [];
     const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed, crashes: r.crashCount || 0 });
     const halfLeader = this._versus && this._versus.key === winner.raceManager ? this._versus.halfLeader
       : (this._versus && this._versus.key === loser.raceManager ? this._versus.halfLeader : null);
     const res = versusResult({ winner: team(winner), loser: team(loser), raceDistance, halfLeader });
     this._versus = null;
-    return this.record('versus', res);
+    return this.record('versus', { ...res, easy });
+  }
+
+  /** VERSUS BOTS: the back seat's bot rode a race with you. pair: its {rides, distance (m)} on this device. */
+  botPartner(partnerKey, pair) {
+    this._stats = applyEvent(this._stats, 'botPartner', { partnerKey }, playDayKey());
+    this._saveStats();
+    return this._evaluate({ pairRides: pair.rides, pairDistanceKm: pair.distance / 1000 });
   }
 
   getEarned() {
@@ -695,55 +702,3 @@ export function showInfoToast(icon, title, subtitle) {
   }, 4000);
 }
 
-// Badge rendering around a PiP
-// shape: 'rect' to trace rectangle perimeter (TV/Monitor room), default circular
-export function updateBadgeDisplay(containerId, achievements, shape) {
-  const container = document.getElementById(containerId);
-  if (!container) return;
-
-  // Clear existing badges
-  container.querySelectorAll('.pip-badge').forEach(el => el.remove());
-
-  const earned = achievements.filter(a => a.earned !== false);
-  const count = earned.length;
-  if (count === 0) return;
-
-  const spacing = Math.max(count, 6);
-
-  if (shape === 'rect') {
-    // Arrange badges along the rectangle perimeter
-    const w = container.offsetWidth || 220;
-    const h = container.offsetHeight || 280;
-    const perimeter = 2 * (w + h);
-    earned.forEach((ach, i) => {
-      const badge = document.createElement('div');
-      badge.className = 'pip-badge';
-      badge.textContent = ach.icon;
-      badge.title = ach.name;
-      const dist = (i / spacing) * perimeter;
-      let x, y;
-      if (dist < w) {
-        x = dist; y = 0;
-      } else if (dist < w + h) {
-        x = w; y = dist - w;
-      } else if (dist < 2 * w + h) {
-        x = w - (dist - w - h); y = h;
-      } else {
-        x = 0; y = h - (dist - 2 * w - h);
-      }
-      badge.style.transform = 'translate(' + (x - w / 2) + 'px, ' + (y - h / 2) + 'px)';
-      container.appendChild(badge);
-    });
-  } else {
-    // Circular arrangement (mobile / non-lobby)
-    const angleStep = 360 / spacing;
-    earned.forEach((ach, i) => {
-      const badge = document.createElement('div');
-      badge.className = 'pip-badge';
-      badge.textContent = ach.icon;
-      badge.title = ach.name;
-      badge.style.transform = 'rotate(' + (i * angleStep) + 'deg) translateX(48px) rotate(-' + (i * angleStep) + 'deg)';
-      container.appendChild(badge);
-    });
-  }
-}
