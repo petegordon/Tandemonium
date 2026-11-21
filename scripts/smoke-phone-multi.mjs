@@ -3,8 +3,8 @@
 // how to join (#563).
 //
 //   MC-16  co-op host step: one "Scan to join" QR (no online room QR, no room
-//          opened yet). Two phones scan the SAME QR, pick "Control the TV" and
-//          get seats 2 and 3 of the one pad room; the QR stays put. Phone 2
+//          opened yet). The first phone to scan it, "Control the TV", gets the one
+//          phone seat; a second is told the seats are taken (#848). Phone 2
 //          presses OK and is seated as Player 2. In the ride it pedals and
 //          steers Player 2 only; it dropping mid-ride pauses the ride and shows
 //          its code again.
@@ -12,6 +12,9 @@
 //          phones scan the same QR, take seats with OK, D-pad → switches team,
 //          BACK leaves the seat and OK rejoins; in the race each phone pedals
 //          its own seat.
+//   MC-19  #848 · four phones on the Versus QR are Players 1 to 4 with no controller: the first is Player 1,
+//          each shows its player and colour, a fifth is told the seats are taken, a 2v2 race rides on phones
+//          alone, and Player 1's phone does not freeze the race. Co-op offers one phone seat.
 //   MC-18  #563 "Play on this phone": the TV opens the RIDE TOGETHER room only
 //          now and the phone lands on the game's join link with its code. A
 //          room that fails: the phone says so and offers Control the TV.
@@ -193,21 +196,20 @@ try {
     const sizes = await phoneA.evaluate(() => ({ control: document.getElementById('btn-control').getBoundingClientRect().height, play: document.getElementById('btn-play').getBoundingClientRect().height }));
     check(sizes.control > sizes.play, 'MC-16: Control the TV is the bigger (default) button', sizes);
     await phoneA.click('#btn-control');
+    const first = await until(game, () => !!window.__phonePool.pool.entries.get(2)?.present);
+    check(first, 'MC-16: the first phone takes the one phone seat');
     const phoneB = await phoneOpens(link, 'control');   // the SAME QR
-    const both = await until(game, () => {
-      const p = window.__phonePool.pool;
-      return p.entries.get(2)?.present && p.entries.get(3)?.present ? { code2: p.entries.get(2).host.room.code, code3: p.entries.get(3).host.room.code } : null;
-    });
-    check(!!both && both.code2 === both.code3, 'MC-16: two phones scanning the same QR get seats 2 and 3 of one pad room', both);
-    const same = await game.evaluate(() => document.getElementById('host-join-qr').value);
-    check(same === link, 'MC-16: the QR stays put after phones join');
+    const full = await until(phoneB, () => /All player seats are taken/.test(document.getElementById('status').textContent));
+    check(full, 'MC-16: co-op is two riders: a second phone is told the seats are taken', await phoneB.evaluate(() => document.getElementById('status').textContent));
+    const qrGone = await until(game, () => !document.getElementById('host-join-qr').value);
+    check(qrGone, 'MC-16: with the phone seat taken the QR is withdrawn');
     const note = await until(phoneA, () => /watch the TV/.test(document.getElementById('status').textContent) && document.getElementById('status').textContent);
     check(!!note, 'MC-16: the joined phone says it is the controller and to watch the TV', note);
     const cand = await until(game, () => {
       const c = window._game.lobby._detectLocalJoinCandidates().filter((x) => x.kind === 'phone').map((x) => x.name);
-      return c.length === 2 ? c : null;
+      return c.length === 1 ? c : null;
     });
-    check(!!cand && cand.includes('Phone 2') && cand.includes('Phone 3'), 'MC-16: both phones are join candidates on the host step', cand);
+    check(!!cand && cand[0] === 'Phone 2', 'MC-16: only that phone is a join candidate on the host step', cand);
     await tap(phoneA, 'ok');
     const seated = await until(game, () => {
       const l = window._game.lobby;
@@ -220,7 +222,7 @@ try {
       const step = document.getElementById('lobby-host');
       return step.classList.contains('host-join-off') ? { entries: [...window.__phonePool.pool.entries.keys()].sort().join() } : null;
     });
-    check(!!after && after.entries === '2,3', 'MC-16: with the partner seat taken the QR goes away and the unused seat closes; joined phones stay', after);
+    check(!!after && after.entries === '2', 'MC-16: with the partner seat taken the QR stays away', after);
     await h.shot(game, '1-coop-seated');
     await phoneB.browser().close();
 
@@ -261,6 +263,9 @@ try {
     await clickId(game, 'btn-versus-join-phone');
     const link = await until(game, () => { const l = window.__phonePool.pool.joinLink(); return l && document.getElementById('ppool-qr').dataset.link === l ? l : null; }, null, 60000);
     check(!!link && !/play=1/.test(link), 'MC-17: the versus QR is controller only (no Play on this phone)', link);
+    const phoneA = await phoneOpens(link, 'connect');   // #848 · nobody on Player 1: the first phone is Player 1
+    check(!!(await until(game, () => window.__phonePad.connected)), 'MC-17: the first phone to scan is Player 1');
+    check(!!phoneA, 'MC-17: Player 1 stays on its phone');
     const phoneB = await phoneOpens(link, null);
     check(await phoneScreen(phoneB) === 'screen-connect', 'MC-17: a phone scanning it skips the question');
     await phoneB.click('#btn-connect');
@@ -275,7 +280,7 @@ try {
     await tap(phoneC, 'ok');
     const v = await until(game, () => window._game.lobby._versusPlayers.filter((p) => p.input?.remoteOnly).length === 2 && true);
     let ps = await players();
-    check(v && ps.length === 3 && new Set(ps.map((p) => p.n)).size === 3, 'MC-17: OK on each phone takes a seat as its own player (keyboard P1 + two phones)', ps);
+    check(v && ps.length === 3 && new Set(ps.map((p) => p.n)).size === 3, 'MC-17: OK on each phone takes a seat as its own player (Phone 1 + two phones)', ps);
     const roster = await game.evaluate(() => (document.getElementById('versus-roster').rows || []).map((r) => r.name || r.shortName));
     check(roster.filter((n) => /Phone [23]/.test(n)).length === 2, 'MC-17: the roster names the phones', roster);
     // D-pad → on Phone 3 moves it to team B (if it isn't there), ← to A.
@@ -311,6 +316,79 @@ try {
     await game.close();
   }
 
+  // ── MC-19 · #848 four phones are Players 1 to 4 ──
+  console.log('MC-19 versus: four phones, no controller');
+  {
+    const game = await openGame();
+    await game.waitForFunction(() => !!window.__phonePool && !!window._game?.lobby, { timeout: 60000 });
+    await clickId(game, 'btn-together');
+    await game.waitForFunction(() => document.getElementById('lobby-flow').current === 'lobby-role', { timeout: 15000 }).catch(() => {});
+    await clickId(game, 'btn-versus');
+    await game.waitForFunction(() => document.getElementById('lobby-flow').current === 'lobby-versus', { timeout: 15000 });
+    await clickId(game, 'btn-versus-join-phone');
+    const link = await until(game, () => { const l = window.__phonePool.pool.joinLink(); return l && /seats=1%2C2%2C3%2C4/.test(l) ? l : null; }, null, 45000);
+    check(!!link, 'MC-19: with nobody on Player 1, one QR offers all four seats', link);
+    const phones = [];
+    for (let i = 0; i < 4; i++) {
+      phones.push(await phoneOpens(link, 'connect'));
+      const here = await until(game, (n) => (n === 0 ? window.__phonePad.connected : !!window.__phonePool.pool.entries.get(n + 1)?.present), i);
+      check(!!here, `MC-19: phone ${i + 1} takes seat ${i + 1}`);
+    }
+    const fifth = await phoneOpens(link, 'connect');
+    const told = await until(fifth, () => /All player seats are taken/.test(document.getElementById('status').textContent));
+    check(told, 'MC-19: a fifth phone is told the seats are taken');
+    await fifth.browser().close();
+    await clickId(game, 'btn-ppool-done');
+    for (const p of phones.slice(1)) await tap(p, 'ok');
+    const seatedAll = await until(game, () => {
+      const v = window._game.lobby._versusPlayers;
+      return v.length === 4 ? v.map((p) => p.n + ':' + p.name).join() : null;
+    });
+    check(seatedAll === '1:Phone 1,2:Phone 2,3:Phone 3,4:Phone 4', 'MC-19: four phones are Players 1 to 4', seatedAll);
+    const badges = [];
+    for (const p of phones) {
+      badges.push(await until(p, () => { const b = document.getElementById('seat-badge'); return !b.hidden && /^Player/.test(b.textContent) ? b.textContent + ' ' + b.style.getPropertyValue('--seat-color') : null; }));
+    }
+    check(badges.join() === 'Player 1 #44ff66,Player 2 #ff4560,Player 3 #6ea8ff,Player 4 #c79dff', 'MC-19: each phone shows its player in its colour', badges);
+    const teamSizes = await game.evaluate(() => { const v = window._game.lobby._versusPlayers; return [v.filter((p) => p.team === 'A').length, v.filter((p) => p.team === 'B').length]; });
+    check(teamSizes.join() === '2,2', 'MC-19: the four players balance into 2v2', teamSizes);
+    await h.shot(game, '5-four-phones');
+    await game.waitForFunction(() => !document.getElementById('btn-versus-continue').disabled, { timeout: 10000 });
+    await clickId(game, 'btn-versus-continue');
+    await sleep(700);
+    await clickId(game, 'btn-start-ride');
+    await game.waitForFunction(() => window._game.state === 'playing' && window._game.mode === 'versus', { timeout: 180000 });
+    await sleep(2500);
+    check(await game.evaluate(() => !window._game._versusPaused), 'MC-19: the race runs with Player 1 on a phone (no disconnect freeze)');
+    const p1Pedal = await whileHolding(game, phones[0], () => ({ p1: window._game.input.isPressed('ArrowLeft') }), (x) => x.p1);
+    check(p1Pedal.p1, 'MC-19: Phone 1 pedals Player 1', p1Pedal);
+    const p4 = () => {
+      const m = window._game.versusRigs.flatMap((r) => r.members).find((x) => x.n === 4);
+      return { p4: !!m && m.input.isPressed('ArrowLeft'), p1: window._game.input.isPressed('ArrowLeft') };
+    };
+    const p4Pedal = await whileHolding(game, phones[3], p4, (x) => x.p4);
+    check(p4Pedal.p4 && !p4Pedal.p1, 'MC-19: Phone 4 pedals Player 4 only', p4Pedal);
+    await h.shot(game, '6-four-phones-race');
+    // A dropped phone pauses the race and gets its own seat back: Player 1's, then Player 4's.
+    for (const [i, name] of [[0, 'Player 1'], [3, 'Player 4']]) {
+      const p = phones[i];
+      await p.evaluate(() => { window.__left = true; });
+      await p.goto('about:blank');
+      const paused = await until(game, () => window._game._versusPaused === true || !!window._game._pause, null, 15000);   // (Player 1's phone opens the pause menu)
+      check(paused, `MC-19: ${name}'s phone dropping pauses the race`);
+      await p.goBack({ waitUntil: 'domcontentloaded' });
+      const btn = await p.$('#btn-connect');
+      if (btn && await p.evaluate(() => document.getElementById('screen-connect').classList.contains('on'))) await p.click('#btn-connect');
+      const back = await until(game, (n) => (n === 0 ? window.__phonePad.connected : window.__phonePool.pool.entries.get(n + 1)?.present) && window._game._versusPaused === false, i, 25000);
+      const label = await until(p, () => { const b = document.getElementById('seat-badge'); return b && !b.hidden ? b.textContent : null; }, null, 15000);
+      check(back && label === name, `MC-19: ${name}'s phone comes back to its own seat and the race resumes`, { back, label });
+      await game.evaluate(() => { for (const id of ['phone-pad-panel', 'phone-pool-panel']) document.getElementById(id)?.classList.remove('open'); window._game._closePause(); });
+      await sleep(300);
+    }
+    for (const p of phones) await p.browser().close();
+    await game.close();
+  }
+
   // ── MC-18 · #563 Play on this phone ──
   console.log('MC-18 Play on this phone');
   {
@@ -331,6 +409,8 @@ try {
     const ctlTv = await until(game, () => window._game.lobby._detectLocalJoinCandidates().some((c) => c.kind === 'phone'));
     check(ctl && ctlTv, 'MC-18: ...and Control the TV then makes it a controller on the TV');
     await phoneF.browser().close();
+    // #848 · co-op has one phone seat: the phone that left frees it
+    check(!!(await until(game, () => !!window.__phonePool.pool.pending?.link && !!document.getElementById('host-join-qr').value, null, 15000)), 'MC-18: a phone that left without sitting down frees the seat');
     await game.evaluate(() => { const l = window._game.lobby; l.openRoomForPhone = l.__openRoom; });
 
     // Play: the TV opens the online room only now; the phone lands on its join link.
@@ -341,10 +421,10 @@ try {
     const landed = await until(phoneP, () => (document.getElementById('joined') ? location.href : null), null, 30000);
     const url = landed ? new URL(landed) : null;
     check(!!url && url.searchParams.get('room') === code && url.origin === new URL(link).origin, 'MC-18: the phone lands on the game\'s join link with that code', landed);
-    // Phone 2 is the earlier phone (now gone); the Play phone took seat 3.
+    // #848 · co-op's one phone seat: the Play phone took it, and it goes back on offer.
     const freed = await until(game, () => {
       const p = window.__phonePool.pool;
-      return p.joinedEntries().map((e) => e.n).join() === '2' && [3, 4].every((n) => p.entries.get(n) && !p.entries.get(n).everJoined);
+      return p.joinedEntries().length === 0 && !!p.entries.get(2) && !p.entries.get(2).everJoined;
     }, null, 15000);
     check(freed, 'MC-18: the phone that went to play is not a controller, and its seat goes back on offer');
     const roomOn = await game.evaluate(() => ({ cls: document.getElementById('lobby-host').classList.contains('host-room-open'), btn: document.getElementById('btn-host-room-code').style.display }));
