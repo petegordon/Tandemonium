@@ -42,7 +42,7 @@ const SCENARIOS = {
     { label: 'TEAM RED', seat: 'P3', anchor: 'br', kind: 'gamepad' },  { label: 'TEAM RED', seat: 'KEYBOARD', anchor: 'br', kind: 'keyboard' },
   ] },
 };
-const OBSTACLE_SETS = [[], ['frontview'], ['frontview', 'pedals'], ['frontview', 'pip', 'pedals']];
+const OBSTACLE_SETS = [[], ['frontview'], ['frontview', 'pedals']];
 
 const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 const failures = [];
@@ -85,7 +85,7 @@ try {
       if (t.kind === 'gamepad') note(t.finiteQuat, `${name}: ${t.label} ${t.seat || ''} orientation still finite after animating`);
     }
     for (const set of OBSTACLE_SETS) {
-      for (const k of ['frontview', 'pip', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
+      for (const k of ['frontview', 'pedals']) await page.evaluate(([k, on]) => window.__setObstacle(k, on), [k, set.includes(k)]);
       await sleep(400); // > LAYOUT_INTERVAL_MS so the tiles re-measure
       const rects = await page.evaluate(() => window.__tiles().map((t) => ({ id: `${t.label} ${t.seat}`.trim(), ...t.rect, right: t.rect.left + t.rect.width, bottom: t.rect.top + t.rect.height })));
       const obs = await page.evaluate(() => window.__obstacles());

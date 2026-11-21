@@ -120,7 +120,7 @@ function mediaControls() {
   }
   for (const v of document.querySelectorAll('video')) if (v.id !== 'clip-preview') found.push(`video#${v.id || '?'}`);
   for (const a of document.querySelectorAll('audio')) if (/partner|voice|remote/i.test(a.id)) found.push(`audio#${a.id}`);
-  for (const id of ['toggle-camera', 'toggle-audio', 'partner-audio', 'selfie-pip', 'partner-pip']) {
+  for (const id of ['toggle-camera', 'toggle-audio', 'partner-audio', 'selfie-pip', 'partner-pip', 'self-pip-wrap', 'partner-pip-wrap']) {
     if (document.getElementById(id)) found.push(`#${id}`);
   }
   return found;
@@ -224,11 +224,11 @@ async function runPass(mediaParam) {
       await page.keyboard.press('ArrowLeft'); await sleep(150); await page.keyboard.press('ArrowRight');
       await sleep(3000);
       const pip = await page.evaluate(() => {
-        const shown = (id) => { const el = document.getElementById(id); return !!el && getComputedStyle(el).display !== 'none'; };
-        return { self: shown('self-pip-wrap'), partner: shown('partner-pip-wrap'),
+        const there = (id) => !!document.getElementById(id);
+        return { self: there('self-pip-wrap'), partner: there('partner-pip-wrap'),
           supported: window._game.recorder.supported, buffering: window._game.recorder.buffering };
       });
-      check(!pip.self && !pip.partner, `the room's picture circles are hidden in a ride (self=${pip.self} partner=${pip.partner})`);
+      check(!pip.self && !pip.partner, `the room's picture circles are gone (Pete, 2026-11-20) (self=${pip.self} partner=${pip.partner})`);
       const rideControls = await page.evaluate(mediaControls);
       check(rideControls.length === 0, `ride: no camera/mic control exists (${JSON.stringify(rideControls)})`);
       if (!pip.supported || !pip.buffering) {

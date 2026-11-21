@@ -4095,42 +4095,6 @@
   }
 
   /* ── The room's two picture circles (mine, my partner's) ── */
-  .pip-wrap {
-    position: fixed;
-    z-index: 11;
-    display: none;
-    pointer-events: none;
-    text-align: center;
-  }
-  #self-pip-wrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
-    left: 14px;
-  }
-  #partner-pip-wrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 18vh + 72px);
-    right: 14px;
-  }
-
-  /* ── Achievement badges around PiP ── */
-  .pip-badges {
-    position: absolute;
-    width: 80px; height: 80px;
-    top: 0; left: 0;
-    pointer-events: none;
-  }
-  .pip-badge {
-    position: absolute;
-    width: 20px; height: 20px;
-    top: 30px; left: 30px;
-    border-radius: 50%;
-    background: rgba(0,0,0,0.6);
-    border: 1.5px solid #ffcc00;
-    font-size: 11px;
-    line-height: 18px;
-    text-align: center;
-    pointer-events: none;
-  }
-
   /* ── Achievement toast ── */
   #achievement-toast-container {
     position: fixed;
@@ -4374,25 +4338,6 @@
     min-width: 200px;
   }
   #options-close-btn.gamepad-focus { outline: 2px solid #fff; outline-offset: 2px; }
-  .pip-video {
-    width: 80px;
-    height: 80px;
-    border-radius: 50%;
-    border: 2.5px solid #fff;
-    object-fit: cover;
-    object-position: center 25%;
-    display: block;
-    background: #000;
-  }
-  .pip-label {
-    display: block;
-    font-size: 9px;
-    font-weight: bold;
-    color: #fff;
-    text-shadow: 0 1px 2px rgba(0,0,0,0.6);
-    margin-top: 3px;
-    letter-spacing: 0.5px;
-  }
 
   /* ── Clip preview modal ── */
   #clip-preview-modal {
@@ -5282,17 +5227,6 @@
   </svg>
 </button>
 
-<!-- The online room's two picture circles: my picture and my partner's -->
-<div id="self-pip-wrap" class="pip-wrap">
-  <img id="self-pip-avatar" class="pip-video" style="display:none;" alt="">
-  <span class="pip-label" id="self-pip-label"></span>
-  <div class="pip-badges" id="self-badges"></div>
-</div>
-<div id="partner-pip-wrap" class="pip-wrap">
-  <img id="partner-pip-avatar" class="pip-video" style="display:none;" alt="">
-  <span class="pip-label" id="partner-pip-label"></span>
-  <div class="pip-badges" id="partner-badges"></div>
-</div>
 
 <div id="status"></div>
 <div id="checkpoint-flash">CHECK POINT</div>
