@@ -387,6 +387,9 @@ const NUMERIC = [
 const LISTS = ['dayList', 'golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished'];
 const FLAGS = ['pedalled', 'maxedAny', 'maxedAll'];
 const STRINGS = ['lastDay', 'lastDailyDay'];
+/** #824 · [period 'YYYY-MM-DD', count]: Tourist's daily sessions and weekly addresses, on the account too. */
+export const TOURIST_PAIRS = Object.freeze(['touristSessions', 'touristAddresses']);
+const isPair = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && Number.isFinite(v[1]) && v[1] >= 0;
 
 export function emptyStats() {
   const L = { v: STATS_VERSION, bests: {}, bestsAt: {} };
@@ -394,6 +397,7 @@ export function emptyStats() {
   for (const k of LISTS) L[k] = [];
   for (const k of FLAGS) L[k] = false;
   for (const k of STRINGS) L[k] = null;
+  for (const k of TOURIST_PAIRS) L[k] = null;
   return L;
 }
 
@@ -433,6 +437,7 @@ export function migrateStats(raw) {
   }
   for (const k of FLAGS) L[k] = raw[k] === true;
   for (const k of STRINGS) L[k] = typeof raw[k] === 'string' ? raw[k] : null;
+  for (const k of TOURIST_PAIRS) L[k] = isPair(raw[k]) ? [raw[k][0], raw[k][1]] : null;
   if (raw.bests && typeof raw.bests === 'object') {
     for (const [k, v] of Object.entries(raw.bests)) if (Number.isFinite(v) && v > 0) L.bests[k] = v;
   }

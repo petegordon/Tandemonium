@@ -913,6 +913,7 @@ class Game {
       achievements: this.achievements,   // one shared list (sign-in merge, sign-out clear, ride unlocks)
     });
     this.lobby.phonePool = this.phonePool.pool;   // #562
+    this.lobby.onTouristRefused = (status) => this._touristRefused(status);   // #824
     // #694 E5 · a Steam friend's Join Game / invite (the Steam build; js/steam-join.js)
     this._steamJoinReq = null;
     this._steamJoinRetry = null;
@@ -1753,6 +1754,7 @@ class Game {
       // #400: the partner's side of the co-op Tourist ready barrier.
       if (profile && profile.type === ROOM_MSG.TOURIST_READY) {
         this._partnerTouristReady = !!profile.ok;
+        this._partnerTouristReason = profile.reason || null;   // #824
         if (this._onPartnerTouristReady) {
           this._onPartnerTouristReady();
         } else if (!profile.ok && this._touristRoute) {
@@ -4096,7 +4098,10 @@ class Game {
     });
     // A route this side could not rebuild, or a build with Tourist switched
     // off (no Maps key / the demo), cannot load — it fails the barrier at once.
-    const canLoad = !!plan.route && this.lobby.roomRules().tourist && !!getMapsApiKey();   // #666: the host's edition
+    // #824 · each device pays its own session: a rider who is out of them says so before the ride starts
+    const limited = !this.lobby.touristSessionGate().allowed;
+    if (limited) { try { analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' }); } catch {} }
+    const canLoad = !limited && !!plan.route && this.lobby.roomRules().tourist && !!getMapsApiKey();   // #666: the host's edition
     // PR #397 m15: a partner that fails while this side is still loading ends
     // the wait at once, rather than after this side's own load settles.
     const partnerFailed = partner.then(v => (v === true ? new Promise(() => {}) : 'partner'));
@@ -4121,14 +4126,16 @@ class Game {
 
     if (ok !== true || theirs !== true) {
       if (this._touristBarrierPending === pending) this._touristBarrierPending = null;
-      const why = ok === 'partner' ? 'The streets didn’t load for both of you.'
+      const why = limited ? 'You have used today’s map sessions. More tomorrow.'
+        : this._partnerTouristReason === 'limit' ? 'Your partner has used today’s map sessions. More tomorrow.'
+        : ok === 'partner' ? 'The streets didn’t load for both of you.'
         : ok !== true
         ? (ok === 'timeout' ? 'The streets took too long to load here.' : 'The streets could not load on this device.')
         : (theirs === 'timeout' ? 'Your partner’s streets took too long to load.' : 'The streets didn’t load for both of you.');
       try { analytics.trackEvent('tourist_coop_abort', { mine: String(ok), theirs: String(theirs) }); } catch {}
       // Tell the partner first (so they show the reason, not just a room).
       if (this.net.connected) {
-        this.net.sendProfile(RoomProtocol.touristReady(false));
+        this.net.sendProfile(RoomProtocol.touristReady(false, limited ? 'limit' : undefined));
         // A partner that already got our ready may be past its barrier, on
         // the instructions screen: bring it back to the room too. (A partner
         // still waiting gives up on its own from the message above.)
@@ -4166,6 +4173,7 @@ class Game {
    * @returns {Promise<boolean>} true when the tiles world is up
    */
   async _prepareTouristRide(plan, isCurrent = () => true) {
+    this._touristRefusing = false;   // #824
     this._leaveSlingMode();
     this.isTourist = true;
     this._touristRoute = plan;
@@ -4526,6 +4534,34 @@ class Game {
       (plan.route.capped
         ? '<div class="victory-stat">' + this._escapeHtml(skipLabel(plan.route)) + '</div>'
         : '');
+  }
+
+  /**
+   * #824 · Google refused the tiles (a quota was hit, 403 / 429): end cleanly, never a blank world. Every other
+   * mode is unaffected.
+   */
+  _touristRefused(status) {
+    if (this._touristRefusing || (!this.isTourist && !this._touristPending)) return;
+    this._touristRefusing = true;
+    try { analytics.trackEvent('tourist_quota_refused', { status }); } catch {}
+    this._lastTouristAbort = 'Tourist is resting, try again tomorrow';
+    if (this.net) {
+      if (this.net.connected) {
+        this.net.sendProfile(RoomProtocol.touristReady(false));
+        this.net.sendEvent(EVT_RETURN_ROOM);
+      }
+      this._returnToRoom();
+    } else {
+      this.instructionsEl.classList.add('hidden');
+      this._returnToLobby();
+    }
+    this._restoreProceduralWorld(true);
+    this.isTourist = false;
+    this._touristPending = false;
+    this._touristRoute = null;
+    this._touristOdo = null;
+    this._hideTouristGoal();
+    showInfoToast('📍', 'Tourist is resting', 'Try again tomorrow. Every other ride is open.');
   }
 
   /**

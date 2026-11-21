@@ -26,7 +26,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { dracoDecoderPath } from './draco-path.js';
 import { ANCHOR_MARGIN, getTouristOrigin, TOURIST_TUNE, TOURIST_MAX_RADIUS_M } from './tourist-config.js';
 import { TouristGround } from './tourist-ground.js';
-import { TilesSessionPlugin } from './tourist-tiles-session.js';
+import { TilesSessionPlugin, watchTileRefusals } from './tourist-tiles-session.js';
 import { isMobile } from './config.js';
 
 const DEG2RAD = Math.PI / 180;
@@ -95,6 +95,7 @@ export class TouristWorld {
     // Registered last, with a lower priority than the rest, so the library asks it first: it hands
     // this ride the root (and session) an earlier ride already paid for (js/tourist-tiles-session.js).
     this._session = new TilesSessionPlugin();
+    this._unwatchRefusals = watchTileRefusals();   // #824
     tiles.registerPlugin(this._session);
 
     // Probe width follows how much we trust the anchor. An anchored origin (real
@@ -839,6 +840,7 @@ export class TouristWorld {
   reseed() { return false; }
 
   dispose() {
+    if (this._unwatchRefusals) { this._unwatchRefusals(); this._unwatchRefusals = null; }
     if (this.tiles) {
       this.scene.remove(this.tiles.group);
       this.tiles.dispose();

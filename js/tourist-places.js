@@ -22,10 +22,10 @@ import { planRoute, planExplore, isValidPoint, formatDistance } from './tourist-
 
 /**
  * New typed places a player may look up, and over how long. Scenic places and places already ridden
- * never count. One number to change: 6 a week means at most 312 lookups a year per player, about $3 at
- * Google's prices if every one were used, against 1,095 a year for 3 a day.
+ * never count. One number to change: 5 a week (#824) means at most 260 lookups a year per player, about
+ * $2.60 at Google's prices if every one were used.
  */
-export const NEW_PLACE_LIMIT = Object.freeze({ count: 6, days: 7 });
+export const NEW_PLACE_LIMIT = Object.freeze({ count: 5, days: 7 });
 
 /** How many of the player's own places are remembered (the oldest drops off). */
 export const MAX_YOUR_PLACES = 8;
@@ -129,6 +129,7 @@ export function periodEnd(now = Date.now(), days = NEW_PLACE_LIMIT.days) {
   const start = new Date(y, m - 1, d);
   if (days >= 28) return new Date(y, m, 1).getTime();
   if (days === 7) return new Date(y, m - 1, d + 7).getTime();
+  if (days === 1) return new Date(y, m - 1, d + 1).getTime();   // (a clock change makes some days 23 or 25 hours)
   return start.getTime() + days * 86400000;
 }
 

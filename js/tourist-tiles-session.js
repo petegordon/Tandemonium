@@ -30,6 +30,47 @@ export const SESSION_REUSE_MS = 150 * 60 * 1000;
 let _root = null;
 let _rootRequests = 0;
 
+/** @type {{ onRoot?: (r: {ok: boolean, status: number}) => void, onReused?: () => void, onRefused?: (status: number) => void }} */
+let _hooks = {};
+
+/** #824 · who hears about paid sessions, reused ones and Google refusing us. */
+export function setTilesSessionHooks(hooks) { _hooks = hooks || {}; }
+
+const call = (fn, ...a) => { try { if (fn) fn(...a); } catch (e) { console.warn('[Tourist] session hook failed', e); } };
+
+/** Is a kept root still good for the next ride (so that ride costs nothing)? */
+export function hasLiveTilesSession(now = Date.now()) {
+  return !!_root && now - _root.at < SESSION_REUSE_MS;
+}
+
+/** How many refused tile requests (403) in this window mean refused, not one expired token. */
+const REFUSED_403S = 3;
+const REFUSED_WINDOW_MS = 10000;
+
+/**
+ * #824 · a hit quota refuses the tiles themselves (429, or 403 again and again; a single 403 is an expired
+ * token, which Google's plugin renews). The renderer has no error event for it, so the page's fetch is watched
+ * while a tiles world is up. → stop watching
+ */
+export function watchTileRefusals(now = () => Date.now()) {
+  const original = globalThis.fetch;
+  if (typeof original !== 'function') return () => {};
+  let recent = [];
+  const watched = async (input, init) => {
+    const res = await original.call(globalThis, input, init);
+    const url = String(typeof input === 'string' ? input : input && input.url);
+    if (url.includes('tile.googleapis.com') && !ROOT_RE.test(url) && (res.status === 403 || res.status === 429)) {
+      const t = now();
+      recent = recent.filter((x) => t - x < REFUSED_WINDOW_MS);
+      recent.push(t);
+      if (res.status === 429 || recent.length >= REFUSED_403S) call(_hooks.onRefused, res.status);
+    }
+    return res;
+  };
+  globalThis.fetch = watched;
+  return () => { if (globalThis.fetch === watched) globalThis.fetch = original; };
+}
+
 /** How many root requests this page has made (for the smoke and for a debug readout). */
 export function rootRequestCount() { return _rootRequests; }
 
@@ -56,15 +97,22 @@ export class TilesSessionPlugin {
     const now = this._now();
     if (_root && now - _root.at < SESSION_REUSE_MS) {
       this.reused = true;
+      call(_hooks.onReused);
       return Promise.resolve(new Response(_root.text, { status: 200, headers: { 'Content-Type': 'application/json' } }));
     }
     this.reused = false;
     _rootRequests++;
     return this._fetch(uri, options).then(async (res) => {
+      // #824 · only an answered request is a paid session; a refusal uses nothing up
+      call(_hooks.onRoot, { ok: res.ok, status: res.status });
+      if (res.status === 403 || res.status === 429) call(_hooks.onRefused, res.status);
       if (!res.ok) return res;
       const text = await res.text();
       _root = { text, at: now };
       return new Response(text, { status: res.status, statusText: res.statusText, headers: { 'Content-Type': 'application/json' } });
+    }, (err) => {
+      call(_hooks.onRoot, { ok: false, status: 0 });
+      throw err;
     });
   }
 }

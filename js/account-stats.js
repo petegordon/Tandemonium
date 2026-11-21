@@ -24,7 +24,7 @@
 // the baseline belongs to: null = counted signed out (the next sign-in claims
 // it), another account = the device's stats aren't this player's (reset).
 
-import { emptyStats, migrateStats, STATS_VERSION } from './achievement-defs.js';
+import { emptyStats, migrateStats, STATS_VERSION, TOURIST_PAIRS } from './achievement-defs.js';
 
 export const ACCOUNT_GAME = 'tandemonium';
 
@@ -72,6 +72,7 @@ function settledParts(L) {
   for (const k of RECENT_KEYS) if (Array.isArray(L[k]) && L[k].length) d.recent[k] = L[k];
   if (typeof L.lastDailyDay === 'string') d.latest.dailyRun = [L.lastDailyDay, num(L.dailyDayRun)];
   if (typeof L.lastDay === 'string') d.latest.lastDay = [L.lastDay, null];
+  for (const k of TOURIST_PAIRS) if (Array.isArray(L[k])) d.latest[k] = L[k];   // #824
   for (const [id, v] of Object.entries(L.bests || {})) {
     if (!num(v)) continue;
     const at = L.bestsAt && L.bestsAt[id];
@@ -112,6 +113,7 @@ export function fromAccount(T) {
     raw.dailyDayRun = num(t.dailyRun[1]);
   }
   if (Array.isArray(t.lastDay) && typeof t.lastDay[0] === 'string') raw.lastDay = t.lastDay[0];
+  for (const k of TOURIST_PAIRS) raw[k] = t[k];
   if (t.bests && typeof t.bests === 'object') {
     for (const [id, e] of Object.entries(t.bests)) {
       if (!Array.isArray(e) || !num(e[0])) continue;
@@ -152,6 +154,10 @@ export function mergeAfterSync(T, Lnow, sent) {
     R.dailyDayRun = mine.dailyDayRun;
   }
   if (mine.lastDay && (!R.lastDay || mine.lastDay > R.lastDay)) R.lastDay = mine.lastDay;
+  for (const k of TOURIST_PAIRS) {   // #824 · the newer period; in the same period, the higher count
+    const a = R[k], b = mine[k];
+    if (b && (!a || b[0] > a[0] || (b[0] === a[0] && b[1] > a[1]))) R[k] = b;
+  }
   for (const [id, v] of Object.entries(mine.bests)) {
     if (v > (R.bests[id] || 0)) {
       R.bests[id] = v;

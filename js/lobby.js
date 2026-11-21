@@ -66,7 +66,9 @@ import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
-import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage } from './tourist-config.js';
+import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage, setLookupReporter } from './tourist-config.js';
+import { setTilesSessionHooks, hasLiveTilesSession } from './tourist-tiles-session.js';
+import { TOURIST_USAGE_KEY, readUsage, mergeUsage, sessionGate, countSession, noteAddresses, storeWithUsage, sessionText } from './tourist-limits.js';
 /** Tourist's "experimental" note: '1' = don't show it again. */
 const TOURIST_NOTE_OFF_KEY = 'tandemonium_tourist_note_off';
 /** Map Tourist: the player's own places and the week's count of new ones (this device). */
@@ -1617,10 +1619,11 @@ export class Lobby {
       this.net.sendProfile(RoomProtocol.touristChoosing(true));
     }
     this._forceWizard = false;
-    this._touristStore = this._touristStoreLoad();
+    this._touristStore = storeWithUsage(this._touristStoreLoad(), this._touristUsage());
     this._showTouristForm(false);
     this._renderTouristPlaces();
     this._showStep(this.touristStep);
+    this._syncTouristUsage();   // #824
     this._refreshTouristFocus(true);
     // the step slides in and its fonts settle: the neighbours are worked out again from where things ended up
     for (const ms of [200, 600, 1400]) setTimeout(() => this._refreshTouristFocus(false), ms);
@@ -1631,6 +1634,7 @@ export class Lobby {
     // the two lookups a typed place needs (a seam: the smoke stands a table in for Google)
     this._touristLookups = { geocode: geocodeAddress, origin: resolveOriginAt };
     if (!this._touristAvailable()) return;     // no card is built either
+    this._initTouristCosts();
 
     const back = document.getElementById('btn-back-tourist');
     if (back) back.addEventListener('click', () => {
@@ -1769,15 +1773,65 @@ export class Lobby {
     this._renderTouristQuota();
   }
 
-  /** "New places this week: 4 of 6 left", on the places and on the form. */
+  // ── #824 · what a player may use of Google, and what it cost ─────────────
+
+  /** Counts only: never a typed address or a ridden place. */
+  _initTouristCosts() {
+    const track = (name, data) => { try { analytics.trackEvent(name, data); } catch { /* offline */ } };
+    const platform = window.steam ? 'steam' : navigator.userAgent.includes('Electron') ? 'desktop' : 'web';
+    const edition = this._achievements.demo ? 'demo' : 'full';
+    setLookupReporter((r) => track('tourist_lookup', r));
+    setTilesSessionHooks({
+      onRoot: ({ ok, status }) => {
+        track('tourist_tiles_session', { ok, status, platform, edition });
+        if (ok) this._saveTouristUsage(countSession(this._touristUsage()));
+      },
+      onReused: () => track('tourist_session_reused', { platform, edition }),
+      onRefused: (status) => { if (this.onTouristRefused) this.onTouristRefused(status); },
+    });
+  }
+
+  /** This player's counts: the device's and the account's, the higher of each. */
+  _touristUsage() {
+    let device = null;
+    try { device = readUsage(localStorage.getItem(TOURIST_USAGE_KEY)); } catch { /* storage off */ }
+    let u = mergeUsage(device, this._achievements.touristUsage());
+    const store = this._touristStore;
+    if (store && store.week) u = noteAddresses(u, store.week, store.used || 0);
+    return u;
+  }
+
+  _saveTouristUsage(u) {
+    try { localStorage.setItem(TOURIST_USAGE_KEY, JSON.stringify(u)); } catch { /* this session only */ }
+    this._achievements.noteTouristUsage(u);
+    if (this._currentStep === this.touristStep) this._renderTouristQuota();
+  }
+
+  /** May a ride start now? (A live session always may.) */
+  touristSessionGate() {
+    return sessionGate(this._touristUsage(), Date.now(), hasLiveTilesSession());
+  }
+
+  /** Signed in: bring the account's counts here before the player picks. Offline: the device's count stands. */
+  async _syncTouristUsage() {
+    this._saveTouristUsage(this._touristUsage());
+    try { await this._achievements.syncStats(); } catch { return; }
+    const u = this._touristUsage();
+    this._touristStoreSave(storeWithUsage(this._touristStore, u));
+    this._saveTouristUsage(u);
+  }
+
+  /** "Map sessions today: 4 of 5 left" and "New places this week: 3 of 5 left", on the places and on the form. */
   _renderTouristQuota() {
     const gate = newPlaceGate(this._touristStore);
-    const text = limitText(gate);
+    const limit = limitText(gate);
+    const sessions = this.touristSessionGate();
+    const text = { headline: sessionText(sessions), detail: `${limit.headline}. ${limit.detail}` };
     for (const id of ['tourist-quota', 'tourist-quota-form']) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.innerHTML = '<b>' + this._escape(text.headline) + '</b><span>' + this._escape(text.detail) + '</span>';
-      el.classList.toggle('out', !gate.allowed);
+      el.classList.toggle('out', !gate.allowed || !sessions.allowed);
     }
     const fresh = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-tourist-new'));
     if (fresh) {
@@ -1950,12 +2004,21 @@ export class Lobby {
       this._refreshTouristFocus(false);
     };
 
+    // #824 · no paid address lookup for a ride that could not start
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      fail(sessionText(sessions));
+      return;
+    }
+
     // which of them need looking up, and is there room in the week for that many
     const texts = two ? [fromText, toText] : [fromText];
     const known = texts.map((t) => knownPoint(this._touristStore, t));
     const need = known.filter((k) => !k).length;
     const gate = newPlaceGate(this._touristStore);
     if (need > gate.left) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'addresses' });
       const t = limitText(gate);
       fail(gate.left === 0 ? `${t.headline}. ${t.detail}`
         : `That is ${need} new places and you have ${gate.left} left this week. Try one address, or a place you have ridden.`);
@@ -1973,7 +2036,10 @@ export class Lobby {
         return { ...p, typed: String(t).trim() };
       }));
       // the lookups happened: they count, whatever comes next
-      if (need) this._touristStoreSave(countNewPlaces(this._touristStore, need));
+      if (need) {
+        this._touristStoreSave(countNewPlaces(this._touristStore, need));
+        this._saveTouristUsage(this._touristUsage());
+      }
       const [from, to] = points;
       const plan = two ? planRoute(from, to) : planExplore(from);
       plan.kind = 'yours';
@@ -2025,6 +2091,15 @@ export class Lobby {
 
   async _startTouristRide(plan) {
     const forMode = this._touristFor || 'solo';
+    // #824 · checked before a ride would open a new paid session; a live session always rides
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      const err = document.getElementById('tourist-error');
+      if (err) err.textContent = sessionText(sessions) + ' Grandma’s, the Daily Ride and Slingshot are still open.';
+      this._renderTouristQuota();
+      return;
+    }
     if (forMode === 'multiplayer') {
       // Online co-op: the captain's plan travels as its two end points, then
       // the ordinary start message (flagged), and both sides enter the game.

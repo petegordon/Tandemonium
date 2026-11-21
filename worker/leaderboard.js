@@ -13,6 +13,7 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
   return allowed[0];
 }
 
+import { monthCost, GOOGLE_DAILY_CAPS } from '../js/tourist-costs.js';
 import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
@@ -1898,6 +1899,7 @@ async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
     players: () => dashPlayers(env, since, ex),
+    tourist_costs: () => dashTouristCosts(env, since),   // #824
   };
 
   // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
@@ -2231,6 +2233,63 @@ async function dashPairs(env, since, ex) {
 // never recorded a session's end. One session counts at most 2 hours, so a
 // window left open overnight doesn't read as a marathon.
 export const PLAYER_SESSION_CAP_MIN = 120;
+/**
+ * #824 · Tourist's Google use and our estimate of its cost. Counts every session (developers too), because the
+ * bill does. Google's billing report stays the source of truth.
+ */
+async function dashTouristCosts(env, since) {
+  const NAMES = ['tourist_tiles_session', 'tourist_session_reused', 'tourist_lookup', 'tourist_limit_hit', 'tourist_quota_refused'];
+  const marks = NAMES.map(() => '?').join(',');
+  const rows = (await env.DB.prepare(
+    `SELECT substr(e.created_at, 1, 10) AS day, e.event_type AS type, json_extract(e.event_data, '$.kind') AS kind,
+            json_extract(e.event_data, '$.ok') AS ok, COUNT(*) AS n
+     FROM events e WHERE e.created_at >= ? AND e.event_type IN (${marks}) GROUP BY day, type, kind, ok`
+  ).bind(since, ...NAMES).all()).results || [];
+  const players = (await env.DB.prepare(
+    `SELECT CASE WHEN s.google_uid IS NOT NULL THEN 'Account ' || CAST(s.google_uid AS INTEGER) ELSE 'Guest' END AS who,
+            CASE WHEN s.google_uid IS NOT NULL THEN 'a:' || CAST(s.google_uid AS INTEGER) ELSE 'g:' || COALESCE(s.device_id, s.ip_address, s.id) END AS id,
+            SUM(CASE WHEN e.event_type = 'tourist_tiles_session' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS sessions,
+            SUM(CASE WHEN e.event_type = 'tourist_lookup' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS lookups
+     FROM events e JOIN sessions s ON s.id = e.session_id
+     WHERE e.created_at >= ? AND e.event_type IN ('tourist_tiles_session', 'tourist_lookup')
+     GROUP BY id ORDER BY sessions DESC, lookups DESC LIMIT 200`
+  ).bind(since).all()).results || [];
+  const blank = () => ({ tiles: 0, geocode: 0, elevation: 0, reused: 0, failed: 0, limit_sessions: 0, limit_addresses: 0, refused: 0 });
+  const days = new Map();
+  for (const r of rows) {
+    if (!days.has(r.day)) days.set(r.day, blank());
+    const d = days.get(r.day);
+    const ok = r.ok === 1 || r.ok === true;
+    if (r.type === 'tourist_tiles_session') { if (ok) d.tiles += r.n; else d.failed += r.n; }
+    else if (r.type === 'tourist_session_reused') d.reused += r.n;
+    else if (r.type === 'tourist_lookup') { if (!ok) d.failed += r.n; else if (r.kind === 'geocode') d.geocode += r.n; else if (r.kind === 'elevation') d.elevation += r.n; }
+    else if (r.type === 'tourist_limit_hit') { if (r.kind === 'addresses') d.limit_addresses += r.n; else d.limit_sessions += r.n; }
+    else if (r.type === 'tourist_quota_refused') d.refused += r.n;
+  }
+  const byMonth = new Map();
+  for (const [day, d] of days) {
+    const m = day.slice(0, 7);
+    if (!byMonth.has(m)) byMonth.set(m, blank());
+    const t = byMonth.get(m);
+    for (const k of Object.keys(t)) t[k] += d[k];
+  }
+  const active = players.filter((p) => p.sessions > 0 || p.lookups > 0).length;
+  const months = [...byMonth].sort().map(([month, c]) => ({ month, ...c, cost: monthCost(month, c) }));
+  const total = months.reduce((a, m) => a + m.cost.total, 0);
+  const today = days.get(new Date().toISOString().slice(0, 10)) || blank();
+  return {
+    days: [...days].sort().reverse().map(([day, c]) => ({ day, ...c })),
+    months, total_usd: total, active_players: active, cost_per_player: active ? total / active : 0,
+    top_players: players.slice(0, 10).map(({ who, sessions, lookups }) => ({ who, sessions, lookups })),
+    today_of_cap: {
+      tiles: pct0(today.tiles, GOOGLE_DAILY_CAPS.tiles), geocode: pct0(today.geocode, GOOGLE_DAILY_CAPS.geocode),
+      elevation: pct0(today.elevation, GOOGLE_DAILY_CAPS.elevation),
+    },
+    caps: GOOGLE_DAILY_CAPS,
+  };
+}
+const pct0 = (n, of) => (of > 0 ? Math.round((n * 100) / of) : 0);
+
 async function dashPlayers(env, since, ex) {
   const sf = sessionFilter(ex, 's');
   const rows = await env.DB.prepare(

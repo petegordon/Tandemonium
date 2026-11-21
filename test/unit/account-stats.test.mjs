@@ -86,7 +86,7 @@ test('every lifetime stat has exactly one merge rule', () => {
   const ruled = [...ADD_KEYS, ...MAX_KEYS, ...OR_KEYS, ...UNION_KEYS, ...RECENT_KEYS, ...DEVICE_KEYS];
   assert.equal(new Set(ruled).size, ruled.length, 'a stat with two rules');
   const L = emptyStats();
-  const handledElsewhere = new Set(['v', 'bests', 'bestsAt', 'lastDay', 'lastDailyDay', 'dailyDayRun']);
+  const handledElsewhere = new Set(['v', 'bests', 'bestsAt', 'lastDay', 'lastDailyDay', 'touristSessions', 'touristAddresses', 'dailyDayRun']);
   for (const k of Object.keys(L)) if (!handledElsewhere.has(k)) assert.ok(ruled.includes(k), `${k} has no merge rule`);
 });
 

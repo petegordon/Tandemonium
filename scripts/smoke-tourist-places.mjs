@@ -9,6 +9,8 @@
 //   TP-05  a place the player already has costs nothing; a new one counts; none left = said so, and the
 //          scenic rides and own places still work
 //   TP-06  the old screen's one remembered route is carried over as the first of "your places"
+//   TP-07  #824: the 5th map session rides, the 6th is stopped, a live session still rides, and a Google refusal
+//          (403) ends cleanly in the lobby with a message and uses no session
 //
 // Google is not reached: the tiles library and Google's hosts are answered or aborted here, and the
 // geocoder is replaced with a table. The key is a dummy.
@@ -73,7 +75,7 @@ check(s.step === 'lobby-tourist' && s.prompt === 'Tourist · Where will you ride
 check(s.scenic.length >= 10 && s.scenic.length <= 14 && !s.form, `TP-01: about a dozen scenic rides, and no form to fill (${s.scenic.length})`, s.scenic);
 check(s.subs.every((t) => /·/.test(t)) && s.subs.some((t) => /km ride$/.test(t)) && s.subs.some((t) => /Open ride$/.test(t)), 'TP-01: each says where it is and what kind of ride', s.subs.slice(0, 3));
 check(s.yours.length === 1 && /Columbus → Denver/.test(s.yours[0]) && !s.none, 'TP-06: the route the old screen remembered is the first of "your places"', s.yours);
-check(/New places this week: 6 of 6 left/.test(s.quota) && /Scenic rides and places you have ridden before never count\./.test(s.quota), 'TP-02: the week\'s new places, and what never counts', s.quota);
+check(/New places this week: 5 of 5 left/.test(s.quota) && /Scenic rides and places you have ridden before never count\./.test(s.quota), 'TP-02: the week\'s new places, and what never counts', s.quota);
 check(s.fresh.vis && !s.fresh.disabled && s.fresh.text === '+ A NEW PLACE', 'TP-01: a new place is the third way in', s.fresh);
 check(!s.wide, 'nothing wider than the screen');
 await shot(page, 'places-desktop');
@@ -117,7 +119,7 @@ check(st.store.used === 1 && st.store.places[0].from.label === 'Paris, France' &
 await page.evaluate(() => { window.__started = null; window.__lookups.length = 0; window._game.lobby._openTouristStep(); });
 await sleep(200);
 s = await screen(page);
-check(/5 of 6 left/.test(s.quota) && /^📍 Paris/.test(s.yours[0]), 'TP-05: 5 of 6 left, and Paris is now one of your places', { quota: s.quota, yours: s.yours });
+check(/4 of 5 left/.test(s.quota) && /^📍 Paris/.test(s.yours[0]), 'TP-05: 4 of 5 left, and Paris is now one of your places', { quota: s.quota, yours: s.yours });
 await page.click('#btn-tourist-new');
 await type('tourist-from', '  paris ');
 await page.click('#btn-tourist-ride');
@@ -157,12 +159,12 @@ check(/Could not find “Xyzzyville”\. Try a city, or a full address\./.test(s
 await page.evaluate(async () => {
   const P = await import('/js/tourist-places.js');
   const l = window._game.lobby;
-  l._touristStoreSave(P.countNewPlaces(l._touristStore, 6));
+  l._touristStoreSave(P.countNewPlaces(l._touristStore, 5));
   l._openTouristStep();
 });
 await sleep(200);
 s = await screen(page);
-check(s.fresh.disabled && /NO NEW PLACES LEFT THIS WEEK/.test(s.fresh.text) && /You have looked up this week’s 6 new places/.test(s.quota) && /More (on \w+|tomorrow|today)\. Scenic rides and your own places are still open\./.test(s.quota),
+check(s.fresh.disabled && /NO NEW PLACES LEFT THIS WEEK/.test(s.fresh.text) && /You have looked up this week’s 5 new places/.test(s.quota) && /More (on \w+|tomorrow|today)\. Scenic rides and your own places are still open\./.test(s.quota),
   'TP-05: none left: the button says so, and when more come', { fresh: s.fresh, quota: s.quota });
 check(s.scenic.length >= 10 && s.yours.length >= 2, 'TP-05: the scenic rides and your places are still there');
 await shot(page, 'places-none-left');
@@ -171,7 +173,7 @@ await page.close();
 // ── TP-03 / TP-04 · a controller ──
 console.log('TP-03 a controller picks a scenic ride');
 // (the pages share one browser profile: this player starts the week afresh)
-const tv = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_places: '{}', tandemonium_tourist_route: '' } });
+const tv = await h.gamePage({ viewport: { width: 1920, height: 1080 }, before, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_places: '{}', tandemonium_tourist_usage: '{}', tandemonium_achievement_stats: '{}', tandemonium_tourist_route: '' } });
 await ready(tv);
 const pads = fakePads(tv);
 const pad = await pads.plug('xbox');
@@ -228,9 +230,59 @@ st = await tv.evaluate(() => { const p = window.__started; return p && { kind: p
 check(st && st.kind === 'scenic' && st.anchor && st.anchor.anchored && Number.isFinite(st.anchor.height) && st.title, 'TP-03: A on a scenic ride starts it with its stored anchor', st);
 await tv.close();
 
+// ── TP-07 · #824 the day's sessions ──
+console.log('TP-07 map sessions');
+const lim = await h.gamePage({ viewport: { width: 1600, height: 900 }, before, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_places: '{}', tandemonium_tourist_usage: '{}', tandemonium_achievement_stats: '{}' } });
+await ready(lim);
+await openTourist(lim);
+await sleep(400);
+await lim.evaluate(async () => {
+  const l = window._game.lobby;
+  window.__TL = await import('/js/tourist-limits.js');
+  window.__TS = await import('/js/tourist-tiles-session.js');
+  window.__TS.forgetTilesSession();
+  window.__rides = 0;
+  l.onTouristReady = () => { window.__rides++; };
+  l._hideLobby = () => {};
+  window.__setSessions = (n) => {
+    let u = window.__TL.emptyUsage();
+    for (let i = 0; i < n; i++) u = window.__TL.countSession(u);
+    localStorage.setItem(window.__TL.TOURIST_USAGE_KEY, JSON.stringify(u));
+    l._achievements.noteTouristUsage(u);
+    l._renderTouristQuota();
+  };
+  window.__ride = async () => { document.getElementById('tourist-error').textContent = ''; await l._startTouristRide({ from: { lat: 1, lon: 1 }, to: null, explore: true, realM: 0, route: {} }); return window.__rides; };
+});
+await lim.evaluate(() => window.__setSessions(4));
+check(await lim.evaluate(() => window.__ride()) === 1, 'TP-07: the 5th session of the day rides');
+check(/Map sessions today: 1 of 5 left/.test((await screen(lim)).quota), 'TP-07: the screen says what is left', (await screen(lim)).quota);
+await lim.evaluate(() => window.__setSessions(5));
+const blocked = await lim.evaluate(async () => ({ rides: await window.__ride(), error: document.getElementById('tourist-error').textContent }));
+check(blocked.rides === 1 && /used today’s 5 map sessions/.test(blocked.error), 'TP-07: the 6th is stopped and says when more come', blocked);
+const live = await lim.evaluate(async () => {
+  const root = 'https://tile.googleapis.com/v1/3dtiles/root.json?key=k';
+  await new window.__TS.TilesSessionPlugin({ fetchImpl: async () => new Response('{"root":1}') }).fetchData(root, {});
+  const counted = window.__TL.readUsage(localStorage.getItem(window.__TL.TOURIST_USAGE_KEY)).sessions;
+  return { rides: await window.__ride(), counted };
+});
+check(live.rides === 2 && live.counted === 6, 'TP-07: a live session still rides at the limit', live);
+const refused = await lim.evaluate(async () => {
+  const g = window._game, l = g.lobby;
+  window.__TS.forgetTilesSession();
+  window.__setSessions(2);
+  l._hideLobby = () => {};
+  g.isTourist = true;
+  g._touristRefusing = false;
+  await new window.__TS.TilesSessionPlugin({ fetchImpl: async () => new Response('denied', { status: 403 }) })
+    .fetchData('https://tile.googleapis.com/v1/3dtiles/root.json?key=k', {});
+  return { abort: g._lastTouristAbort, state: g.state, tourist: g.isTourist, used: window.__TL.readUsage(localStorage.getItem(window.__TL.TOURIST_USAGE_KEY)).sessions };
+});
+check(/Tourist is resting/.test(refused.abort || '') && refused.state === 'lobby' && !refused.tourist && refused.used === 2, 'TP-07: a 403 ends cleanly in the lobby and uses no session', refused);
+await lim.close();
+
 // ── a phone ──
 console.log('a phone');
-const phone = await h.gamePage({ viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, before, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_places: '{}', tandemonium_tourist_route: '' } });
+const phone = await h.gamePage({ viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, before, storage: { tandemonium_tutorial_done: 'smoke', tandemonium_tourist_places: '{}', tandemonium_tourist_usage: '{}', tandemonium_achievement_stats: '{}', tandemonium_tourist_route: '' } });
 await ready(phone);
 await openTourist(phone);
 await sleep(500);
