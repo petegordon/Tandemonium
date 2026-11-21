@@ -110,6 +110,33 @@ try {
     .catch(() => note(false, 're-enable: tiles did not come back'));
   note(true, 're-enable: tiles rebuilt');
 
+  // #821 · a controller that drops and returns draws again, on a canvas with a live context
+  const back = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return { ok: false };
+    const old = t.canvas;
+    t._destroyOverlay();
+    const end = performance.now() + 20000;
+    while (!t.overlay && performance.now() < end) await new Promise(requestAnimationFrame);
+    return { ok: !!t.overlay, fresh: t.canvas !== old, inTile: t.el.contains(t.canvas), oldGone: !t.el.contains(old),
+      live: !!t.overlay && !t.overlay.renderer.getContext().isContextLost() };
+  });
+  note(back.ok && back.fresh && back.inTile && back.oldGone && back.live, `#821: a returned controller redraws on a fresh canvas ${JSON.stringify(back)}`);
+
+  // #821 · a tile that cannot start retries with a back-off, not every frame
+  const retries = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return -1;
+    const proto = t.hud._viz.ControllerOverlay.prototype, init = proto.init;
+    let calls = 0;
+    proto.init = async function () { calls++; throw new Error('smoke: no context'); };
+    t._destroyOverlay();
+    await new Promise((r) => setTimeout(r, 2500));
+    proto.init = init;
+    return calls;
+  });
+  note(retries >= 1 && retries <= 3, `#821: a failing tile backs off (${retries} tries in 2.5 s)`);
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   note(real.length === 0, `console errors: ${real.length}${real.length ? '\n    ' + real.join('\n    ') : ''}`);
 } catch (e) {
