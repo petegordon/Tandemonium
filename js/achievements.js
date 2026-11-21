@@ -478,6 +478,21 @@ export class AchievementManager {
     return this._evaluate(s);
   }
 
+  /** #824 · Tourist's counts as the account last had them. */
+  touristUsage() {
+    const s = this._stats.touristSessions, a = this._stats.touristAddresses;
+    return { day: s ? s[0] : '', sessions: s ? s[1] : 0, week: a ? a[0] : '', addresses: a ? a[1] : 0 };
+  }
+
+  /** #824 · keep Tourist's counts with the stats, so they reach the account at the next sync. */
+  noteTouristUsage(u) {
+    this._stats = { ...this._stats,
+      touristSessions: u.day ? [u.day, u.sessions] : this._stats.touristSessions,
+      touristAddresses: u.week ? [u.week, u.addresses] : this._stats.touristAddresses };
+    this._saveStats();
+    this._scheduleStatsSync();
+  }
+
   /** Versus, each frame: who led when the leader crossed halfway. */
   versusFrame(rigs, raceDistance) {
     if (!rigs || !rigs.length) return;
