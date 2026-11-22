@@ -46,8 +46,13 @@ const OUR_HOSTS = [
   'https://tandemonium-relay.pete-872.workers.dev', 'wss://tandemonium-relay.pete-872.workers.dev',
   'https://tandemonium-remote.housetandem.com', 'wss://tandemonium-remote.housetandem.com',
   'https://tandemonium.housetandem.com', 'https://housetandem.com',
-  'https://usersfirst-store.pete-872.workers.dev',
 ];
+/**
+ * Cloudflare Web Analytics: Cloudflare adds its visit-counting script to the pages it serves on
+ * the live domain. Its two hosts, on production only (staging and previews are not counted).
+ */
+const BEACON_SCRIPT = 'https://static.cloudflareinsights.com';
+const BEACON_REPORT = 'https://cloudflareinsights.com';
 /** Services the game calls: Google Maps and 3D Tiles (Tourist), weather, the PeerJS broker, Google sign-in (dashboard). */
 const SERVICE_HOSTS = [
   'https://*.googleapis.com', 'https://*.gstatic.com', 'https://*.google.com', 'https://api.open-meteo.com',
@@ -71,12 +76,14 @@ export function inlineScriptHashes(html) {
  */
 export function pagePolicy(html, env, { framed = false } = {}) {
   const map = (list) => (env === 'staging' ? [...new Set(list.map(toStaging))] : list);
-  const scripts = ["'self'", ...inlineScriptHashes(html), ...SCRIPT_HOSTS, ...MAPS_SCRIPT_HOSTS, 'https://accounts.google.com', "'wasm-unsafe-eval'", 'blob:'];
+  const beacon = env === 'production';
+  const scripts = ["'self'", ...inlineScriptHashes(html), ...SCRIPT_HOSTS, ...MAPS_SCRIPT_HOSTS, 'https://accounts.google.com',
+    ...(beacon ? [BEACON_SCRIPT] : []), "'wasm-unsafe-eval'", 'blob:'];
   return [
     "default-src 'self'",
     `script-src ${scripts.join(' ')}`,
     "worker-src 'self' blob:",
-    `connect-src 'self' data: blob: ${[...map(OUR_HOSTS), ...SCRIPT_HOSTS, ...SERVICE_HOSTS].join(' ')}`,
+    `connect-src 'self' data: blob: ${[...map(OUR_HOSTS), ...SCRIPT_HOSTS, ...SERVICE_HOSTS, ...(beacon ? [BEACON_REPORT] : [])].join(' ')}`,
     "img-src 'self' data: blob: https:",
     "media-src 'self' data: blob: https:",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://accounts.google.com",
