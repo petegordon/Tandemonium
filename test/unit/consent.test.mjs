@@ -120,16 +120,67 @@ test('a yes before signing in is recorded without an account, and gains it on th
   assert.equal(db.prepare('SELECT COUNT(*) n FROM consents').get().n, 1);
 });
 
-test('a no keeps the choice, the time and the country, and nothing about who', async () => {
+test('a no keeps the choice, the time, the country and the account (so it holds everywhere), with no name or address', async () => {
   const db = freshDb();
   const who = account(db);
   await call(envFor(db), '/consent', { country: 'FR', body: { id: ID, choice: 'decline', version: CONSENT_VERSION, account_token: who.token } });
   const row = db.prepare('SELECT * FROM consents WHERE id = ?').get(ID);
   assert.equal(row.choice, 'decline');
   assert.equal(row.country, 'FR');
-  assert.equal(row.user_id, null);
+  assert.equal(row.user_id, who.userId);
   assert.equal(row.username, null);
   assert.equal(row.ip_address, null);
+  // signed out: nothing about who at all
+  await call(envFor(db), '/consent', { country: 'FR', body: { id: ID2, choice: 'decline', version: CONSENT_VERSION } });
+  const anon = db.prepare('SELECT user_id, username, ip_address FROM consents WHERE id = ?').get(ID2);
+  assert.deepEqual({ ...anon }, { user_id: null, username: null, ip_address: null });
+});
+
+const me = (env, tok, country = 'DE') => worker.fetch(new Request('https://api.test/me/consent', {
+  headers: { Authorization: 'Bearer ' + tok, 'CF-Connecting-IP': ADDRESS, 'CF-IPCountry': country },
+}), env, { waitUntil() {} });
+
+test('the answer is the account’s, kept once: every game reads it, and a new answer takes the old one’s place', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const who = account(db);
+  assert.equal((await me(env, who.token)).status, 200);
+  assert.deepEqual(await (await me(env, who.token)).json(), { consent: null, required: true, version: CONSENT_VERSION });
+  assert.equal((await worker.fetch(new Request('https://api.test/me/consent'), env, { waitUntil() {} })).status, 401, 'signed in only');
+
+  const first = await (await call(env, '/consent', { body: { id: ID, choice: 'accept', version: CONSENT_VERSION, account_token: who.token } })).json();
+  assert.equal(first.consent.choice, 'accept');
+  // another game, another country: the same account, the same answer, nothing to ask
+  const seen = await (await me(env, who.token, 'US')).json();
+  assert.equal(seen.consent.choice, 'accept');
+  assert.equal(seen.consent.version, CONSENT_VERSION);
+  assert.equal(seen.required, false);
+
+  // changed in Settings (a new id): one row for the account, the new answer
+  const next = await (await call(env, '/consent', { body: { id: ID2, choice: 'decline', version: CONSENT_VERSION, account_token: who.token } })).json();
+  assert.equal(next.consent.choice, 'decline');
+  const rows = db.prepare('SELECT id, choice FROM consents WHERE user_id = ?').all(who.userId);
+  assert.deepEqual(rows.map((r) => ({ ...r })), [{ id: ID2, choice: 'decline' }]);
+  assert.equal((await (await me(env, who.token)).json()).consent.choice, 'decline');
+});
+
+test('an answer given before signing in joins the account, unless the account already has one: then the account’s stands', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const who = account(db);
+  // the account said no in another game
+  await call(env, '/consent', { body: { id: ID, choice: 'decline', version: CONSENT_VERSION, account_token: who.token } });
+  // this device said yes while signed out, then signs in
+  await call(env, '/consent', { body: { id: ID2, choice: 'accept', version: CONSENT_VERSION } });
+  const out = await (await call(env, '/consent', { body: { id: ID2, choice: 'accept', version: CONSENT_VERSION, account_token: who.token } })).json();
+  assert.equal(out.consent.choice, 'decline', 'the account is told its own answer');
+  assert.deepEqual(db.prepare('SELECT id FROM consents').all().map((r) => r.id), [ID], 'kept in one place: the other row is gone');
+});
+
+test('a signed-out answer says nothing back about any account', async () => {
+  const env = envFor(freshDb());
+  const out = await (await call(env, '/consent', { body: { id: ID, choice: 'accept', version: CONSENT_VERSION } })).json();
+  assert.deepEqual(out, { ok: true, consent: null });
 });
 
 test('an answer is never rewritten: the other choice on the same id is refused, and bad input is refused', async () => {
@@ -175,71 +226,134 @@ test('deleting the account removes its consent answers', async () => {
 
 // ── the game's side ──
 
-const regionApi = (required, log = []) => async (url, init = {}) => {
-  log.push({ url: String(url), body: init.body ? JSON.parse(init.body) : null });
-  if (String(url).endsWith('/consent/region')) return { ok: true, json: async () => ({ required, country: required ? 'DE' : 'US' }) };
-  return { ok: true, json: async () => ({ ok: true }) };
-};
+const { syncConsent } = await import('../../js/consent.js');
+
+/** A fake account service: where the player is, and the account's answer (kept in one place: here). */
+function service({ required = true, account = null } = {}) {
+  const s = { required, account, anon: new Set(), log: [] };
+  s.fetch = async (url, init = {}) => {
+    const u = String(url);
+    const body = init.body ? JSON.parse(init.body) : null;
+    s.log.push({ url: u, body, authed: !!(init.headers && init.headers.Authorization) });
+    const json = (o) => ({ ok: true, json: async () => o });
+    if (u.endsWith('/consent/region')) return json({ required: s.required });
+    if (u.endsWith('/me/consent')) return json({ consent: s.account, required: s.required });
+    if (u.endsWith('/consent')) {
+      if (!body.account_token) { s.anon.add(body.id); return json({ ok: true, consent: null }); }
+      // Signed in. An answer from before sign-in joins only an account with none; a new id is the account's new answer.
+      const fromBefore = s.anon.has(body.id);
+      if (!fromBefore || !s.account) s.account = { choice: body.choice, version: body.version, at: 1 };
+      return json({ ok: true, consent: s.account });
+    }
+    return json({});
+  };
+  return s;
+}
+const base = (svc, storage, extra = {}) => ({ storage, fetchImpl: svc.fetch, apiBase: 'https://api.test', nav: {}, ...extra });
+const posts = (svc) => svc.log.filter((c) => c.url.endsWith('/consent') && c.body);
 
 test('outside those countries nobody is asked and analytics run', async () => {
   let asked = 0;
-  const out = await resolveConsent({ ask: async () => { asked++; return 'accept'; }, storage: mem(), fetchImpl: regionApi(false), apiBase: 'https://api.test', nav: {} });
-  assert.deepEqual(out, { allowed: true, required: false, mark: null });
+  const out = await resolveConsent({ ask: async () => { asked++; return 'accept'; }, ...base(service({ required: false }), mem()) });
+  assert.deepEqual(out, { allowed: true, required: false, mark: null, answered: false });
   assert.equal(asked, 0);
 });
 
-test('inside them the player is asked once; a yes is kept, sent with the session, and marks analytics', async () => {
+test('signed out, the player is asked once on this device; a yes marks analytics', async () => {
+  const svc = service();
   const storage = mem();
-  const log = [];
   let asked = 0;
-  const o = { ask: async () => { asked++; return 'accept'; }, getToken: () => 'tok', storage, fetchImpl: regionApi(true, log), apiBase: 'https://api.test', nav: {} };
-  assert.deepEqual(await resolveConsent(o), { allowed: true, required: true, mark: CONSENT_VERSION });
-  const sent = log.find((c) => c.url.endsWith('/consent'));
-  assert.equal(sent.body.choice, 'accept');
-  assert.equal(sent.body.account_token, 'tok');
-  assert.equal(sent.body.id, storedConsent(storage).id);
-  assert.deepEqual(await resolveConsent(o), { allowed: true, required: true, mark: CONSENT_VERSION });
+  const o = { ask: async () => { asked++; return 'accept'; }, ...base(svc, storage) };
+  assert.deepEqual(await resolveConsent(o), { allowed: true, required: true, mark: CONSENT_VERSION, answered: true });
+  assert.equal(posts(svc)[0].body.choice, 'accept');
+  assert.equal(posts(svc)[0].body.account_token, undefined);
+  await resolveConsent(o);
   assert.equal(asked, 1, 'not asked again');
 });
 
-test('a no turns analytics off, is remembered, and sends no token; new wording asks again', async () => {
-  const storage = mem();
-  const log = [];
+test('signed in, the answer goes to the account; another game or device finds it there and does not ask', async () => {
+  const svc = service();
   let asked = 0;
-  const o = { ask: async () => { asked++; return 'decline'; }, getToken: () => 'tok', storage, fetchImpl: regionApi(true, log), apiBase: 'https://api.test', nav: {} };
-  assert.deepEqual(await resolveConsent(o), { allowed: false, required: true, mark: null });
-  assert.equal(log.find((c) => c.url.endsWith('/consent')).body.account_token, undefined);
-  await resolveConsent(o);
-  assert.equal(asked, 1);
-  storage.setItem('tandemonium_consent', JSON.stringify({ ...storedConsent(storage), version: '2020-01-01' }));
-  await resolveConsent(o);
-  assert.equal(asked, 2);
+  const ask = async () => { asked++; return 'decline'; };
+  const first = await resolveConsent({ ask, getToken: () => 'tok', ...base(svc, mem()) });
+  assert.deepEqual(first, { allowed: false, required: true, mark: null, answered: true });
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(posts(svc)[0].body.account_token, 'tok');
+  assert.equal(svc.account.choice, 'decline');
+  // a different device (empty storage), even in a country that does not ask
+  svc.required = false;
+  const second = await resolveConsent({ ask, getToken: () => 'tok', ...base(svc, mem()) });
+  assert.equal(second.allowed, false, 'the account said no: that holds everywhere');
+  assert.equal(second.answered, true);
+  assert.equal(asked, 1, 'consented to once');
+  assert.equal(posts(svc).length, 1, 'and stored once');
 });
 
-test('Global Privacy Control is a no without asking, anywhere; an unreachable server falls back to the time zone', async () => {
+test('an answer given before signing in joins the account at sign-in; an account that already answered wins', async () => {
+  // the account has no answer yet
+  const svc = service();
+  const storage = mem();
+  await resolveConsent({ ask: async () => 'accept', ...base(svc, storage) });
+  await new Promise((r) => setTimeout(r, 0));
+  const joined = await syncConsent({ getToken: () => 'tok', ...base(svc, storage) });
+  assert.equal(joined.allowed, true);
+  assert.equal(svc.account.choice, 'accept');
+  assert.equal(storedConsent(storage).account, true);
+
+  // the account already said no in another game (this device, signed out, could not see that)
+  const svc2 = service();
+  const storage2 = mem();
+  await resolveConsent({ ask: async () => 'accept', ...base(svc2, storage2) });
+  await new Promise((r) => setTimeout(r, 0));
+  svc2.account = { choice: 'decline', version: CONSENT_VERSION, at: 1 };
+  const theirs = await syncConsent({ getToken: () => 'tok', ...base(svc2, storage2) });
+  assert.deepEqual(theirs, { allowed: false, required: true, mark: null, answered: true });
+  assert.equal(storedConsent(storage2).choice, 'decline', 'this device now goes by the account');
+});
+
+test('an answer copied from one account is not inherited by the next account to sign in here', async () => {
+  const svc = service({ account: { choice: 'accept', version: CONSENT_VERSION, at: 1 } });
+  const storage = mem();
+  await resolveConsent({ ask: async () => 'decline', getToken: () => 'tok-a', ...base(svc, storage) });
+  assert.equal(storedConsent(storage).choice, 'accept');
+  svc.account = null;                                      // a different account, with no answer
+  assert.equal(await syncConsent({ getToken: () => 'tok-b', ...base(svc, storage) }), null);
+  assert.equal(storedConsent(storage), null, 'forgotten here: that player is asked for themselves');
+});
+
+test('new wording asks again; Global Privacy Control is a no without asking; an unreachable service falls back to the time zone', async () => {
+  const svc = service();
+  const storage = mem();
   let asked = 0;
   const ask = async () => { asked++; return 'accept'; };
-  const gpc = await resolveConsent({ ask, storage: mem(), fetchImpl: regionApi(false), apiBase: 'https://api.test', nav: { globalPrivacyControl: true } });
+  await resolveConsent({ ask, ...base(svc, storage) });
+  storage.setItem('tandemonium_consent', JSON.stringify({ ...storedConsent(storage), version: '2020-01-01' }));
+  await resolveConsent({ ask, ...base(svc, storage) });
+  assert.equal(asked, 2);
+
+  const gpc = await resolveConsent({ ask, ...base(service({ required: false }), mem(), { nav: { globalPrivacyControl: true } }) });
   assert.equal(gpc.allowed, false);
-  assert.equal(asked, 0);
-  const down = async (url) => { if (String(url).endsWith('/consent/region')) throw new Error('offline'); return { ok: true, json: async () => ({}) }; };
+  assert.equal(asked, 2);
+
+  const down = async (url) => { if (!String(url).endsWith('/consent')) throw new Error('offline'); return { ok: true, json: async () => ({}) }; };
   const berlin = await resolveConsent({ ask, storage: mem(), fetchImpl: down, apiBase: 'https://api.test', nav: {}, timeZone: 'Europe/Berlin' });
   assert.equal(berlin.required, true);
-  assert.equal(asked, 1);
+  assert.equal(asked, 3);
   const ohio = await resolveConsent({ ask, storage: mem(), fetchImpl: down, apiBase: 'https://api.test', nav: {}, timeZone: 'America/New_York' });
-  assert.deepEqual(ohio, { allowed: true, required: false, mark: null });
+  assert.deepEqual(ohio, { allowed: true, required: false, mark: null, answered: false });
   assert.ok(europeanTimeZone('Atlantic/Reykjavik') && !europeanTimeZone('Asia/Tokyo') && !europeanTimeZone(undefined));
 });
 
-test('Settings changes the answer with a new record each time', () => {
+test('Settings changes the answer with a new record each time', async () => {
   const storage = mem();
   const sent = [];
-  const fetchImpl = async (_u, init) => { sent.push(JSON.parse(init.body)); return { ok: true }; };
-  const a = saveConsent('accept', { storage, fetchImpl, apiBase: 'https://api.test' });
-  const b = saveConsent('decline', { storage, fetchImpl, apiBase: 'https://api.test' });
+  const fetchImpl = async (_u, init) => { sent.push(JSON.parse(init.body)); return { ok: true, json: async () => ({}) }; };
+  const a = saveConsent('accept', { token: 'tok', storage, fetchImpl, apiBase: 'https://api.test' });
+  const b = saveConsent('decline', { token: 'tok', storage, fetchImpl, apiBase: 'https://api.test' });
+  await new Promise((r) => setTimeout(r, 0));
   assert.notEqual(a.id, b.id);
   assert.equal(storedConsent(storage).choice, 'decline');
-  assert.deepEqual(sent.map((s) => s.choice), ['accept', 'decline']);
+  assert.deepEqual(sent.map((s) => [s.choice, s.account_token]), [['accept', 'tok'], ['decline', 'tok']]);
 });
 
 test('the analytics client sends nothing until a yes, drops what waited on a no, and marks what it sends', async () => {

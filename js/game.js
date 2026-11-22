@@ -106,7 +106,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
-import { resolveConsent, saveConsent, storedConsent, recordConsent } from './consent.js';
+import { resolveConsent, saveConsent, storedConsent, syncConsent } from './consent.js';
 import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
@@ -7493,15 +7493,16 @@ class Game {
     const auth = this.lobby && this.lobby.auth;
     const getToken = () => (auth && auth.isLoggedIn() && auth.token) || null;
     const force = new URLSearchParams(window.location.search).has('ask-consent');
-    resolveConsent({ ask: () => this.lobby.askAnalyticsConsent(), getToken, force }).then((r) => {
-      this._consentRequired = r.required;
-      analytics.setAnalyticsAllowed(r.allowed, r.mark);
-      if (!r.required) return;
-      // Settings shows the answer, and changes it.
+    // Settings shows the answer and changes it, once there is one (or one is owed).
+    let wired = false;
+    const showSwitch = () => {
       for (const id of ['opt-analytics-label', 'opt-analytics-row', 'opt-analytics-note']) {
         const el = document.getElementById(id);
         if (el) el.style.display = '';
       }
+      this._updateOptionsAnalyticsUI();
+      if (wired) return;
+      wired = true;
       const set = (on) => {
         const now = storedConsent();
         if (now && (now.choice === 'accept') === on) return;
@@ -7511,15 +7512,21 @@ class Game {
       };
       document.getElementById('opt-analytics-on')?.addEventListener('click', () => set(true));
       document.getElementById('opt-analytics-off')?.addEventListener('click', () => set(false));
-      this._updateOptionsAnalyticsUI();
-      // A yes given before signing in gains the account once there is one.
-      if (auth && auth.identity && auth.identity.onChange) {
-        auth.identity.onChange((user, reason) => {
-          const a = storedConsent();
-          if (user && reason === 'signin' && a && a.choice === 'accept') recordConsent(a, { token: getToken() });
-        });
-      }
-    }).catch(() => analytics.setAnalyticsAllowed(false));
+    };
+    const apply = (r) => {
+      analytics.setAnalyticsAllowed(r.allowed, r.mark);
+      if (r.required || r.answered) showSwitch();
+    };
+    resolveConsent({ ask: () => this.lobby.askAnalyticsConsent(), getToken, force }).then(apply)
+      .catch(() => analytics.setAnalyticsAllowed(false));
+    // The answer is the account's: after a sign-in, the account's answer is the one that counts
+    // (given in any House Tandem game), and one given here before signing in joins the account.
+    if (auth && auth.identity && auth.identity.onChange) {
+      auth.identity.onChange((user, reason) => {
+        if (!user || reason !== 'signin') return;
+        syncConsent({ getToken }).then((r) => { if (r) apply(r); }).catch(() => {});
+      });
+    }
   }
 
   _updateOptionsAnalyticsUI() {

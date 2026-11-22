@@ -26,7 +26,7 @@ import {
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
-import { handleConsentRegion, handleConsentRecord, consentMissing } from './accounts/consent.js';
+import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
@@ -96,6 +96,7 @@ registerAccountTables([
   { table: 'discord_posts', user: 'user_id', login: 'login_id' },
   { table: 'sessions', user: 'google_uid', login: 'login_id', text: true },
   ...GAME_ACCOUNT_TABLES,
+  ...CONSENT_ACCOUNT_TABLES,
 ]);
 
 /** What the identity module needs from this worker. */
@@ -133,6 +134,9 @@ export default {
       // Analytics consent (EEA, UK, Switzerland): is this player to be asked, and their answer.
       if (path === '/consent/region' && request.method === 'GET') {
         return handleConsentRegion(request, corsOrigin, { jsonResponse });
+      }
+      if (path === '/me/consent' && request.method === 'GET') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleAccountConsent(req, e, c, uid, { jsonResponse }));
       }
       if (path === '/consent' && request.method === 'POST') {
         const text = await readBodyLimited(request, 4096);

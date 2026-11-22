@@ -34,7 +34,7 @@ for (const [name, viewport] of [['phone', { width: 390, height: 844 }], ['tv', {
   await sleep(300);
   const s = await state(page);
   check(s.open && s.fits, `${name}: the question shows and fits the screen`, s);
-  check(/never sell/.test(s.text) && /IP address/.test(s.text) && /either way/.test(s.text) && /Settings/.test(s.text), `${name}: it says what is recorded, that play is saved either way, and where to change it`, s.text);
+  check(/never sell/.test(s.text) && /IP address/.test(s.text) && /either way/.test(s.text) && /Settings/.test(s.text) && /House Tandem account/.test(s.text), `${name}: it says what is recorded, that play is saved either way, and where to change it`, s.text);
   check(s.sameSize && s.tall >= 40, `${name}: both answers are the same size and easy to press`, s);
   check(s.link === 'https://housetandem.com/privacy', `${name}: it links the privacy policy`, s.link);
   await h.shot(page, `${name}-question`);
