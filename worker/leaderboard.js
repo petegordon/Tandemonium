@@ -1456,6 +1456,19 @@ function isValidUUID(str) {
   return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+// Analytics comes from any browser, signed in or not, and is read on the dashboard:
+// text is plain and short, numbers are numbers, and nothing else is stored.
+export const analyticsText = (v, n = 64) => (typeof v === 'string' && v ? (v.replace(/[<>\u0000-\u001f\u007f]/g, '').slice(0, n) || null) : null);
+const txt = analyticsText;
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? (v ? 1 : 0) : null);
+const scalar = (v, n = 64) => (typeof v === 'string' ? txt(v, n) : num(v));
+const jsonText = (v, n = 8000) => {
+  if (!v) return null;
+  let s;
+  try { s = JSON.stringify(v); } catch { return null; }
+  return typeof s === 'string' && s.length <= n ? s.replace(/[<>]/g, '') : '{"dropped":"too long"}';
+};
+
 async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   const body = await request.json();
   if (!body.id || !isValidUUID(body.id)) {
@@ -1464,18 +1477,18 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   const baseValues = [
     body.id,
-    body.started_at || new Date().toISOString(),
-    body.device_type || null,
-    body.input_method || null,
-    body.referrer || null,
-    body.user_agent || null,
+    txt(body.started_at, 40) || new Date().toISOString(),
+    txt(body.device_type, 32),
+    txt(body.input_method, 32),
+    txt(body.referrer, 300),
+    txt(body.user_agent, 300),
     body.is_stoker ? 1 : 0,
     body.joined_via_url ? 1 : 0,
-    body.room_code || null,
-    body.google_uid || null,
-    body.platform || 'browser',
-    body.screen_width || null,
-    body.screen_height || null,
+    txt(body.room_code, 16),
+    scalar(body.google_uid, 32),
+    txt(body.platform, 16) || 'browser',
+    num(body.screen_width),
+    num(body.screen_height),
     clientIP || null,
   ];
   // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
@@ -1528,7 +1541,7 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(txt(body[field], 80));
     }
   }
 
@@ -1622,11 +1635,11 @@ async function handleAnalyticsEventBatch(request, env, corsOrigin) {
   const batch = events.map(e =>
     stmt.bind(
       e.session_id,
-      e.event_type,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString(),
-      e.page || null,
-      e.input_method || null
+      txt(e.event_type, 64) || 'unknown',
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString(),
+      txt(e.page, 64),
+      txt(e.input_method, 32)
     )
   );
   await env.DB.batch([...ensureSessions(env, events), ...batch]);
@@ -1652,16 +1665,16 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
   ).bind(
     body.id,
     body.session_id,
-    body.room_code || null,
-    body.level || 'unknown',
-    body.role || 'solo',
-    body.difficulty || 'normal',
-    body.input_method || 'unknown',
-    body.controller_name || null,
-    body.controller_connection || null,
-    body.bike_preset || null,
-    body.steering_feel ?? null,
-    body.started_at || new Date().toISOString()
+    txt(body.room_code, 16),
+    txt(body.level, 64) || 'unknown',
+    txt(body.role, 16) || 'solo',
+    txt(body.difficulty, 16) || 'normal',
+    txt(body.input_method, 32) || 'unknown',
+    txt(body.controller_name, 80),
+    txt(body.controller_connection, 24),
+    txt(body.bike_preset, 32),
+    scalar(body.steering_feel, 32),
+    txt(body.started_at, 40) || new Date().toISOString()
   ).run();
 
   await saveRideSeats(env, body.id, body.seats);
@@ -1731,7 +1744,7 @@ async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field]));
     }
   }
 
@@ -1754,10 +1767,11 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   }
 
   const body = await request.json();
-  const events = body.events;
-  if (!Array.isArray(events) || events.length === 0) {
+  if (!Array.isArray(body.events) || body.events.length === 0) {
     return jsonResponse({ error: 'No events' }, 400, corsOrigin);
   }
+  const events = body.events.filter((e) => e && typeof e === 'object').slice(0, 200);
+  if (events.length === 0) return jsonResponse({ success: true }, 200, corsOrigin);
 
   const stmt = env.DB.prepare(
     'INSERT INTO ride_events (ride_id, event_type, distance, event_data, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -1765,10 +1779,10 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   const batch = events.map(e =>
     stmt.bind(
       rideId,
-      e.event_type,
-      e.distance ?? null,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString()
+      txt(e.event_type, 64) || 'unknown',
+      num(e.distance),
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString()
     )
   );
   await env.DB.batch(batch);
@@ -1779,6 +1793,9 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
 
 async function handleAnalyticsRoomCreate(request, env, corsOrigin) {
   const body = await request.json();
+  body.code = txt(body.code, 16);
+  body.captain_session_id = txt(body.captain_session_id, 40);
+  body.created_at = txt(body.created_at, 40);
   if (!body.code || !body.captain_session_id) {
     return jsonResponse({ error: 'Missing code or captain_session_id' }, 400, corsOrigin);
   }
@@ -1803,7 +1820,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.disconnect_count_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET disconnect_count = disconnect_count + ? WHERE code = ?'
-    ).bind(body.disconnect_count_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.disconnect_count_increment) || 0))), roomCode).run();
     delete body.disconnect_count_increment;
   }
 
@@ -1811,7 +1828,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.rides_played_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET rides_played = rides_played + ? WHERE code = ?'
-    ).bind(body.rides_played_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.rides_played_increment) || 0))), roomCode).run();
     delete body.rides_played_increment;
   }
 
@@ -1828,7 +1845,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field], 80));
     }
   }
 
@@ -1844,6 +1861,8 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
 
 async function handleAnalyticsConversion(request, env, corsOrigin) {
   const body = await request.json();
+  body.action = txt(body.action, 64);
+  body.created_at = txt(body.created_at, 40);
   if (!isValidUUID(body.session_id) || !body.action) {
     return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
   }
@@ -1854,8 +1873,8 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
   ).bind(
     body.session_id,
     body.action,
-    body.context || null,
-    body.url || null,
+    txt(body.context, 200),
+    txt(body.url, 300),
     body.created_at || new Date().toISOString()
   ).run();
 

@@ -700,6 +700,31 @@ test('Steam web sign-in refuses forged, replayed or foreign answers', async () =
     assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 302);
     assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 410);
   } finally { ok.restore(); }
+
+  // Each field once: an answer that repeats a field is refused before Steam is asked, in either order.
+  const twice = mockSteamOpenId(true);
+  try {
+    const other = 'https://steamcommunity.com/openid/id/76561190000000002';
+    const users = db.prepare('SELECT COUNT(*) n FROM users').get().n;
+    for (const first of [true, false]) {
+      for (const fields of [['openid.claimed_id', 'openid.identity'], ['openid.sig'], ['openid.signed']]) {
+        const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/' } })).json();
+        const claimed = 'https://steamcommunity.com/openid/id/76561190000000001';
+        const real = [
+          ['r', begin.id], ['openid.mode', 'id_res'], ['openid.op_endpoint', 'https://steamcommunity.com/openid/login'],
+          ['openid.claimed_id', claimed], ['openid.identity', claimed],
+          ['openid.return_to', 'https://api.test/auth/steam/callback?r=' + begin.id],
+          ['openid.response_nonce', 'n'], ['openid.assoc_handle', 'a'],
+          ['openid.signed', 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle'], ['openid.sig', 's'],
+        ];
+        const extra = fields.map((f) => [f, f.endsWith('_id') || f.endsWith('identity') ? other : 'x']);
+        const q = new URLSearchParams(first ? [...extra, ...real] : [...real, ...extra]);
+        assert.equal((await call(env, '/auth/steam/callback?' + q)).status, 401, fields.join('+') + (first ? ' first' : ' last'));
+      }
+    }
+    assert.equal(twice.checks.length, 0, 'refused before asking Steam');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, users, 'no account signed in or made');
+  } finally { twice.restore(); }
 });
 
 test('deleting an account removes every record on it; the partner keeps their own ride', async () => {
