@@ -28,6 +28,7 @@ import {
 import { registerAccountTables } from './accounts/combine.js';
 import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
 import { pruneAnalytics } from './retention.js';
+import { isAchievementId } from './achievement-ids.js';
 import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
@@ -653,7 +654,7 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
 
   if (newAchievements && Array.isArray(newAchievements)) {
     for (const achId of newAchievements) {
-      if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+      if (!isAchievementId(achId)) continue;
       batchStmts.push(badgeInsert(env, userId, loginId, achId, scoreId));
     }
   }
@@ -669,7 +670,7 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
         'INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(seat.userId, seat.loginId, levelId, distance, timeMs, seat.role, f.collectiblesCount, f.inputSource,
              f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
-      const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
+      const achStmts = seat.newAchievements.filter(isAchievementId).map((achId) =>
         badgeInsert(env, seat.userId, seat.loginId, achId, scoreId));
       if (achStmts.length) await env.DB.batch(achStmts);
     } catch (err) {
@@ -1317,7 +1318,7 @@ async function syncAchievements(request, env, corsOrigin, userId, loginId) {
   // account lacks is recorded (under this login).
   let synced = 0;
   for (const achId of achievements.slice(0, 500)) {
-    if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+    if (!isAchievementId(achId)) continue;
     const res = await badgeInsert(env, userId, loginId, achId).run();
     if (res.meta.changes > 0) synced++;
   }

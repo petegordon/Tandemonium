@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { achievementsJson, FILE } from '../../scripts/gen-achievements-json.mjs';
+import { achievementsJson, FILE, achievementIdsModule, IDS_FILE } from '../../scripts/gen-achievements-json.mjs';
 
 test('achievements.json matches the definitions (npm run gen:achievements)', () => {
   const committed = fs.readFileSync(FILE, 'utf8').replace(/\r\n/g, '\n');
@@ -21,4 +21,22 @@ test('achievements.json: 100 achievements, each in a listed section, hidden ones
   assert.equal(new Set(data.achievements.map((a) => a.id)).size, 100, 'ids are unique');
   assert.ok(data.achievements.some((a) => a.hidden), 'the hidden ones say so');
   assert.equal(data.renamed.todays_launch, 'daily_launch');
+});
+
+// ── the ids the API accepts (worker/achievement-ids.js) ──
+
+test('worker/achievement-ids.js matches the definitions (npm run gen:achievements)', () => {
+  const committed = fs.readFileSync(IDS_FILE, 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(committed, achievementIdsModule());
+});
+
+test('the API’s list: every achievement and every old id an account may still hold; nothing else', async () => {
+  const { isAchievementId, ACHIEVEMENT_ID_COUNT } = await import('../../worker/achievement-ids.js');
+  const data = JSON.parse(fs.readFileSync(FILE, 'utf8'));
+  for (const a of data.achievements) assert.equal(isAchievementId(a.id), true, a.id);
+  for (const old of Object.keys(data.renamed)) assert.equal(isAchievementId(old), true, old);
+  assert.equal(ACHIEVEMENT_ID_COUNT, data.achievements.length + Object.keys(data.renamed).length);
+  for (const bad of ['made_up', '', 'FIRST_PEDAL', 'first_pedal ', null, undefined, 7, {}, ['first_pedal'], 'x'.repeat(65)]) {
+    assert.equal(isAchievementId(bad), false, String(bad));
+  }
 });
