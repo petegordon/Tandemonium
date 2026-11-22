@@ -300,7 +300,8 @@ export default {
       try { writeMetric(env, 'error', message); } catch (_) { /* don't mask original error */ }
       // The pages a browser is sent to during sign-in get a page, not JSON.
       if (SIGNIN_PAGES.has(url.pathname)) return signInErrorPage();
-      return jsonResponse({ error: message }, 500, corsOrigin);
+      // What went wrong is in the log (above), never in the answer.
+      return jsonResponse({ error: 'Something went wrong on our side. Try again in a moment.' }, 500, corsOrigin);
     }
   }
 };
@@ -332,7 +333,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   try {
     payload = await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID);
   } catch (e) {
-    return jsonResponse({ error: e.message }, 401, corsOrigin);
+    console.error('google sign-in refused', (e && e.message) || e);
+    return jsonResponse({ error: 'Google did not confirm this sign-in' }, 401, corsOrigin);
   }
 
   writeMetric(env, 'auth_google');
@@ -403,7 +405,8 @@ async function handleSteamAuth(request, env, corsOrigin) {
   }
 
   if (!verified) {
-    return jsonResponse({ error: 'Steam ticket invalid', detail: lastError }, 401, corsOrigin);
+    console.error('steam ticket refused', lastError);
+    return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
   }
 
   writeMetric(env, 'auth_steam');

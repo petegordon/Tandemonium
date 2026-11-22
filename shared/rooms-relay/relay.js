@@ -94,6 +94,13 @@ export function relayFrame(message) {
     return size > 0 && size <= MAX_FRAME_BYTES ? message : null;
 }
 
+/** Are two short strings the same? (Every character is compared, so timing says nothing.) */
+function sameText(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+    let diff = 0;
+    for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    return diff === 0;
+}
 function randomKey() {
     const b = crypto.getRandomValues(new Uint8Array(12));
     return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -167,14 +174,18 @@ export class Room {
         return this.state.getWebSockets(role).some((s) => s !== except && s.readyState === 1);
     }
 
-    /** GET /turn on the room: TURN credentials for a seat holder whose partner is here too. */
+    /**
+     * GET /turn on the room: TURN credentials for a seat holder whose partner is here too.
+     * The proof is the room's P2P key, which the relay hands only to the two connected seats
+     * (in partner-ready) and replaces when a seat changes hands.
+     */
     async _turn(url) {
         const role = url.searchParams.get('role');
-        const device = cleanDevice(url.searchParams.get('device'));
+        const key = url.searchParams.get('key') || '';
         const seats = await this._readSeats();
         const seat = (role === 'captain' || role === 'stoker') ? seats[role] : null;
         const partner = role === 'captain' ? 'stoker' : 'captain';
-        if (!seat || !device || seat.device !== device || !this._seatOpen(role) || !this._seatOpen(partner)) {
+        if (!seat || !seats.p2p || !sameText(key, seats.p2p) || !this._seatOpen(role) || !this._seatOpen(partner)) {
             return new Response(JSON.stringify({ error: 'Not in this room' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
         const resp = await fetch(

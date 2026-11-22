@@ -46,10 +46,11 @@ function isWebLink(url) {
   try { return /^https?:$/.test(new URL(url).protocol); } catch (e) { return false; }
 }
 
-/** A sign-in page the game may hand to the system browser: https, our host, under /auth/. */
+/** A sign-in page the game may hand to the system browser: https, our host, under /auth/, or the account page. */
 function isSignInUrl(url) {
   try {
     const u = new URL(String(url));
+    if (u.protocol === 'https:' && u.hostname === 'housetandem.com' && u.pathname === '/account' && !u.search && !u.hash && !u.username && !u.port) return true;
     return u.protocol === 'https:' && isOurHost(u.hostname) && u.pathname.startsWith('/auth/');
   } catch (e) { return false; }
 }

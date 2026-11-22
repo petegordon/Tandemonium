@@ -103,8 +103,8 @@ function mockFetch(discordUser) {
 const DISCORD_PETE = { id: '80351110224678912', username: 'pete', global_name: 'Pete', avatar: 'abc123' };
 
 /** Run a device-code sign-in to the end; returns the poll result. */
-async function deviceSignIn(env, token = null, extra = {}) {
-  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device', ...extra }, token })).json();
+async function deviceSignIn(env, extra = {}) {
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device', ...extra } })).json();
   assert.match(begin.code, /^[A-HJ-NP-Z2-9]{4}$/);
   const go = await call(env, '/auth/discord/go?r=' + encodeURIComponent(begin.id));
   assert.equal(go.status, 302);
@@ -127,22 +127,26 @@ async function deviceSignIn(env, token = null, extra = {}) {
   const k = html.match(/name="k" value="([^"]+)"/)[1];
   const ok = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code.toLowerCase(), ok: '1' } });
   assert.equal(ok.status, 200);
-  extra.onConfirmed && extra.onConfirmed(await ok.text());
   return (await call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } })).json();
 }
 
 const nonceHash = async (n) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(n))).toString('base64url');
 const RETURN = 'https://tandemonium.housetandem.com/account';
+const NONCE = 'n'.repeat(43);
 
-/** Begin a browser sign-in and come back from Discord. → { id, code, nonce } (nothing exchanged yet). */
-async function webBegin(env, extra = {}, nonce = 'n'.repeat(43)) {
-  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: RETURN, nonce_hash: await nonceHash(nonce), ...extra } })).json();
-  const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
-  const loc = cb.headers.get('Location') || '';
+/** The { id, code } a sign-in callback sent the browser back with (#ht_result=<id>.<code>, and nothing else). */
+function heldResult(res) {
+  const loc = res.headers.get('Location') || '';
   const m = loc.match(/#ht_result=([^&]+)$/);
   assert.ok(m, 'back with a code and nothing else: ' + loc);
   const [id, code] = decodeURIComponent(m[1]).split('.');
-  return { id, code, nonce };
+  return { id, code };
+}
+/** Begin a browser sign-in and come back from Discord. → { id, code, nonce } (nothing exchanged yet). */
+async function webBegin(env, extra = {}, nonce = NONCE) {
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: RETURN, nonce_hash: await nonceHash(nonce), ...extra } })).json();
+  const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+  return { ...heldResult(cb), nonce };
 }
 const exchange = (env, body) => call(env, '/auth/exchange', { method: 'POST', body });
 /** A real browser sign-in with Discord, to the end. → { token, user } */
@@ -194,38 +198,70 @@ test('cancelling on the confirm page hands the game an error, not a session', as
   } finally { restore(); }
 });
 
-test('redirect sign-in goes back to the game with the session in the fragment; foreign return URLs are refused', async () => {
+test('redirect sign-in goes back to the game with a one-time code in the fragment, never the session; foreign return URLs are refused', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const bad = await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://evil.example/' } });
+    const nonce_hash = await nonceHash(NONCE);
+    const bad = await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://evil.example/', nonce_hash } });
     assert.equal(bad.status, 400);
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/?x=1#old' } })).json();
+    assert.equal((await bad.json()).code, undefined, 'refused for the return URL, not for a missing value');
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/?x=1#old', nonce_hash } })).json();
     assert.equal(begin.code, null);
     const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
     assert.equal(cb.status, 302);
     const loc = cb.headers.get('Location');
-    assert.ok(loc.startsWith('https://tandemonium.housetandem.com/?x=1#ht_auth='), loc);
+    assert.ok(loc.startsWith('https://tandemonium.housetandem.com/?x=1#ht_result='), loc);
+    assert.ok(!loc.includes('ht_auth'), 'no session in the address');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0, 'no account until the exchange');
+    const out = await (await exchange(env, { ...heldResult(cb), nonce: NONCE })).json();
+    assert.equal(out.user.name, 'Pete');
+    assert.equal((await call(env, '/me', { token: out.token })).status, 200);
   } finally { restore(); }
 });
 
 const steamTicket = (env) => call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } }).then((r) => r.json());
 
-test('Steam player links a new Discord from the TV: one account, both pictures, a notice', async () => {
+/**
+ * A signed-in browser adds a Discord: begin (redirect, with the session) → Discord → back
+ * with #ht_link. → { id, code, secret, cb } (nothing linked yet).
+ */
+async function discordLinkBegin(env, token, extra = {}) {
+  const res = await call(env, '/auth/discord/begin', { method: 'POST', token, body: { mode: 'redirect', return_to: RETURN, ...extra } });
+  assert.equal(res.status, 200, await res.clone().text());
+  const begin = await res.json();
+  const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+  assert.equal(cb.status, 302);
+  assert.ok(!/ht_auth|ht_result/.test(cb.headers.get('Location')), 'a link brings back no session');
+  return { ...heldLink(cb), secret: begin.secret, cb };
+}
+/** The same, finished by the tab that began it. → { status: 'linked', token, user } | { status: 'combine', ... , id, secret } */
+async function linkDiscord(env, token, extra = {}) {
+  const { id, code, secret } = await discordLinkBegin(env, token, extra);
+  const res = await complete(env, token, { id, code, secret });
+  assert.equal(res.status, 200, await res.clone().text());
+  return { ...(await res.json()), id, secret };
+}
+
+test('Steam player links a new Discord in a browser: one account, both pictures, a notice; the TV code is refused', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
     const steam = await steamTicket(env);
     assert.deepEqual(Object.keys(steam.user.identities), ['steam']);
-    let phone = '';
-    const linked = await deviceSignIn(env, steam.token, { onConfirmed: (h) => { phone = h; } });
-    assert.equal(linked.status, 'done');
-    assert.equal(linked.linked, true);
+    // On the TV (a device code, with the session) a login is never added.
+    const tv = await call(env, '/auth/discord/begin', { method: 'POST', token: steam.token, body: { mode: 'device' } });
+    assert.equal(tv.status, 403);
+    assert.equal((await tv.json()).code, 'link_needs_browser');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM auth_requests').get().n, 0, 'no request is opened');
+
+    const linked = await linkDiscord(env, steam.token);
+    assert.equal(linked.status, 'linked');
     assert.equal(linked.user.id, steam.user.id);
     assert.deepEqual(Object.keys(linked.user.identities).sort(), ['discord', 'steam']);
-    assert.match(phone, /Discord is linked/);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
 
     const notices = (await (await call(env, '/me/notices', { token: linked.token })).json()).notices;
     assert.equal(notices.length, 1);
@@ -241,51 +277,49 @@ test('Steam player links a new Discord from the TV: one account, both pictures, 
   } finally { restore(); }
 });
 
-/** A Steam TV links a Discord that has its own account: the phone types the code and lands on the Combine page. */
-async function phoneToCombine(env, db) {
+/** A Steam player links, in a browser, a Discord that has its own account: the link stops at the combine question. */
+async function linkToCombine(env, db) {
   const web = await deviceSignIn(env);   // Pete's Discord account, with a badge here and in Carnival Dozer
   badge(db, web.user.id, 'first_ride');
   gameBadge(db, web.user.id, 'coins', 'jackpot');
   const steam = await steamTicket(env);
-  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
-  const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
-  const k = html.match(/name="k" value="([^"]+)"/)[1];
-  const page = await (await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, code: begin.code, ok: '1' } })).text();
-  const poll = () => call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } }).then((r) => r.json());
-  const choose = (ok) => call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok } }).then((r) => r.text());
-  return { web, steam, begin, k, page, poll, choose };
+  const asked = await linkDiscord(env, steam.token);
+  const choose = (ok) => combine(env, steam.token, { id: asked.id, secret: asked.secret, ok });
+  return { web, steam, asked, choose };
 }
 
-test('#612 · TV combine: after the typed code the phone shows both accounts (every game) and nothing moves yet', async () => {
+test('#612 · Discord combine: the link stops to show both accounts (every game) and nothing moves yet', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const { web, page, poll } = await phoneToCombine(env, db);
-    assert.match(page, /Combine your accounts\?/);
-    assert.match(page, /already has its own House Tandem account/);
-    assert.match(page, /pete_steam/, 'names the account on the screen');
-    assert.match(page, /0 rides · 1 badge in Tandemonium/);
-    assert.match(page, /Also: Carnival Dozer \(1 badge\)/, 'a combine moves every game, so the page says so');
-    assert.match(page, /name="step" value="combine"/);
-    assert.equal((await poll()).status, 'confirming', 'the TV keeps waiting while the phone decides');
+    const { web, steam, asked } = await linkToCombine(env, db);
+    assert.equal(asked.status, 'combine');
+    assert.equal(asked.provider, 'discord');
+    assert.equal(asked.token, undefined, 'no new session before the choice');
+    assert.equal(asked.into.name, 'pete_steam', 'names the account that is signed in');
+    assert.deepEqual(asked.into.logins.map((l) => l.provider), ['steam']);
+    assert.equal(asked.other.name, 'Pete');
+    assert.equal(asked.other.rides, 0);
+    assert.equal(asked.other.badges, 1);
+    assert.deepEqual(asked.other.games, [{ game: 'coins', title: 'Carnival Dozer', badges: 1 }], 'a combine moves every game, so the answer names them');
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'nothing combined before the choice');
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.deepEqual(Object.keys((await (await call(env, '/me', { token: steam.token })).json()).user.identities), ['steam']);
   } finally { restore(); }
 });
 
-test('#612 · TV combine: Combine folds the Discord account into the Steam one, with a notice and full undo', async () => {
+test('#612 · Discord combine: Combine folds the Discord account into the Steam one, with a notice and full undo', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const { web, steam, choose, poll } = await phoneToCombine(env, db);
-    assert.match(await choose('1'), /now part of <b>pete_steam<\/b>/);
-    const done = await poll();
-    assert.equal(done.status, 'done');
-    assert.equal(done.linked, true);
-    assert.equal(done.merged, true, 'the TV pulls the combined progress');
-    assert.equal(done.user.id, steam.user.id, 'the account on the screen is kept');
+    const { web, steam, choose } = await linkToCombine(env, db);
+    const res = await choose(true);
+    assert.equal(res.status, 200);
+    const done = await res.json();
+    assert.equal(done.status, 'combined');
+    assert.equal(done.user.id, steam.user.id, 'the signed-in account is kept');
     assert.deepEqual(Object.keys(done.user.identities).sort(), ['discord', 'steam']);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, steam.user.id);
@@ -302,22 +336,28 @@ test('#612 · TV combine: Combine folds the Discord account into the Steam one, 
   } finally { restore(); }
 });
 
-test('#612 · TV combine: Cancel changes nothing; Combine is refused without the typed code first', async () => {
+test('#612 · Discord combine: Cancel changes nothing; Combine is refused before the link is finished, and on a device-code page', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const { web, choose, poll } = await phoneToCombine(env, db);
-    assert.match(await choose('0'), /keeps its own account/);
-    const res = await poll();
-    assert.equal(res.status, 'error');
-    assert.equal(res.error, 'cancelled');
+    const { web, steam, choose } = await linkToCombine(env, db);
+    assert.equal((await (await choose(false)).json()).status, 'cancelled');
+    assert.equal((await choose(true)).status, 410, 'the request is gone');
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.equal((await (await call(env, '/me/notices', { token: steam.token })).json()).notices.length, 0);
 
-    // A new request: posting the Combine step straight away (no code typed) does nothing.
-    const steam = await steamTicket(env);
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' }, token: steam.token })).json();
+    // A new link: asking to combine straight away (the code from Discord not handed in) does nothing.
+    const held = await discordLinkBegin(env, steam.token);
+    assert.equal((await combine(env, steam.token, { id: held.id, secret: held.secret, ok: true })).status, 410);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2, 'still two accounts');
+    // It is still there for its own tab, which is asked first.
+    assert.equal((await (await complete(env, steam.token, { id: held.id, code: held.code, secret: held.secret })).json()).status, 'combine');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+
+    // The device-code page has no combine step: a posted one is refused.
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' } })).json();
     const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
     const k = html.match(/name="k" value="([^"]+)"/)[1];
     const forced = await call(env, '/auth/discord/confirm', { method: 'POST', form: { r: begin.id, k, step: 'combine', ok: '1' } });
@@ -465,9 +505,9 @@ test('existing users keep their sign-in after the migration', () => {
 });
 
 test('helpers: return URLs and default Discord avatars', () => {
-  const cors = 'https://tandemonium.housetandem.com,https://tandemonium.jimandi.love';
+  const cors = 'https://tandemonium.housetandem.com,https://housetandem.com';
   assert.equal(allowedReturnTo('https://tandemonium.housetandem.com/play#x', cors), 'https://tandemonium.housetandem.com/play');
-  assert.equal(allowedReturnTo('https://tandemonium.jimandi.love/play', cors), null, 'the old domain gets no sign-in');
+  assert.equal(allowedReturnTo('https://tandemonium.jimandi.love/play', cors), null, 'the old domain is not on the list: no sign-in');
   assert.equal(allowedReturnTo('http://localhost:8080/', cors), null, 'not on the list');
   assert.equal(allowedReturnTo('http://localhost:8080/', cors + ',http://localhost:8080'), 'http://localhost:8080/');
   assert.equal(allowedReturnTo('javascript:alert(1)', cors), null);
@@ -494,9 +534,13 @@ function mockSteamOpenId(valid = true) {
 }
 const jwtSub = (token) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString()).sub;
 
-/** Begin → go → Steam → callback. `tamper(params)` edits Steam's answer first. */
-async function steamWebSignIn(env, { token, steamId = '76561190000000001', tamper } = {}) {
-  const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account' }, token })).json();
+/**
+ * Begin → go → Steam → callback. `tamper(params)` edits Steam's answer first.
+ * Signed in (`token`) it is a link; signed out, a sign-in bound to this browser's value (NONCE).
+ */
+async function steamWebSignIn(env, { token, steamId = '76561190000000001', tamper, extra = {} } = {}) {
+  const body = { return_to: RETURN, ...(token ? {} : { nonce_hash: await nonceHash(NONCE) }), ...extra };
+  const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body, token })).json();
   const go = await call(env, '/auth/steam/go?r=' + encodeURIComponent(begin.id));
   assert.equal(go.status, 302);
   const login = new URL(go.headers.get('Location'));
@@ -517,6 +561,14 @@ async function steamWebSignIn(env, { token, steamId = '76561190000000001', tampe
   const res = await call(env, returnTo.pathname + returnTo.search);
   res.begin = begin;
   return res;
+}
+/** A Steam sign-in on the web, to the end. → { token, user } */
+async function steamWebSession(env, opts = {}) {
+  const cb = await steamWebSignIn(env, opts);
+  assert.equal(cb.status, 302);
+  const res = await exchange(env, { ...heldResult(cb), nonce: NONCE });
+  assert.equal(res.status, 200);
+  return res.json();
 }
 
 /** The #ht_link=<id>.<code> a link callback sent the browser back with. */
@@ -640,7 +692,9 @@ test('#612 · linking needs a sign-in from the last 10 minutes', async () => {
       assert.equal((await res.json()).code, 'fresh_signin');
     }
     // Signed out, the same buttons are plain sign-ins.
-    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account' } })).status, 200);
+    const nonce_hash = await nonceHash(NONCE);
+    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN, nonce_hash } })).status, 200);
+    assert.equal((await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: RETURN, nonce_hash } })).status, 200);
   } finally { restore(); }
 });
 
@@ -663,8 +717,10 @@ test('Steam sign-in on the web finds the account the Steam game made; linking fr
     const cb = await steamWebSignIn(env);
     assert.equal(cb.status, 302);
     const loc = cb.headers.get('Location');
-    assert.ok(loc.startsWith('https://tandemonium.housetandem.com/account#ht_auth='), loc);
-    assert.equal(jwtSub(decodeURIComponent(loc.split('#ht_auth=')[1])), game.user.id, 'same account as the game');
+    assert.ok(loc.startsWith('https://tandemonium.housetandem.com/account#ht_result='), loc);
+    const signedIn = await (await exchange(env, { ...heldResult(cb), nonce: NONCE })).json();
+    assert.equal(jwtSub(signedIn.token), game.user.id, 'same account as the game');
+    assert.deepEqual(Object.keys(signedIn.user.identities), ['steam']);
     assert.equal(checks.length, 1);
     assert.equal(checks[0].get('openid.mode'), 'check_authentication', 'Steam itself confirms the answer');
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
@@ -689,7 +745,7 @@ test('Steam web sign-in refuses forged, replayed or foreign answers', async () =
   const steam = mockSteamOpenId(true);
   try {
     // Return URL elsewhere.
-    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://evil.example/' } })).status, 400);
+    assert.equal((await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://evil.example/', nonce_hash: await nonceHash(NONCE) } })).status, 400);
     // An answer meant for another request, a non-Steam id, an unsigned field.
     for (const tamper of [
       (p) => { p['openid.return_to'] = 'https://api.test/auth/steam/callback?r=someoneelse'; },
@@ -713,7 +769,7 @@ test('Steam web sign-in refuses forged, replayed or foreign answers', async () =
   // A used request can't be replayed.
   const ok = mockSteamOpenId(true);
   try {
-    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/' } })).json();
+    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/', nonce_hash: await nonceHash(NONCE) } })).json();
     const claimed = 'https://steamcommunity.com/openid/id/76561190000000001';
     const q = new URLSearchParams({
       r: begin.id, 'openid.mode': 'id_res', 'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
@@ -733,7 +789,8 @@ test('Steam web sign-in refuses forged, replayed or foreign answers', async () =
     const users = db.prepare('SELECT COUNT(*) n FROM users').get().n;
     for (const first of [true, false]) {
       for (const fields of [['openid.claimed_id', 'openid.identity'], ['openid.sig'], ['openid.signed']]) {
-        const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/' } })).json();
+        const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/', nonce_hash: await nonceHash(NONCE) } })).json();
+        assert.ok(begin.id);
         const claimed = 'https://steamcommunity.com/openid/id/76561190000000001';
         const real = [
           ['r', begin.id], ['openid.mode', 'id_res'], ['openid.op_endpoint', 'https://steamcommunity.com/openid/login'],
@@ -758,7 +815,8 @@ test('deleting an account removes every record on it; the partner keeps their ow
   const restore = mockFetch(DISCORD_PETE);
   try {
     const p1 = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'pete_steam', ticket: 'a1b2c3d4e5f60718' } })).json();
-    await deviceSignIn(env, p1.token);   // Pete links Discord: two sign-ins on one account
+    assert.equal((await linkDiscord(env, p1.token)).status, 'linked');   // Pete links Discord: two sign-ins on one account
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM user_logins WHERE user_id = ?').get(p1.user.id).n, 2);
     // Sam, the couch partner, has their own account.
     const sam = Number(account(db, 'sam', 'Sam'));
     const L1 = loginOf(db, p1.user.id), LS = loginOf(db, sam);
@@ -832,8 +890,10 @@ test('House Tandem Discord membership: member, not a member (with the invite), u
     let r = await (await call(env, '/me/discord', { token: steam.token })).json();
     assert.deepEqual(r, { linked: false, member: null, said_hello: null, invite: 'https://discord.gg/abc', server_url: 'https://discord.com/channels/G1' }, 'no Discord linked');
 
-    const d = await deviceSignIn(env, steam.token);
+    const d = await linkDiscord(env, steam.token);
+    assert.equal(d.status, 'linked');
     r = await (await call(env, '/me/discord', { token: d.token })).json();
+    assert.equal(r.linked, true);
     assert.equal(r.member, null, 'no bot token: unknown');
     assert.equal(asked.length, 0);
 
@@ -866,37 +926,41 @@ test('website sign-in with join_server: Discord link on the button, guilds.join,
     return inner(input, init);
   };
   const signIn = async (body) => {
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', ...body } })).json();
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', nonce_hash: await nonceHash(NONCE), ...body } })).json();
     const auth = new URL(begin.authorize_url);
     const go = new URL((await call(env, '/auth/discord/go?r=' + begin.id)).headers.get('Location'));
     assert.equal(go.toString(), auth.toString(), 'the button link and the redirect are the same consent screen');
     const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
-    return { scope: auth.searchParams.get('scope'), loc: cb.headers.get('Location') };
+    assert.ok(cb.headers.get('Location').startsWith('https://housetandem.com/account.html#ht_result='));
+    // What the callback found is told by the exchange; the address carries the code and nothing else.
+    const out = await (await exchange(env, { ...heldResult(cb), nonce: NONCE })).json();
+    assert.ok(out.token, 'signed in');
+    return { scope: auth.searchParams.get('scope'), server: out.server };
   };
   try {
     let r = await signIn({ join_server: true });
     assert.equal(r.scope, 'identify guilds.join');
-    assert.match(r.loc, /^https:\/\/housetandem\.com\/account\.html#ht_auth=[^&]+&ht_server=added$/);
+    assert.equal(r.server, 'added');
     assert.deepEqual(joins[0], { u: `https://discord.com/api/v10/guilds/G1/members/${DISCORD_PETE.id}`, method: 'PUT', auth: 'Bot bot-token', body: { access_token: 'at' } });
 
     answer = 204;
     r = await signIn({ join_server: true });
-    assert.match(r.loc, /&ht_server=already$/);
+    assert.equal(r.server, 'already');
 
     answer = 403;   // the bot is missing Create Invite: still signed in
     r = await signIn({ join_server: true });
-    assert.match(r.loc, /#ht_auth=[^&]+&ht_server=failed$/);
+    assert.equal(r.server, 'failed', 'still signed in');
 
     const before = joins.length;
     r = await signIn({});
     assert.equal(r.scope, 'identify', 'the game asks for nothing more');
-    assert.doesNotMatch(r.loc, /ht_server/);
+    assert.equal(r.server, undefined);
     assert.equal(joins.length, before);
 
     delete env.DISCORD_BOT_TOKEN;
     r = await signIn({ join_server: true });
     assert.equal(r.scope, 'identify', 'no bot: no guilds.join on the consent screen');
-    assert.doesNotMatch(r.loc, /ht_server/);
+    assert.equal(r.server, undefined);
   } finally { globalThis.fetch = inner; restore(); }
 });
 
@@ -913,13 +977,12 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     if (u.includes('/users/@me/connections')) return Response.json(conns);
     return inner(input, init);
   };
-  const signIn = async (scopes) => {
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes } })).json();
+  const signIn = async (scopes, e = env) => {
+    const begin = await (await call(e, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', nonce_hash: await nonceHash(NONCE), scopes } })).json();
     const auth = new URL(begin.authorize_url);
-    const cb = await call(env, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
-    const loc = cb.headers.get('Location');
-    const token = decodeURIComponent(loc.match(/ht_auth=([^&]+)/)[1]);
-    return { scope: auth.searchParams.get('scope'), token, loc };
+    const cb = await call(e, `/auth/discord/callback?code=c&state=${auth.searchParams.get('state')}`);
+    const out = await (await exchange(e, { ...heldResult(cb), nonce: NONCE })).json();
+    return { scope: auth.searchParams.get('scope'), token: out.token, steam: out.steam };
   };
   const discordRow = () => db.prepare("SELECT user_id, scopes, email FROM user_logins WHERE provider = 'discord'").get();
   try {
@@ -935,7 +998,7 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     const me = await (await call(env, '/me', { token: r.token })).json();
     assert.ok(!me.user.identities.steam, 'a Steam with its own account is left on it (#612)');
     assert.ok(me.user.identities.discord);
-    assert.match(r.loc, /ht_steam=has_account/, 'the page is told, so it can offer Link Steam (and the combine screen)');
+    assert.equal(r.steam, 'has_account', 'the page is told, so it can offer Link Steam (and the combine screen)');
     assert.equal(db.prepare("SELECT user_id FROM user_logins WHERE provider = 'steam'").get().user_id, steamUser);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(steamUser).n, 1, 'the Steam account is still its own');
     assert.ok(steam.token);
@@ -943,9 +1006,9 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     // A verified Steam with no account of its own is linked, with a notice.
     const db3 = freshDb();
     const env3 = { ...env, DB: d1(db3) };
-    const b3 = await (await call(env3, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
-    const cb3 = await call(env3, `/auth/discord/callback?code=c&state=${b3.id}`);
-    const t3 = decodeURIComponent(cb3.headers.get('Location').match(/ht_auth=([^&]+)/)[1]);
+    const r3 = await signIn(['connections'], env3);
+    assert.equal(r3.steam, undefined);
+    const t3 = r3.token;
     const me3 = await (await call(env3, '/me', { token: t3 })).json();
     assert.ok(me3.user.identities.steam, 'the Steam account Discord verified is linked');
     assert.equal((await (await call(env3, '/me/notices', { token: t3 })).json()).notices[0].provider, 'steam');
@@ -962,8 +1025,8 @@ test('Join checklist permissions: email kept while granted, a verified Steam con
     const db2 = freshDb();
     const env2 = { ...env, DB: d1(db2) };
     conns = [{ type: 'steam', id: STEAM_ID, verified: false }];
-    const begin = await (await call(env2, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://housetandem.com/account.html', scopes: ['connections'] } })).json();
-    await call(env2, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.ok((await signIn(['connections'], env2)).token);
+    assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider = 'discord'").get().n, 1);
     assert.equal(db2.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider = 'steam'").get().n, 0);
   } finally { globalThis.fetch = inner; restore(); }
 });
@@ -1118,9 +1181,9 @@ test('#678 collision: rides and distance add, the better time per level and the 
     putPair(db, 'guest:devA', P, { rides: 4, distance: 4000, lastRide: '2026-11-06 10:00:00' });   // Pete's own device, Pete signed in as P2
     putPair(db, 'guest:devB', S, { rides: 7, distance: 7000, lastRide: '2026-11-06 10:00:00' });   // another device: untouched
 
-    // Pete signs in with Discord on the TV (device code), linking to his account.
-    const linked = await deviceSignIn(env, pete.token, { device_id: 'devA' });
-    assert.equal(linked.status, 'done');
+    // Pete adds his Discord to his account, in a browser on this device.
+    const linked = await linkDiscord(env, pete.token, { device_id: 'devA' });
+    assert.equal(linked.status, 'linked');
     assert.equal(linked.user.id, pete.user.id);
 
     const withSam = await (await call(env, '/pair?with=' + S, { token: pete.token })).json();
@@ -1140,9 +1203,7 @@ test('#678 collision: rides and distance add, the better time per level and the 
     assert.equal((await (await call(env, '/me/delete', { method: 'POST', token: pete.token, body: { confirm: 'no' } })).status), 400);
 
     // Again, by Discord redirect this time: nothing moves twice.
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devA' } })).json();
-    const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
-    assert.equal(cb.status, 302);
+    assert.equal((await webSignIn(env, { return_to: 'https://tandemonium.housetandem.com/', device_id: 'devA' })).user.id, pete.user.id);
     assert.equal((await (await call(env, '/pair?with=' + S, { token: pete.token })).json()).rides, 5);
   } finally { restore(); }
 });
@@ -1161,27 +1222,14 @@ test('#678 Discord redirect and Steam on the web claim the device too; a seat si
     assert.equal(guestPairRows(db), 2, 'devR and devW are still guests');
 
     // Player 1 on devR signs in by redirect.
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', device_id: 'devR' } })).json();
-    const loc = (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).headers.get('Location');
-    const token = decodeURIComponent(loc.split('#ht_auth=')[1]);
+    const held = await webBegin(env, { return_to: 'https://tandemonium.housetandem.com/', device_id: 'devR' });
+    assert.equal(guestPairRows(db), 2, 'nothing is claimed until the browser that began it exchanges the code');
+    const { token } = await (await exchange(env, held)).json();
     assert.equal(jwtSub(token), seat.user.id, 'same Discord account as the seat sign-in');
     assert.equal((await (await call(env, '/pair?with=' + S, { token })).json()).rides, 2);
 
     // Steam on the web from devW.
-    const wb = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: 'https://tandemonium.housetandem.com/account', device_id: 'devW' } })).json();
-    const login = new URL((await call(env, '/auth/steam/go?r=' + encodeURIComponent(wb.id))).headers.get('Location'));
-    const returnTo = new URL(login.searchParams.get('openid.return_to'));
-    const claimed = 'https://steamcommunity.com/openid/id/76561190000000002';
-    for (const [k, v] of Object.entries({
-      'openid.ns': 'http://specs.openid.net/auth/2.0', 'openid.mode': 'id_res',
-      'openid.op_endpoint': 'https://steamcommunity.com/openid/login',
-      'openid.claimed_id': claimed, 'openid.identity': claimed,
-      'openid.return_to': returnTo.toString(), 'openid.response_nonce': '2026-11-07T00:00:00Zabc',
-      'openid.assoc_handle': '1', 'openid.signed': 'signed,op_endpoint,claimed_id,identity,return_to,response_nonce,assoc_handle',
-      'openid.sig': 'c2ln',
-    })) returnTo.searchParams.set(k, v);
-    const steamLoc = (await call(env, returnTo.pathname + returnTo.search)).headers.get('Location');
-    const steamToken = decodeURIComponent(steamLoc.split('#ht_auth=')[1]);
+    const steamToken = (await steamWebSession(env, { steamId: '76561190000000002', extra: { device_id: 'devW' } })).token;
     assert.equal((await (await call(env, '/pair?with=' + S, { token: steamToken })).json()).rides, 6);
     assert.equal(guestPairRows(db), 0);
   } finally { restore(); }
@@ -1232,7 +1280,8 @@ test('Join checklist "say hello": a post in the hello channel since joining coun
   const hello = async (token) => (await (await call(env, '/me/discord', { token })).json()).said_hello;
   try {
     const steam = await (await call(env, '/auth/steam', { method: 'POST', body: { steamId: '76561190000000001', personaName: 'p', ticket: 'a1b2c3d4e5f60718' } })).json();
-    const d = await deviceSignIn(env, steam.token);
+    const d = await linkDiscord(env, steam.token);
+    assert.equal(d.status, 'linked');
     assert.equal(await hello(d.token), false, 'no post yet');
     pages = [[{ ...msg(10, DISCORD_PETE.id, '2026-11-12T00:00:00Z'), type: 7 }]];
     assert.equal(await hello(d.token), false, "Discord's join notice in #welcome isn't a hello");
@@ -1354,7 +1403,7 @@ test('undo a link: the sign-in leaves the account; the session that came in thro
   const restore = mockFetch(DISCORD_PETE);
   try {
     const steam = await steamTicket(env);
-    await deviceSignIn(env, steam.token);
+    assert.equal((await linkDiscord(env, steam.token)).status, 'linked');
     const discordSession = await webSignIn(env);   // signed in through the Discord that was linked
     assert.equal(discordSession.user.id, steam.user.id);
     const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
@@ -1377,7 +1426,7 @@ test('undo a link never removes the last sign-in on an account', async () => {
   const restore = mockFetch(DISCORD_PETE);
   try {
     const steam = await steamTicket(env);
-    await deviceSignIn(env, steam.token);
+    assert.equal((await linkDiscord(env, steam.token)).status, 'linked');
     const discord = await webSignIn(env);
     const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
     db.prepare("DELETE FROM user_logins WHERE provider = 'steam'").run();   // only Discord is left
@@ -1536,10 +1585,9 @@ test('a name outside Latin-1 signs in, and its session reads back with the name 
   const name = '“Pétè” 山口 🚲';
   const restore = mockFetch({ ...DISCORD_PETE, global_name: name });
   try {
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
-    const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
-    assert.equal(cb.status, 302);
-    const token = decodeURIComponent(cb.headers.get('Location').split('#ht_auth=')[1]);
+    const out = await webSignIn(env);
+    assert.equal(out.user.name, name);
+    const token = out.token;
     assert.match(token, /^[A-Za-z0-9_.-]+$/);
     const claims = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
     assert.equal(claims.name, name, 'a plain atob + JSON.parse reader gets the name');
@@ -1556,12 +1604,11 @@ test('a failure inside a sign-in page is answered with a page and logged, never 
   const realError = console.error;
   console.error = (...a) => logged.push(a.join(' '));
   try {
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
     const realPrepare = env.DB.prepare;
-    // The first sign-in makes the account (an INSERT); the second updates it, and that fails.
-    await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(begin.id)}`);
-    const again = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/' } })).json();
-    env.DB.prepare = (sql) => { if (/^UPDATE users SET/.test(sql)) throw new Error('database said no'); return realPrepare(sql); };
+    // The callback holds what Discord said on the request (an UPDATE), and that fails.
+    const again = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/', nonce_hash: await nonceHash(NONCE) } })).json();
+    assert.ok(again.id);
+    env.DB.prepare = (sql) => { if (/^UPDATE auth_requests SET/.test(sql)) throw new Error('database said no'); return realPrepare(sql); };
     const cb = await call(env, `/auth/discord/callback?code=c&state=${encodeURIComponent(again.id)}`);
     assert.equal(cb.status, 500);
     assert.match(cb.headers.get('Content-Type'), /text\/html/);
@@ -1571,11 +1618,13 @@ test('a failure inside a sign-in page is answered with a page and logged, never 
     assert.ok(html.includes('mailto:hello@housetandem.com'), 'and who to write to');
     assert.ok(!html.includes('database said no'), 'the page does not show the cause');
     assert.ok(logged.some((l) => l.includes('/auth/discord/callback') && l.includes('database said no')), 'the log does');
-    // A script's route answers in JSON.
+    // A script's route answers in JSON, and does not show the cause either.
     env.DB.prepare = () => { throw new Error('database said no'); };
+    logged.length = 0;
     const api = await call(env, '/auth/poll', { method: 'POST', body: { id: again.id, secret: again.secret } });
     assert.equal(api.status, 500);
-    assert.equal((await api.json()).error, 'database said no');
+    assert.deepEqual(await api.json(), { error: 'Something went wrong on our side. Try again in a moment.' });
+    assert.ok(logged.some((l) => l.includes('database said no')), 'the log has it');
   } finally { console.error = realError; restore(); }
 });
 
@@ -1650,23 +1699,46 @@ test('browser sign-in: what the callback found comes from the exchange, not the 
   } finally { globalThis.fetch = inner; real(); }
 });
 
-test('an older page without the value still gets the old answer, until that is turned off', async () => {
+test('a page that sends no value is asked to reload: no redirect sign-in without one; TV sign-in is not affected', async () => {
   const db = freshDb();
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const body = { mode: 'redirect', return_to: RETURN };
-    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body })).json();
-    const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
-    assert.match(cb.headers.get('Location'), /#ht_auth=/);
+    const refusedWith = async (p, body) => {
+      const res = await call(env, p, { method: 'POST', body });
+      assert.equal(res.status, 400, p + ' ' + JSON.stringify(body));
+      assert.equal((await res.json()).code, 'update_required');
+    };
+    await refusedWith('/auth/discord/begin', { mode: 'redirect', return_to: RETURN });
+    await refusedWith('/auth/steam/begin', { return_to: RETURN });
+    // A value of the wrong shape is no value.
+    for (const nonce_hash of ['short', 'n'.repeat(44), '!'.repeat(43), 12345, null]) {
+      await refusedWith('/auth/discord/begin', { mode: 'redirect', return_to: RETURN, nonce_hash });
+      await refusedWith('/auth/steam/begin', { return_to: RETURN, nonce_hash });
+    }
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM auth_requests').get().n, 0, 'no request is opened');
+    assert.equal((await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' } })).status, 200, 'TV sign-in is not affected');
+    await webBegin(env);
+  } finally { restore(); }
+});
 
-    const strict = { ...env, AUTH_LEGACY_TOKEN_REDIRECT: 'off' };
-    const refused = await call(strict, '/auth/discord/begin', { method: 'POST', body });
-    assert.equal(refused.status, 400);
-    assert.equal((await refused.json()).code, 'update_required');
-    assert.equal((await call(strict, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN } })).status, 400);
-    assert.equal((await call(strict, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' } })).status, 200, 'TV sign-in is not affected');
-    await webBegin(strict);
+test('a redirect request stored with no value gets the expired page, not a session', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const { restore } = mockSteamOpenId(true);
+  try {
+    // Requests as an earlier version stored them: no value kept with them.
+    const strip = (id) => db.prepare('UPDATE auth_requests SET profile_json = NULL WHERE id = ?').run(id);
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: RETURN, nonce_hash: await nonceHash(NONCE) } })).json();
+    strip(begin.id);
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.equal(cb.status, 410);
+    assert.equal(cb.headers.get('Location'), null);
+
+    const steam = await steamWebSignIn(env, { tamper: () => strip(db.prepare("SELECT id FROM auth_requests WHERE provider = 'steam'").get().id) });
+    assert.equal(steam.status, 410);
+    assert.equal(steam.headers.get('Location'), null);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0, 'nobody is signed in or made');
   } finally { restore(); }
 });
 
@@ -1735,7 +1807,7 @@ test('undo ends the other sessions; the one that asked carries on with a new tok
   const restore = mockFetch(DISCORD_PETE);
   try {
     const steam = await steamTicket(env);
-    await deviceSignIn(env, steam.token);
+    assert.equal((await linkDiscord(env, steam.token)).status, 'linked');
     const other = await steamTicket(env);
     const [n] = (await (await call(env, '/me/notices', { token: other.token })).json()).notices;
     const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: other.token, body: { id: n.id } })).json();
@@ -1785,15 +1857,21 @@ test('a device-code session is limited: no delete, link or hand-off until a real
   } finally { restore(); }
 });
 
-test('adding a login by device code can be turned off; a plain device sign-in cannot be', async () => {
+test('adding a login by device code is always refused; a plain device sign-in still works', async () => {
   const db = freshDb();
-  const env = { ...envFor(db), AUTH_DEVICE_LINK: 'off' };
+  const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
     const steam = await steamTicket(env);
     const res = await call(env, '/auth/discord/begin', { method: 'POST', token: steam.token, body: { mode: 'device' } });
     assert.equal(res.status, 403);
     assert.equal((await res.json()).code, 'link_needs_browser');
+    // From a browser session too: the device code is for signing in, never for adding a login.
+    const web = await webSignIn(env);
+    const again = await call(env, '/auth/discord/begin', { method: 'POST', token: web.token, body: { mode: 'device' } });
+    assert.equal(again.status, 403);
+    assert.equal((await again.json()).code, 'link_needs_browser');
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM auth_requests WHERE link_user_id IS NOT NULL").get().n, 0, 'no link request is opened');
     assert.equal((await deviceSignIn(env)).status, 'done');
   } finally { restore(); }
 });
@@ -1838,7 +1916,8 @@ test('Discord endpoints act only on Discord requests', async () => {
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN } })).json();
+    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN, nonce_hash: await nonceHash(NONCE) } })).json();
+    assert.ok(begin.id, 'a live Steam request');
     assert.equal((await call(env, '/auth/discord/go?r=' + begin.id)).status, 410);
     assert.equal((await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).status, 410);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0);

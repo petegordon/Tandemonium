@@ -69,7 +69,9 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
     this._iceServers = null;
     try {
       // Only a connection holding a seat in this room gets TURN credentials (the relay checks).
-      const q = '?room=' + encodeURIComponent(this.roomCode || '') + '&role=' + encodeURIComponent(this.role || '') + this._deviceParam();
+      // The proof is the room's P2P key, which the relay sent this seat when the partner arrived.
+      if (!this.p2pKey) return this._defaultIceServers();
+      const q = '?room=' + encodeURIComponent(this.roomCode || '') + '&role=' + encodeURIComponent(this.role || '') + '&key=' + encodeURIComponent(this.p2pKey);
       if (!this.options.turnCredentialsUrl) return this._defaultIceServers();   // no TURN: STUN only
       const resp = await fetch(this.options.turnCredentialsUrl + q);
       const data = await resp.json();
