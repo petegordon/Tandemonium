@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stamp the current commit + time into the lobby footer (#lobby-version) of a
 # local checkout, e.g. before a hand-made build. CI does the same in
-# deploy.yml, pr-preview.yml and build-windows.yml; without a stamp the footer
+# pr-preview.yml and build-windows.yml; without a stamp the footer
 # reads "v.dev (local build)". Don't commit the result.
 
 HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "dev")

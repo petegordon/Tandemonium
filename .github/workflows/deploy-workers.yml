@@ -56,12 +56,7 @@ jobs:
           workingDirectory: worker
           command: deploy --config wrangler.toml
 
-      - name: Deploy Store Worker
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: worker
-          command: deploy --config wrangler-store.toml
+      # The store Worker (wrangler-store.toml) is on hold and is not deployed from here.
 
       # Phone-remote relay (#421, #454). Its own Worker, so RIDE TOGETHER's
       # relay is untouched. A deploy drops the open pad rooms' sockets; games

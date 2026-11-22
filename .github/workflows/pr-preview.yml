@@ -15,8 +15,8 @@ jobs:
   # PREVIEW: a flaky unrelated test once blocked a deploy and a phone tester
   # spent a round on a stale build without knowing. A broken build shows as a
   # red check next to a live preview instead of a silently old preview.
-  # What stops a red build reaching production is deploy.yml, which runs the
-  # unit tests itself and does not deploy if they fail. (Making `tests` a
+  # What stops a red build reaching production is deploy-staging.yml, which runs
+  # the unit tests itself and does not deploy if they fail. (Making `tests` a
   # required check for merging is a branch-protection setting on main, not
   # something this file can do.)
   tests:
