@@ -26,6 +26,7 @@ import {
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { pruneAnalytics } from './retention.js';
 import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
@@ -112,6 +113,17 @@ async function deviceKeys(env, deviceId) {
 }
 
 export default {
+  /** Once a day (wrangler-api.toml): gameplay analytics older than 24 months are deleted. */
+  async scheduled(_event, env, ctx) {
+    const work = pruneAnalytics(env).then((out) => {
+      const total = Object.values(out.removed).reduce((a, b) => a + b, 0);
+      if (total || out.errors.length) console.log('analytics retention', JSON.stringify(out));
+      if (out.errors.length) console.error('analytics retention failed', out.errors.join(' | '));
+    }).catch((e) => console.error('analytics retention failed', (e && e.message) || e));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(work);
+    return work;
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';

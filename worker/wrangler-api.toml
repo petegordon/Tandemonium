@@ -27,6 +27,10 @@ DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = "1560085413719187517"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
+# Once a day: gameplay analytics older than 24 months are deleted (worker/retention.js).
+[triggers]
+crons = ["17 4 * * *"]
+
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "tandemonium_api"
@@ -91,6 +95,9 @@ DISCORD_CLIENT_ID = "1573899793137406122"
 DISCORD_GUILD_ID = ""
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = ""
+
+[env.staging.triggers]
+crons = ["47 4 * * *"]
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
