@@ -59,7 +59,9 @@ const nowS = () => Math.floor(Date.now() / 1000);
  * account. Anything that isn't a short plain token is ignored.
  */
 export function cleanDeviceId(v) {
-  return typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v) ? v : null;
+  // A guest key ('h_' + 22, worker/room-proof.js) is made from a device id by the server; it is
+  // never a device id itself, so one sent in a device id's place is ignored.
+  return typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(v) && !/^h_[A-Za-z0-9_-]{22}$/.test(v) ? v : null;
 }
 
 /** What a begin call stored on the request (profile_json holds only this until the callback). */

@@ -320,7 +320,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const googleId = payload.sub;
   const name = payload.name || 'Player';
   const picture = payload.picture || null;
-  const email = payload.email || null;
+  // Only an address Google itself has confirmed is carried (the dashboard's check reads it).
+  const email = (payload.email_verified === true || payload.email_verified === 'true') && typeof payload.email === 'string' ? payload.email : null;
 
   // #612: Google is a legacy sign-in; its users keep their account.
   const { userId, loginId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
@@ -1020,7 +1021,8 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const mode = url.searchParams.get('mode');       // 'solo' | 'together'
   const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'adventurous' | 'daredevil'
   const userFilter = url.searchParams.get('user_id'); // 'me'
-  let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
+  const asked = parseInt(url.searchParams.get('limit') || '20', 10);
+  let limit = Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20;
 
   // Cache public global leaderboard requests (30s TTL)
   const isPublic = scope === 'global' && !userFilter;
