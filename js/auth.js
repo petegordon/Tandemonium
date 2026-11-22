@@ -16,17 +16,18 @@
 // Discord sign-in:
 //   - same device (a browser with a mouse or touch): a full-page redirect to
 //     Discord and back; the session comes back in the URL fragment.
-//   - device code (TV, Steam build, or linking): the game shows a QR + a
-//     4-letter code; the player finishes in a browser (their phone, or the
-//     system browser the Steam build opens) and types the code. The game
-//     polls the API with a secret only it holds. Linking from a phone adds a
-//     Discord with no account of its own; if it has one, the phone shows both
-//     accounts and the player chooses Combine (#612). Every link and combine
-//     shows a notice with undo.
+//   - device code (TV, Steam build): the game shows a QR + a 4-letter code; the
+//     player finishes in a browser (their phone, or the system browser the Steam
+//     build opens) and types the code. The game polls the API with a secret only
+//     it holds. A session made this way can play but can't delete, link or open
+//     another site signed in without a sign-in in a browser.
+//   - adding a login to an account happens on the account page in a browser.
+//     Every link and combine shows a notice with undo.
 
 import { API_BASE } from './config.js';
 import { getDeviceId, getSessionId, attachAccount } from './analytics.js';
-import { IdentityClient, takeRedirect, loginPictures } from '../shared/identity/client.js';
+import { IdentityClient, loginPictures } from '../shared/identity/client.js';
+import { askInPage } from '../shared/identity/elements/ask-switch.js';
 
 /**
  * #678 · this device's id, sent with Player 1's sign-in so the rides it
@@ -45,11 +46,10 @@ function sessionIdForSignIn() {
 const STORAGE_USER = 'tandemonium_auth_user';
 const STORAGE_TOKEN = 'tandemonium_auth_token';
 
-/** Pull `#ht_auth=<jwt>` off the URL (a Discord redirect coming back). */
-export function takeRedirectToken(loc = globalThis.location, hist = globalThis.history) {
-  const back = takeRedirect(loc, hist);
-  return (back && back.token) || null;
-}
+/** Where a login is added to an account: the House Tandem account page, in a browser. */
+export const ACCOUNT_PAGE_URL = 'https://housetandem.com/account';
+const LINK_POLL_MS = 4000;
+const LINK_WAIT_MS = 10 * 60 * 1000;
 
 /** The sign-ins to picture, left to right: Discord, then Steam (then anything else). */
 export const identityPictures = loginPictures;
@@ -86,6 +86,7 @@ export class AuthManager {
       deviceId: deviceIdForSignIn,
       sessionId: sessionIdForSignIn,
       shapeUser,
+      confirmSwitch: askInPage,
       // A link needs a sign-in from the last few minutes (#612): the Steam build gets one
       // by signing in again with Steam, without asking the player.
       reauth: async () => {
@@ -106,7 +107,7 @@ export class AuthManager {
   get token() { return this.identity.token; }
   set token(v) { this.identity.token = v; }
   /** The device-code sign-in in progress (the P1 seat panel shows its QR again). */
-  get _device() { return this.identity._device; }
+  get _device() { return this.identity._device || this._linkWatch || null; }
 
   isLoggedIn() {
     return this.identity.isSignedIn();
@@ -137,7 +138,11 @@ export class AuthManager {
    */
   async resumeFromRedirect() {
     const back = await this.identity.resume();
-    if (!back || !back.signedIn) return false;
+    if (!back) return false;
+    if (!back.signedIn) {
+      if (back.error) this.lastAuthError = back.error;
+      return false;
+    }
     if (this._onLoginCallback) this._onLoginCallback(this.user);
     return true;
   }
@@ -160,15 +165,15 @@ export class AuthManager {
 
   /**
    * Device code: start (or reuse) a sign-in finished in another browser. Signed in
-   * already, it links Discord to this account instead.
+   * already, Discord is added on the account page instead: a code approved on another
+   * device is never what joins two logins.
    * Resolves { url, code, expiresAt } for the QR, then keeps polling; `onDone`
    * gets (user, { linked, merged }) or (null, { error }). One at a time.
    */
   async startDiscordDevice({ onDone, onStatus } = {}) {
-    const link = this.isLoggedIn() && !this.isTokenExpired();
+    if (this.isLoggedIn() && !this.isTokenExpired()) return this._watchForDiscordLink({ onDone });
     try {
       return await this.identity.startDevice({
-        link,
         onStatus,
         onDone: (user, info) => {
           if (onDone) onDone(user, info);
@@ -181,8 +186,48 @@ export class AuthManager {
     }
   }
 
+  /**
+   * Signed in already (the Steam build, a TV): Discord is added on the account page. This
+   * gives the QR that page's address ({ url, code: '', linkPage: true }) and re-reads the
+   * account every few seconds, so the screen shows the new login as soon as it is there.
+   * `onDone(user, { linked: true })` when Discord appears; (null, { error: 'expired' }) after
+   * ten minutes.
+   */
+  _watchForDiscordLink({ onDone } = {}) {
+    this._stopLinkWatch();
+    const watch = { stopped: false, timer: null, until: Date.now() + LINK_WAIT_MS, url: ACCOUNT_PAGE_URL, code: '', linkPage: true };
+    this._linkWatch = watch;
+    const tick = async () => {
+      if (watch.stopped) return;
+      try { await this.identity.refresh(); } catch (e) { /* offline: next time */ }
+      if (watch.stopped) return;
+      if (this.hasIdentity('discord')) {
+        this._stopLinkWatch();
+        if (onDone) onDone(this.user, { linked: true });
+        return;
+      }
+      if (Date.now() >= watch.until) {
+        this._stopLinkWatch();
+        if (onDone) onDone(null, { error: 'expired' });
+        return;
+      }
+      watch.timer = setTimeout(tick, LINK_POLL_MS);
+    };
+    watch.timer = setTimeout(tick, LINK_POLL_MS);
+    return { url: ACCOUNT_PAGE_URL, code: '', linkPage: true, expiresAt: watch.until };
+  }
+
+  _stopLinkWatch() {
+    const w = this._linkWatch;
+    if (!w) return;
+    w.stopped = true;
+    if (w.timer) clearTimeout(w.timer);
+    this._linkWatch = null;
+  }
+
   /** Stop polling (the popup closed). The browser side simply expires. */
   cancelDiscordDevice() {
+    this._stopLinkWatch();
     this.identity.cancelDevice();
   }
 

@@ -109,7 +109,7 @@ test('analytics keeps plain, short text and real numbers; nothing else is stored
   assert.equal((await post(env, `/api/analytics/session/${SID}`, { controller_name: mark, controller_connection: long }, 'PUT')).status, 200);
   assert.equal((await post(env, '/api/analytics/ride', { id: RID, session_id: SID, level: mark, difficulty: mark, input_method: mark, controller_name: mark + long, controller_connection: mark, bike_preset: long, role: long })).status, 200);
   assert.equal((await post(env, `/api/analytics/ride/${RID}`, { abandon_reason: mark + long, distance: '12<i>', completed: true, max_speed: 9.5, crash_count: { $ne: 1 } }, 'PUT')).status, 200);
-  assert.equal((await post(env, '/api/analytics/event/batch', { events: [ev(mark, { page: long, event_data: { note: mark } }), ev('big', { event_data: { blob: 'y'.repeat(20000) } })] })).status, 200);
+  assert.equal((await post(env, '/api/analytics/event/batch', { events: [ev(mark, { page: long, event_data: { note: mark } }), ev('big', { event_data: { blob: 'y'.repeat(9000) } })] })).status, 200);
   assert.equal((await post(env, '/api/analytics/conversion', { session_id: SID, action: mark, context: long, url: mark + long })).status, 200);
 
   const every = [];

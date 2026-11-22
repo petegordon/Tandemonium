@@ -4413,6 +4413,11 @@ export class Lobby {
             if (info && info.linked) this._justLinkedAt = Date.now();
             if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
             if (this._profileUpdateUI) this._profileUpdateUI(user);
+            // Linked from the account page: the QR has done its job. The card stays open on both logins.
+            if (info && info.linked) {
+              this._hideProfileDevice();
+              if (this._activeModal === 'profile') this._modalFocus.setItems(this._profileItems(), 0);
+            }
             return;
           }
           const err = info && info.error;
@@ -4424,6 +4429,7 @@ export class Lobby {
             return;
           }
           // Expired or cancelled while the popup is still open: a fresh code.
+          if (this.auth.isLoggedIn()) { this._hideProfileDevice(); return; }   // the wait for a link ran out: the button is back
           this._setProfileDeviceStatus(err === 'cancelled' ? 'Cancelled. Scan again to sign in.' : 'That code expired. Here is a new one.');
           setTimeout(() => { if (this.profilePopup.classList.contains('visible')) this._showProfileDevice(); }, 1500);
         },
@@ -4440,8 +4446,17 @@ export class Lobby {
       qr.make();
       qrEl.innerHTML = qr.createSvgTag({ cellSize: 3, margin: 1 });
     } catch (_) { qrEl.innerHTML = ''; }
-    document.getElementById('profile-popup-code').textContent = dev.code || '';
-    this._setProfileDeviceStatus('Waiting for Discord…');
+    // Adding Discord to an account is done on the account page: other steps, no code.
+    const steps = box.querySelector('.profile-popup-steps');
+    if (steps) {
+      if (!this._profileDeviceSteps) this._profileDeviceSteps = steps.innerHTML;
+      steps.innerHTML = dev.linkPage
+        ? '<li>Scan with your phone&rsquo;s camera</li><li>Sign in with Steam</li><li>Choose <b>Link Discord</b></li>'
+        : this._profileDeviceSteps;
+    }
+    const codeEl = document.getElementById('profile-popup-code');
+    if (codeEl) codeEl.textContent = dev.code || '';
+    this._setProfileDeviceStatus(dev.linkPage ? 'This screen updates when Discord is linked.' : 'Waiting for Discord…');
     this._profileDevUrl = dev.url;
     if (openBtn && this._hasDesktopBrowser()) openBtn.style.display = '';
     // The pad list loses the hidden trigger and gains OPEN ON THIS COMPUTER; focus lands
@@ -4451,6 +4466,33 @@ export class Lobby {
       this._modalFocus.setItems(items, Math.max(0, items.indexOf(openBtn)));
     }
     return dev;
+  }
+
+  /**
+   * Ask the analytics question (index.html #consent-prompt). → 'accept' | 'decline'.
+   * With no prompt on the page the answer is 'decline': nothing is collected on a guess.
+   */
+  askAnalyticsConsent() {
+    const el = document.getElementById('consent-prompt');
+    const yes = document.getElementById('consent-accept');
+    const no = document.getElementById('consent-decline');
+    if (!el || !yes || !no) return Promise.resolve('decline');
+    return new Promise((resolve) => {
+      const keys = (e) => e.stopPropagation();   // the lobby behind does not hear the keyboard
+      const pick = (choice) => {
+        el.classList.remove('visible');
+        el.removeEventListener('keydown', keys);
+        yes.onclick = null;
+        no.onclick = null;
+        if (this._activeModal === 'consent') { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
+        resolve(choice);
+      };
+      yes.onclick = () => pick('accept');
+      no.onclick = () => pick('decline');
+      el.addEventListener('keydown', keys);
+      el.classList.add('visible');
+      try { yes.focus({ preventScroll: true }); } catch (e) { /* no focus here */ }
+    });
   }
 
   /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
@@ -8542,6 +8584,20 @@ export class Lobby {
     }
     this._gpPrevY = y;
 
+    // The analytics question (js/consent.js): the pad moves between its two answers and A
+    // picks one. B does nothing: it is answered, not dismissed.
+    const ask = document.getElementById('consent-prompt');
+    if (ask && ask.classList.contains('visible')) {
+      if (this._activeModal !== 'consent') {
+        this._activeModal = 'consent';
+        this._modalBack = () => {};
+        const btns = [document.getElementById('consent-decline'), document.getElementById('consent-accept')].filter(Boolean);
+        this._modalFocus.setSpatial(btns, btns[btns.length - 1]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
+
     // LB/RB bumpers (buttons 4/5) — cycle bike color; over the Achievements
     // sheet they jump a section instead (and leave the bike alone).
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
@@ -9055,6 +9111,7 @@ export class Lobby {
           try {
             const dev = await this.auth.startDiscordDevice({
               onStatus: (s) => { this._p1DeviceStatus = s; emit(1); },
+              // (Signed in already, this is the account page's address and no code: see auth.js.)
               onDone: (user, info) => {
                 this._p1DeviceStatus = null;
                 if (user) {

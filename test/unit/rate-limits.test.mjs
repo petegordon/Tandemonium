@@ -60,13 +60,28 @@ test('a flood from one IP is refused past 300 a minute, whatever ids it makes up
   assert.notEqual(await send(env, '/leaderboard', { method: 'GET', ip: '5.6.7.8' }), 429, 'another IP is unaffected');
 });
 
-test('one player: 30 a minute per kind of write; other kinds and other players are separate', async () => {
+test('analytics writes are counted per IP: the ids in a request choose no allowance', async () => {
+  const env = envFor();
+  const seen = [];
+  const inner = env.PLAYER_LIMITER;
+  env.PLAYER_LIMITER = { limit: async (k) => { seen.push(k.key); return inner.limit(k); } };
+  const statuses = [];
+  for (let i = 0; i < 40; i++) statuses.push(await send(env, '/api/analytics/event/batch', { body: { events: [{ session_id: sid(1) }] } }));
+  await send(env, `/api/analytics/session/${sid(1)}`, { method: 'PUT' });
+  await send(env, '/api/analytics/session', { body: { id: sid(1), device_id: 'someone-elses-device' } });
+  assert.equal(statuses.filter((s) => s === 429).length, 0, 'one busy session on an IP is under its ceiling');
+  assert.deepEqual(seen, [], 'no per-id bucket is spent');
+  // One sender can't use up another IP's allowance by naming the same session.
+  for (let i = 0; i < 300; i++) await send(env, '/api/analytics/event/batch', { ip: '9.9.9.9', body: { events: [{ session_id: sid(2) }] } });
+  assert.equal(await send(env, '/api/analytics/event/batch', { ip: '9.9.9.9', body: { events: [{ session_id: sid(2) }] } }), 429);
+  assert.notEqual(await send(env, '/api/analytics/event/batch', { ip: '8.8.8.8', body: { events: [{ session_id: sid(2) }] } }), 429);
+});
+
+test('signed-in writes keep the per-account limit of 30 a minute', async () => {
   const env = envFor();
   const statuses = [];
-  for (let i = 0; i < 31; i++) statuses.push(await send(env, '/api/analytics/event/batch', { body: { events: [{ session_id: sid(1) }] } }));
-  assert.equal(statuses.filter((s) => s === 429).length, 1, 'the 31st event batch is refused');
-  assert.notEqual(await send(env, `/api/analytics/session/${sid(1)}`, { method: 'PUT' }), 429, 'session updates have their own bucket');
-  assert.notEqual(await send(env, '/api/analytics/event/batch', { body: { events: [{ session_id: sid(2) }] } }), 429, 'another player on the same IP is fine');
+  for (let i = 0; i < 31; i++) statuses.push(await send(env, '/score', { body: {} }));
+  assert.equal(statuses.filter((s) => s === 429).length, 1, 'the 31st is refused');
 });
 
 test('starting a sign-in: 30 a minute per IP', async () => {

@@ -28,6 +28,7 @@
 // the tables and routes are shaped so they can move as they are.
 
 import { combineAccounts, separateAccount, splitLogin, absorbLogin } from './combine.js';
+import { originListed } from './origins.js';
 
 const REQUEST_TTL_S = 600;
 const DISCORD_API = 'https://discord.com/api';
@@ -142,29 +143,59 @@ export async function firstLogin(env, userId) {
 }
 
 /**
- * #783 · who a verified session token is, now: its login (the token's `lid`, or the
- * sign-in named by `via` in tokens from before lids) and the account that login belongs
- * to today. So a session follows its login through a combine or a separate. A token with
+ * #783 · who a verified session token is, now: its login (the token's `lid`) and the
+ * account that login belongs to today. So a session follows its login through a combine or a separate. A token with
  * neither is its account's first sign-in. → the claims with `sub` and `lid` set, or null
  * when the login and the account are both gone.
  */
 export async function resolveSession(env, claims) {
   if (!claims) return null;
+  // SELECT *: token_version arrives with migration 0022, and this runs before or after it.
   let login = null;
   if (Number.isInteger(claims.lid)) {
-    login = await env.DB.prepare('SELECT login_id, user_id FROM user_logins WHERE login_id = ?').bind(claims.lid).first();
+    // A token that names a login is that login or nothing: login ids are never reused.
+    login = await env.DB.prepare('SELECT * FROM user_logins WHERE login_id = ?').bind(claims.lid).first();
+    if (!login) return null;
   }
-  if (!login && typeof claims.via === 'string' && claims.via.includes(':')) {
-    const i = claims.via.indexOf(':');
-    login = await loginRow(env, claims.via.slice(0, i), claims.via.slice(i + 1));
+  if (!login && claims.sub != null) {
+    login = await env.DB.prepare("SELECT * FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
+      .bind(claims.sub).first();
   }
-  if (login) return { ...claims, sub: login.user_id, lid: login.login_id };
+  if (login) {
+    if (!sessionCurrent(claims, login)) return null;
+    return { ...claims, sub: login.user_id, lid: login.login_id };
+  }
   if (claims.sub == null) return null;
-  const lid = await firstLogin(env, claims.sub);
-  if (lid != null) return { ...claims, lid };
   // An account with no sign-in row at all (none are expected): still that account.
   const user = await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?').bind(claims.sub).first();
   return user ? { ...claims, lid: null } : null;
+}
+
+/** Has this login's sessions been ended since the token was made? A token with no `tv` is version 0. */
+function sessionCurrent(claims, login) {
+  const have = Number.isInteger(claims.tv) ? claims.tv : 0;
+  return have >= (Number(login.token_version) || 0);
+}
+
+/**
+ * End every session of an account (and of `alsoLogins`, which just left it): each login's
+ * version goes up, so older tokens stop resolving, and hand-off codes already made are
+ * dropped. The version is kept per login because a session follows its login through a
+ * combine or a separate. → false when migration 0022 is not applied yet.
+ */
+export async function revokeSessions(env, userId, alsoLogins = []) {
+  const ids = alsoLogins.filter(Number.isInteger);
+  const where = ids.length ? `user_id = ? OR login_id IN (${ids.map(() => '?').join(',')})` : 'user_id = ?';
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE user_logins SET token_version = COALESCE(token_version, 0) + 1 WHERE ${where}`).bind(userId, ...ids),
+      env.DB.prepare("DELETE FROM auth_requests WHERE provider = 'handoff' AND link_user_id = ?").bind(userId),
+    ]);
+    return true;
+  } catch (e) {
+    if (/no such column/i.test(String(e && e.message))) return false;
+    throw e;
+  }
 }
 
 /**
@@ -225,6 +256,11 @@ export async function upsertIdentity(env, { provider, providerId, name, avatar }
 // and it can be undone for UNDO_DAYS.
 
 const LINK_FRESH_S = 600;
+// Opening another House Tandem site signed in: a longer window than a link, since a
+// session that is too old only means the other site asks the player to sign in.
+const HANDOFF_FRESH_S = 3600;
+// However a session is passed on, it ends this long after the real sign-in behind it.
+const SESSION_MAX_S = 30 * 86400;
 const UNDO_DAYS = 7;
 const PROVIDER_NAMES = { discord: 'Discord', steam: 'Steam', google: 'Google' };
 
@@ -235,37 +271,67 @@ async function sessionClaims(request, env, deps) {
   return sub ? { sub } : null;
 }
 
-/** A link may begin only on a session signed in within the last LINK_FRESH_S. */
-function freshEnough(claims) {
-  return !!(claims && claims.iat && claims.iat >= nowS() - LINK_FRESH_S);
+/**
+ * Was this session made by a real sign-in within `within` seconds? `auth_time` is set only
+ * by a provider sign-in and carried through hand-offs, links and combines. A token without
+ * it (from before it existed) works but is never fresh, and neither is one issued by device
+ * code: whoever began a device sign-in is not proven to be whoever approved it.
+ */
+export function freshEnough(claims, within = LINK_FRESH_S) {
+  return !!(claims && !claims.dev && Number.isInteger(claims.auth_time) && claims.auth_time >= nowS() - within);
 }
-function needFreshSignIn(deps, corsOrigin) {
+export function needFreshSignIn(deps, corsOrigin, doing = 'linking another account') {
   return deps.jsonResponse({
-    error: 'For your safety, sign in again before linking another account.',
+    error: `For your safety, sign in again before ${doing}.`,
     code: 'fresh_signin',
   }, 401, corsOrigin);
 }
 
-/** A session for an account, and what the game and the website show about it. */
-export async function sessionFor(env, userId, deps, login = null) {
+/** What a new token keeps from the session it continues. */
+function basisOf(claims) {
+  return { authTime: claims.auth_time, dev: claims.dev ? 1 : 0, exp: claims.exp };
+}
+/** The claims a provider sign-in puts on its session: when it happened, and the login's version. */
+export async function realSignInClaims(env, loginId) {
+  const row = loginId == null ? null : await env.DB.prepare('SELECT * FROM user_logins WHERE login_id = ?').bind(loginId).first();
+  return { auth_time: nowS(), ...(row && row.token_version ? { tv: row.token_version } : {}) };
+}
+
+/**
+ * A session for an account, and what the game and the website show about it.
+ * `basis`: { authTime, dev, exp } of the sign-in or session this continues. A continued
+ * session keeps its auth_time and never ends later than the one it came from.
+ */
+export async function sessionFor(env, userId, deps, login = null, basis = null) {
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(userId).first();
   const identities = await listIdentities(env, userId);
   const claims = { sub: userId, name: user.display_name, picture: user.avatar_url };
   // `login`: a login id, or 'provider:id'. None given: the account's first sign-in.
   let row = null;
   if (Number.isInteger(login)) {
-    row = await env.DB.prepare('SELECT login_id, provider, provider_id FROM user_logins WHERE login_id = ? AND user_id = ?').bind(login, userId).first();
+    row = await env.DB.prepare('SELECT * FROM user_logins WHERE login_id = ? AND user_id = ?').bind(login, userId).first();
   } else if (typeof login === 'string' && login.includes(':')) {
     const i = login.indexOf(':');
-    row = await env.DB.prepare('SELECT login_id, provider, provider_id FROM user_logins WHERE provider = ? AND provider_id = ? AND user_id = ?')
+    row = await env.DB.prepare('SELECT * FROM user_logins WHERE provider = ? AND provider_id = ? AND user_id = ?')
       .bind(login.slice(0, i), login.slice(i + 1), userId).first();
   }
   if (!row) {
-    row = await env.DB.prepare("SELECT login_id, provider, provider_id FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
+    row = await env.DB.prepare("SELECT * FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
       .bind(userId).first();
   }
-  if (row) { claims.lid = row.login_id; claims.via = row.provider + ':' + row.provider_id; }
-  const token = await deps.createJWT(claims, env.JWT_SECRET);
+  if (row) {
+    claims.lid = row.login_id;
+    claims.via = row.provider + ':' + row.provider_id;
+    if (row.token_version) claims.tv = row.token_version;
+  }
+  const b = basis || {};
+  const now = nowS();
+  if (Number.isInteger(b.authTime)) claims.auth_time = b.authTime;
+  if (b.dev) claims.dev = 1;
+  const ends = [now + SESSION_MAX_S];
+  if (Number.isInteger(b.authTime)) ends.push(b.authTime + SESSION_MAX_S);
+  if (Number.isFinite(b.exp)) ends.push(b.exp);
+  const token = await deps.createJWT(claims, env.JWT_SECRET, Math.max(Math.min(...ends) - now, 1));
   return { token, user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities } };
 }
 
@@ -417,9 +483,8 @@ export function allowedReturnTo(returnTo, corsSetting, pickCorsOrigin) {
   let u;
   try { u = new URL(returnTo); } catch { return null; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  const allowed = (corsSetting || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(u.origin);
-  if (!local && !allowed.includes(u.origin)) return null;
+  // Only a site on this API's own list (local addresses only where the list names them).
+  if (!originListed(u.origin, corsSetting)) return null;
   u.hash = '';
   return u.toString();
 }
@@ -469,13 +534,21 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   const claims = await sessionClaims(request, env, deps);
   const linkUserId = claims ? claims.sub : null;
   if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
+  // A login is added in a browser, never by a code approved on another device.
+  if (linkUserId && mode === 'device') return linkNeedsBrowser(deps, corsOrigin);
+  // A redirect sign-in is bound to the browser that began it.
+  const nonceHash = cleanNonceHash(body.nonce_hash);
+  if (mode === 'redirect' && !linkUserId && !nonceHash) return updateRequired(deps, corsOrigin);
 
   const deviceId = cleanDeviceId(body.device_id);
   const info = {};
   if (deviceId) info.deviceId = deviceId;
+  if (nonceHash) info.nonceHash = nonceHash;
   if (body.join_server === true) info.joinServer = true;
-  const scopes = cleanScopes(body.scopes);
-  if (scopes.length) info.scopes = scopes;
+  // An explicit list is the player's decision, an empty one included (it clears the stored email).
+  if (Array.isArray(body.scopes)) info.scopes = cleanScopes(body.scopes);
+  if (linkUserId) info.basis = basisOf(claims);
+  if (mode === 'device') info.asker = requestingDevice(request);
 
   const id = randomId(12);
   const secret = randomId(24);
@@ -494,6 +567,38 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   }, 200, corsOrigin);
 }
 
+/** The hash of the value a browser keeps for its sign-in (base64url SHA-256), or null. */
+function cleanNonceHash(v) {
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/.test(v) ? v : null;
+}
+function updateRequired(deps, corsOrigin) {
+  return deps.jsonResponse({ error: 'Reload this page, then sign in again.', code: 'update_required' }, 400, corsOrigin);
+}
+function linkNeedsBrowser(deps, corsOrigin) {
+  return deps.jsonResponse({ error: 'Add this sign-in from your account page in a browser.', code: 'link_needs_browser' }, 403, corsOrigin);
+}
+
+/**
+ * What the approval page says about the screen that asked: a kind of device from a fixed
+ * list (the header is the requester's to write, so none of it is shown as sent) and
+ * Cloudflare's idea of where it is.
+ */
+function requestingDevice(request) {
+  const ua = String(request.headers.get('User-Agent') || '');
+  const kind = /Valve Steam|SteamDeck|Electron/i.test(ua) ? 'the Steam game'
+    : /SMART-TV|SmartTV|Tizen|Web0S|BRAVIA|AFT[A-Z]|Android TV|CrKey/i.test(ua) ? 'a TV'
+    : /iPhone/i.test(ua) ? 'an iPhone'
+    : /iPad/i.test(ua) ? 'an iPad'
+    : /Android/i.test(ua) ? 'an Android device'
+    : /Windows/i.test(ua) ? 'a Windows computer'
+    : /Macintosh/i.test(ua) ? 'a Mac'
+    : /Linux|CrOS/i.test(ua) ? 'a Linux computer'
+    : 'an unknown device';
+  const cf = request.cf || {};
+  const place = [cf.city, cf.country].filter((s) => typeof s === 'string' && s).join(', ').slice(0, 80);
+  return { kind, place };
+}
+
 async function liveRequest(env, id) {
   if (!id) return null;
   const row = await env.DB.prepare('SELECT * FROM auth_requests WHERE id = ?').bind(id).first();
@@ -501,9 +606,15 @@ async function liveRequest(env, id) {
   return row;
 }
 
+/** A live request that a Discord endpoint may act on. */
+async function liveDiscordRequest(env, id) {
+  const row = await liveRequest(env, id);
+  return row && row.provider === 'discord' ? row : null;
+}
+
 /** GET /auth/discord/go?r=<id> → Discord's consent screen. Short, so it fits a QR. */
 export async function handleDiscordGo(request, env, url) {
-  const row = await liveRequest(env, url.searchParams.get('r'));
+  const row = await liveDiscordRequest(env, url.searchParams.get('r'));
   if (!row || row.status !== 'pending') return page('This sign-in link has expired', '<p>Go back to the game and choose <b>Sign in with Discord</b> again.</p>', 410);
   return Response.redirect(discordAuthorizeUrl(env, url, row), 302);
 }
@@ -635,12 +746,16 @@ async function applyDiscordExtras(env, userId, profile, extras, deps) {
   }
 }
 
-/** A plain sign-in (no link): find or make the account, and its session. */
-async function finish(env, row, profile, deps, deviceId = null, extras = null) {
+/**
+ * A plain sign-in (no link): find or make the account, and its session.
+ * `viaDevice`: approved on another device, so the session is marked (see freshEnough).
+ */
+async function finish(env, row, profile, deps, deviceId = null, extras = null, viaDevice = false) {
   const { userId } = await upsertIdentity(env, profile);
   await claimGuestPairs(env, deviceId, userId, deps);
   const steamLink = extras ? await applyDiscordExtras(env, userId, profile, extras, deps) : null;
-  const result = await sessionFor(env, userId, deps, `${profile.provider}:${profile.providerId}`);
+  const result = await sessionFor(env, userId, deps, `${profile.provider}:${profile.providerId}`,
+    { authTime: nowS(), dev: viaDevice ? 1 : 0 });
   if (steamLink === 'combine') result.steam_has_account = true;
   const p = profile.provider || 'discord';
   deps.writeMetric && deps.writeMetric(env, 'auth_' + p + (p === 'steam' ? '_web' : ''));
@@ -652,13 +767,59 @@ async function finish(env, row, profile, deps, deviceId = null, extras = null) {
  * and send the browser back with a one-time code. Only the tab that began the
  * link (its secret + the account's session) can use it: POST /auth/link/complete.
  */
-async function holdLink(env, row, profile, extras) {
+async function holdLink(env, row, profile, extras, server = null) {
   const code = randomId(18);
   const held = { profile, codeHash: await sha256(code), deviceId: requestDeviceId(row) };
   if (extras) held.extras = { scopes: extras.scopes, email: extras.email, steamId: extras.steamId };
+  if (server) held.server = server;
   await env.DB.prepare("UPDATE auth_requests SET status = 'verified', profile_json = ? WHERE id = ?")
     .bind(JSON.stringify(held), row.id).run();
   return `${row.return_to}#ht_link=${encodeURIComponent(row.id + '.' + code)}`;
+}
+
+const EXCHANGE_TTL_S = 120;
+
+/**
+ * A redirect sign-in whose browser kept a value (begin's nonce_hash): the session is not put
+ * in the address. The browser comes back with a short single-use code, and POST /auth/exchange
+ * gives the session only to the holder of both the code and the value. Nothing about the
+ * account changes until then: a sign-in page opened from someone else's link does nothing.
+ */
+async function holdSignIn(env, row, profile, extras = null, server = null) {
+  const code = randomId(24);
+  const held = {
+    profile, deviceId: requestDeviceId(row), nonceHash: beginInfo(row).nonceHash, at: nowS(), server: server || null,
+    extras: extras ? { scopes: extras.scopes, email: extras.email, steamId: extras.steamId } : null,
+  };
+  await env.DB.prepare("UPDATE auth_requests SET status = 'exchange', secret_hash = ?, profile_json = ? WHERE id = ?")
+    .bind(await sha256(code), JSON.stringify(held), row.id).run();
+  return `${row.return_to}#ht_result=${encodeURIComponent(row.id + '.' + code)}`;
+}
+
+/**
+ * POST /auth/exchange { id, code, nonce } → { token, user, server?, steam? }
+ * The row is removed by the same statement that reads it, so a code works once. A code with
+ * the wrong value is used up and refused.
+ */
+export async function handleAuthExchange(request, env, corsOrigin, deps) {
+  let body = {};
+  try { body = await request.json(); } catch {}
+  const gone = () => deps.jsonResponse({ error: 'This sign-in has expired. Start it again.', code: 'signin_gone' }, 410, corsOrigin);
+  if (typeof body.id !== 'string' || typeof body.code !== 'string' || typeof body.nonce !== 'string') return gone();
+  if (body.code.length > 128 || body.nonce.length > 128) return gone();
+  const taken = await env.DB.prepare("DELETE FROM auth_requests WHERE id = ? AND status = 'exchange' AND secret_hash = ? RETURNING *")
+    .bind(body.id, await sha256(body.code)).all();
+  const row = taken.results && taken.results[0];
+  if (!row) return gone();
+  let held = null;
+  try { held = JSON.parse(row.profile_json); } catch {}
+  if (!held || !held.nonceHash || held.at < nowS() - EXCHANGE_TTL_S) return gone();
+  if ((await sha256(body.nonce)) !== held.nonceHash) {
+    deps.writeMetric && deps.writeMetric(env, 'auth_exchange_mismatch');
+    return deps.jsonResponse({ error: 'This sign-in was started in another browser or tab. Start it again here.', code: 'signin_mismatch' }, 403, corsOrigin);
+  }
+  const { steam_has_account: hasSteam, ...result } = await finish(env, row, held.profile, deps, cleanDeviceId(held.deviceId), held.extras);
+  return deps.jsonResponse({ ...result, server: held.server || undefined, steam: hasSteam ? 'has_account' : undefined }, 200, corsOrigin);
 }
 
 /** A sign-in page failed on our side: say so, and nothing about why (that is in the log). */
@@ -669,7 +830,7 @@ const EXPIRED_PAGE = () => page('This sign-in link has expired', '<p>Go back to 
 
 /** GET /auth/discord/callback?code&state — Discord sends the browser back here. */
 export async function handleDiscordCallback(request, env, url, deps) {
-  const row = await liveRequest(env, url.searchParams.get('state'));
+  const row = await liveDiscordRequest(env, url.searchParams.get('state'));
   if (!row || row.status !== 'pending') return EXPIRED_PAGE();
   if (url.searchParams.get('error')) {
     await env.DB.prepare("UPDATE auth_requests SET status = 'error', result_json = ? WHERE id = ?")
@@ -683,25 +844,30 @@ export async function handleDiscordCallback(request, env, url, deps) {
     ({ profile, accessToken } = got);
     extras = beginInfo(row).scopes || beginInfo(row).joinServer ? got : null;
   } catch (e) {
-    return page('Discord sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back to the game and try again.</p>`, 502);
+    console.error('discord sign-in failed', (e && e.message) || e);
+    return page('Discord sign-in failed', '<p>Discord did not confirm this sign-in.</p><p>Go back to the game and try again.</p>', 502);
   }
   // The website's checklist: signing in also joins the House Tandem server.
   const joined = wantsServerJoin(env, row) ? await addToServer(env, profile.providerId, accessToken, deps) : null;
   const server = joined ? `&ht_server=${joined}` : '';
+  const bound = !!beginInfo(row).nonceHash;   // a current client: hints travel over POST, not in the address
 
   if (row.mode === 'redirect') {
-    if (row.link_user_id) return Response.redirect((await holdLink(env, row, profile, extras)) + server, 302);
-    const result = await finish(env, row, profile, deps, requestDeviceId(row), extras);
-    await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
-    const steam = result.steam_has_account ? '&ht_steam=has_account' : '';
-    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}${server}${steam}`, 302);
+    if (row.link_user_id) {
+      const back = await holdLink(env, row, profile, extras, bound ? joined : null);
+      return Response.redirect(bound ? back : back + server, 302);
+    }
+    // A sign-in is only ever handed to the browser that began it (begin refuses any other).
+    if (!bound) return EXPIRED_PAGE();
+    return Response.redirect(await holdSignIn(env, row, profile, extras, joined), 302);
   }
 
   // Device mode: hold the profile until the player types the code their screen shows.
   const confirmKey = randomId(12);
+  const { basis, asker } = beginInfo(row);
   await env.DB.prepare("UPDATE auth_requests SET status = 'confirm', profile_json = ? WHERE id = ?")
-    .bind(JSON.stringify({ ...profile, confirmKey, deviceId: requestDeviceId(row), tries: 0 }), row.id).run();
-  return confirmPage(env, row, profile, confirmKey);
+    .bind(JSON.stringify({ ...profile, confirmKey, deviceId: requestDeviceId(row), tries: 0, basis, asker }), row.id).run();
+  return confirmPage(env, row, profile, confirmKey, '', asker);
 }
 
 const MAX_CODE_TRIES = 3;
@@ -711,16 +877,20 @@ const MAX_CODE_TRIES = 3;
  * with a code printed here) means a link someone sent you can't sign their TV
  * in as you: you would have to read the code off their screen.
  */
-async function confirmPage(env, row, profile, confirmKey, error = '') {
+async function confirmPage(env, row, profile, confirmKey, error = '', asker = null) {
   let action = 'sign the game in as you';
   if (row.link_user_id) {
     const acct = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(row.link_user_id).first();
     action = `add your Discord to <b>${escapeHtml((acct && acct.display_name) || 'this')}</b>'s House Tandem account`;
   }
+  const from = asker && asker.kind
+    ? `<p class="asker">This request came from <b>${escapeHtml(asker.kind)}</b>${asker.place ? ` near <b>${escapeHtml(asker.place)}</b>` : ''}.</p>`
+    : '';
   return page('Type the code on your screen', `
     <div class="who"><img src="${escapeHtml(profile.avatar)}" alt=""><span>${escapeHtml(profile.name)}</span></div>
+    ${from}
     <p>Type the 4-letter code your TV or game screen is showing. This will ${action}.</p>
-    <p class="note">Only do this for a screen in front of you. If someone sent you this link, close it.</p>
+    <p class="warn" role="alert"><b>Whoever is at that screen will be signed in as you.</b> Only continue for a screen in front of you. If someone sent you this link or read you a code, close this page.</p>
     ${error ? `<p class="error" role="alert">${escapeHtml(error)}</p>` : ''}
     <form method="POST" action="/auth/discord/confirm">
       <input type="hidden" name="r" value="${escapeHtml(row.id)}">
@@ -767,7 +937,7 @@ async function combinePage(env, row, confirmKey, otherId) {
 export async function handleDiscordConfirm(request, env, url, deps) {
   let form;
   try { form = await request.formData(); } catch { return page('Something went wrong', '<p>Try again from the game.</p>', 400); }
-  const row = await liveRequest(env, String(form.get('r') || ''));
+  const row = await liveDiscordRequest(env, String(form.get('r') || ''));
   if (!row || row.status !== 'confirm') return EXPIRED_PAGE();
   let held = null;
   try { held = JSON.parse(row.profile_json); } catch {}
@@ -790,7 +960,7 @@ export async function handleDiscordConfirm(request, env, url, deps) {
     const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
     const { status } = await combineInto(env, row.link_user_id, profile, deps);
     await claimGuestPairs(env, cleanDeviceId(held.deviceId), row.link_user_id, deps);
-    const result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)), linked: true, merged: status === 'combined' };
+    const result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null, held.basis)), linked: true, merged: status === 'combined' };
     await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
       .bind(JSON.stringify(result), row.id).run();
     return page('Combined', `<p>Your Discord and its progress are now part of <b>${escapeHtml(result.user.name)}</b>. Look back at the game. You can close this tab.</p>
@@ -805,7 +975,7 @@ export async function handleDiscordConfirm(request, env, url, deps) {
     }
     await env.DB.prepare('UPDATE auth_requests SET profile_json = ? WHERE id = ?').bind(JSON.stringify({ ...held, tries }), row.id).run();
     const profile = { provider: held.provider, providerId: held.providerId, name: held.name, avatar: held.avatar };
-    return confirmPage(env, row, profile, held.confirmKey, 'That isn\'t the code on the screen. Check it and try again.');
+    return confirmPage(env, row, profile, held.confirmKey, 'That isn\'t the code on the screen. Check it and try again.', held.asker);
   }
 
   const deviceId = cleanDeviceId(held.deviceId);
@@ -820,9 +990,9 @@ export async function handleDiscordConfirm(request, env, url, deps) {
       return combinePage(env, row, held.confirmKey, otherId);
     }
     await claimGuestPairs(env, deviceId, row.link_user_id, deps);
-    result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)), linked: true, merged: false };
+    result = { ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null, held.basis)), linked: true, merged: false };
   } else {
-    result = await finish(env, row, profile, deps, deviceId);
+    result = await finish(env, row, profile, deps, deviceId, null, true);
   }
   await env.DB.prepare("UPDATE auth_requests SET status = 'done', result_json = ?, profile_json = NULL WHERE id = ?")
     .bind(JSON.stringify(result), row.id).run();
@@ -839,7 +1009,7 @@ async function heldLinkRequest(request, env, body, deps, wantStatus) {
   if (row.status !== wantStatus) return null;
   let held = null;
   try { held = JSON.parse(row.profile_json); } catch {}
-  return held && held.profile ? { row, held } : null;
+  return held && held.profile ? { row, held, basis: basisOf(claims) } : null;
 }
 
 const LINK_GONE = 'This link has expired or was started somewhere else. Start it again from your account.';
@@ -855,7 +1025,7 @@ export async function handleLinkComplete(request, env, corsOrigin, deps) {
   if (!got || !body.code || (await sha256(String(body.code))) !== got.held.codeHash) {
     return deps.jsonResponse({ error: LINK_GONE, code: 'link_gone' }, 410, corsOrigin);
   }
-  const { row, held } = got;
+  const { row, held, basis } = got;
   const userId = row.link_user_id;
   const { status, otherId } = await addLogin(env, userId, held.profile, deps);
   if (status === 'combine') {
@@ -869,8 +1039,9 @@ export async function handleLinkComplete(request, env, corsOrigin, deps) {
   await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
   await claimGuestPairs(env, cleanDeviceId(held.deviceId), userId, deps);
   const steamLink = held.extras ? await applyDiscordExtras(env, userId, held.profile, held.extras, deps) : null;
-  const result = await sessionFor(env, userId, deps, row.link_login_id ?? null);
+  const result = await sessionFor(env, userId, deps, row.link_login_id ?? null, basis);
   if (steamLink === 'combine') result.steam_has_account = true;
+  if (held.server) result.server = held.server;
   return deps.jsonResponse({ status: 'linked', ...result }, 200, corsOrigin);
 }
 
@@ -883,12 +1054,12 @@ export async function handleLinkCombine(request, env, corsOrigin, deps) {
   try { body = await request.json(); } catch {}
   const got = await heldLinkRequest(request, env, body, deps, 'combine');
   if (!got) return deps.jsonResponse({ error: LINK_GONE, code: 'link_gone' }, 410, corsOrigin);
-  const { row, held } = got;
+  const { row, held, basis } = got;
   await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
   if (body.ok !== true) return deps.jsonResponse({ status: 'cancelled' }, 200, corsOrigin);
   await combineInto(env, row.link_user_id, held.profile, deps);
   if (held.extras) await applyDiscordExtras(env, row.link_user_id, held.profile, held.extras, deps);
-  return deps.jsonResponse({ status: 'combined', ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null)) }, 200, corsOrigin);
+  return deps.jsonResponse({ status: 'combined', ...(await sessionFor(env, row.link_user_id, deps, row.link_login_id ?? null, basis)) }, 200, corsOrigin);
 }
 
 // ------------------------------------------------------------
@@ -933,6 +1104,7 @@ export async function handleNoticeSeen(request, env, corsOrigin, userId, deps) {
 export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
   const body = await readBody(request);
   const claims = await sessionClaims(request, env, deps);
+  if (!freshEnough(claims)) return needFreshSignIn(deps, corsOrigin, 'undoing this');
   const ev = await env.DB.prepare('SELECT * FROM account_events WHERE id = ? AND user_id = ?').bind(Number(body.id) || 0, userId).first();
   if (!ev || ev.undone_at || ev.undo_until <= nowS()) {
     return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
@@ -969,7 +1141,21 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
   }
   await env.DB.prepare('UPDATE account_events SET undone_at = ? WHERE id = ?').bind(nowS(), ev.id).run();
   deps.writeMetric && deps.writeMetric(env, 'undo_' + ev.kind);
-  return deps.jsonResponse({ undone: true, kind: ev.kind, signed_out: !!(claims && leaving.includes(claims.lid)) }, 200, corsOrigin);
+  // Whatever came in through this change stops working, on every device. The session that
+  // asked carries on with a new token, unless its own login is the one that left.
+  await revokeSessions(env, userId, leaving);
+  const signedOut = !!(claims && leaving.includes(claims.lid));
+  const next = signedOut ? {} : await sessionFor(env, userId, deps, claims.lid ?? null, basisOf(claims));
+  return deps.jsonResponse({ undone: true, kind: ev.kind, signed_out: signedOut, ...next }, 200, corsOrigin);
+}
+
+/** POST /me/signout-all: every session of this account stops working, the one asking too. */
+export async function handleSignOutEverywhere(request, env, corsOrigin, userId, deps) {
+  if (!(await revokeSessions(env, userId))) {
+    return deps.jsonResponse({ error: 'That is not available yet. Try again later.' }, 503, corsOrigin);
+  }
+  deps.writeMetric && deps.writeMetric(env, 'signout_everywhere');
+  return deps.jsonResponse({ ok: true }, 200, corsOrigin);
 }
 
 /** POST /auth/poll { id, secret } → { status: pending | done | error | expired, ... } */
@@ -1024,7 +1210,12 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   const claims = await sessionClaims(request, env, deps);
   const linkUserId = claims ? claims.sub : null;
   if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
+  const nonceHash = cleanNonceHash(body.nonce_hash);
+  if (!linkUserId && !nonceHash) return updateRequired(deps, corsOrigin);
   const deviceId = cleanDeviceId(body.device_id);
+  const info = {};
+  if (deviceId) info.deviceId = deviceId;
+  if (nonceHash) info.nonceHash = nonceHash;
   const id = randomId(12);
   const secret = randomId(24);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
@@ -1032,7 +1223,7 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
     `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, profile_json, created_at)
      VALUES (?, ?, 'steam', 'redirect', NULL, ?, ?, ?, 'pending', ?, ?)`
   ).bind(id, await sha256(secret), linkUserId || null, linkUserId ? (claims.lid ?? null) : null, returnTo,
-         deviceId ? JSON.stringify({ deviceId }) : null, nowS()).run();
+         Object.keys(info).length ? JSON.stringify(info) : null, nowS()).run();
   return deps.jsonResponse({
     id, secret, expires_in: REQUEST_TTL_S,
     url: `${url.origin}/auth/steam/go?r=${encodeURIComponent(id)}`,
@@ -1119,13 +1310,13 @@ export async function handleSteamWebCallback(request, env, url, deps) {
     steamId = await verifySteamAssertion(url, row.id, fetchImpl);
   } catch (e) {
     await drop();
-    return page('Steam sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back and try again.</p>`, 401);
+    console.error('steam sign-in failed', (e && e.message) || e);
+    return page('Steam sign-in failed', '<p>Steam did not confirm this sign-in.</p><p>Go back and try again.</p>', 401);
   }
   const profile = await fetchSteamProfile(env, steamId, fetchImpl);
   if (row.link_user_id) return Response.redirect(await holdLink(env, row, profile, null), 302);
-  await drop();
-  const result = await finish(env, row, profile, deps, requestDeviceId(row));
-  return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
+  if (!beginInfo(row).nonceHash) { await drop(); return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410); }
+  return Response.redirect(await holdSignIn(env, row, profile), 302);
 }
 
 // ------------------------------------------------------------
@@ -1241,13 +1432,15 @@ const HANDOFF_TTL_S = 60;
 
 /** POST /auth/handoff (signed in) → { code, expires_in } */
 export async function handleHandoffCreate(request, env, corsOrigin, userId, deps, loginId = null) {
+  const claims = await sessionClaims(request, env, deps);
+  if (!freshEnough(claims, HANDOFF_FRESH_S)) return needFreshSignIn(deps, corsOrigin, 'opening another site signed in');
   const id = randomId(12);
   const secret = randomId(18);
   await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
   await env.DB.prepare(
-    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, created_at)
-     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, ?, NULL, 'done', ?)`
-  ).bind(id, await sha256(secret), userId, loginId ?? null, nowS()).run();
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, link_login_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, 'handoff', 'handoff', NULL, ?, ?, NULL, 'done', ?, ?)`
+  ).bind(id, await sha256(secret), userId, loginId ?? null, JSON.stringify({ basis: basisOf(claims) }), nowS()).run();
   return deps.jsonResponse({ code: `${id}.${secret}`, expires_in: HANDOFF_TTL_S }, 200, corsOrigin);
 }
 
@@ -1258,14 +1451,19 @@ export async function handleHandoffRedeem(request, env, corsOrigin, deps) {
   const [id, secret] = String(body.code || '').split('.');
   const gone = () => deps.jsonResponse({ error: 'This sign-in link has expired' }, 410, corsOrigin);
   if (!id || !secret) return gone();
-  const row = await env.DB.prepare("SELECT * FROM auth_requests WHERE id = ? AND provider = 'handoff'").bind(id).first();
-  if (!row) return gone();
-  await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(id).run();
-  if (row.created_at < nowS() - HANDOFF_TTL_S || (await sha256(secret)) !== row.secret_hash) return gone();
+  // One statement finds and removes it, so two requests with the same code can't both win.
+  const taken = await env.DB.prepare("DELETE FROM auth_requests WHERE id = ? AND provider = 'handoff' AND secret_hash = ? RETURNING *")
+    .bind(id, await sha256(secret)).all();
+  const row = taken.results && taken.results[0];
+  if (!row || row.created_at < nowS() - HANDOFF_TTL_S) return gone();
   const user = await env.DB.prepare('SELECT id, display_name, avatar_url FROM users WHERE id = ?').bind(row.link_user_id).first();
   if (!user) return gone();
+  let held = null;
+  try { held = JSON.parse(row.profile_json || 'null'); } catch {}
+  // A code made just before this version has no record of its session: a short one, not fresh.
+  const basis = (held && held.basis) || { exp: nowS() + 86400 };
   // The other site is the same login as the one that asked (#783).
-  const { token } = await sessionFor(env, user.id, deps, row.link_login_id ?? null);
+  const { token } = await sessionFor(env, user.id, deps, row.link_login_id ?? null, basis);
   const identities = await listIdentities(env, user.id);
   deps.writeMetric && deps.writeMetric(env, 'auth_handoff');
   return deps.jsonResponse({ token, user: { id: user.id, name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
@@ -1293,6 +1491,8 @@ function page(title, body, status = 200) {
                 padding: 12px 8px 12px calc(8px + .3em); border-radius: 12px; border: 2px solid #5b5068; background: #2a2335; color: #ffd36b; width: 100%; box-sizing: border-box; }
   .code-input:focus { outline: none; border-color: #ffd36b; }
   .note { font-size: 14px; opacity: .75; }
+  .asker { font-size: 15px; }
+  .warn { font-size: 14px; background: #3a2320; border: 1px solid #8a4a3f; border-radius: 10px; padding: 10px 12px; text-align: left; }
   .error { color: #ff9b8a; font-weight: 600; }
   .acct { background: #221c2c; border: 1px solid #3a3147; border-radius: 14px; padding: 12px; margin: 10px 0; }
   .acct-label { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; opacity: .65; margin-bottom: 8px; }

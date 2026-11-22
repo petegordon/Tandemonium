@@ -120,7 +120,7 @@ test('the board gives at most 200 rows, and a sign-in carries only a confirmed a
 });
 
 test('the dashboard shows what the API returns as text', () => {
-  const html = read('dashboard', 'index.html');
+  const html = read('dashboard', 'dashboard.js');
   const src = html.slice(html.indexOf('function plain('));
   const plain = new Function(src.slice(0, src.indexOf('\n}\n') + 2) + '\nreturn plain;')();
   const out = plain({ controllers: [{ controller_name: '<img src=x onerror=alert(1)>', rides: 3 }], 'k"<': 'a\'b`c', n: null, ok: true });

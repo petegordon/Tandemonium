@@ -8,7 +8,7 @@
 //                never shown to players; it is the only way to tell "the same
 //                person came back tomorrow" from "a new player arrived", which
 //                is what makes D1/D7 retention measurable for signed-out users.
-//   google_uid — only for signed-in players.
+//   account    — only from a verified sign-in token (account_token), never a claimed id.
 //
 // Helper vocabulary used by the current work (add here, don't invent names at
 // the call site):
@@ -20,6 +20,46 @@ const API_BASE = 'https://tandemonium-api.pete-872.workers.dev/api/analytics';
 const IS_ELECTRON = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
 const DISABLED = !IS_ELECTRON && typeof location !== 'undefined' &&
   (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+
+// Consent (js/consent.js): null until the game knows whether this player may be counted,
+// then true or false. Nothing is sent before a yes; a no clears what was waiting.
+let allowed = null;
+let consentMark = null;      // sent with every write after a yes in a country that asks
+let pendingSession = null;   // the session row, held until a yes (kept through a no: Settings can turn it on later)
+const PENDING_EVENTS_MAX = 300;
+
+/** Add the mark of a yes to an analytics address (the API drops unmarked writes from countries that ask). */
+function marked(url) {
+  return consentMark ? url + (url.includes('?') ? '&' : '?') + 'consent=' + encodeURIComponent(consentMark) : url;
+}
+
+/** May analytics run? null: not known yet. */
+export function analyticsAllowed() { return allowed; }
+/** Analytics never run here (a developer's own machine). */
+export function analyticsDisabled() { return DISABLED; }
+
+/**
+ * The answer is in. true: the held session starts and events flow. false: nothing is sent,
+ * now or later this launch, and what was waiting is dropped. `mark`: the consent version.
+ */
+export function setAnalyticsAllowed(yes, mark = null) {
+  allowed = !!yes;
+  consentMark = allowed && mark ? String(mark) : null;
+  if (!allowed) {
+    eventBuffer = [];
+    rideEventBuffer = [];
+    currentRideId = null;
+    if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+    return;
+  }
+  if (DISABLED) return;
+  if (pendingSession) {
+    const data = pendingSession;
+    pendingSession = null;
+    createSession(accountToken ? { ...data, account_token: accountToken } : data);
+  }
+  if (sessionId && !flushTimer) flushTimer = setInterval(flushUIEvents, 5000);
+}
 
 let sessionId = null;
 let currentInputMethod = null;
@@ -90,17 +130,21 @@ export function initSession(opts) {
   sessionId = uuid();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
+  // Already signed in at launch: the server reads the account from this token.
+  if (opts.account_token) accountToken = opts.account_token;
 
   sessionStartTime = performance.now();
 
-  createSession({
+  const data = {
     id: sessionId,
     started_at: new Date().toISOString(),
     ...opts,
     device_id: getDeviceId(),
     user_agent: navigator.userAgent,
-  });
-
+  };
+  // Not known yet whether this player may be counted: the row waits (setAnalyticsAllowed).
+  if (allowed !== true) { pendingSession = data; return sessionId; }
+  createSession(data);
   flushTimer = setInterval(flushUIEvents, 5000);
   return sessionId;
 }
@@ -118,10 +162,10 @@ export function attachAccount(token) {
   if (DISABLED || !token || token === accountToken) return;
   accountToken = token;
   const sid = sessionId;
-  if (!sid) return;
+  if (!sid || allowed !== true) return;   // (a held session row takes the token with it)
   const send = (attempt) => {
-    if (accountToken !== token) return;   // signed in again since: that one carries on
-    fetch(`${API_BASE}/session/${sid}`, {
+    if (accountToken !== token || allowed !== true) return;   // signed in again since: that one carries on
+    fetch(marked(`${API_BASE}/session/${sid}`), {
       method: 'PUT', headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ account_token: token }), keepalive: true, credentials: 'omit',
     }).then((r) => { if (!r.ok) throw new Error(String(r.status)); })
@@ -144,6 +188,7 @@ export function getSessionId() {
 // ---- UI/Flow Event Tracking ----
 
 export function trackEvent(eventType, eventData = null) {
+  if (allowed === false) return;
   eventBuffer.push({
     session_id: getSessionId(),
     event_type: eventType,
@@ -327,8 +372,8 @@ export function trackConversion(action, context, url = null) {
  * for them), but the row carries the device, platform and user agent.
  */
 function createSession(data, attempt = 0) {
-  if (DISABLED) return;
-  fetch(`${API_BASE}/session`, {
+  if (DISABLED || allowed !== true) return;
+  fetch(marked(`${API_BASE}/session`), {
     method: 'POST',
     headers: { 'Content-Type': 'text/plain' },
     body: JSON.stringify(data),
@@ -343,6 +388,12 @@ function createSession(data, attempt = 0) {
 }
 
 function flushUIEvents() {
+  if (allowed !== true) {
+    // Waiting for the answer: keep the latest few. A no: keep none.
+    if (allowed === false) eventBuffer = [];
+    else if (eventBuffer.length > PENDING_EVENTS_MAX) eventBuffer.splice(0, eventBuffer.length - PENDING_EVENTS_MAX);
+    return;
+  }
   if (eventBuffer.length === 0) return;
   const batch = eventBuffer.splice(0);
   // Events tracked before initSession() have no session yet; give them this one.
@@ -352,7 +403,7 @@ function flushUIEvents() {
 }
 
 function beacon(url, data, method = 'POST') {
-  if (DISABLED) return;
+  if (DISABLED || allowed !== true) return;
   try {
     const body = JSON.stringify(data);
 
@@ -360,7 +411,7 @@ function beacon(url, data, method = 'POST') {
     // sendBeacon inherits cookies which forces credentials mode and requires
     // Access-Control-Allow-Credentials, complicating CORS. fetch + keepalive
     // is equally reliable for fire-and-forget.
-    fetch(url, {
+    fetch(marked(url), {
       method,
       headers: { 'Content-Type': 'text/plain' },
       body,
