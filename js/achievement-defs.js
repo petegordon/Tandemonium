@@ -783,11 +783,15 @@ export const ROAD_HALF_WIDTH = 2.5;         // metres from the centre: off-road 
 export const FALSE_START_S = 3;
 export const SO_CLOSE_M = 10;            // a road with no checkpoints: the last 10 m
 
-/** Where the last checkpoint sits on a road (0 when it has none). Same list RaceManager builds. */
+/**
+ * So Close: the checkpoint a crash must be past (0 when the road has none). The finish counts as the last
+ * checkpoint, so this is the one before it. Grandma's is 250 m with a checkpoint every 62 m: the one at 248 m is
+ * effectively the finish line, and the final stretch starts at 186 m.
+ */
 export function lastCheckpointM(raceDistance, interval) {
   const d = n(raceDistance), i = n(interval);
   if (!(d > 0) || !(i > 0) || i >= d) return 0;
-  return Math.ceil(d / i - 1) * i;
+  return (Math.floor(d / i) - 1) * i;
 }
 
 export class RideTracker {

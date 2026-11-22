@@ -264,9 +264,11 @@ test('So Close: anywhere past the last checkpoint', () => {
   assert.equal(at(241, 0), true);
 });
 
-test('lastCheckpointM matches RaceManager', () => {
+test('lastCheckpointM: the checkpoint before the finish line', () => {
+  assert.equal(lastCheckpointM(250, 62), 186);  // Grandma's: 248 m is effectively the finish
+  assert.equal(lastCheckpointM(500, 125), 375); // Daily Ride
   assert.equal(lastCheckpointM(250, 50), 200);
-  assert.equal(lastCheckpointM(260, 50), 250);
+  assert.equal(lastCheckpointM(260, 50), 200);
   assert.equal(lastCheckpointM(250, 250), 0);   // Tourist: one "checkpoint" at the end = none
   assert.equal(lastCheckpointM(250, 0), 0);
 });
