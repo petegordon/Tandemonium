@@ -69,13 +69,22 @@ function seeded() {
 }
 
 async function dash(db, route, query) {
-  const auth = await token({ sub: 1, email: 'pete@petegordon.com' });
-  const res = await worker.fetch(new Request(`https://api.test/api/analytics/dashboard/${route}?days=30&${query}`, {
-    headers: { Authorization: 'Bearer ' + auth, 'CF-Connecting-IP': '2603:6013:1400:66::1' },
-  }), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+  const res = await dashRaw(db, route, query, await token({ sub: 38, email: 'pete@petegordon.com' }));
   assert.equal(res.status, 200, await res.clone().text());
   return res.json();
 }
+
+const dashRaw = (db, route, query, auth) => worker.fetch(new Request(`https://api.test/api/analytics/dashboard/${route}?days=30&${query}`, {
+  headers: { Authorization: 'Bearer ' + auth, 'CF-Connecting-IP': '2603:6013:1400:66::1' },
+}), { DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET }, { waitUntil() {} });
+
+test('a session ended from the account no longer opens the dashboard', async () => {
+  const db = seeded();
+  const auth = await token({ sub: 38, email: 'pete@petegordon.com' });
+  assert.equal((await dashRaw(db, 'overview', '', auth)).status, 200);
+  db.prepare('UPDATE user_logins SET token_version = 1 WHERE user_id = 38').run();
+  assert.equal((await dashRaw(db, 'overview', '', auth)).status, 401);
+});
 
 test('no exclusion counts every session', async () => {
   const o = await dash(seeded(), 'overview', '');
