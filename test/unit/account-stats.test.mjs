@@ -61,7 +61,7 @@ const envFor = (db) => ({ DB: d1(db), CORS_ORIGIN: '*', JWT_SECRET: SECRET, AUTH
 const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
 function jwt(sub) {
   const h = b64u({ alg: 'HS256', typ: 'JWT' });
-  const p = b64u({ sub, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+  const p = b64u({ sub, iat: Math.floor(Date.now() / 1000), auth_time: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
   const sig = crypto.createHmac('sha256', SECRET).update(`${h}.${p}`).digest('base64url');
   return `${h}.${p}.${sig}`;
 }

@@ -23,6 +23,7 @@ import {
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
   resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
+  handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
@@ -172,6 +173,10 @@ export default {
       if (path === '/auth/poll' && request.method === 'POST') {
         return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
+      // A redirect sign-in's code + the value its browser kept → the session.
+      if (path === '/auth/exchange' && request.method === 'POST') {
+        return handleAuthExchange(request, env, corsOrigin, identityDeps());
+      }
       // #612 · a link finishes in the tab that began it; a combine only after the player said yes.
       if (path === '/auth/link/complete' && request.method === 'POST') {
         return handleLinkComplete(request, env, corsOrigin, identityDeps());
@@ -205,6 +210,9 @@ export default {
       }
       if (path === '/me/discord') {
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/me/signout-all' && request.method === 'POST') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleSignOutEverywhere(req, e, c, uid, identityDeps()));
       }
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
@@ -340,7 +348,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
   // Create server JWT (include email for dashboard access control). #783: lid = this login.
-  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId }, env.JWT_SECRET);
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
@@ -424,7 +432,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
   await attachSessionAccount(env, body.session_id, userId, loginId);
 
   // #783 · lid: the login this session is (its account is whatever that login belongs to).
-  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId }, env.JWT_SECRET);
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
   return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
@@ -1401,7 +1409,7 @@ export const PLAYER_LIMIT = 30;
 export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
-  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo']);
+  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all']);
 // The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
 const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
   '/auth/steam/go', '/auth/steam/callback']);
@@ -2901,6 +2909,7 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   let body = {};
   try { body = await request.json(); } catch {}
   if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
+  if (!freshEnough(await claimsFromRequest(request, env))) return needFreshSignIn(identityDeps(), corsOrigin, 'deleting your account');
   const key = userId;
   const counts = {};
   for (const [name, sql, arg] of [

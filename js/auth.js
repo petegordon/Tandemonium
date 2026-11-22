@@ -16,13 +16,13 @@
 // Discord sign-in:
 //   - same device (a browser with a mouse or touch): a full-page redirect to
 //     Discord and back; the session comes back in the URL fragment.
-//   - device code (TV, Steam build, or linking): the game shows a QR + a
-//     4-letter code; the player finishes in a browser (their phone, or the
-//     system browser the Steam build opens) and types the code. The game
-//     polls the API with a secret only it holds. Linking from a phone adds a
-//     Discord with no account of its own; if it has one, the phone shows both
-//     accounts and the player chooses Combine (#612). Every link and combine
-//     shows a notice with undo.
+//   - device code (TV, Steam build): the game shows a QR + a 4-letter code; the
+//     player finishes in a browser (their phone, or the system browser the Steam
+//     build opens) and types the code. The game polls the API with a secret only
+//     it holds. A session made this way can play but can't delete, link or open
+//     another site signed in without a sign-in in a browser.
+//   - adding a login to an account happens on the account page in a browser.
+//     Every link and combine shows a notice with undo.
 
 import { API_BASE } from './config.js';
 import { getDeviceId, getSessionId, attachAccount } from './analytics.js';
@@ -137,7 +137,11 @@ export class AuthManager {
    */
   async resumeFromRedirect() {
     const back = await this.identity.resume();
-    if (!back || !back.signedIn) return false;
+    if (!back) return false;
+    if (!back.signedIn) {
+      if (back.error) this.lastAuthError = back.error;
+      return false;
+    }
     if (this._onLoginCallback) this._onLoginCallback(this.user);
     return true;
   }
@@ -160,15 +164,17 @@ export class AuthManager {
 
   /**
    * Device code: start (or reuse) a sign-in finished in another browser. Signed in
-   * already, it links Discord to this account instead.
+   * already, Discord is added on the account page instead: a code approved on another
+   * device is never what joins two logins.
    * Resolves { url, code, expiresAt } for the QR, then keeps polling; `onDone`
    * gets (user, { linked, merged }) or (null, { error }). One at a time.
    */
   async startDiscordDevice({ onDone, onStatus } = {}) {
-    const link = this.isLoggedIn() && !this.isTokenExpired();
+    if (this.isLoggedIn() && !this.isTokenExpired()) {
+      throw new Error('To add Discord, open housetandem.com/account in a browser, sign in, and choose Link Discord.');
+    }
     try {
       return await this.identity.startDevice({
-        link,
         onStatus,
         onDone: (user, info) => {
           if (onDone) onDone(user, info);
