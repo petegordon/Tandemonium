@@ -4413,6 +4413,11 @@ export class Lobby {
             if (info && info.linked) this._justLinkedAt = Date.now();
             if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
             if (this._profileUpdateUI) this._profileUpdateUI(user);
+            // Linked from the account page: the QR has done its job. The card stays open on both logins.
+            if (info && info.linked) {
+              this._hideProfileDevice();
+              if (this._activeModal === 'profile') this._modalFocus.setItems(this._profileItems(), 0);
+            }
             return;
           }
           const err = info && info.error;
@@ -4424,6 +4429,7 @@ export class Lobby {
             return;
           }
           // Expired or cancelled while the popup is still open: a fresh code.
+          if (this.auth.isLoggedIn()) { this._hideProfileDevice(); return; }   // the wait for a link ran out: the button is back
           this._setProfileDeviceStatus(err === 'cancelled' ? 'Cancelled. Scan again to sign in.' : 'That code expired. Here is a new one.');
           setTimeout(() => { if (this.profilePopup.classList.contains('visible')) this._showProfileDevice(); }, 1500);
         },
@@ -4440,8 +4446,17 @@ export class Lobby {
       qr.make();
       qrEl.innerHTML = qr.createSvgTag({ cellSize: 3, margin: 1 });
     } catch (_) { qrEl.innerHTML = ''; }
-    document.getElementById('profile-popup-code').textContent = dev.code || '';
-    this._setProfileDeviceStatus('Waiting for Discord…');
+    // Adding Discord to an account is done on the account page: other steps, no code.
+    const steps = box.querySelector('.profile-popup-steps');
+    if (steps) {
+      if (!this._profileDeviceSteps) this._profileDeviceSteps = steps.innerHTML;
+      steps.innerHTML = dev.linkPage
+        ? '<li>Scan with your phone&rsquo;s camera</li><li>Sign in with Steam</li><li>Choose <b>Link Discord</b></li>'
+        : this._profileDeviceSteps;
+    }
+    const codeEl = document.getElementById('profile-popup-code');
+    if (codeEl) codeEl.textContent = dev.code || '';
+    this._setProfileDeviceStatus(dev.linkPage ? 'This screen updates when Discord is linked.' : 'Waiting for Discord…');
     this._profileDevUrl = dev.url;
     if (openBtn && this._hasDesktopBrowser()) openBtn.style.display = '';
     // The pad list loses the hidden trigger and gains OPEN ON THIS COMPUTER; focus lands
@@ -9055,6 +9070,7 @@ export class Lobby {
           try {
             const dev = await this.auth.startDiscordDevice({
               onStatus: (s) => { this._p1DeviceStatus = s; emit(1); },
+              // (Signed in already, this is the account page's address and no code: see auth.js.)
               onDone: (user, info) => {
                 this._p1DeviceStatus = null;
                 if (user) {

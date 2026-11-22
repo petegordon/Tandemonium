@@ -18,7 +18,7 @@ const ROOM_CODE_PATTERN = '^TNDM-[A-Z0-9]{4}$';
 const SETTINGS = {
     ROOM_BINDING: 'TANDEM_ROOM',
     ROOM_CODE_PATTERN,
-    ALLOWED_ORIGINS: 'https://tandemonium.housetandem.com,https://tandemonium.jimandi.love',
+    ALLOWED_ORIGINS: 'https://tandemonium.housetandem.com',
     RELAY_NAME: 'Tandemonium',
 };
 

@@ -60,6 +60,12 @@ export const TEXT = Object.freeze({
   combineAsk: (/** @type {string} */ into) => `Combine it into ${into}? Rides, achievements and progress in every House Tandem game are kept from both, and both sign-ins open the combined account. You can separate them again for 7 days.`,
   combineYes: 'Combine',
   combineNo: 'Cancel',
+  // Asked before a sign-in takes this browser (a link from another site, or a different account).
+  continueTitle: (/** @type {string} */ name) => (name ? `Continue as ${name}?` : 'Continue with this account?'),
+  continueWarn: 'Only continue if you opened this yourself.',
+  continueSwitch: (/** @type {string} */ from) => `You are signed in here as ${from}. Continuing switches this browser to the other account.`,
+  continueYes: 'Continue',
+  continueNo: 'Cancel',
   combined: 'Combined. Both sign-ins now open this account.',
   nothingChanged: 'Nothing was changed.',
   linked: (/** @type {string} */ p) => `${providerName(p)} is linked.`,

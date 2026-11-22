@@ -52,6 +52,8 @@ test('a new window is for a web address only', () => {
 test('the system browser is opened only for our own sign-in pages', () => {
   assert.equal(T.isSignInUrl('https://tandemonium-api.pete-872.workers.dev/auth/discord/go?r=abc'), true);
   assert.equal(T.isSignInUrl('https://api.housetandem.com/auth/discord/go?r=abc'), true);
+  assert.equal(T.isSignInUrl('https://housetandem.com/account'), true, 'the account page, where a login is added');
+  for (const u of ['https://housetandem.com/account?x=1', 'https://housetandem.com/account#x', 'https://housetandem.com/other', 'http://housetandem.com/account', 'https://evil.housetandem.com.example/account']) assert.equal(T.isSignInUrl(u), false, u);
   for (const url of [
     'https://someone-else.workers.dev/auth/discord/go',
     'https://api.housetandem.com/share/x',

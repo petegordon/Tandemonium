@@ -143,9 +143,8 @@ export async function firstLogin(env, userId) {
 }
 
 /**
- * #783 · who a verified session token is, now: its login (the token's `lid`, or the
- * sign-in named by `via` in tokens from before lids) and the account that login belongs
- * to today. So a session follows its login through a combine or a separate. A token with
+ * #783 · who a verified session token is, now: its login (the token's `lid`) and the
+ * account that login belongs to today. So a session follows its login through a combine or a separate. A token with
  * neither is its account's first sign-in. → the claims with `sub` and `lid` set, or null
  * when the login and the account are both gone.
  */
@@ -157,13 +156,6 @@ export async function resolveSession(env, claims) {
     // A token that names a login is that login or nothing: login ids are never reused.
     login = await env.DB.prepare('SELECT * FROM user_logins WHERE login_id = ?').bind(claims.lid).first();
     if (!login) return null;
-  } else if (typeof claims.via === 'string' && claims.via.includes(':') && !flagOff(env, 'AUTH_LEGACY_VIA')) {
-    // Tokens from before lids. The login must be one that existed when the token was made,
-    // so a sign-in created again later is not picked up by an older token.
-    const i = claims.via.indexOf(':');
-    const row = await env.DB.prepare('SELECT * FROM user_logins WHERE provider = ? AND provider_id = ?')
-      .bind(claims.via.slice(0, i), claims.via.slice(i + 1)).first();
-    if (row && loginExistedAt(row, claims.iat)) login = row;
   }
   if (!login && claims.sub != null) {
     login = await env.DB.prepare("SELECT * FROM user_logins WHERE user_id = ? AND provider != 'device' ORDER BY login_id LIMIT 1")
@@ -177,23 +169,6 @@ export async function resolveSession(env, claims) {
   // An account with no sign-in row at all (none are expected): still that account.
   const user = await env.DB.prepare('SELECT 1 AS x FROM users WHERE id = ?').bind(claims.sub).first();
   return user ? { ...claims, lid: null } : null;
-}
-
-/**
- * A compatibility path that stays on until its Worker variable is set to 'off':
- *   AUTH_LEGACY_TOKEN_REDIRECT  redirect sign-ins from pages that keep no value (#ht_auth)
- *   AUTH_DEVICE_LINK            adding a login by device code (installed game builds)
- *   AUTH_LEGACY_VIA             tokens from before login ids, found through `via`
- */
-function flagOff(env, name) {
-  return String((env && env[name]) || '').toLowerCase() === 'off';
-}
-
-/** Did this login exist at `iat`? (linked_at is SQLite's UTC 'YYYY-MM-DD HH:MM:SS'.) */
-function loginExistedAt(login, iat) {
-  if (!Number.isFinite(iat)) return false;
-  const at = Date.parse(String(login.linked_at || '').replace(' ', 'T') + 'Z');
-  return Number.isFinite(at) && Math.floor(at / 1000) <= iat;
 }
 
 /** Has this login's sessions been ended since the token was made? A token with no `tv` is version 0. */
@@ -508,9 +483,8 @@ export function allowedReturnTo(returnTo, corsSetting, pickCorsOrigin) {
   let u;
   try { u = new URL(returnTo); } catch { return null; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  // Only a site on this API's own list (local addresses only where the list names them), and
-  // never the old domain: it can still call the API while players move, but receives no sign-in.
-  if (!originListed(u.origin, corsSetting) || u.hostname === 'tandemonium.jimandi.love') return null;
+  // Only a site on this API's own list (local addresses only where the list names them).
+  if (!originListed(u.origin, corsSetting)) return null;
   u.hash = '';
   return u.toString();
 }
@@ -560,10 +534,11 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
   const claims = await sessionClaims(request, env, deps);
   const linkUserId = claims ? claims.sub : null;
   if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
-  // Adding a login by device code: only installed builds still ask, until this is off.
-  if (linkUserId && mode === 'device' && flagOff(env, 'AUTH_DEVICE_LINK')) return linkNeedsBrowser(deps, corsOrigin);
+  // A login is added in a browser, never by a code approved on another device.
+  if (linkUserId && mode === 'device') return linkNeedsBrowser(deps, corsOrigin);
+  // A redirect sign-in is bound to the browser that began it.
   const nonceHash = cleanNonceHash(body.nonce_hash);
-  if (legacyRedirectRefused(env, mode, linkUserId, nonceHash)) return updateRequired(deps, corsOrigin);
+  if (mode === 'redirect' && !linkUserId && !nonceHash) return updateRequired(deps, corsOrigin);
 
   const deviceId = cleanDeviceId(body.device_id);
   const info = {};
@@ -595,10 +570,6 @@ export async function handleDiscordBegin(request, env, url, corsOrigin, deps) {
 /** The hash of the value a browser keeps for its sign-in (base64url SHA-256), or null. */
 function cleanNonceHash(v) {
   return typeof v === 'string' && /^[A-Za-z0-9_-]{43}$/.test(v) ? v : null;
-}
-/** With AUTH_LEGACY_TOKEN_REDIRECT=off, a redirect sign-in must be bound to its browser. */
-function legacyRedirectRefused(env, mode, linkUserId, nonceHash) {
-  return mode === 'redirect' && !linkUserId && !nonceHash && flagOff(env, 'AUTH_LEGACY_TOKEN_REDIRECT');
 }
 function updateRequired(deps, corsOrigin) {
   return deps.jsonResponse({ error: 'Reload this page, then sign in again.', code: 'update_required' }, 400, corsOrigin);
@@ -873,7 +844,8 @@ export async function handleDiscordCallback(request, env, url, deps) {
     ({ profile, accessToken } = got);
     extras = beginInfo(row).scopes || beginInfo(row).joinServer ? got : null;
   } catch (e) {
-    return page('Discord sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back to the game and try again.</p>`, 502);
+    console.error('discord sign-in failed', (e && e.message) || e);
+    return page('Discord sign-in failed', '<p>Discord did not confirm this sign-in.</p><p>Go back to the game and try again.</p>', 502);
   }
   // The website's checklist: signing in also joins the House Tandem server.
   const joined = wantsServerJoin(env, row) ? await addToServer(env, profile.providerId, accessToken, deps) : null;
@@ -885,11 +857,9 @@ export async function handleDiscordCallback(request, env, url, deps) {
       const back = await holdLink(env, row, profile, extras, bound ? joined : null);
       return Response.redirect(bound ? back : back + server, 302);
     }
-    if (bound) return Response.redirect(await holdSignIn(env, row, profile, extras, joined), 302);
-    const result = await finish(env, row, profile, deps, requestDeviceId(row), extras);
-    await env.DB.prepare('DELETE FROM auth_requests WHERE id = ?').bind(row.id).run();
-    const steam = result.steam_has_account ? '&ht_steam=has_account' : '';
-    return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}${server}${steam}`, 302);
+    // A sign-in is only ever handed to the browser that began it (begin refuses any other).
+    if (!bound) return EXPIRED_PAGE();
+    return Response.redirect(await holdSignIn(env, row, profile, extras, joined), 302);
   }
 
   // Device mode: hold the profile until the player types the code their screen shows.
@@ -1241,7 +1211,7 @@ export async function handleSteamWebBegin(request, env, url, corsOrigin, deps) {
   const linkUserId = claims ? claims.sub : null;
   if (linkUserId && !freshEnough(claims)) return needFreshSignIn(deps, corsOrigin);
   const nonceHash = cleanNonceHash(body.nonce_hash);
-  if (legacyRedirectRefused(env, 'redirect', linkUserId, nonceHash)) return updateRequired(deps, corsOrigin);
+  if (!linkUserId && !nonceHash) return updateRequired(deps, corsOrigin);
   const deviceId = cleanDeviceId(body.device_id);
   const info = {};
   if (deviceId) info.deviceId = deviceId;
@@ -1340,14 +1310,13 @@ export async function handleSteamWebCallback(request, env, url, deps) {
     steamId = await verifySteamAssertion(url, row.id, fetchImpl);
   } catch (e) {
     await drop();
-    return page('Steam sign-in failed', `<p>${escapeHtml(e.message)}</p><p>Go back and try again.</p>`, 401);
+    console.error('steam sign-in failed', (e && e.message) || e);
+    return page('Steam sign-in failed', '<p>Steam did not confirm this sign-in.</p><p>Go back and try again.</p>', 401);
   }
   const profile = await fetchSteamProfile(env, steamId, fetchImpl);
   if (row.link_user_id) return Response.redirect(await holdLink(env, row, profile, null), 302);
-  if (beginInfo(row).nonceHash) return Response.redirect(await holdSignIn(env, row, profile), 302);
-  const result = await finish(env, row, profile, deps, requestDeviceId(row));
-  await drop();
-  return Response.redirect(`${row.return_to}#ht_auth=${encodeURIComponent(result.token)}`, 302);
+  if (!beginInfo(row).nonceHash) { await drop(); return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410); }
+  return Response.redirect(await holdSignIn(env, row, profile), 302);
 }
 
 // ------------------------------------------------------------

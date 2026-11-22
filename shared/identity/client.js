@@ -46,6 +46,11 @@ async function newSignInNonce() {
   return { nonce, hash };
 }
 
+/** How the switch question is asked when a client is given no `confirmSwitch` (the package's index sets the on-page one). */
+let defaultAsk = null;
+/** @param {((q: { from: { name?: string }|null, to: { name?: string, avatar?: string } }) => boolean|Promise<boolean>)|null} fn */
+export function setDefaultConfirm(fn) { defaultAsk = typeof fn === 'function' ? fn : null; }
+
 /** The browser's own yes/no. No dialog available: the answer is no. */
 function askInBrowser({ from, to }) {
   const ask = /** @type {any} */ (globalThis).confirm;
@@ -79,7 +84,7 @@ function askInBrowser({ from, to }) {
  * @property {History} [history]
  * @property {() => number} [now]
  * @property {boolean} [forgetOn401]                  refresh(): any 401 ends the session (default: only `account_gone` does; meStatus says 401)
- * @property {(q: { from: { name?: string }|null, to: { name?: string } }) => boolean|Promise<boolean>} [confirmSwitch]
+ * @property {(q: { from: { name?: string }|null, to: { name?: string, avatar?: string } }) => boolean|Promise<boolean>} [confirmSwitch]
  *                                                   ask before a sign-in replaces a different account (default: the browser's confirm)
  */
 
@@ -96,18 +101,15 @@ export function decodeToken(token) {
  * Pull what a sign-in redirect brought back out of the URL fragment, and clean the URL:
  *   #ht_result=<id>.<code>      a sign-in to swap for a session (with this tab's value)
  *   #ht_link=<id>.<code>        a link to finish (completeLink)
- *   #ht_auth=<token>            a sign-in from an older server or tab
- *   &ht_server=joined|…         older servers: the Discord server join's result
- *   &ht_steam=has_account       older servers: Discord's verified Steam has its own account
- * @returns {{ token?: string, result?: { id: string, code: string }, link?: { id: string, code: string }, server?: string, steam?: string }|null}
+ * A session token in the address (#ht_auth, from servers before 0.5) is taken off and never
+ * used: nothing in an address says who began the sign-in.
+ * @returns {{ result?: { id: string, code: string }, link?: { id: string, code: string }, server?: string, steam?: string }|null}
  */
 export function takeRedirect(loc = globalThis.location, hist = globalThis.history) {
   if (!loc || !loc.hash || !/ht_(auth|link|result)=/.test(loc.hash)) return null;
   const params = new URLSearchParams(loc.hash.slice(1));
-  /** @type {{ token?: string, result?: { id: string, code: string }, link?: { id: string, code: string }, server?: string, steam?: string }} */
+  /** @type {{ result?: { id: string, code: string }, link?: { id: string, code: string } }} */
   const out = {};
-  const token = params.get('ht_auth');
-  if (token) out.token = token;
   const pair = (/** @type {string|null} */ v) => {
     if (!v || !v.includes('.')) return undefined;
     const i = v.indexOf('.');
@@ -117,14 +119,10 @@ export function takeRedirect(loc = globalThis.location, hist = globalThis.histor
   if (result) out.result = result;
   const link = pair(params.get('ht_link'));
   if (link) out.link = link;
-  const server = params.get('ht_server');
-  if (server) out.server = server;
-  const steam = params.get('ht_steam');
-  if (steam) out.steam = steam;
   for (const k of ['ht_auth', 'ht_result', 'ht_link', 'ht_server', 'ht_steam']) params.delete(k);
   const rest = params.toString();
   try { hist.replaceState(null, '', loc.pathname + loc.search + (rest ? '#' + rest : '')); } catch (e) { /* no history here */ }
-  return out.token || out.result || out.link ? out : null;
+  return out.result || out.link ? out : null;
 }
 
 /** The logins to picture, left to right: Discord, then Steam, then anything else. */
@@ -165,7 +163,7 @@ export class IdentityClient {
     this._hist = opts.history;
     this._now = opts.now || (() => Date.now());
     this._forgetOn401 = !!opts.forgetOn401;
-    this._confirmSwitch = opts.confirmSwitch || askInBrowser;
+    this._confirmSwitch = opts.confirmSwitch || ((/** @type {any} */ q) => (defaultAsk || askInBrowser)(q));
     /** @type {IdentityUser|null} */ this.user = null;
     /** @type {string|null} */ this.token = null;
     /** @type {string|null} */ this.lastError = null;
@@ -369,7 +367,7 @@ export class IdentityClient {
    * Is it fine for a session for `next` to take this browser's place? A working session for
    * a different account needs a yes. `ask`: also ask when nothing is signed in here.
    */
-  async _mayTake(/** @type {any} */ next, /** @type {{ name?: string }} */ to, ask = false) {
+  async _mayTake(/** @type {any} */ next, /** @type {{ name?: string, avatar?: string }} */ to, ask = false) {
     const cur = this.token ? this.claims() : null;
     const working = !!(cur && typeof cur.exp === 'number' && cur.exp > Math.floor(this._now() / 1000));
     if (working && String(cur.sub) === String(next.sub)) return true;
@@ -391,7 +389,7 @@ export class IdentityClient {
     const c = decodeToken(r.data.token);
     if (!c) return { signedIn: false, error: 'This sign-in has expired. Start it again.' };
     const u = r.data.user || { id: c.sub, name: c.name, avatar: c.picture };
-    if (!(await this._mayTake(c, { name: u.name }))) return { signedIn: false, declined: true };
+    if (!(await this._mayTake(c, { name: u.name, avatar: u.avatar || c.picture }))) return { signedIn: false, declined: true };
     const provider = typeof c.via === 'string' ? c.via.split(':')[0] : 'discord';
     this.apply(r.data.token, u, { provider });
     return { signedIn: true, server: r.data.server || undefined, steam: r.data.steam || undefined, after: this._takeAfter(c.sub) };
@@ -459,24 +457,6 @@ export class IdentityClient {
     const back = takeRedirect(this._loc || globalThis.location, this._hist || globalThis.history);
     if (!back) return null;
     if (back.result) return this._exchange(back.result);
-    if (back.token) {
-      const c = decodeToken(back.token);
-      if (!c) return null;
-      // An old link opened again (a bookmark, the back button): the token in it has expired.
-      // The session already here, if any, stays as it is.
-      if (typeof c.exp === 'number' && c.exp <= Math.floor(this._now() / 1000)) return { signedIn: false, expired: true };
-      // A token in the address (an older server or tab) proves nothing about who began it,
-      // so it needs a yes even with nobody signed in here. Its hints are not read.
-      if (!(await this._mayTake(c, { name: typeof c.name === 'string' ? c.name : undefined }, true))) return { signedIn: false, declined: true };
-      const before = this.token;
-      this.token = back.token;
-      const r = await this.api('/me').catch(() => null);
-      if (r && r.status === 401) { this.token = before; return { signedIn: false, expired: true }; }
-      const u = r && r.ok && r.data.user;
-      const provider = typeof c.via === 'string' ? c.via.split(':')[0] : 'discord';
-      this.apply(back.token, u ? { id: u.id, name: u.display_name, avatar: u.avatar_url, identities: u.identities } : { id: c.sub, name: c.name, avatar: c.picture }, { provider });
-      return { signedIn: true, after: this._takeAfter(c.sub) };
-    }
     return this.completeLink(/** @type {{ id: string, code: string }} */ (back.link));
   }
 
@@ -536,7 +516,7 @@ export class IdentityClient {
         if (r.data.status === 'done') {
           const same = !!(this.user && r.data.linked);
           const next = decodeToken(r.data.token);
-          if (!same && next && !(await this._mayTake(next, { name: r.data.user && r.data.user.name }))) {
+          if (!same && next && !(await this._mayTake(next, { name: r.data.user && r.data.user.name, avatar: (r.data.user && r.data.user.avatar) || next.picture }))) {
             this._finishDevice(dev, null, { error: 'declined' });
             return;
           }
@@ -632,7 +612,7 @@ export class IdentityClient {
     if (!r.ok || !r.data.token) return { signedIn: false, error: r.data.error || 'This sign-in link has expired' };
     const c = decodeToken(r.data.token);
     if (!c || (typeof c.exp === 'number' && c.exp <= Math.floor(this._now() / 1000))) return { signedIn: false, error: 'This sign-in link has expired' };
-    const to = { name: (r.data.user && r.data.user.name) || c.name };
+    const to = { name: (r.data.user && r.data.user.name) || c.name, avatar: (r.data.user && r.data.user.avatar) || c.picture };
     if (!(await this._mayTake(c, to, true))) return { signedIn: false, declined: true };
     const cur = this.token ? this.claims() : null;
     if (cur && String(cur.sub) === String(c.sub) && !this.tokenExpired(0)) return { signedIn: true };
@@ -642,9 +622,12 @@ export class IdentityClient {
   }
 
   async handoff() {
+    /** True after a handoff() the server refused because this sign-in is not recent: sign in again, then it works. */
+    this.handoffStale = false;
     if (!this.token) return null;
     try {
       const r = await this._withFresh(() => this.api('/auth/handoff', { method: 'POST' }));
+      this.handoffStale = r.status === 401 && r.data.code === 'fresh_signin';
       return (r.ok && r.data.code) || null;
     } catch (e) { return null; }
   }

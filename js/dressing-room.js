@@ -316,8 +316,11 @@ export class DressingRoom {
       let qr = '';
       try { const q = qrcode(0, 'M'); q.addData(v.url); q.make(); qr = q.createSvgTag({ cellSize: 3, margin: 1 }); } catch (e) {}
       html = `<div class="dr-acc-qr">${qr}</div>
-        <ol class="dr-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Type this code on your phone <b class="dr-acc-code">${esc(v.code || '')}</b></li></ol>
-        <p class="dr-acc-status">${v.status === 'confirming' ? 'Type the code on your phone…' : 'Waiting for Discord…'}</p>
+        ${v.code
+    ? `<ol class="dr-acc-steps"><li>Scan with your phone</li><li>Sign in with Discord</li><li>Type this code on your phone <b class="dr-acc-code">${esc(v.code)}</b></li></ol>
+        <p class="dr-acc-status">${v.status === 'confirming' ? 'Type the code on your phone…' : 'Waiting for Discord…'}</p>`
+    : `<ol class="dr-acc-steps"><li>Scan with your phone</li><li>Sign in with Steam</li><li>Choose <b>Link Discord</b></li></ol>
+        <p class="dr-acc-status">This screen updates when Discord is linked.</p>`}
         <button class="opt-btn dr-acc-btn" data-act="acc-cancel">Hide</button>`;
     } else {
       // One QR at a time: while another seat's is open, this Sign in waits (greyed, skipped by the pad).

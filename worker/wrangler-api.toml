@@ -16,7 +16,7 @@ database_name = "tandemonium-leaderboard"
 database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
-CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
+CORS_ORIGIN = "https://tandemonium.housetandem.com,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
 # #612: House Tandem Discord application (sign-in). DISCORD_CLIENT_SECRET is a secret.
 DISCORD_CLIENT_ID = "1568461616578699348"
 # #612 · the House Tandem players' Discord: membership shows on the account page (needs the
@@ -25,11 +25,6 @@ DISCORD_GUILD_ID = "1560085412838379560"
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 # Join checklist "say hello": the channel(s) a first post counts in (#welcome). The bot reads author ids only.
 DISCORD_HELLO_CHANNEL_IDS = "1560085413719187517"
-# Older sign-in paths are closed (see flagOff in accounts/identity.js): every site is on
-# @usersfirst/identity 0.5.
-AUTH_LEGACY_TOKEN_REDIRECT = "off"
-AUTH_DEVICE_LINK = "off"
-AUTH_LEGACY_VIA = "off"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
 [[analytics_engine_datasets]]
@@ -96,9 +91,6 @@ DISCORD_CLIENT_ID = "1573899793137406122"
 DISCORD_GUILD_ID = ""
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = ""
-AUTH_LEGACY_TOKEN_REDIRECT = "off"
-AUTH_DEVICE_LINK = "off"
-AUTH_LEGACY_VIA = "off"
 
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
