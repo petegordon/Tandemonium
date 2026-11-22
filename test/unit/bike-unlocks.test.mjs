@@ -100,6 +100,11 @@ test('sign-in that brings in progress: a welcome; a single new achievement is no
   const r = pendingBikeCelebration(state, ids(40), FULL_RULES, { signIn: true });
   assert.deepEqual(r.welcome, { kind: 'signin', achievements: 30 });
   assert.deepEqual(r.bikes, ['bike_green']);
+  // #863 · the words say the achievements arrived with the sign-in, not that they were just earned
+  assert.equal(welcomeText(r.welcome, 1), 'Your rides came with you: 30 achievements and 1 new bike.');
+  assert.equal(welcomeText(r.welcome, 0), 'Your rides came with you: 30 achievements are now on this device.');
+  assert.equal(welcomeText({ kind: 'signin', achievements: 1 }, 0), 'Your rides came with you: 1 achievement is now on this device.');
+  assert.equal(welcomeText({ kind: 'demo', achievements: 3 }, 0), 'Your demo riding earned you 3 achievements.');
   assert.equal(pendingBikeCelebration(state, ids(11), FULL_RULES, { signIn: true }).welcome, null);
   assert.equal(pendingBikeCelebration(state, ids(40), FULL_RULES).welcome, null, 'not on a ride');
 });
