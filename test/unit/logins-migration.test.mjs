@@ -132,7 +132,9 @@ test('0021 keeps every account’s totals, credits old rows to the earliest logi
   assert.equal((await (await call('/pair?with=2', { tok: old })).json()).rides, 4);
   assert.equal((await (await call('/pair?with=guest%3Adev-raw-1', { tok: old })).json()).rides, 2);
   const board = await (await call('/daily?key=2026-11-10', { tok: old })).json();
-  assert.deepEqual(board.results.map((r) => [r.user_id, r.mode]).sort(), [[1, 'pair'], [1, 'solo'], [2, 'pair']]);
+  // Riders are named by public id; only Pete's own rows keep his account number.
+  assert.deepEqual(board.results.map((r) => [r.pid === me.user.pid ? 'me' : 'partner', r.user_id ?? null, r.mode]).sort(),
+    [['me', 1, 'pair'], ['me', 1, 'solo'], ['partner', null, 'pair']]);
 
   // A session names its login by id. A token from before login ids (even one that carries
   // `via`) is the account's first sign-in.

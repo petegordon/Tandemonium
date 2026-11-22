@@ -26,6 +26,7 @@ import {
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
 import { pruneAnalytics } from './retention.js';
 import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
@@ -382,7 +383,7 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
 /** A Steam web-API auth ticket as the game sends it: hex (a few hundred characters). */
@@ -467,7 +468,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
   const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: avatarUrl, identities } }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -1040,12 +1041,20 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
   // #783 · an account with two logins can have two rows for a day and mode: its result is
   // the better one (the rows come best first).
   const seen = new Set();
-  const results = (rows.results || []).filter((r) => {
+  const best = (rows.results || []).filter((r) => {
     const k = r.user_id + ':' + r.mode;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+  // Each rider is named by public id (pid). The caller's own rows keep their account
+  // number too: it is theirs, and game builds from before public ids find "you" by it.
+  const pids = await publicPlayerIds(env, best.map((r) => r.user_id));
+  const results = best.map(({ user_id, ...r }) => ({
+    ...(String(user_id) === String(userId) ? { user_id } : {}),
+    pid: pids.get(user_id) || null,
+    ...r,
+  }));
 
   return jsonResponse({
     key,
@@ -1171,11 +1180,16 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     }
   }
 
-  // Assemble entries
-  const entries = rows.map(row => ({
+  // Assemble entries. A player is named by public id (pid): account numbers stay here.
+  const riders = Object.values(contribMap).flat().map(c => c.player_user_id);
+  const pids = await publicPlayerIds(env, [...userIds, ...riders]);
+  const entries = rows.map(({ user_id, ...row }) => ({
     ...row,
-    contributions: contribMap[row.id] || [],
-    achievements: (achMap[row.user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
+    pid: pids.get(user_id) || null,
+    contributions: (contribMap[row.id] || []).map(({ player_user_id, ...c }) => ({
+      ...c, player_pid: player_user_id == null ? null : pids.get(player_user_id) || null
+    })),
+    achievements: (achMap[user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
   }));
 
   const response = jsonResponse({ entries }, 200, corsOrigin);
@@ -1197,15 +1211,18 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 // ============================================================
 
 async function handlePlayerProfile(request, env, url, corsOrigin) {
-  const parts = url.pathname.split('/');
-  const playerId = parseInt(parts[2]);
-  if (!playerId) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  // GET /player/<pid>: a player is asked for by public id, never by account number.
+  const pid = url.pathname.split('/')[2] || '';
+  if (!isPublicPlayerId(pid)) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  const playerId = await userIdForPublicId(env, pid);
+  if (playerId == null) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
 
   const levelFilter = url.searchParams.get('level');
 
-  const user = await env.DB.prepare('SELECT id, display_name, avatar_url, created_at FROM users WHERE id = ?')
+  const user = await env.DB.prepare('SELECT display_name, avatar_url, created_at FROM users WHERE id = ?')
     .bind(playerId).first();
   if (!user) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
+  user.pid = pid;
 
   const achievements = await env.DB.prepare(ACCOUNT_BADGES).bind(playerId).all();
 
@@ -1270,6 +1287,8 @@ async function getMe(request, env, corsOrigin, userId) {
 
   // #612: every sign-in linked to the account (the TV's Profile pill shows Discord + Steam).
   if (user) user.identities = await listIdentities(env, userId);
+  // The player's own public id: what a board row's pid is compared with to find "you".
+  if (user) user.pid = await ensurePublicId(env, userId);
 
   return jsonResponse({
     user,

@@ -58,7 +58,8 @@ export const identityPictures = loginPictures;
  * A server user as the lobby keeps it. Only a link or a fresh sign-in for the same player
  * (`prev`) carries anything over; a new sign-in starts clean, so one player's id never
  * sticks to the next. `id` is the Steam id in the Steam build (tuning and saves are keyed
- * by it); `serverId` is always the House Tandem account.
+ * by it); `serverId` is always the House Tandem account. `pid` is the player's public id:
+ * what a board row carries for its rider, so it is what finds "you" on a board.
  */
 function shapeUser(serverUser, extra, prev) {
   const p = prev || {};
@@ -69,6 +70,7 @@ function shapeUser(serverUser, extra, prev) {
     name: displayName || (serverUser && serverUser.name) || p.name || 'Player',
     avatar: (serverUser && serverUser.avatar) || p.avatar || null,
     serverId: serverUser && serverUser.id,
+    pid: (serverUser && serverUser.pid) || p.pid || null,
     identities: (serverUser && serverUser.identities) || p.identities || {},
   };
   if (rest.provider) user.provider = rest.provider;
@@ -95,6 +97,9 @@ export class AuthManager {
       },
     });
     this.identity.onChange((user, reason) => {
+      // The account as just re-read from the server carries the player's public id.
+      const me = this.identity.me && this.identity.me.user;
+      if (user && reason === 'refresh' && me && me.pid) user.pid = me.pid;
       if (!user || reason === 'signout' || reason === 'refresh' || reason === 'gone') return;
       this.lastAuthError = null;
       try { attachAccount(this.identity.token); } catch (e) { /* analytics only */ }
@@ -115,6 +120,18 @@ export class AuthManager {
 
   getUser() {
     return this.user;
+  }
+
+  /**
+   * The signed-in player's public id, or null. A session kept from before public ids has
+   * none yet: the account is read from the server once to get it.
+   */
+  async publicId() {
+    if (!this.user) return null;
+    if (!this.user.pid && this.token) {
+      try { await this.identity.refresh(); } catch (e) { /* offline: no "you" on the board this time */ }
+    }
+    return (this.user && this.user.pid) || null;
   }
 
   /** Current server JWT (or null). The injected-identity surface other modules

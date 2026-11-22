@@ -29,6 +29,7 @@
 
 import { combineAccounts, separateAccount, splitLogin, absorbLogin } from './combine.js';
 import { originListed } from './origins.js';
+import { ensurePublicId } from './public-id.js';
 
 const REQUEST_TTL_S = 600;
 const DISCORD_API = 'https://discord.com/api';
@@ -332,7 +333,8 @@ export async function sessionFor(env, userId, deps, login = null, basis = null) 
   if (Number.isInteger(b.authTime)) ends.push(b.authTime + SESSION_MAX_S);
   if (Number.isFinite(b.exp)) ends.push(b.exp);
   const token = await deps.createJWT(claims, env.JWT_SECRET, Math.max(Math.min(...ends) - now, 1));
-  return { token, user: { id: userId, name: user.display_name, avatar: user.avatar_url, identities } };
+  // pid: the player's own public id, which is what boards show for them.
+  return { token, user: { id: userId, pid: await ensurePublicId(env, userId), name: user.display_name, avatar: user.avatar_url, identities } };
 }
 
 /** What the combine screen shows about an account. */
@@ -1486,7 +1488,7 @@ export async function handleHandoffRedeem(request, env, corsOrigin, deps) {
   const { token } = await sessionFor(env, user.id, deps, row.link_login_id ?? null, basis);
   const identities = await listIdentities(env, user.id);
   deps.writeMetric && deps.writeMetric(env, 'auth_handoff');
-  return deps.jsonResponse({ token, user: { id: user.id, name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
+  return deps.jsonResponse({ token, user: { id: user.id, pid: await ensurePublicId(env, user.id), name: user.display_name, avatar: user.avatar_url, identities } }, 200, corsOrigin);
 }
 
 /** The small page the browser shows during a sign-in. */
