@@ -106,6 +106,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { resolveConsent, saveConsent, storedConsent, recordConsent } from './consent.js';
 import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
@@ -1093,6 +1094,7 @@ class Game {
       screen_height: window.screen.height,
     });
     analytics.setPage('landing');
+    this._initAnalyticsConsent();
 
     // Start loop
     this.lastTime = performance.now();
@@ -7479,6 +7481,52 @@ class Game {
       if (w) b.textContent = w.label;
       b.classList.toggle('active', !!w && w.key === cur);
     }
+  }
+
+  /**
+   * Analytics consent (js/consent.js). Players in the EEA, the UK and Switzerland are asked
+   * once, before anything is sent; everyone else is counted as before. Until the answer is
+   * in, analytics hold what they have and send nothing.
+   */
+  _initAnalyticsConsent() {
+    if (analytics.analyticsDisabled()) return;
+    const auth = this.lobby && this.lobby.auth;
+    const getToken = () => (auth && auth.isLoggedIn() && auth.token) || null;
+    const force = new URLSearchParams(window.location.search).has('ask-consent');
+    resolveConsent({ ask: () => this.lobby.askAnalyticsConsent(), getToken, force }).then((r) => {
+      this._consentRequired = r.required;
+      analytics.setAnalyticsAllowed(r.allowed, r.mark);
+      if (!r.required) return;
+      // Settings shows the answer, and changes it.
+      for (const id of ['opt-analytics-label', 'opt-analytics-row', 'opt-analytics-note']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      }
+      const set = (on) => {
+        const now = storedConsent();
+        if (now && (now.choice === 'accept') === on) return;
+        const answer = saveConsent(on ? 'accept' : 'decline', { token: getToken() });
+        analytics.setAnalyticsAllowed(on, on ? answer.version : null);
+        this._updateOptionsAnalyticsUI();
+      };
+      document.getElementById('opt-analytics-on')?.addEventListener('click', () => set(true));
+      document.getElementById('opt-analytics-off')?.addEventListener('click', () => set(false));
+      this._updateOptionsAnalyticsUI();
+      // A yes given before signing in gains the account once there is one.
+      if (auth && auth.identity && auth.identity.onChange) {
+        auth.identity.onChange((user, reason) => {
+          const a = storedConsent();
+          if (user && reason === 'signin' && a && a.choice === 'accept') recordConsent(a, { token: getToken() });
+        });
+      }
+    }).catch(() => analytics.setAnalyticsAllowed(false));
+  }
+
+  _updateOptionsAnalyticsUI() {
+    const a = storedConsent();
+    const on = !!(a && a.choice === 'accept');
+    document.getElementById('opt-analytics-on')?.classList.toggle('active', on);
+    document.getElementById('opt-analytics-off')?.classList.toggle('active', !on);
   }
 
   _updateOptionsShowSoloUI() {

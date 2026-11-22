@@ -26,6 +26,7 @@ import {
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { handleConsentRegion, handleConsentRecord, consentMissing } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
@@ -129,8 +130,20 @@ export default {
       const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
       if (limited) return limited;
 
+      // Analytics consent (EEA, UK, Switzerland): is this player to be asked, and their answer.
+      if (path === '/consent/region' && request.method === 'GET') {
+        return handleConsentRegion(request, corsOrigin, { jsonResponse });
+      }
+      if (path === '/consent' && request.method === 'POST') {
+        const text = await readBodyLimited(request, 4096);
+        if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
+        return handleConsentRecord(request, env, corsOrigin, text, clientIP, { jsonResponse, sessionFromToken });
+      }
+
       // Analytics writes take no sign-in: their size is checked before anything parses them.
       if (isAnalyticsWrite(path, request.method)) {
+        // From a country where the player is asked first, nothing is kept without their yes.
+        if (consentMissing(request, url)) return new Response(null, { status: 204, headers: corsHeaders(corsOrigin) });
         const text = await readBodyLimited(request, analyticsBodyLimit(path));
         if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
         let parsed = null;
@@ -2958,6 +2971,10 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
       // Another account's notice that names this one (combined earlier, separated since).
       q('UPDATE account_events SET from_user_id = NULL, from_name = NULL, moved_json = NULL WHERE from_user_id = ?', userId),
     ]);
+  } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
+  // Its analytics consent answers (migration 0023; absent before it is applied).
+  try {
+    await env.DB.prepare('DELETE FROM consents WHERE user_id = ?').bind(userId).run();
   } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);

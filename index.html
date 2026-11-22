@@ -4087,6 +4087,22 @@
     z-index: 90;
   }
   #options-overlay.visible { display: flex; }
+  /* Sizes come from the kit's ramp (phone sizes below 1024px, TV sizes at 1920px). */
+  #consent-prompt {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.80);
+    display: none; align-items: center; justify-content: center;
+    z-index: 200; padding: 16px; box-sizing: border-box;
+    color: #fff; font-size: var(--uf-size-sm, 14px);
+  }
+  #consent-prompt.visible { display: flex; }
+  #consent-prompt .consent-card { max-width: min(100%, 34em); min-width: 0; padding: 1.6em 1.8em; }
+  #consent-prompt h2 { color: #fff; font-size: var(--uf-size-lg, 20px); margin-bottom: 0.8em; }
+  #consent-prompt .consent-text { margin: 0 0 0.9em; font-size: 1em; line-height: 1.5; color: rgba(255,255,255,0.9); text-align: left; }
+  #consent-prompt .consent-small { font-size: 0.85em; color: rgba(255,255,255,0.68); }
+  #consent-prompt .consent-text a { color: #ffd36b; }
+  #consent-prompt .options-row { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 0.7em; margin-top: 1.2em; }
+  #consent-prompt .options-row .opt-btn { flex: 1 1 0; min-width: 0; box-sizing: border-box; width: auto; height: auto; min-height: max(44px, 3.1em); padding: 0.7em 0.8em; font-size: 1em; margin: 0; }
   .options-card {
     background: var(--uf-color-surface);
     border: 1.5px solid rgba(255,255,255,0.15);
@@ -6604,6 +6620,20 @@ ON</button>
 <div id="gamepad-badge">🎮</div>
 
 <!-- Options overlay (Start button) -->
+<!-- Analytics consent, asked in the EEA, the UK and Switzerland (js/consent.js). Both answers
+     are one press away and look the same; the game plays the same after either. -->
+<div id="consent-prompt" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+  <div class="options-card consent-card">
+    <h2 id="consent-title">Help make Tandemonium better?</h2>
+    <p class="consent-text">May we record how the game is played? That means your device type, the rides you take, crashes, frame rate and menu steps, kept with a random ID for this device and your IP address. We use it only to improve our games. We never sell your data or your identity.</p>
+    <p class="consent-text consent-small">Your account, rides and achievements are saved either way, because the game needs them to work. You can change your answer any time in Settings. <a href="https://housetandem.com/privacy" target="_blank" rel="noopener">Privacy policy</a></p>
+    <div class="options-row">
+      <button class="opt-btn" id="consent-decline">No thanks</button>
+      <button class="opt-btn" id="consent-accept">Yes, share</button>
+    </div>
+  </div>
+</div>
+
 <div id="options-overlay">
   <div class="options-card">
     <h2>Settings</h2>
@@ -6700,6 +6730,16 @@ ON</button>
         <button class="opt-btn" id="opt-discord-off">Off</button>
       </div>
       <div class="options-note" id="opt-discord-note">Post my Daily Ride results to the House Tandem Discord</div>
+    </div>
+    <!-- Shown only where players are asked about analytics (EEA, UK, Switzerland): the same
+         answer as the prompt, changeable at any time. -->
+    <div class="opt-section">
+      <div class="label" id="opt-analytics-label" style="display:none;">Gameplay Analytics</div>
+      <div class="options-row" id="opt-analytics-row" style="display:none;">
+        <button class="opt-btn" id="opt-analytics-on">On</button>
+        <button class="opt-btn" id="opt-analytics-off">Off</button>
+      </div>
+      <div class="options-note" id="opt-analytics-note" style="display:none;">Share how the game is played, to help improve it — applies immediately</div>
     </div>
     <!-- E-5 · the front door to Tourist Mode. Hidden unless a Maps key is
          present; see _initOptionsOverlay. -->
