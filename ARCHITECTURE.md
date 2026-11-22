@@ -25,3 +25,4 @@
 | 18 | Desktop/Electron & TV Mode | Large-screen build, gamepad-first UX | `desktop/index.html`, `electron/main.js` |
 | 19 | CI/CD & Deployment | GitHub Actions, Pages, Workers deploy, Steam upload | `.github/workflows/*` |
 | 20 | Test & Diagnostic Pages | Controller testing, relay testing, chromakey testing | `test/*.html`, `controller/*.html` |
+
