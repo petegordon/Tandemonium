@@ -40,7 +40,9 @@ export async function startHarness({ port, outDir = null, headless = 'new', auto
       // (scripts/build-site.mjs), and anything the policy refuses fails the smoke.
       if (process.env.SMOKE_CSP && type === 'text/html') {
         const html = fs.readFileSync(f, 'utf8');
-        r.writeHead(200, { 'Content-Type': type, 'Content-Security-Policy': pagePolicy(html, 'production') });
+        // The smokes' own stand-in servers (a local relay, a fake API) are on this machine: they are allowed here, and only here.
+        const policy = pagePolicy(html, 'production').replace("connect-src 'self'", "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*");
+        r.writeHead(200, { 'Content-Type': type, 'Content-Security-Policy': policy });
         return r.end(html);
       }
       r.writeHead(200, { 'Content-Type': type });

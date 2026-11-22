@@ -38,16 +38,19 @@ export const STAGING_HOSTS = [
 
 /** Where module scripts and their own imports come from (the import maps; PeerJS on unpkg). */
 const SCRIPT_HOSTS = ['https://cdn.jsdelivr.net', 'https://esm.sh', 'https://unpkg.com'];
+/** Google's Maps script (Tourist's place search) and what it loads. */
+const MAPS_SCRIPT_HOSTS = ['https://maps.googleapis.com', 'https://maps.gstatic.com'];
 /** Our own servers: the account and game API, the ride relay, the phone-remote relay. */
 const OUR_HOSTS = [
   'https://tandemonium-api.pete-872.workers.dev', 'https://api.housetandem.com',
   'https://tandemonium-relay.pete-872.workers.dev', 'wss://tandemonium-relay.pete-872.workers.dev',
   'https://tandemonium-remote.housetandem.com', 'wss://tandemonium-remote.housetandem.com',
   'https://tandemonium.housetandem.com', 'https://housetandem.com',
+  'https://usersfirst-store.pete-872.workers.dev',
 ];
 /** Services the game calls: Google Maps and 3D Tiles (Tourist), weather, the PeerJS broker, Google sign-in (dashboard). */
 const SERVICE_HOSTS = [
-  'https://*.googleapis.com', 'https://www.gstatic.com', 'https://api.open-meteo.com',
+  'https://*.googleapis.com', 'https://*.gstatic.com', 'https://*.google.com', 'https://api.open-meteo.com',
   'https://0.peerjs.com', 'wss://0.peerjs.com', 'https://accounts.google.com',
 ];
 
@@ -68,7 +71,7 @@ export function inlineScriptHashes(html) {
  */
 export function pagePolicy(html, env, { framed = false } = {}) {
   const map = (list) => (env === 'staging' ? [...new Set(list.map(toStaging))] : list);
-  const scripts = ["'self'", ...inlineScriptHashes(html), ...SCRIPT_HOSTS, 'https://accounts.google.com', "'wasm-unsafe-eval'", 'blob:'];
+  const scripts = ["'self'", ...inlineScriptHashes(html), ...SCRIPT_HOSTS, ...MAPS_SCRIPT_HOSTS, 'https://accounts.google.com', "'wasm-unsafe-eval'", 'blob:'];
   return [
     "default-src 'self'",
     `script-src ${scripts.join(' ')}`,
