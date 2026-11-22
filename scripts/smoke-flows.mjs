@@ -276,14 +276,19 @@ console.log('quit (desktop only)');
   check(await desk.evaluate(() => window._game.lobby._stepFocus.items.includes(document.getElementById('bar-quit'))), 'QT-02 desktop: Quit pill is in the pad\'s focus scope');
 
   // Pad-navigable: walk down to the bar, then along it to Quit (bounded).
-  // #517: Quit is the bar's last pill (… Controls, Music, Settings, Quit).
+  // #517: Quit is the bar's last pill (… Players, Music, Settings, Quit). The bar's
+  // groups wrap (kit <uf-system-bar>): at this 1280px window, beside the art panel,
+  // the eight pills take two rows and Quit sits under Settings. So the walk goes
+  // RIGHT along the row and, where the row ends, DOWN to the next one.
   let s = await dlook();
+  let rowEnded = false;
   for (let i = 0; i < 16 && s.focus !== 'bar-quit'; i++) {
     const inBar = (s.focus || '').startsWith('bar-');
-    const dir = !inBar ? 'DOWN' : 'RIGHT';
+    const dir = !inBar || rowEnded ? 'DOWN' : 'RIGHT';
     await dpads.tap(0, dir);
     const before = s.focus;
-    await until(async () => (await dlook()).focus !== before, 1500);
+    const moved = await until(async () => (await dlook()).focus !== before, 1500);
+    rowEnded = inBar && dir === 'RIGHT' && !moved;
     s = await dlook();
   }
   check(s.focus === 'bar-quit', 'QT-03 pad: d-pad reaches the Quit pill', s.focus);
