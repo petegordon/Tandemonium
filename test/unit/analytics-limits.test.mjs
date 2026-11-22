@@ -33,7 +33,9 @@ test('a body over the limit is refused with 413', async () => {
   const big = JSON.stringify({ id: SID, referrer: 'x'.repeat(ANALYTICS_BODY_MAX) });
   assert.equal((await send('/api/analytics/session', big)).status, 413);
   assert.equal((await send(`/api/analytics/session/${SID}`, big, 'PUT')).status, 413);
-  assert.equal((await send('/api/analytics/event/batch', big)).status, 413);
+  const huge = JSON.stringify({ events: [{ session_id: SID, event_type: 'x', event_data: 'x'.repeat(ANALYTICS_RIDE_EVENTS_MAX) }] });
+  assert.equal((await send('/api/analytics/event/batch', huge)).status, 413);
+  assert.equal((await send(`/api/analytics/ride/${RID}/events`, huge)).status, 413);
 });
 
 test('the size is counted as it is read, whatever length was declared', async () => {
@@ -60,6 +62,12 @@ test('the largest batches the game sends fit', async () => {
   assert.ok(ui.length < ANALYTICS_BODY_MAX, `UI batch ${ui.length}`);
   assert.equal((await send('/api/analytics/event/batch', ui)).status, 200);
 
+  // A burst of achievements in one five-second batch: the server's limit of 200 events.
+  const earned = { session_id: SID, event_type: 'achievement_earned', event_data: { achievement_id: 'some_long_achievement_id', ride_id: RID }, page: 'victory', input_method: 'gamepad_gyro', created_at: '2026-11-22T12:00:00.000Z' };
+  const burst = JSON.stringify({ events: Array(200).fill(earned) });
+  assert.ok(burst.length > ANALYTICS_BODY_MAX && burst.length < ANALYTICS_RIDE_EVENTS_MAX, `burst ${burst.length}`);
+  assert.equal((await send('/api/analytics/event/batch', burst)).status, 200);
+
   // A long ride: the server's limit of 200 events, all sent together when it ends.
   const rideEvent = { event_type: 'collectible', distance: 12345.678901234567, event_data: { type: 'token', value: 10, total: 123, combo: 4 }, created_at: '2026-11-22T12:00:00.000Z' };
   const ride = JSON.stringify({ events: Array(200).fill(rideEvent) });
@@ -77,8 +85,9 @@ test('the largest batches the game sends fit', async () => {
   assert.ok(start.length < ANALYTICS_BODY_MAX, `ride start ${start.length}`);
 });
 
-test('only ride event batches get the larger limit', () => {
+test('only the two event batches get the larger limit', () => {
   assert.equal(analyticsBodyLimit('/api/analytics/session'), ANALYTICS_BODY_MAX);
-  assert.equal(analyticsBodyLimit('/api/analytics/event/batch'), ANALYTICS_BODY_MAX);
+  assert.equal(analyticsBodyLimit('/api/analytics/event/batch'), ANALYTICS_RIDE_EVENTS_MAX);
+  assert.equal(analyticsBodyLimit('/api/analytics/conversion'), ANALYTICS_BODY_MAX);
   assert.equal(analyticsBodyLimit(`/api/analytics/ride/${RID}`), ANALYTICS_BODY_MAX);
 });

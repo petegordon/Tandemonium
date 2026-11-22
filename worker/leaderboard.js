@@ -1479,8 +1479,9 @@ const jsonText = (v, n = 8000) => {
 /** The largest analytics body, in bytes. The game's own are far smaller (test/unit/analytics-limits). */
 export const ANALYTICS_BODY_MAX = 16 * 1024;
 /**
- * A ride's events are sent in one batch when it ends, and installed builds can't be changed:
- * a long ride may need more than the default. 64 KB is what a browser's keepalive fetch can send.
+ * The two event batches can legitimately be larger, and installed builds can't be changed: a
+ * ride's events go in one batch when it ends, and a burst of achievements shares one UI batch
+ * (about 60 events is already 16 KB). 64 KB is what a browser's keepalive fetch can send.
  */
 export const ANALYTICS_RIDE_EVENTS_MAX = 64 * 1024;
 
@@ -1490,7 +1491,8 @@ function isAnalyticsWrite(path, method) {
 }
 
 export function analyticsBodyLimit(path) {
-  return /^\/api\/analytics\/ride\/[^/]+\/events$/.test(path) ? ANALYTICS_RIDE_EVENTS_MAX : ANALYTICS_BODY_MAX;
+  return path === '/api/analytics/event/batch' || /^\/api\/analytics\/ride\/[^/]+\/events$/.test(path)
+    ? ANALYTICS_RIDE_EVENTS_MAX : ANALYTICS_BODY_MAX;
 }
 
 /**
