@@ -1,6 +1,32 @@
 const path = require('path');
 const fs = require('fs');
 
+// What the desktop package leaves out. The app serves its own folder as tandemonium://app
+// (electron/main.js), so everything packaged is readable by the game page: only what the
+// running game loads belongs in it. Each rule is matched against a path from the app
+// folder, starting with "/". Left out:
+//   - the API's source and migrations, the docs, the unit tests, and the build, smoke and
+//     capture scripts: nothing in index.html, js/, shared/ or electron/ loads them
+//   - local settings and secrets (.env files), CI and editor folders
+//   - Steamworks exports and upload output, tools with their own entry point, old copies
+//   - dev-only pages and rendered output (#505 fit viewer)
+// The pages under test/ (Options > Dev tools opens test/index.html) do ship.
+const PACKAGE_IGNORE = [
+  /(^|\/)\.env[^/]*$/,
+  /^\/\.(github|claude|wrangler|vscode)(\/|$)/,
+  /^\/worker(\/|$)/,
+  /^\/docs(\/|$)/,
+  /^\/test\/unit(\/|$)/,
+  /^\/scripts(\/|$)/,
+  /^\/steam(\/|$)/,
+  /^\/steam_output(\/|$)/,
+  /^\/builds(\/|$)/,
+  /^\/(tandy-agent|test_multiplayer|peerjs-server|backup-game|types)(\/|$)/,
+  /^\/tools\/(fit-viewer|gamepad-test)(\/|$)/,
+  /^\/renders(\/|$)/,
+  /^\/[^/]+\.(md|docx)$/,
+];
+
 module.exports = {
   packagerConfig: {
     // steamworks-ffi-node is pure JS + uses Koffi FFI; no native .node binary
@@ -31,8 +57,7 @@ module.exports = {
       NSBluetoothAlwaysUsageDescription: 'Tandemonium reads Bluetooth controllers for steering and gyro.',
       LSMinimumSystemVersion: '11.0',
     },
-    // Dev-only pages and rendered output that must not ship (#505 fit viewer).
-    ignore: [/^\/tools\/fit-viewer(\/|$)/, /^\/renders(\/|$)/],
+    ignore: PACKAGE_IGNORE,
   },
   // No Steam Input files ship: no controller_config/ in the depot. The game
   // runs in Steam's emulation mode on purpose — without an action manifest

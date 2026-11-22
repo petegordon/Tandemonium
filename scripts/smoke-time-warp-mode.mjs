@@ -192,6 +192,8 @@ const board = await page.evaluate(async () => {
            warped: list.querySelectorAll('.lb-warp').length };
 });
 check(board.rows.length === 2 && board.warped === 1 && /⏳/.test(board.heading), 'TM-08 the Daily board marks the time-warp row ⏳', board);
+check(board.rows.filter((r) => /You/.test(r)).length === 1 && /Pete/.test(board.rows.find((r) => /You/.test(r)) || ''),
+  'TM-08 the row with the public id of the player is marked You', board);
 await shot(page, 'tw-board');
 await page.close();
 
