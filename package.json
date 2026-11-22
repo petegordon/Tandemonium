@@ -37,6 +37,7 @@
     "smoke:daily": "node scripts/smoke-daily-ride.mjs",
     "smoke:time-warp-mode": "node scripts/smoke-time-warp-mode.mjs",
     "gen:achievements": "node scripts/gen-achievements-json.mjs",
+    "build:staging": "node scripts/build-site.mjs --env staging",
     "check:dashboard-sql": "node scripts/check-dashboard-sql.mjs",
     "smoke:daily-best": "node scripts/smoke-daily-best.mjs",
     "smoke:tutorial": "node scripts/smoke-tutorial-first.mjs",

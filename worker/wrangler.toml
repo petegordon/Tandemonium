@@ -27,3 +27,33 @@ name = "RELAY_IP_LIMITER"
 type = "ratelimit"
 namespace_id = "1020"
 simple = { limit = 120, period = 60 }
+
+# ── Staging ─────────────────────────────────────────────────────────────────
+# Its own rooms and RELAY_SECRET (the same value as the staging API's). No TURN key:
+# staging rooms use the relay.
+[env.staging]
+name = "tandemonium-relay-staging"
+workers_dev = true
+routes = [{ pattern = "relay-staging.housetandem.com", custom_domain = true }]
+
+[env.staging.durable_objects]
+bindings = [
+    { name = "TANDEM_ROOM", class_name = "TandemRoom" }
+]
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["TandemRoom"]
+
+[[env.staging.analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "tandemonium_relay_staging"
+
+[[env.staging.unsafe.bindings]]
+name = "RELAY_IP_LIMITER"
+type = "ratelimit"
+namespace_id = "4020"
+simple = { limit = 120, period = 60 }
+
+[env.staging.vars]
+TURN_KEY_ID = ""

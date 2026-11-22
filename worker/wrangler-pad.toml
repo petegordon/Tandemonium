@@ -35,3 +35,30 @@ name = "PAD_IP_LIMITER"
 type = "ratelimit"
 namespace_id = "3003"
 simple = { limit = 300, period = 60 }
+
+# ── Staging ─────────────────────────────────────────────────────────────────
+[env.staging]
+name = "tandemonium-pad-staging"
+workers_dev = true
+routes = [{ pattern = "pad-staging.housetandem.com", custom_domain = true }]
+
+[env.staging.durable_objects]
+bindings = [
+    { name = "PAD_ROOM", class_name = "PadRoom" }
+]
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["PadRoom"]
+
+[[env.staging.unsafe.bindings]]
+name = "PAD_PLAYER_LIMITER"
+type = "ratelimit"
+namespace_id = "4002"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "PAD_IP_LIMITER"
+type = "ratelimit"
+namespace_id = "4003"
+simple = { limit = 300, period = 60 }
