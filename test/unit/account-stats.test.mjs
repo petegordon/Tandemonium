@@ -180,6 +180,8 @@ test('time in game: deltas capped to real time; sessions after a 30-minute gap',
   assert.equal(capPlaySeconds(5000, null, 0), MAX_PLAY_REPORT_S);
   assert.equal(capPlaySeconds(60, 1_000_000, 1_000_000 + 30_000), 35, '30 s since the last report + 5 s slack');
   assert.equal(capPlaySeconds(-4, null, 0), 0);
+  assert.equal(capPlaySeconds(600, 1_000_000, 1_000_000 + 19_999), 0, 'sooner than 20 s after the last report: nothing');
+  assert.equal(capPlaySeconds(600, 1_000_000, 1_000_000 + 20_000), 25);
   const db = freshDb();
   const env = envFor(db);
   const u = addUser(db, 'Pat');
@@ -188,11 +190,18 @@ test('time in game: deltas capped to real time; sessions after a 30-minute gap',
   assert.deepEqual([p.seconds, p.sessions, p.added], [60, 1, 60]);
   p = await recordPlay(env, u, 'dice', 60, t0 + 60_000);
   assert.deepEqual([p.seconds, p.sessions], [120, 1]);
-  // A second device reporting the same minute: only the real time since the last report counts.
-  p = await recordPlay(env, u, 'dice', 60, t0 + 61_000);
-  assert.equal(p.added, 6);
+  // A second device (or a second room) reporting the same minute adds nothing and writes nothing,
+  // however many times it tries.
+  const writes = () => db.prepare('SELECT last_report_ms m FROM game_playtime').all().map((r) => r.m).join();
+  const before = writes();
+  for (let i = 0; i < 50; i++) {
+    p = await recordPlay(env, u, 'dice', 600, t0 + 61_000 + i * 10);
+    assert.equal(p.added, 0);
+  }
+  assert.equal(writes(), before, 'no row was touched');
+  assert.equal(p.seconds, 120);
   p = await recordPlay(env, u, 'dice', 60, t0 + 3_600_000);
-  assert.deepEqual([p.seconds, p.sessions], [186, 2]);
+  assert.deepEqual([p.seconds, p.sessions], [180, 2]);
   await assert.rejects(recordPlay(env, u, 'nope', 10, t0));
 });
 
@@ -251,7 +260,8 @@ test('#783 · combining accounts: game rows stay with each login and read as one
   assert.equal((await gameProfile(env, a, 'coins')).stats.games, 3);
   assert.equal(db.prepare('SELECT COUNT(*) n FROM game_playtime').get().n, 3, 'the rows themselves are untouched: one per login and game');
   // The cap is per account: B's login can't count a minute A's login already counted.
-  assert.equal((await recordPlay(env, a, 'dice', 60, t0 + 1000, moved.logins[0])).added, 6);
+  assert.equal((await recordPlay(env, a, 'dice', 60, t0 + 1000, moved.logins[0])).added, 0);
+  assert.equal((await recordPlay(env, a, 'dice', 60, t0 + 30_000, moved.logins[0])).added, 35);
 
   await separateAccount(env, moved, a);
   db.prepare("UPDATE game_playtime SET seconds = 50, last_played = (SELECT last_played FROM game_playtime WHERE game = 'coins'), last_report_ms = ? WHERE login_id = ? AND game = 'dice'").run(t0, moved.logins[0]);
