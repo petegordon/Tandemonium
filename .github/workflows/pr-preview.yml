@@ -4,7 +4,7 @@ name: PR Preview Deploy
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, closed]
+    types: [opened, synchronize, reopened]
 
 # This workflow only reads the repository.
 permissions:
@@ -20,7 +20,6 @@ jobs:
   # required check for merging is a branch-protection setting on main, not
   # something this file can do.)
   tests:
-    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -108,73 +107,3 @@ jobs:
             if [ "$status" = FAILED ]; then echo "::error::$s failed"; fi
           done
           exit $fail
-
-  preview:
-    # Previews are served from the game's own address, next to the live game, so they are
-    # built only from branches of this repository: never from a fork's pull request.
-    if: github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    # Previews serialize among themselves. deploy.yml has its own group
-    # (gh-pages-main) so a burst of preview runs can't evict a pending main deploy;
-    # it retries if a preview push races it. (#319)
-    concurrency:
-      group: gh-pages-write
-      cancel-in-progress: false
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Checkout
-        # Always check out — the cleanup path (PR closed/merged) also needs a
-        # git repo, or pr-preview-action fails with "not in a git directory".
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          # On pull_request the checkout is GitHub's merge of the PR into its
-          # base. Depth 2 brings that merge's two parents: the base (HEAD^1) and
-          # the PR's head (HEAD^2). The stage step compares against the base to
-          # find the heavy files this PR changed; one commit is not enough.
-          fetch-depth: 2
-
-      # A preview is not a full copy of the game (#760): the heavy folders
-      # (tandem-3d/, assets/, images/, goose-stage/reels/) hold only the files this
-      # PR added or changed, and a service worker the preview registers fetches
-      # the rest from the live game. scripts/stage-preview.mjs does the staging
-      # (what is copied, the worker, the <base> tag, the version stamps) and
-      # explains each part; scripts/smoke-preview-fallback.mjs tests it.
-      - name: Stage deploy files
-        if: github.event.action != 'closed'
-        env:
-          # Passed as environment, not pasted into the script text.
-          PR_NUMBER: ${{ github.event.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          # The comparison below is only right on GitHub's merge commit (two
-          # parents: the base, then the PR's head). Anything else: stop, don't guess.
-          if ! git rev-parse --verify --quiet 'HEAD^2' > /dev/null; then
-            echo "::error::Expected a checkout of the PR's merge commit; cannot tell which heavy files this PR changed."
-            exit 1
-          fi
-          # HEAD^1 is the base branch as merged, so HEAD^1...HEAD is exactly what
-          # origin/<base>...HEAD would give, without fetching the base's history.
-          node scripts/stage-preview.mjs --out _site --pr "$PR_NUMBER" --sha "$HEAD_SHA" --base 'HEAD^1'
-
-      # Tourist Mode (#333) reads window.__TOURIST_MAPS_KEY__ from the gitignored
-      # js/tourist-key.local.js (generated locally by `npm run gen-tourist-key`).
-      # That file never enters git, so recreate it here from the GOOGLE_MAPS_API_KEY
-      # secret — mirrors scripts/gen-tourist-key.js. The Map Tiles key is client-
-      # side by design; keep it locked to the tandemonium.housetandem.com referrer +
-      # Map Tiles API in Google Cloud so publishing it here is safe.
-      - name: Inject Tourist Maps key
-        if: github.event.action != 'closed'
-        env:
-          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
-        run: |
-          node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
-
-      - name: Deploy PR Preview
-        uses: rossjrw/pr-preview-action@873417d2df72380da1f3978378fb58560bcde976 # v1.8.2
-        with:
-          source-dir: ./_site/
-          preview-branch: gh-pages
-          umbrella-dir: pr-preview
-          action: auto

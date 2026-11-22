@@ -86,7 +86,7 @@ database_name = "tandemonium-leaderboard-staging"
 database_id = "932bee20-d2c6-4161-b98b-950baf609bf0"
 
 [env.staging.vars]
-CORS_ORIGIN = "https://staging.housetandem.com,https://tandemonium-staging.housetandem.com,http://localhost:8080,http://127.0.0.1:8080"
+CORS_ORIGIN = "https://staging.housetandem.com,https://tandemonium-staging.housetandem.com,https://pr-*-tandemonium-site-staging.pete-872.workers.dev,https://pr-*-housetandem-web-staging.pete-872.workers.dev,http://localhost:8080,http://127.0.0.1:8080"
 DISCORD_CLIENT_ID = "1573899793137406122"
 DISCORD_GUILD_ID = ""
 DISCORD_INVITE_URL = "https://housetandem.com/discord"

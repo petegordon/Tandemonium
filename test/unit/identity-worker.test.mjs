@@ -443,8 +443,10 @@ test('existing users keep their sign-in after the migration', () => {
 
 test('helpers: return URLs and default Discord avatars', () => {
   const cors = 'https://tandemonium.housetandem.com,https://tandemonium.jimandi.love';
-  assert.equal(allowedReturnTo('https://tandemonium.jimandi.love/play#x', cors), 'https://tandemonium.jimandi.love/play');
-  assert.equal(allowedReturnTo('http://localhost:8080/', cors), 'http://localhost:8080/');
+  assert.equal(allowedReturnTo('https://tandemonium.housetandem.com/play#x', cors), 'https://tandemonium.housetandem.com/play');
+  assert.equal(allowedReturnTo('https://tandemonium.jimandi.love/play', cors), null, 'the old domain gets no sign-in');
+  assert.equal(allowedReturnTo('http://localhost:8080/', cors), null, 'not on the list');
+  assert.equal(allowedReturnTo('http://localhost:8080/', cors + ',http://localhost:8080'), 'http://localhost:8080/');
   assert.equal(allowedReturnTo('javascript:alert(1)', cors), null);
   assert.equal(allowedReturnTo('https://tandemonium.housetandem.com.evil.example/', cors), null);
   assert.match(discordAvatarUrl({ id: '80351110224678912', avatar: null }), /embed\/avatars\/[0-5]\.png$/);
