@@ -25,8 +25,9 @@ DISCORD_GUILD_ID = "1560085412838379560"
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 # Join checklist "say hello": the channel(s) a first post counts in (#welcome). The bot reads author ids only.
 DISCORD_HELLO_CHANNEL_IDS = "1560085413719187517"
-# Older sign-in paths are closed (see flagOff in accounts/identity.js). AUTH_LEGACY_TOKEN_REDIRECT
-# follows once every site is on @usersfirst/identity 0.5.
+# Older sign-in paths are closed (see flagOff in accounts/identity.js): every site is on
+# @usersfirst/identity 0.5.
+AUTH_LEGACY_TOKEN_REDIRECT = "off"
 AUTH_DEVICE_LINK = "off"
 AUTH_LEGACY_VIA = "off"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
