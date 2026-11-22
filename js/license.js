@@ -3,6 +3,8 @@
 // ============================================================
 
 const STORE_API = 'https://usersfirst-store.pete-872.workers.dev';
+/** The store is on hold: its server is not deployed, so the game does not call it. */
+const STORE_LIVE = false;
 const CACHE_KEY = 'tandemonium_license';
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const _FREEPLAY_HASH = '960d0f6e2f5e4974bb71f690e303d0a116661ca4f3fcec9f8e7d8ce9ba82e7da';
@@ -149,6 +151,9 @@ export class LicenseManager {
   // ── Private ──────────────────────────────────────────────
 
   async _fetch() {
+    // The store is on hold and its server is not running: nobody holds a store license, and
+    // nothing is asked. (Free-play windows and codes above still apply.)
+    if (!STORE_LIVE) { this._license = { licensed: false }; return; }
     try {
       const serverId = this.auth.user ? this.auth.user.serverId : null;
       if (!serverId) return;

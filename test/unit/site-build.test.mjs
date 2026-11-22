@@ -136,3 +136,11 @@ test('the published pages: every one has a policy, none has an inline event hand
     }
   }
 });
+
+test('Cloudflare Web Analytics: its two hosts on production pages only', () => {
+  const prod = pagePolicy(PAGE, 'production');
+  assert.ok(directive(prod, 'script-src').split(' ').includes('https://static.cloudflareinsights.com'));
+  assert.ok(directive(prod, 'connect-src').split(' ').includes('https://cloudflareinsights.com'));
+  assert.ok(!pagePolicy(PAGE, 'staging').includes('cloudflareinsights'), 'staging and previews are not counted');
+  assert.ok(!prod.includes('usersfirst-store'), 'the store is on hold: the game does not call it');
+});
