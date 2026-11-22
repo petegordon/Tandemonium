@@ -13,6 +13,7 @@
 //   BL-09b #768 no goose mesh casts a shadow (the eyes, unskinned, cast two floating ones); the bike still does
 //   BL-10  Settings › Bike Chooser Geese: beside the bike (the geese stand either side); back to on the bike
 //   BL-07  demo → full game: one welcome screen, "Your demo riding earned you 32 achievements and 4 new bikes."
+//   BL-11  #863 a sign-in that brings achievements, phone size: "Welcome back!", the new line, Close clear of the heading
 import { startHarness, sleep } from './lib/smoke-harness.mjs';
 
 const h = await startHarness({ port: 8981, outDir: 'tandemonium-bike-ladder' });
@@ -325,5 +326,32 @@ const s7 = await sheet(full);
 await h.shot(full, 'bl07-demo-welcome');
 check(s7.welcome === 'Your demo riding earned you 32 achievements and 4 new bikes.' && s7.heading === '4 new bikes!'
   && s7.bikes.join() === 'bike_magenta,bike_red,bike_green,bike_yellow' && s7.ride.join() === 'RIDE,RIDE,RIDE,RIDE', 'BL-07: the demo → full game welcome, one screen', s7);
+
+// ── BL-11 a sign-in that brings achievements, on a phone (#863) ──
+console.log('BL-11 the sign-in welcome on a phone');
+const phone = await h.gamePage({ viewport: { width: 390, height: 844, isMobile: true, hasTouch: true }, storage: {
+  tandemonium_tutorial_done: 'smoke',
+  tandemonium_achievements: JSON.stringify(ids.slice(0, 21).map(id => ({ id, earnedAt: 1 }))),
+} });
+await ready(phone);
+const s11 = await phone.evaluate(async () => {
+  const bikes = ['default', 'bike_orange', 'bike_magenta', 'bike_red'];
+  localStorage.setItem('tandemonium_bike_ladder', JSON.stringify({ bikes, edition: 'full', count: 10 }));
+  window._game.lobby.checkNewBikes({ signIn: true });
+  await new Promise(r => setTimeout(r, 600));
+  const s = document.getElementById('new-bike-sheet');
+  if (!s || !s.open) return { open: false };
+  const box = (el) => { const r = el.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }; };
+  // the heading's words, not its full-width block
+  const range = document.createRange(); range.selectNodeContents(s.querySelector('.uf-sheet__title'));
+  const words = [...range.getClientRects()].map(r => ({ l: r.left, r: r.right, t: r.top, b: r.bottom }));
+  const close = box(s.querySelector('.uf-sheet__close'));
+  const hit = words.some(w => w.l < close.r && w.r > close.l && w.t < close.b && w.b > close.t);
+  return { open: true, heading: s.heading, welcome: s.querySelector('.nb-welcome')?.textContent, later: [...s.querySelectorAll('.nb-actions *')].map(b => b.textContent).join(), hit, close, words };
+});
+await h.shot(phone, 'bl11-signin-welcome-phone');
+check(s11.open && s11.heading === 'Welcome back!' && s11.welcome === 'Your rides came with you: 11 achievements are now on this device.',
+  'BL-11: a sign-in is "Welcome back!", and says the achievements arrived (not "the full game")', s11);
+check(s11.open && s11.hit === false, 'BL-11: on a phone, Close does not sit on the heading', s11);
 
 await h.finish();

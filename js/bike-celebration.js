@@ -79,6 +79,8 @@ const STYLE = `
   #new-bike-sheet .nb-name { font: 800 var(--uf-size-lg)/1.15 var(--uf-font-ui); color: var(--nb-colour); text-align: center; }
   #new-bike-sheet .nb-how { font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); text-align: center; }
   #new-bike-sheet .nb-next { margin: 0; text-align: center; font-size: var(--uf-size-sm); color: var(--uf-color-fg-muted); }
+  /* #863 · on a phone the heading wraps and ran under "Close": give Close its own row */
+  @media (max-width: 640px) { #new-bike-sheet[headline]:not([data-hero]) .uf-sheet__head { padding-top: 2.4em; } }
   @keyframes nb-roll-in { from { transform: translateX(-120vw) rotate(-8deg); opacity: 0; } 70% { transform: translateX(4%) rotate(2deg); opacity: 1; } to { transform: none; } }
   @media (prefers-reduced-motion: reduce) { #new-bike-sheet .nb-card { animation: none; } }
 `;
@@ -157,8 +159,9 @@ export class BikeCelebration {
     const sheet = this._ensureSheet();
     const n = r.bikes.length;
     sheet.toggleAttribute('data-hero', !!r.hero);   // a full-screen reward (the last three bikes)
-    sheet.heading = n === 0 ? 'Welcome to the full game!' : n === 1 ? 'New bike!' : `${n} new bikes!`;
-    if (r.welcome && r.welcome.kind === 'demo' && n === 0) sheet.heading = 'Welcome to the full game!';
+    // #863 · with no new bike the heading is the welcome: "the full game" only for the demo → full game jump
+    const welcomeHeading = r.welcome && r.welcome.kind === 'demo' ? 'Welcome to the full game!' : 'Welcome back!';
+    sheet.heading = n === 0 ? welcomeHeading : n === 1 ? 'New bike!' : `${n} new bikes!`;
     const body = sheet.body;
     body.replaceChildren();
     // the old actions row goes too (a new one below)

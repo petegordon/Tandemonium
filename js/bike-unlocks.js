@@ -170,10 +170,16 @@ export function pendingBikeCelebration(state, earnedIds, rules, opts = {}, defs 
 /** The welcome line for a jump. */
 export function welcomeText(welcome, bikeCount) {
   if (!welcome) return '';
-  const from = welcome.kind === 'demo' ? 'Your demo riding' : 'Your saved riding';
   const a = `${welcome.achievements} achievement${welcome.achievements === 1 ? '' : 's'}`;
+  const bikes = `${bikeCount} new bike${bikeCount === 1 ? '' : 's'}`;
+  // #863 · a sign-in: these were earned before, somewhere else, and have now arrived here
+  if (welcome.kind !== 'demo') {
+    if (!bikeCount) return `Your rides came with you: ${a} ${welcome.achievements === 1 ? 'is' : 'are'} now on this device.`;
+    return `Your rides came with you: ${a} and ${bikes}.`;
+  }
+  const from = 'Your demo riding';
   if (!bikeCount) return `${from} earned you ${a}.`;
-  return `${from} earned you ${a} and ${bikeCount} new bike${bikeCount === 1 ? '' : 's'}.`;
+  return `${from} earned you ${a} and ${bikes}.`;
 }
 
 /** How a bike was earned (the line under its name on the celebration). */
