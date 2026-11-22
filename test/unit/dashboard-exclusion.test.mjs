@@ -69,7 +69,8 @@ function seeded() {
 }
 
 async function dash(db, route, query) {
-  const res = await dashRaw(db, route, query, await token({ sub: 38, email: 'pete@petegordon.com' }));
+  db.prepare("INSERT OR IGNORE INTO users (id, provider, provider_id, display_name) VALUES (1, 'google', 'g-pete', 'Pete')").run();
+  const res = await dashRaw(db, route, query, await token({ sub: 1, email: 'pete@petegordon.com' }));
   assert.equal(res.status, 200, await res.clone().text());
   return res.json();
 }
