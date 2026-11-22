@@ -124,6 +124,7 @@ export function cleanClientDelta(delta) {
 export const PLAYTIME_GAMES = Object.freeze(['tandemonium', 'dice', 'coins', 'roulette', 'wheel', 'timber', 'sandhands']);
 export const MAX_PLAY_REPORT_S = 600;   // one report covers at most 10 minutes (a retry after being offline)
 export const PLAY_SLACK_S = 5;          // clocks and network jitter
+export const MIN_PLAY_GAP_S = 20;       // games report once a minute: an account's reports closer than this add nothing (and write nothing)
 export const SESSION_GAP_S = 30 * 60;   // a report after 30 minutes without one starts a new session
 
 /** How many of `seconds` a report may add, given the last report's server time (ms) or null. */
@@ -133,6 +134,7 @@ export function capPlaySeconds(seconds, lastReportMs, nowMs) {
   let cap = MAX_PLAY_REPORT_S;
   if (typeof lastReportMs === 'number' && Number.isFinite(lastReportMs)) {
     const elapsed = (nowMs - lastReportMs) / 1000;
+    if (elapsed < MIN_PLAY_GAP_S) return 0;
     cap = Math.min(cap, Math.max(0, elapsed + PLAY_SLACK_S));
   }
   return Math.floor(Math.min(s, cap));
