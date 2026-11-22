@@ -134,20 +134,38 @@ test('both seats taken: each rider gets a pair proof naming the two of them (a g
   assert.equal(await partnerFromProof(SECRET, toCap.pair, '8', 'captain'), null, 'only for the rider it names');
 });
 
-test('TURN credentials: only for a connection holding a seat; bad room codes are refused at the door', async () => {
+test('TURN credentials: only for a rider holding the room key, with both seats open; bad room codes are refused at the door', async () => {
   const R = room();
   const realFetch = globalThis.fetch;
   let minted = 0;
-  globalThis.fetch = async () => { minted++; return { ok: true, text: async () => '{"iceServers":{"urls":["turn:x"]}}' }; };
+  let sentBody = null;
+  globalThis.fetch = async (_u, init) => { minted++; sentBody = init.body; return { ok: true, text: async () => '{"iceServers":{"urls":["turn:x"]}}' }; };
   try {
-    await R.dial('captain', { device: 'device-captain' });
+    const cap = (await R.dial('captain', { device: 'device-captain' })).seated;
     const turn = (q) => R.r.fetch({ url: 'https://relay/turn-credentials?' + new URLSearchParams({ room: 'TNDM-ABCD', ...q }) });
     assert.equal((await turn({ role: 'captain', device: 'device-stranger' })).status, 403);
     assert.equal((await turn({ role: 'stoker', device: 'device-captain' })).status, 403);
+    assert.equal((await turn({ role: 'captain', device: 'device-captain' })).status, 403, 'no partner yet: nothing to connect to');
+    assert.equal((await turn({ role: 'captain', key: '' })).status, 403, 'no key yet either');
     assert.equal(minted, 0);
-    const ok = await turn({ role: 'captain', device: 'device-captain' });
+    const sto = (await R.dial('stoker', { device: 'device-stoker' })).seated;
+    // Both seats taken: each rider is sent the room's key (partner-ready's p2p).
+    const key = cap.sent.find((m) => m.type === 'partner-ready').p2p;
+    assert.ok(key && key === sto.sent.find((m) => m.type === 'partner-ready').p2p);
+    assert.equal((await turn({ role: 'captain', device: 'device-stranger' })).status, 403);
+    assert.equal((await turn({ role: 'captain', device: 'device-captain' })).status, 403, 'a device id is not proof of a seat');
+    assert.equal((await turn({ role: 'captain' })).status, 403, 'no key');
+    assert.equal((await turn({ role: 'captain', key: key.slice(0, -1) + (key.endsWith('A') ? 'B' : 'A') })).status, 403, 'a wrong key');
+    assert.equal((await turn({ role: 'spectator', key })).status, 403, 'not a seat');
+    assert.equal(minted, 0);
+    const ok = await turn({ role: 'captain', key });
     assert.equal(ok.status, 200);
     assert.equal(minted, 1);
+    assert.equal(JSON.parse(sentBody).ttl, 3600, 'credentials last an hour');
+    assert.equal((await turn({ role: 'stoker', key })).status, 200, 'either rider');
+    // A rider leaves: nothing to connect to until they are back.
+    await R.leave(sto);
+    assert.equal((await turn({ role: 'captain', key })).status, 403, 'the partner left');
   } finally { globalThis.fetch = realFetch; }
   assert.ok(isRoomCode('TNDM-AB2C'));
   assert.ok(!isRoomCode('anything') && !isRoomCode('TNDM-ABCDE') && !isRoomCode(null));

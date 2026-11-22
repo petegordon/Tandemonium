@@ -2,7 +2,7 @@ const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net, nat
 const path = require('path');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
-const { isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl } = require('./trust');
+const { isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl, appFilePath } = require('./trust');
 
 // Local diagnostic log: %USERPROFILE%\tandemonium-diag.log. Steam-launched
 // runs swallow stdout, so the main process, the renderer (errors, warnings,
@@ -746,13 +746,10 @@ app.whenReady().then(async () => {
   _diagLog(`[vendors] three ${_threeVersion ? _threeVersion + ' from node_modules' : 'not installed locally — CDN'}`);
   protocol.handle('tandemonium', async (request) => {
     const url = new URL(request.url);
-    let filePath = decodeURIComponent(url.pathname);
-    if (filePath === '/' || filePath === '') filePath = '/index.html';
-    const fullPath = path.join(rootDir, filePath);
-    // Security: prevent path traversal
-    if (fullPath !== rootDir && !fullPath.startsWith(rootDir + path.sep)) {
-      return new Response('Forbidden', { status: 403 });
-    }
+    // Only the app's own files (electron/trust.js).
+    const fullPath = appFilePath(rootDir, url.pathname);
+    if (!fullPath) return new Response('Forbidden', { status: 403 });
+    const filePath = '/' + path.relative(path.resolve(rootDir), fullPath).split(path.sep).join('/');
     // #353: the root page's importmap pulls three from jsdelivr. Point it at
     // the packaged node_modules/three instead, so three — and the Draco
     // decoder, which js/draco-path.js resolves next to three/addons/ — load
@@ -774,7 +771,7 @@ app.whenReady().then(async () => {
     // headers Chromium heuristically caches responses in the profile —
     // which served STALE JS after source edits (fresh `npm start` showed
     // old code). Files are local; re-reading from disk costs nothing.
-    const resp = await net.fetch('file://' + fullPath);
+    const resp = await net.fetch(require('url').pathToFileURL(fullPath).href);
     const headers = new Headers(resp.headers);
     headers.set('Cache-Control', 'no-store');
     return new Response(resp.body, { status: resp.status, headers });

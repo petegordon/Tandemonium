@@ -5,8 +5,13 @@ name: Deploy Workers
 on:
   push:
     branches: [main]
-    # pad-protocol.js is bundled into the pad relay (worker/pad-relay.js).
-    paths: ['worker/**', 'js/remote/pad-protocol.js']
+    # Files outside worker/ that the Workers bundle: pad-protocol.js (pad relay),
+    # shared/rooms-relay (ride relay and room proofs), tourist-costs.js (API).
+    paths:
+      - 'worker/**'
+      - 'js/remote/pad-protocol.js'
+      - 'shared/rooms-relay/**'
+      - 'js/tourist-costs.js'
   workflow_dispatch:
 
 # This workflow only reads the repository.
@@ -14,7 +19,25 @@ permissions:
   contents: read
 
 jobs:
+  # Nothing is deployed unless the unit tests pass on this commit.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: npm ci --omit=optional --ignore-scripts || npm install --no-audit --no-fund --ignore-scripts
+
+      - name: Unit tests
+        run: node --test "test/unit/*.test.mjs"
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -33,12 +56,7 @@ jobs:
           workingDirectory: worker
           command: deploy --config wrangler.toml
 
-      - name: Deploy Store Worker
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          workingDirectory: worker
-          command: deploy --config wrangler-store.toml
+      # The store Worker (wrangler-store.toml) is on hold and is not deployed from here.
 
       # Phone-remote relay (#421, #454). Its own Worker, so RIDE TOGETHER's
       # relay is untouched. A deploy drops the open pad rooms' sockets; games

@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { pagePolicy } from '../build-site.mjs';
 
 const ROOT = process.cwd();
 const require = createRequire(ROOT + '/package.json');
@@ -34,7 +35,17 @@ export async function startHarness({ port, outDir = null, headless = 'new', auto
     const f = path.join(ROOT, u === '/' ? 'index.html' : u);
     fs.stat(f, (e, st) => {
       if (e || st.isDirectory()) return r.writeHead(404).end();
-      r.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' });
+      const type = MIME[path.extname(f)] || 'application/octet-stream';
+      // SMOKE_CSP=1: pages are served under the content policy the site build gives them
+      // (scripts/build-site.mjs), and anything the policy refuses fails the smoke.
+      if (process.env.SMOKE_CSP && type === 'text/html') {
+        const html = fs.readFileSync(f, 'utf8');
+        // The smokes' own stand-in servers (a local relay, a fake API) are on this machine: they are allowed here, and only here.
+        const policy = pagePolicy(html, 'production').replace("connect-src 'self'", "connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* http://localhost:* ws://localhost:*");
+        r.writeHead(200, { 'Content-Type': type, 'Content-Security-Policy': policy });
+        return r.end(html);
+      }
+      r.writeHead(200, { 'Content-Type': type });
       fs.createReadStream(f).pipe(r);
     });
   });
@@ -78,6 +89,14 @@ export async function startHarness({ port, outDir = null, headless = 'new', auto
       return req.abort();
     });
     page.on('pageerror', (e) => { errors.push(e.message); console.log('  PAGEERROR:', e.message); });
+    if (process.env.SMOKE_CSP) {
+      page.on('console', (m) => {
+        const t = m.text();
+        if (!/Content Security Policy/i.test(t)) return;
+        errors.push(t);
+        console.log('  POLICY:', t.slice(0, 400));
+      });
+    }
     // (#tourist note: smoke:tourist-note asks for it by clearing this key)
     const seed = { tandemonium_started: '1', tandemonium_tourist_note_off: '1', ...storage };
     await page.evaluateOnNewDocument((s) => { try { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); } catch {} }, seed);

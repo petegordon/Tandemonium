@@ -4,17 +4,19 @@
 
 /**
  * Grant a license to a user after successful payment.
- * Uses INSERT OR REPLACE so re-purchasing on same platform upgrades the tier.
+ * Re-purchasing on the same platform upgrades the tier and keeps the license's id,
+ * which is the id returned (a payment row references it).
  */
 export async function grantLicense(db, { userId, gameId, productId, platform }) {
   const id = crypto.randomUUID();
-  await db.prepare(`
+  const row = await db.prepare(`
     INSERT INTO licenses (id, user_id, game_id, product_id, platform, status, granted_at)
     VALUES (?1, ?2, ?3, ?4, ?5, 'active', datetime('now'))
     ON CONFLICT(user_id, game_id, platform)
     DO UPDATE SET product_id = ?4, status = 'active', granted_at = datetime('now')
-  `).bind(id, userId, gameId, productId, platform).run();
-  return id;
+    RETURNING id
+  `).bind(id, userId, gameId, productId, platform).first();
+  return (row && row.id) || id;
 }
 
 /**
@@ -51,11 +53,12 @@ export async function getUserLicenses(db, userId) {
 }
 
 /**
- * Revoke a license (for refunds).
+ * Revoke a license (for refunds): only while it is still for the product that was refunded,
+ * so refunding an earlier purchase doesn't take away a later upgrade.
  */
-export async function revokeLicense(db, userId, gameId, platform) {
+export async function revokeLicense(db, userId, gameId, platform, productId) {
   await db.prepare(`
     UPDATE licenses SET status = 'refunded'
-    WHERE user_id = ?1 AND game_id = ?2 AND platform = ?3 AND status = 'active'
-  `).bind(userId, gameId, platform).run();
+    WHERE user_id = ?1 AND game_id = ?2 AND platform = ?3 AND product_id = ?4 AND status = 'active'
+  `).bind(userId, gameId, platform, productId).run();
 }

@@ -99,6 +99,40 @@ test('rides and conversions for a missing session are stored too', async () => {
   assert.equal(db.prepare('SELECT COUNT(*) n FROM conversions').get().n, 1);
 });
 
+test('analytics keeps plain, short text and real numbers; nothing else is stored', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const mark = '<img src=x onerror=alert(1)>';
+  const RID = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+  const long = 'x'.repeat(5000);
+  assert.equal((await post(env, '/api/analytics/session', { id: SID, device_type: mark, referrer: long, user_agent: mark + long, platform: mark, screen_width: '1920<b>', input_method: { a: 1 } })).status, 200);
+  assert.equal((await post(env, `/api/analytics/session/${SID}`, { controller_name: mark, controller_connection: long }, 'PUT')).status, 200);
+  assert.equal((await post(env, '/api/analytics/ride', { id: RID, session_id: SID, level: mark, difficulty: mark, input_method: mark, controller_name: mark + long, controller_connection: mark, bike_preset: long, role: long })).status, 200);
+  assert.equal((await post(env, `/api/analytics/ride/${RID}`, { abandon_reason: mark + long, distance: '12<i>', completed: true, max_speed: 9.5, crash_count: { $ne: 1 } }, 'PUT')).status, 200);
+  assert.equal((await post(env, '/api/analytics/event/batch', { events: [ev(mark, { page: long, event_data: { note: mark } }), ev('big', { event_data: { blob: 'y'.repeat(9000) } })] })).status, 200);
+  assert.equal((await post(env, '/api/analytics/conversion', { session_id: SID, action: mark, context: long, url: mark + long })).status, 200);
+
+  const every = [];
+  for (const t of ['sessions', 'rides', 'events', 'conversions']) {
+    for (const row of db.prepare(`SELECT * FROM ${t}`).all()) for (const [k, v] of Object.entries(row)) every.push([t + '.' + k, v]);
+  }
+  assert.ok(every.length > 20);
+  for (const [where, v] of every) {
+    if (typeof v !== 'string') continue;
+    assert.ok(!/[<>]/.test(v), where + ' holds markup: ' + v.slice(0, 40));
+    assert.ok(v.length <= 8000, where + ' is ' + v.length + ' long');
+  }
+  const ride = db.prepare('SELECT * FROM rides WHERE id = ?').get(RID);
+  assert.equal(ride.controller_name.length, 80);
+  assert.equal(ride.level, 'img src=x onerror=alert(1)');
+  assert.equal(ride.completed, 1);
+  assert.equal(ride.max_speed, 9.5);
+  assert.equal(ride.crash_count, null, 'an object is not a number');
+  const s = db.prepare('SELECT * FROM sessions WHERE id = ?').get(SID);
+  assert.equal(s.screen_width, null, 'text is not a number');
+  assert.equal(s.referrer.length, 300);
+});
+
 test('session updates have their own rate limit and cannot use up session creates', async () => {
   const db = freshDb();
   // The per-player limit counts each kind of write in its own bucket.

@@ -50,7 +50,7 @@
 <body>
 <main>
   <header>
-    <img src="../images/logo.png" alt="Tandemonium" onerror="this.remove()">
+    <img src="../images/logo.png" alt="Tandemonium" id="share-logo">
     <span class="kicker">Share your ride</span>
   </header>
 
@@ -77,6 +77,12 @@
   import { SHARE_API_BASE, SHARE_SITE_URL } from '../js/share-result.js';
 
   const $ = (id) => document.getElementById(id);
+  // A logo that does not load is taken away (done here, not in the tag: the page's policy runs no inline handlers).
+  const logo = $('share-logo');
+  if (logo) {
+    logo.addEventListener('error', () => logo.remove());
+    if (logo.complete && !logo.naturalWidth) logo.remove();
+  }
   const id = new URLSearchParams(location.search).get('id') || '';
   let meta = null;
   let file = null;   // the card as a File, fetched ahead so Share runs inside the tap (iOS)

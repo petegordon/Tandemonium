@@ -16,7 +16,7 @@ database_name = "tandemonium-leaderboard"
 database_id = "e5d28c62-6e2e-4dd2-aceb-cd8254ac5736"
 
 [vars]
-CORS_ORIGIN = "https://tandemonium.housetandem.com,https://tandemonium.jimandi.love,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
+CORS_ORIGIN = "https://tandemonium.housetandem.com,https://housetandem.com,https://www.housetandem.com,https://dice.housetandem.com,https://coins.housetandem.com"
 # #612: House Tandem Discord application (sign-in). DISCORD_CLIENT_SECRET is a secret.
 DISCORD_CLIENT_ID = "1568461616578699348"
 # #612 · the House Tandem players' Discord: membership shows on the account page (needs the
@@ -27,14 +27,18 @@ DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = "1560085413719187517"
 # Set these secrets via: wrangler secret put GOOGLE_CLIENT_ID / JWT_SECRET / RELAY_SECRET / STEAM_WEB_API_KEY
 
+# Once a day: gameplay analytics older than 24 months are deleted (worker/retention.js).
+[triggers]
+crons = ["17 4 * * *"]
+
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "tandemonium_api"
 
 # Rate limiting (Pete 2026-11-09): the same two rules for every route,
 # applied in one place (limitRequest in leaderboard.js).
-# 1. Per player: 30 a minute for each kind of write, keyed by the account when
-#    signed in, else the session / device / ride id.
+# 1. Per player: 30 a minute for each kind of write, keyed by the signed-in account
+#    (or the IP without a valid token). Analytics writes are counted by rule 2 alone.
 [[unsafe.bindings]]
 name = "PLAYER_LIMITER"
 type = "ratelimit"
@@ -73,11 +77,12 @@ simple = { limit = 6, period = 60 }
 #   npx wrangler d1 execute tandemonium-leaderboard-staging --remote --file migrations/<file>.sql
 # It has its own secrets (wrangler secret put <NAME> --config wrangler-api.toml --env staging):
 # JWT_SECRET and RELAY_SECRET are different from production's, so a staging session is
-# never a production one. No Discord / Steam secrets are set: sign-in there is by test token.
+# never a production one. Discord is its own app (House Tandem Staging), with no bot: staging
+# cannot message players or touch the real server.
 [env.staging]
 name = "tandemonium-api-staging"
 workers_dev = true
-routes = []
+routes = [{ pattern = "api-staging.housetandem.com", custom_domain = true }]
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -85,12 +90,40 @@ database_name = "tandemonium-leaderboard-staging"
 database_id = "932bee20-d2c6-4161-b98b-950baf609bf0"
 
 [env.staging.vars]
-CORS_ORIGIN = "https://tandemonium.housetandem.com,http://localhost:8080,http://127.0.0.1:8080"
-DISCORD_CLIENT_ID = ""
+CORS_ORIGIN = "https://staging.housetandem.com,https://tandemonium-staging.housetandem.com,https://pr-*-tandemonium-site-staging.pete-872.workers.dev,https://pr-*-housetandem-web-staging.pete-872.workers.dev,http://localhost:8080,http://127.0.0.1:8080"
+DISCORD_CLIENT_ID = "1573899793137406122"
 DISCORD_GUILD_ID = ""
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = ""
 
+[env.staging.triggers]
+crons = ["47 4 * * *"]
+
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "tandemonium_api_staging"
+
+# Staging's own rate limits (limits are not inherited by an environment).
+[[env.staging.unsafe.bindings]]
+name = "PLAYER_LIMITER"
+type = "ratelimit"
+namespace_id = "4009"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "IP_LIMITER"
+type = "ratelimit"
+namespace_id = "4010"
+simple = { limit = 300, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "SIGNIN_LIMITER"
+type = "ratelimit"
+namespace_id = "4011"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "SHARE_LIMITER"
+type = "ratelimit"
+namespace_id = "4008"
+simple = { limit = 6, period = 60 }

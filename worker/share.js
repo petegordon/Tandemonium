@@ -8,7 +8,8 @@ import { discordMemberStatus } from './accounts/identity.js';
 //                             → { id, url, imageUrl, expiresAt }   (no account needed; rate limited)
 //   GET  /share/:id           → { id, caption, link, imageUrl, dayKey, expiresAt }
 //   GET  /share/:id/image     → the card image
-//   POST /share/discord       { id }  (signed in, with Discord linked) → posts the card to the
+//   POST /share/discord       { id }  (signed in, Discord linked, a member of the House Tandem
+//                             server: the same check and answers as a clip) → posts the card to the
 //                             House Tandem Discord's #daily-ride through the DISCORD_SHARE_WEBHOOK
 //                             secret, under the player's Discord name and picture. Daily Ride only,
 //                             one post per player per day. 503 when the secret is not set.
@@ -116,6 +117,17 @@ async function hashIp(ip, salt) {
  * deps: { jsonResponse, corsHeaders, getUserFromRequest, checkRateLimit, listIdentities, writeMetric }
  */
 /** The account's Discord login (posts are recorded under it). */
+/**
+ * Posting is for members of the House Tandem server. → the answer that refuses the post
+ * (403 not_member with the invite, 503 when membership can't be checked), or null for a member.
+ */
+async function refuseNonMember(env, userId, corsOrigin, deps) {
+  const status = await (deps.discordMemberStatus || discordMemberStatus)(env, userId, deps.fetchImpl);
+  if (status.member === false) return deps.jsonResponse({ error: 'Join the House Tandem Discord to post', code: 'not_member', invite: env.DISCORD_INVITE_URL || null }, 403, corsOrigin);
+  if (status.member !== true) return deps.jsonResponse({ error: 'Could not check the House Tandem Discord', code: 'member_unknown' }, 503, corsOrigin);
+  return null;
+}
+
 async function discordLogin(env, userId) {
   const row = await env.DB.prepare("SELECT login_id FROM user_logins WHERE user_id = ? AND provider = 'discord' ORDER BY last_login_at DESC, login_id LIMIT 1")
     .bind(userId).first();
@@ -239,6 +251,8 @@ async function postToDiscord(request, env, clientIP, corsOrigin, deps) {
   const ids = await deps.listIdentities(env, user.id);
   const discord = ids.discord;
   if (!discord) return jsonResponse({ error: 'Link Discord to post', code: 'no_discord' }, 403, corsOrigin);
+  const refused = await refuseNonMember(env, user.id, corsOrigin, deps);
+  if (refused) return refused;
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad JSON' }, 400, corsOrigin); }
@@ -308,9 +322,8 @@ async function postClipToDiscord(request, env, url, corsOrigin, deps) {
   const ids = await deps.listIdentities(env, user.id);
   const discord = ids.discord;
   if (!discord) return jsonResponse({ error: 'Link Discord to post', code: 'no_discord' }, 403, corsOrigin);
-  const status = await (deps.discordMemberStatus || discordMemberStatus)(env, user.id, deps.fetchImpl);
-  if (status.member === false) return jsonResponse({ error: 'Join the House Tandem Discord to post', code: 'not_member', invite: env.DISCORD_INVITE_URL || null }, 403, corsOrigin);
-  if (status.member !== true) return jsonResponse({ error: 'Could not check the House Tandem Discord', code: 'member_unknown' }, 503, corsOrigin);
+  const refused = await refuseNonMember(env, user.id, corsOrigin, deps);
+  if (refused) return refused;
 
   const len = Number(request.headers.get('Content-Length') || 0);
   if (len > CLIP_GIF_MAX_BYTES) return jsonResponse({ error: 'Clip too big', code: 'too_big' }, 413, corsOrigin);

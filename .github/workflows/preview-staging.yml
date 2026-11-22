@@ -1,0 +1,64 @@
+name: Preview on staging
+# Third-party actions are pinned to a commit (the tag is in the comment).
+# Publishes a PR's game files to its own address on the staging Worker.
+# workflow_run runs THIS file from main, so a branch cannot change what runs with the token.
+# From the branch, files are only read and copied by main's scripts/build-site.mjs:
+# nothing in the branch is installed or run.
+on:
+  workflow_run:
+    workflows: [PR Preview Deploy]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  preview:
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number != null
+    runs-on: ubuntu-latest
+    environment: preview
+    steps:
+      - name: Main's scripts and config
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: main
+          persist-credentials: false
+      - name: The branch's files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: pr-files
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Build the preview
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node scripts/build-site.mjs --env staging --root pr-files --sha "$HEAD_SHA"
+      - name: Publish the preview
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          rm -rf pr-files
+          npx --yes wrangler@4.166.0 versions upload --config wrangler-site.jsonc --env staging --preview-alias "pr-$PR_NUMBER"
+      - name: Link it on the PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          marker='<!-- staging-preview -->'
+          body="$marker
+          Staging preview for \`${HEAD_SHA:0:7}\`: https://pr-$PR_NUMBER-tandemonium-site-staging.pete-872.workers.dev"
+          id=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$body" > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "$body"
+          fi

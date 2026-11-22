@@ -184,6 +184,13 @@ const geese = (page) => page.evaluate(async () => {
     matNames: [...mats].map((m) => m.name).sort().join(','),
   };
 });
+// #736 put Cyclists, Fancy and Georgian behind the holiday bikes; a fresh profile is refused them.
+// SR-21 is about a chosen outfit reaching the geese, so this player is one who kept the two
+// outfits from before the bikes (js/rewards.js keptOutfits). smoke:wardrobe covers the locks.
+const SR21_STORAGE = {
+  tandemonium_tutorial_done: 'smoke', tandemonium_goose_outfit: 'victorian',
+  tandemonium_outfits_kept: JSON.stringify(['cyclists', 'georgian']),
+};
 const openOptions = (page) => page.evaluate(() => window._game._openOptions());
 const closeOptions = (page) => page.evaluate(() => window._game._closeOptions());
 /** Cyclists captain seated on the bike with its colourway remap live (polled: the swap loads GLBs). */
@@ -196,7 +203,7 @@ const cyclistsLive = (page, timeout) => page.waitForFunction(async () => {
   return n > 0;
 }, { timeout }).then(() => true).catch(() => false);
 {
-  const page = await h.gamePage({ storage: { tandemonium_tutorial_done: 'smoke', tandemonium_goose_outfit: 'victorian' } });
+  const page = await h.gamePage({ storage: SR21_STORAGE });
   // The lobby has settled: the bike's geese are loaded before the player opens Options.
   await page.waitForFunction(() => !!window._game.bike?.goose?.riders?.Captain, { timeout: 120000 }).catch(() => {});
   // Chosen in the lobby: Cyclists, then its second colourway.
@@ -254,7 +261,7 @@ const cyclistsLive = (page, timeout) => page.waitForFunction(async () => {
 console.log('SR-21 outfit chosen while the geese load');
 {
   const page = await h.gamePage({
-    storage: { tandemonium_tutorial_done: 'smoke', tandemonium_goose_outfit: 'victorian' },
+    storage: SR21_STORAGE,
     before: (p) => p.evaluateOnNewDocument(() => {
       const orig = window.fetch.bind(window);
       window.fetch = (input, init) => {

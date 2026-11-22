@@ -10,14 +10,18 @@
   things the tiles must dodge (front-view selfie cam, partner PiP, pedal bars).
   Switch scenarios with the buttons (or ?scenario=solo|local|versus|lobby).
 
-  three resolves from the CDN like index.html; pass ?three=/node_modules/three/
-  (or any base URL that has build/ and examples/jsm/) to use a local copy —
-  scripts/smoke-controller-overlay.mjs drives this page headless that way.
+  three resolves from the CDN like index.html. On this machine only (localhost),
+  ?three=/node_modules/three/ (a path on this server that has build/ and
+  examples/jsm/) uses a local copy — scripts/smoke-controller-overlay.mjs drives
+  this page headless that way. Anywhere else the address cannot choose where
+  code comes from.
 -->
 <script>
   (function () {
-    var params = new URLSearchParams(location.search);
-    var base = params.get('three') || 'https://cdn.jsdelivr.net/npm/three@0.161.0/';
+    var local = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+    var base = local ? new URLSearchParams(location.search).get('three') : null;
+    // A path on this server only: one leading slash, nothing that names another host.
+    if (!base || !/^\/[^/\\]/.test(base) || base.indexOf(':') >= 0) return;
     if (!base.endsWith('/')) base += '/';
     var im = document.createElement('script');
     im.type = 'importmap';
@@ -25,8 +29,16 @@
       'three': base + 'build/three.module.js',
       'three/addons/': base + 'examples/jsm/',
     } });
-    document.currentScript.after(im);
+    document.currentScript.after(im);   // comes first, so it is the one used
   })();
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.161.0/examples/jsm/"
+  }
+}
 </script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -78,6 +90,8 @@
 import * as THREE from 'three';
 import { ControllerOverlayHud } from '../js/controller-overlay-hud.js';
 import { TEAM_COLORS } from '../js/versus/team-rig.js';
+import { setControllerManager, steamXInputMap } from '../js/input-manager.js';
+import { steamSlotForPadIndex } from '../shared/units.js';
 
 // ── Fake pads: standard-mapping shape, self-animating so every tile moves ──
 const IDS = {
@@ -138,13 +152,22 @@ pads[5] = xinputPad;
 // ── Emulation mode (#362): Steam's snapshot is EMPTY, but it re-emits every
 // captured pad as a virtual XInput device — two identical "Xbox 360" pads: the
 // Steam Controller's twin (XInput slot 0) and the DualSense (slot 1). Only
-// getControllerForGamepadIndex tells them apart; main.js pushes that map.
+// Steam's XInput slot map tells them apart; main.js pushes that map and the
+// game reads it through the controller manager's units (controller-core 0.7+).
 const xinputTwin = makePad(4, 'Xbox 360 Controller (XInput STANDARD GAMEPAD)');
 pads[4] = xinputTwin;
 const fakeSteamXInput = { input: { getXInputMap: () => [
   { index: 0, handle: 'h-sc', type: '14' },
   { index: 1, handle: 'h-ds', type: '13' },
 ] } };
+// The one unit lookup the HUD's naming goes through (input-manager.js
+// steamTypeForGamepad): the Steam slot behind a virtual XInput pad, ranked the
+// way controller-core ranks it.
+manager.unitForPad = (index) => {
+  const steamSlot = steamSlotForPadIndex(pads, index, steamXInputMap());
+  return steamSlot ? { steamSlot } : null;
+};
+setControllerManager(manager);
 
 // ── Scenarios → the ctx the game passes each frame ──
 const ctx = { state: 'playing', mode: 'solo', manager, versusRigs: null, input: idleInput, inputP2: null, localP2Type: null, pads };

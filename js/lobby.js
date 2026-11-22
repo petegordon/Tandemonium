@@ -65,8 +65,10 @@ import { getSeatLooks, getChooserGeese, isMobile, isTV, RELAY_URL, BIKE_MODEL_PA
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
+import { escapeHtml } from './escape-html.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
+import { cleanText, cleanPlace } from './remote-safe.js';
 import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage, setLookupReporter } from './tourist-config.js';
 import { setTilesSessionHooks, hasLiveTilesSession } from './tourist-tiles-session.js';
 import { TOURIST_USAGE_KEY, readUsage, mergeUsage, sessionGate, countSession, noteAddresses, storeWithUsage, sessionText } from './tourist-limits.js';
@@ -4412,6 +4414,11 @@ export class Lobby {
             if (info && info.linked) this._justLinkedAt = Date.now();
             if (info && info.linked) showInfoToast('🔗', 'Discord linked', info.merged ? 'Your Discord and Steam accounts are now one' : 'Discord and Steam are one House Tandem account');
             if (this._profileUpdateUI) this._profileUpdateUI(user);
+            // Linked from the account page: the QR has done its job. The card stays open on both logins.
+            if (info && info.linked) {
+              this._hideProfileDevice();
+              if (this._activeModal === 'profile') this._modalFocus.setItems(this._profileItems(), 0);
+            }
             return;
           }
           const err = info && info.error;
@@ -4423,6 +4430,7 @@ export class Lobby {
             return;
           }
           // Expired or cancelled while the popup is still open: a fresh code.
+          if (this.auth.isLoggedIn()) { this._hideProfileDevice(); return; }   // the wait for a link ran out: the button is back
           this._setProfileDeviceStatus(err === 'cancelled' ? 'Cancelled. Scan again to sign in.' : 'That code expired. Here is a new one.');
           setTimeout(() => { if (this.profilePopup.classList.contains('visible')) this._showProfileDevice(); }, 1500);
         },
@@ -4439,8 +4447,17 @@ export class Lobby {
       qr.make();
       qrEl.innerHTML = qr.createSvgTag({ cellSize: 3, margin: 1 });
     } catch (_) { qrEl.innerHTML = ''; }
-    document.getElementById('profile-popup-code').textContent = dev.code || '';
-    this._setProfileDeviceStatus('Waiting for Discord…');
+    // Adding Discord to an account is done on the account page: other steps, no code.
+    const steps = box.querySelector('.profile-popup-steps');
+    if (steps) {
+      if (!this._profileDeviceSteps) this._profileDeviceSteps = steps.innerHTML;
+      steps.innerHTML = dev.linkPage
+        ? '<li>Scan with your phone&rsquo;s camera</li><li>Sign in with Steam</li><li>Choose <b>Link Discord</b></li>'
+        : this._profileDeviceSteps;
+    }
+    const codeEl = document.getElementById('profile-popup-code');
+    if (codeEl) codeEl.textContent = dev.code || '';
+    this._setProfileDeviceStatus(dev.linkPage ? 'This screen updates when Discord is linked.' : 'Waiting for Discord…');
     this._profileDevUrl = dev.url;
     if (openBtn && this._hasDesktopBrowser()) openBtn.style.display = '';
     // The pad list loses the hidden trigger and gains OPEN ON THIS COMPUTER; focus lands
@@ -4450,6 +4467,33 @@ export class Lobby {
       this._modalFocus.setItems(items, Math.max(0, items.indexOf(openBtn)));
     }
     return dev;
+  }
+
+  /**
+   * Ask the analytics question (index.html #consent-prompt). → 'accept' | 'decline'.
+   * With no prompt on the page the answer is 'decline': nothing is collected on a guess.
+   */
+  askAnalyticsConsent() {
+    const el = document.getElementById('consent-prompt');
+    const yes = document.getElementById('consent-accept');
+    const no = document.getElementById('consent-decline');
+    if (!el || !yes || !no) return Promise.resolve('decline');
+    return new Promise((resolve) => {
+      const keys = (e) => e.stopPropagation();   // the lobby behind does not hear the keyboard
+      const pick = (choice) => {
+        el.classList.remove('visible');
+        el.removeEventListener('keydown', keys);
+        yes.onclick = null;
+        no.onclick = null;
+        if (this._activeModal === 'consent') { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
+        resolve(choice);
+      };
+      yes.onclick = () => pick('accept');
+      no.onclick = () => pick('decline');
+      el.addEventListener('keydown', keys);
+      el.classList.add('visible');
+      try { yes.focus({ preventScroll: true }); } catch (e) { /* no focus here */ }
+    });
   }
 
   /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
@@ -4615,7 +4659,8 @@ export class Lobby {
         const mode = this._lbMainTab === 'solo' ? 'solo' : 'together';
         const data = await this.auth.getLeaderboard(levelId, null, null, { mode });
         const entries = data.entries || [];
-        const myId = this.auth.user ? this.auth.user.serverId : null;
+        // A row names its rider by public id, so "you" is found by the player's own.
+        const myId = await this.auth.publicId();
 
         if (entries.length === 0) {
           list.innerHTML = '<div class="lb-no-data">No scores yet</div>';
@@ -4642,9 +4687,9 @@ export class Lobby {
     list.innerHTML = '<div class="lb-no-data">Loading...</div>';
     try {
       const data = await this.auth.fetchDailyBoard(key);
-      const myId = this.auth.user.serverId;
+      const myId = await this.auth.publicId();
       const rows = ((data && data.results) || []).filter(r =>
-        tab === 'you' ? String(r.user_id) === String(myId)
+        tab === 'you' ? this._isMyRow(r, myId)
           : tab === 'together' ? r.mode === 'pair' : r.mode === 'solo');
       if (rows.length === 0) {
         list.innerHTML = '<div class="lb-no-data">No rides on this road yet</div>';
@@ -4657,10 +4702,21 @@ export class Lobby {
     }
   }
 
+  /**
+   * Is this board row the signed-in player's? Rows name their rider by public id (`pid`).
+   * The Daily board also puts the account number on the player's own rows (only theirs).
+   */
+  _isMyRow(row, myPid) {
+    if (!row) return false;
+    if (myPid && row.pid === myPid) return true;
+    const mine = this.auth && this.auth.user ? this.auth.user.serverId : null;
+    return row.user_id != null && mine != null && String(row.user_id) === String(mine);
+  }
+
   /** Rows from worker /daily: rank, rider, Solo/Pair, ⏳ when ridden in time warp, time. */
   _renderDailyRows(rows, myId, { mine = false } = {}) {
     return rows.map((r, i) => {
-      const isYou = !mine && myId && String(r.user_id) === String(myId);
+      const isYou = !mine && this._isMyRow(r, myId);
       const avatarSrc = r.avatar_url ? (this._avatarCache.get(r.avatar_url) || r.avatar_url) : '';
       const avatar = avatarSrc
         ? '<img class="lb-avatar" src="' + this._escapeHtml(avatarSrc) + '" alt="" referrerpolicy="no-referrer">' : '';
@@ -4685,7 +4741,7 @@ export class Lobby {
     const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
-      const isYou = !mine && myId && e.user_id === myId;
+      const isYou = !mine && !!myId && e.pid === myId;
       const diffHtml = DIFF_LABEL[e.difficulty] ? '<span class="lb-diff">' + DIFF_LABEL[e.difficulty] + '</span>' : '';
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
@@ -4955,10 +5011,9 @@ export class Lobby {
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
 
+  /** Text made safe for HTML, between tags or inside a quoted attribute (quotes are escaped too). */
   _escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeHtml(str);
   }
 
   /** Fetch an avatar URL once, convert to blob URL, and cache it. */
@@ -6076,6 +6131,11 @@ export class Lobby {
       // select; this re-syncs it (and moves an older build off its room step).
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
+      // The plan is the captain's to send: a captain takes none from its stoker.
+      if (this._roomRole === 'captain') return;
+      // Its words come from the partner's copy of the game: plain, short text only (js/remote-safe.js).
+      profile = { ...profile, from: cleanPlace(profile.from), to: cleanPlace(profile.to),
+        title: typeof profile.title === 'string' ? cleanText(profile.title, 80) : undefined };
       // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
       // plan from the two end points (pure, deterministic); held until the
       // flagged START_RIDE that follows.
@@ -8536,6 +8596,20 @@ export class Lobby {
     }
     this._gpPrevY = y;
 
+    // The analytics question (js/consent.js): the pad moves between its two answers and A
+    // picks one. B does nothing: it is answered, not dismissed.
+    const ask = document.getElementById('consent-prompt');
+    if (ask && ask.classList.contains('visible')) {
+      if (this._activeModal !== 'consent') {
+        this._activeModal = 'consent';
+        this._modalBack = () => {};
+        const btns = [document.getElementById('consent-decline'), document.getElementById('consent-accept')].filter(Boolean);
+        this._modalFocus.setSpatial(btns, btns[btns.length - 1]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
+
     // LB/RB bumpers (buttons 4/5) — cycle bike color; over the Achievements
     // sheet they jump a section instead (and leave the bike alone).
     const lb = gp.buttons[4] && gp.buttons[4].pressed;
@@ -9049,6 +9123,7 @@ export class Lobby {
           try {
             const dev = await this.auth.startDiscordDevice({
               onStatus: (s) => { this._p1DeviceStatus = s; emit(1); },
+              // (Signed in already, this is the account page's address and no code: see auth.js.)
               onDone: (user, info) => {
                 this._p1DeviceStatus = null;
                 if (user) {

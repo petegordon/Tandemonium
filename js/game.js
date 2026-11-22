@@ -106,6 +106,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { resolveConsent, saveConsent, storedConsent, syncConsent } from './consent.js';
 import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
@@ -1087,13 +1088,13 @@ class Game {
       is_stoker: !!roomParam,
       joined_via_url: !!roomParam,
       room_code: roomParam ? (roomParam.startsWith('TNDM-') ? roomParam : 'TNDM-' + roomParam) : null,
-      google_uid: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.getUser())
-        ? this.lobby.auth.getUser().serverId || null : null,
+      account_token: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.token) || null,
       platform: window.steam ? 'steam' : (navigator.userAgent.includes('Electron') ? 'electron' : 'browser'),
       screen_width: window.screen.width,
       screen_height: window.screen.height,
     });
     analytics.setPage('landing');
+    this._initAnalyticsConsent();
 
     // Start loop
     this.lastTime = performance.now();
@@ -4302,14 +4303,22 @@ class Game {
     if (!el) return;
     const ridden = this.bike ? this.bike.distanceTraveled : 0;
     const left = Math.max(0, this._touristGoalM - ridden);
-    const text = this._touristRoute.explore
-      ? this._touristRoute.headline + ' · <span class="tourist-togo">' + formatDistance(ridden) + ' ridden</span>'
-      : this._touristRoute.headline +
-        ' · <span class="tourist-togo">' + (this.raceManager && this.raceManager.finished ? 'you are here!' : formatDistance(left) + ' to go') + '</span>';
+    const togo = this._touristRoute.explore ? formatDistance(ridden) + ' ridden'
+      : (this.raceManager && this.raceManager.finished ? 'you are here!' : formatDistance(left) + ' to go');
+    const headline = String(this._touristRoute.headline || '');
+    const text = headline + ' · ' + togo;
     if (text !== this._prevTouristGoalText) {
       this._prevTouristGoalText = text;
-      el.innerHTML = '<span class="tourist-arrow" aria-hidden="true">&#x27A4;</span> ' + text;
-      this._touristArrowEl = el.querySelector('.tourist-arrow');
+      // Built as text, never as markup: in a room the headline is made from the partner's plan.
+      const arrow = document.createElement('span');
+      arrow.className = 'tourist-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      arrow.textContent = '➤';
+      const togoEl = document.createElement('span');
+      togoEl.className = 'tourist-togo';
+      togoEl.textContent = togo;
+      el.replaceChildren(arrow, ' ' + headline + ' · ', togoEl);
+      this._touristArrowEl = arrow;
     }
     // which way the beam is from where the bike points (no road to follow here)
     const arrow = this._touristArrowEl;
@@ -7474,6 +7483,59 @@ class Game {
     }
   }
 
+  /**
+   * Analytics consent (js/consent.js). Players in the EEA, the UK and Switzerland are asked
+   * once, before anything is sent; everyone else is counted as before. Until the answer is
+   * in, analytics hold what they have and send nothing.
+   */
+  _initAnalyticsConsent() {
+    if (analytics.analyticsDisabled()) return;
+    const auth = this.lobby && this.lobby.auth;
+    const getToken = () => (auth && auth.isLoggedIn() && auth.token) || null;
+    const force = new URLSearchParams(window.location.search).has('ask-consent');
+    // Settings shows the answer and changes it, once there is one (or one is owed).
+    let wired = false;
+    const showSwitch = () => {
+      for (const id of ['opt-analytics-label', 'opt-analytics-row', 'opt-analytics-note']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      }
+      this._updateOptionsAnalyticsUI();
+      if (wired) return;
+      wired = true;
+      const set = (on) => {
+        const now = storedConsent();
+        if (now && (now.choice === 'accept') === on) return;
+        const answer = saveConsent(on ? 'accept' : 'decline', { token: getToken() });
+        analytics.setAnalyticsAllowed(on, on ? answer.version : null);
+        this._updateOptionsAnalyticsUI();
+      };
+      document.getElementById('opt-analytics-on')?.addEventListener('click', () => set(true));
+      document.getElementById('opt-analytics-off')?.addEventListener('click', () => set(false));
+    };
+    const apply = (r) => {
+      analytics.setAnalyticsAllowed(r.allowed, r.mark);
+      if (r.required || r.answered) showSwitch();
+    };
+    resolveConsent({ ask: () => this.lobby.askAnalyticsConsent(), getToken, force }).then(apply)
+      .catch(() => analytics.setAnalyticsAllowed(false));
+    // The answer is the account's: after a sign-in, the account's answer is the one that counts
+    // (given in any House Tandem game), and one given here before signing in joins the account.
+    if (auth && auth.identity && auth.identity.onChange) {
+      auth.identity.onChange((user, reason) => {
+        if (!user || reason !== 'signin') return;
+        syncConsent({ getToken }).then((r) => { if (r) apply(r); }).catch(() => {});
+      });
+    }
+  }
+
+  _updateOptionsAnalyticsUI() {
+    const a = storedConsent();
+    const on = !!(a && a.choice === 'accept');
+    document.getElementById('opt-analytics-on')?.classList.toggle('active', on);
+    document.getElementById('opt-analytics-off')?.classList.toggle('active', !on);
+  }
+
   _updateOptionsShowSoloUI() {
     const on = getShowSolo();
     const onBtn  = document.getElementById('opt-solo-on');
@@ -8221,7 +8283,7 @@ class Game {
   /** So Close: where this ride's last checkpoint sits (0 = none; the tracker falls back to the last 10 m). */
   _lastCheckpointM() {
     const rm = this.mode === 'versus' ? null : this.raceManager;
-    if (rm && Array.isArray(rm.checkpoints)) return rm.checkpoints.length ? rm.checkpoints[rm.checkpoints.length - 1] : 0;
+    if (rm && Array.isArray(rm.checkpoints)) return rm.checkpoints.length ? lastCheckpointM(rm.raceDistance, rm.checkpointInterval) : 0;
     const lvl = this.lobby && this.lobby.selectedLevel;
     return lvl ? lastCheckpointM(lvl.distance, lvl.checkpointInterval) : 0;
   }

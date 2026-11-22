@@ -132,13 +132,20 @@ test('0021 keeps every account’s totals, credits old rows to the earliest logi
   assert.equal((await (await call('/pair?with=2', { tok: old })).json()).rides, 4);
   assert.equal((await (await call('/pair?with=guest%3Adev-raw-1', { tok: old })).json()).rides, 2);
   const board = await (await call('/daily?key=2026-11-10', { tok: old })).json();
-  assert.deepEqual(board.results.map((r) => [r.user_id, r.mode]).sort(), [[1, 'pair'], [1, 'solo'], [2, 'pair']]);
+  // Riders are named by public id; only Pete's own rows keep his account number.
+  assert.deepEqual(board.results.map((r) => [r.pid === me.user.pid ? 'me' : 'partner', r.user_id ?? null, r.mode]).sort(),
+    [['me', 1, 'pair'], ['me', 1, 'solo'], ['partner', null, 'pair']]);
 
-  const viaSteam = await token({ sub: 1, via: 'steam:s-pete' });
-  db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
-  const res = await call('/score', { method: 'POST', tok: viaSteam, body: { levelId: 'grandma', distance: 1200, timeMs: 180000, mode: 'solo' } });
-  assert.equal(res.status, 200, await res.clone().text());
-  assert.deepEqual(one('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1'), { user_id: 1, login_id: 12 }, 'a token from before lids names its login by `via`');
+  // A session names its login by id. A token from before login ids (even one that carries
+  // `via`) is the account's first sign-in.
+  const post = async (claims) => {
+    db.prepare("UPDATE scores SET created_at = datetime('now', '-1 minute')").run();
+    const res = await call('/score', { method: 'POST', tok: await token(claims), body: { levelId: 'grandma', distance: 1200, timeMs: 180000, mode: 'solo' } });
+    assert.equal(res.status, 200, await res.clone().text());
+    return one('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1');
+  };
+  assert.deepEqual(await post({ sub: 1, lid: 12 }), { user_id: 1, login_id: 12 }, 'recorded under the login the session names');
+  assert.deepEqual(await post({ sub: 1, via: 'steam:s-pete' }), { user_id: 1, login_id: 11 }, '`via` alone names no login: the first sign-in');
 });
 
 test('0021 on an empty database, and applied to the schema twice over, does not fail', () => {

@@ -9,9 +9,11 @@
 export function pickCorsOrigin(requestOrigin, corsSetting) {
   const allowed = (corsSetting || '*').split(',').map(s => s.trim()).filter(Boolean);
   if (allowed.includes('*')) return requestOrigin || '*';
-  if (allowed.includes(requestOrigin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin)) return requestOrigin;
+  if (originListed(requestOrigin, corsSetting)) return requestOrigin;
   return allowed[0];
 }
+
+import { originListed } from './accounts/origins.js';
 
 import { monthCost, GOOGLE_DAILY_CAPS } from '../js/tourist-costs.js';
 import {
@@ -21,8 +23,13 @@ import {
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
   resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
+  handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims, fetchSteamProfile,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
+import { pruneAnalytics } from './retention.js';
+import { isAchievementId } from './achievement-ids.js';
+import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
@@ -92,6 +99,7 @@ registerAccountTables([
   { table: 'discord_posts', user: 'user_id', login: 'login_id' },
   { table: 'sessions', user: 'google_uid', login: 'login_id', text: true },
   ...GAME_ACCOUNT_TABLES,
+  ...CONSENT_ACCOUNT_TABLES,
 ]);
 
 /** What the identity module needs from this worker. */
@@ -107,6 +115,17 @@ async function deviceKeys(env, deviceId) {
 }
 
 export default {
+  /** Once a day (wrangler-api.toml): gameplay analytics older than 24 months are deleted. */
+  async scheduled(_event, env, ctx) {
+    const work = pruneAnalytics(env).then((out) => {
+      const total = Object.values(out.removed).reduce((a, b) => a + b, 0);
+      if (total || out.errors.length) console.log('analytics retention', JSON.stringify(out));
+      if (out.errors.length) console.error('analytics retention failed', out.errors.join(' | '));
+    }).catch((e) => console.error('analytics retention failed', (e && e.message) || e));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(work);
+    return work;
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';
@@ -125,6 +144,31 @@ export default {
       // Rate limits, one place for every route (see limitRequest).
       const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
       if (limited) return limited;
+
+      // Analytics consent (EEA, UK, Switzerland): is this player to be asked, and their answer.
+      if (path === '/consent/region' && request.method === 'GET') {
+        return handleConsentRegion(request, corsOrigin, { jsonResponse });
+      }
+      if (path === '/me/consent' && request.method === 'GET') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleAccountConsent(req, e, c, uid, { jsonResponse }));
+      }
+      if (path === '/consent' && request.method === 'POST') {
+        const text = await readBodyLimited(request, 4096);
+        if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
+        return handleConsentRecord(request, env, corsOrigin, text, clientIP, { jsonResponse, sessionFromToken });
+      }
+
+      // Analytics writes take no sign-in: their size is checked before anything parses them.
+      if (isAnalyticsWrite(path, request.method)) {
+        // From a country where the player is asked first, nothing is kept without their yes.
+        if (consentMissing(request, url)) return new Response(null, { status: 204, headers: corsHeaders(corsOrigin) });
+        const text = await readBodyLimited(request, analyticsBodyLimit(path));
+        if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch { /* answered below */ }
+        if (!parsed || typeof parsed !== 'object') return jsonResponse({ error: 'Invalid body' }, 400, corsOrigin);
+        request = new Request(request.url, { method: request.method, headers: request.headers, body: text });
+      }
 
       // Auth routes
       if (path === '/auth/google' && request.method === 'POST') {
@@ -160,6 +204,10 @@ export default {
       if (path === '/auth/poll' && request.method === 'POST') {
         return handleAuthPoll(request, env, corsOrigin, identityDeps());
       }
+      // A redirect sign-in's code + the value its browser kept → the session.
+      if (path === '/auth/exchange' && request.method === 'POST') {
+        return handleAuthExchange(request, env, corsOrigin, identityDeps());
+      }
       // #612 · a link finishes in the tab that began it; a combine only after the player said yes.
       if (path === '/auth/link/complete' && request.method === 'POST') {
         return handleLinkComplete(request, env, corsOrigin, identityDeps());
@@ -193,6 +241,9 @@ export default {
       }
       if (path === '/me/discord') {
         return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleDiscordMembership(req, e, c, uid, identityDeps()));
+      }
+      if (path === '/me/signout-all' && request.method === 'POST') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleSignOutEverywhere(req, e, c, uid, identityDeps()));
       }
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
@@ -280,7 +331,8 @@ export default {
       try { writeMetric(env, 'error', message); } catch (_) { /* don't mask original error */ }
       // The pages a browser is sent to during sign-in get a page, not JSON.
       if (SIGNIN_PAGES.has(url.pathname)) return signInErrorPage();
-      return jsonResponse({ error: message }, 500, corsOrigin);
+      // What went wrong is in the log (above), never in the answer.
+      return jsonResponse({ error: 'Something went wrong on our side. Try again in a moment.' }, 500, corsOrigin);
     }
   }
 };
@@ -312,7 +364,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   try {
     payload = await verifyGoogleIdToken(credential, env.GOOGLE_CLIENT_ID);
   } catch (e) {
-    return jsonResponse({ error: e.message }, 401, corsOrigin);
+    console.error('google sign-in refused', (e && e.message) || e);
+    return jsonResponse({ error: 'Google did not confirm this sign-in' }, 401, corsOrigin);
   }
 
   writeMetric(env, 'auth_google');
@@ -320,21 +373,32 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const googleId = payload.sub;
   const name = payload.name || 'Player';
   const picture = payload.picture || null;
-  const email = payload.email || null;
+  // Only an address Google itself has confirmed is carried (the dashboard's check reads it).
+  const email = (payload.email_verified === true || payload.email_verified === 'true') && typeof payload.email === 'string' ? payload.email : null;
 
   // #612: Google is a legacy sign-in; its users keep their account.
   const { userId, loginId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
   await claimGuestPairs(env, cleanDeviceId(body.device_id), userId, identityDeps());   // #678
 
   // Create server JWT (include email for dashboard access control). #783: lid = this login.
-  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId }, env.JWT_SECRET);
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
 /** A Steam web-API auth ticket as the game sends it: hex (a few hundred characters). */
 const STEAM_TICKET_RE = /^[0-9a-fA-F]{16,8192}$/;
+/** The identity the game asks Steam for its ticket with (electron/main.js): Steam checks the ticket was made for it. */
+export const STEAM_TICKET_IDENTITY = 'tandemonium';
+
+/** A name the game sent, as one line of at most 64 characters, or null. */
+export function cleanPlayerName(v) {
+  if (typeof v !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const t = v.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+  return t || null;
+}
 
 async function handleSteamAuth(request, env, corsOrigin) {
   if (!env.STEAM_WEB_API_KEY) {
@@ -357,7 +421,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   for (const appId of appIds) {
     try {
-      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}`;
+      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}&identity=${STEAM_TICKET_IDENTITY}`;
       const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
       if (!steamRes.ok) {
         lastError = `Steam API returned ${steamRes.status} for appId ${appId}`;
@@ -382,26 +446,17 @@ async function handleSteamAuth(request, env, corsOrigin) {
   }
 
   if (!verified) {
-    return jsonResponse({ error: 'Steam ticket invalid', detail: lastError }, 401, corsOrigin);
+    console.error('steam ticket refused', lastError);
+    return jsonResponse({ error: 'Steam ticket invalid' }, 401, corsOrigin);
   }
 
   writeMetric(env, 'auth_steam');
 
-  const name = personaName || 'Steam Player';
-
-  // Fetch real avatar URL from Steam (avatars use content hashes, not Steam IDs)
-  let avatarUrl = 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg'; // default
-  try {
-    const summaryUrl = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${env.STEAM_WEB_API_KEY}&steamids=${steamId}`;
-    const summaryRes = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
-    if (summaryRes.ok) {
-      const summaryData = await summaryRes.json();
-      const player = summaryData?.response?.players?.[0];
-      if (player?.avatarmedium) avatarUrl = player.avatarmedium;
-    }
-  } catch (e) {
-    // Non-fatal — proceed with default avatar
-  }
+  // The name and picture come from Steam's own profile for this id (the same request the
+  // picture always took). Only when Steam does not answer is the name the game sent used.
+  const steamProfile = await fetchSteamProfile(env, verifiedSteamId, fetch, cleanPlayerName(personaName) || 'Steam Player');
+  const name = cleanPlayerName(steamProfile.name) || 'Steam Player';
+  const avatarUrl = steamProfile.avatar;
 
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
   const { userId, loginId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
@@ -411,10 +466,10 @@ async function handleSteamAuth(request, env, corsOrigin) {
   await attachSessionAccount(env, body.session_id, userId, loginId);
 
   // #783 · lid: the login this session is (its account is whatever that login belongs to).
-  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId }, env.JWT_SECRET);
+  const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: avatarUrl, identities } }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -461,6 +516,12 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
   // Numbers are numbers (the tables aren't STRICT: a string would be stored as text).
   if (typeof distance !== 'number' || !Number.isFinite(distance) || typeof timeMs !== 'number' || !Number.isFinite(timeMs)) {
     return jsonResponse({ error: 'Invalid numbers' }, 400, corsOrigin);
+  }
+
+  // A day key (a ride on the Daily road) is checked as POST /daily checks its own.
+  if (body.dailyKey != null) {
+    if (typeof body.dailyKey !== 'string' || !DAY_KEY_RE.test(body.dailyKey)) return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
+    if (!dailyDayAllowed(body.dailyKey, dailyKeyUTC(), body.warp === true)) return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
   }
 
   // Validate level ID
@@ -593,7 +654,7 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
 
   if (newAchievements && Array.isArray(newAchievements)) {
     for (const achId of newAchievements) {
-      if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+      if (!isAchievementId(achId)) continue;
       batchStmts.push(badgeInsert(env, userId, loginId, achId, scoreId));
     }
   }
@@ -609,7 +670,7 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
         'INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode, collectibles_count, input_source, difficulty, safety_used, score_multiplier) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
       ).bind(seat.userId, seat.loginId, levelId, distance, timeMs, seat.role, f.collectiblesCount, f.inputSource,
              f.difficulty, safetyUsed ? 1 : 0, f.scoreMultiplier).run();
-      const achStmts = seat.newAchievements.filter((a) => typeof a === 'string' && a.length <= 64).map((achId) =>
+      const achStmts = seat.newAchievements.filter(isAchievementId).map((achId) =>
         badgeInsert(env, seat.userId, seat.loginId, achId, scoreId));
       if (achStmts.length) await env.DB.batch(achStmts);
     } catch (err) {
@@ -938,6 +999,9 @@ export function dailyUpsertSql(dnf) {
           OR excluded.time_ms < daily_results.time_ms`;
 }
 
+/** A day key: YYYY-MM-DD. */
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** #611 · how far ahead of the real date a time-warp ride may post. */
 export const WARP_MAX_DAYS = 7;
 
@@ -987,12 +1051,20 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
   // #783 · an account with two logins can have two rows for a day and mode: its result is
   // the better one (the rows come best first).
   const seen = new Set();
-  const results = (rows.results || []).filter((r) => {
+  const best = (rows.results || []).filter((r) => {
     const k = r.user_id + ':' + r.mode;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+  // Each rider is named by public id (pid). The caller's own rows keep their account
+  // number too: it is theirs, and game builds from before public ids find "you" by it.
+  const pids = await publicPlayerIds(env, best.map((r) => r.user_id));
+  const results = best.map(({ user_id, ...r }) => ({
+    ...(String(user_id) === String(userId) ? { user_id } : {}),
+    pid: pids.get(user_id) || null,
+    ...r,
+  }));
 
   return jsonResponse({
     key,
@@ -1020,15 +1092,18 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const mode = url.searchParams.get('mode');       // 'solo' | 'together'
   const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'adventurous' | 'daredevil'
   const userFilter = url.searchParams.get('user_id'); // 'me'
-  let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
+  const asked = parseInt(url.searchParams.get('limit') || '20', 10);
+  let limit = Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20;
 
-  // Cache public global leaderboard requests (30s TTL)
+  // Cache public global leaderboard requests (30s TTL). Only the body is kept: each caller
+  // gets the CORS headers for its own origin, whoever asked first.
   const isPublic = scope === 'global' && !userFilter;
+  const cacheKey = new Request(url.toString(), { method: 'GET' });
   if (isPublic) {
-    const cache = caches.default;
-    const cacheKey = new Request(url.toString(), request);
-    const cached = await cache.match(cacheKey);
-    if (cached) return cached;
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      return new Response(cached.body, { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders(corsOrigin || '*') } });
+    }
   }
 
   const conditions = ['s.level_id = ?'];
@@ -1117,25 +1192,26 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     }
   }
 
-  // Assemble entries
-  const entries = rows.map(row => ({
+  // Assemble entries. A player is named by public id (pid): account numbers stay here.
+  const riders = Object.values(contribMap).flat().map(c => c.player_user_id);
+  const pids = await publicPlayerIds(env, [...userIds, ...riders]);
+  const entries = rows.map(({ user_id, ...row }) => ({
     ...row,
-    contributions: contribMap[row.id] || [],
-    achievements: (achMap[row.user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
+    pid: pids.get(user_id) || null,
+    contributions: (contribMap[row.id] || []).map(({ player_user_id, ...c }) => ({
+      ...c, player_pid: player_user_id == null ? null : pids.get(player_user_id) || null
+    })),
+    achievements: (achMap[user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
   }));
 
-  const response = jsonResponse({ entries }, 200, corsOrigin);
-
-  // Store in cache for public requests
+  // Store in cache for public requests: the body, with no caller's headers on it.
   if (isPublic) {
-    const cache = caches.default;
-    const cacheKey = new Request(url.toString(), request);
-    const cachedResponse = new Response(response.clone().body, response);
-    cachedResponse.headers.set('Cache-Control', 'public, max-age=30');
-    await cache.put(cacheKey, cachedResponse);
+    await caches.default.put(cacheKey, new Response(JSON.stringify({ entries }), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30' },
+    }));
   }
 
-  return response;
+  return jsonResponse({ entries }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -1143,15 +1219,18 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 // ============================================================
 
 async function handlePlayerProfile(request, env, url, corsOrigin) {
-  const parts = url.pathname.split('/');
-  const playerId = parseInt(parts[2]);
-  if (!playerId) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  // GET /player/<pid>: a player is asked for by public id, never by account number.
+  const pid = url.pathname.split('/')[2] || '';
+  if (!isPublicPlayerId(pid)) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  const playerId = await userIdForPublicId(env, pid);
+  if (playerId == null) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
 
   const levelFilter = url.searchParams.get('level');
 
-  const user = await env.DB.prepare('SELECT id, display_name, avatar_url, created_at FROM users WHERE id = ?')
+  const user = await env.DB.prepare('SELECT display_name, avatar_url, created_at FROM users WHERE id = ?')
     .bind(playerId).first();
   if (!user) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
+  user.pid = pid;
 
   const achievements = await env.DB.prepare(ACCOUNT_BADGES).bind(playerId).all();
 
@@ -1216,6 +1295,8 @@ async function getMe(request, env, corsOrigin, userId) {
 
   // #612: every sign-in linked to the account (the TV's Profile pill shows Discord + Steam).
   if (user) user.identities = await listIdentities(env, userId);
+  // The player's own public id: what a board row's pid is compared with to find "you".
+  if (user) user.pid = await ensurePublicId(env, userId);
 
   return jsonResponse({
     user,
@@ -1237,7 +1318,7 @@ async function syncAchievements(request, env, corsOrigin, userId, loginId) {
   // account lacks is recorded (under this login).
   let synced = 0;
   for (const achId of achievements.slice(0, 500)) {
-    if (typeof achId !== 'string' || !achId || achId.length > 64) continue;
+    if (!isAchievementId(achId)) continue;
     const res = await badgeInsert(env, userId, loginId, achId).run();
     if (res.meta.changes > 0) synced++;
   }
@@ -1375,18 +1456,19 @@ async function verifyGoogleIdToken(token, expectedAud) {
 // ============================================================
 
 // ── Rate limits (Pete 2026-11-09): two rules, the same for every route ──
-//   1. Per player: 30 a minute for each kind of write, keyed by the account
-//      when signed in, else by the session / device / ride id.
+//   1. Per player: 30 a minute for each kind of write, keyed by the signed-in
+//      account (or the IP when a write has no valid token).
 //   2. Per IP: 300 a minute across every route. A venue puts every machine on
-//      one IP (one machine sends ~15-20 a minute while riding), and an id can
-//      be made up, so this ceiling is what stops a script.
+//      one IP (one machine sends ~15-20 a minute while riding). Analytics
+//      writes carry no sign-in and their ids are the sender's to choose, so
+//      this per-IP rule is the one that counts them.
 // Starting a sign-in has no player yet: 30 a minute per IP. Share uploads
 // keep their own tighter limit (they post publicly to Discord; worker/share.js).
 export const PLAYER_LIMIT = 30;
 export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
-  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo']);
+  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all']);
 // The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
 const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
   '/auth/steam/go', '/auth/steam/callback']);
@@ -1395,17 +1477,9 @@ const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/au
 export async function playerBucket(request, env, path, clientIP) {
   const method = request.method;
   if (method !== 'POST' && method !== 'PUT') return null;
-  const json = async () => { try { return JSON.parse(await request.clone().text()); } catch { return {}; } };
-  const seg = path.split('/');
-  if (path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/')) {
-    const kind = seg[3];   // session | event | ride | room | conversion
-    if (seg.length >= 5 && seg[4] !== 'batch') return `${kind}${seg[5] ? '-' + seg[5] : ''}:${seg[4]}`;   // /session/:id, /ride/:id(/events), /room/:code
-    const b = await json();
-    if (kind === 'session') return 'session-create:' + (b.device_id || b.id || 'ip:' + clientIP);
-    if (kind === 'event') return 'event:' + ((Array.isArray(b.events) && b.events[0] && b.events[0].session_id) || 'ip:' + clientIP);
-    if (kind === 'room') return 'room:' + (b.code || 'ip:' + clientIP);
-    return kind + ':' + (b.session_id || 'ip:' + clientIP);
-  }
+  // Analytics: counted by the per-IP rule alone (see above). A key taken from the request
+  // would let one sender spend another player's allowance, or make up a new one each time.
+  if (isAnalyticsWrite(path, method)) return null;
   if (path === '/score' || path === '/daily' || path === '/achievements/sync' || /^\/games\/[^/]+\/sync$/.test(path)) {
     const auth = request.headers.get('Authorization') || '';
     const sub = auth.startsWith('Bearer ') && env.JWT_SECRET ? await userFromToken(auth.slice(7), env) : null;
@@ -1426,11 +1500,20 @@ export async function limitRequest(request, env, path, clientIP, corsOrigin) {
   return bucket ? checkRateLimit(env.PLAYER_LIMITER, bucket, corsOrigin, env) : null;
 }
 
+/**
+ * The kind of limit a key counts, without whose it is: 'ip', 'signin', 'user', 'score:user',
+ * 'score:ip'... The address or account the key ends with is never part of it.
+ */
+export function limitKind(key) {
+  const m = /^(?:[a-z_-]+:)??(?:ip|user|signin)(?=:)/.exec(String(key));
+  return m ? m[0] : 'other';
+}
+
 async function checkRateLimit(limiter, key, corsOrigin, env) {
   if (!limiter) return null; // graceful fallback if binding not configured
   const { success } = await limiter.limit({ key });
   if (!success) {
-    if (env) writeMetric(env, 'rate_limit_hit', key);
+    if (env) writeMetric(env, 'rate_limit_hit', limitKind(key));
     return new Response(JSON.stringify({ error: 'Too many requests' }), {
       status: 429,
       headers: {
@@ -1456,6 +1539,65 @@ function isValidUUID(str) {
   return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+// Analytics comes from any browser, signed in or not, and is read on the dashboard:
+// text is plain and short, numbers are numbers, and nothing else is stored.
+export const analyticsText = (v, n = 64) => (typeof v === 'string' && v ? (v.replace(/[<>\u0000-\u001f\u007f]/g, '').slice(0, n) || null) : null);
+const txt = analyticsText;
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? (v ? 1 : 0) : null);
+const scalar = (v, n = 64) => (typeof v === 'string' ? txt(v, n) : num(v));
+const jsonText = (v, n = 8000) => {
+  if (!v) return null;
+  let s;
+  try { s = JSON.stringify(v); } catch { return null; }
+  return typeof s === 'string' && s.length <= n ? s.replace(/[<>]/g, '') : '{"dropped":"too long"}';
+};
+
+/** The largest analytics body, in bytes. The game's own are far smaller (test/unit/analytics-limits). */
+export const ANALYTICS_BODY_MAX = 16 * 1024;
+/**
+ * The two event batches can legitimately be larger, and installed builds can't be changed: a
+ * ride's events go in one batch when it ends, and a burst of achievements shares one UI batch
+ * (about 60 events is already 16 KB). 64 KB is what a browser's keepalive fetch can send.
+ */
+export const ANALYTICS_RIDE_EVENTS_MAX = 64 * 1024;
+
+function isAnalyticsWrite(path, method) {
+  return (method === 'POST' || method === 'PUT')
+    && path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/');
+}
+
+export function analyticsBodyLimit(path) {
+  return path === '/api/analytics/event/batch' || /^\/api\/analytics\/ride\/[^/]+\/events$/.test(path)
+    ? ANALYTICS_RIDE_EVENTS_MAX : ANALYTICS_BODY_MAX;
+}
+
+/**
+ * The body as text, or null when it is over `max` bytes. The declared length is checked first,
+ * and the bytes are counted as they arrive (a declared length can be missing or wrong).
+ */
+export async function readBodyLimited(request, max) {
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
+
 async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   const body = await request.json();
   if (!body.id || !isValidUUID(body.id)) {
@@ -1464,18 +1606,18 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   const baseValues = [
     body.id,
-    body.started_at || new Date().toISOString(),
-    body.device_type || null,
-    body.input_method || null,
-    body.referrer || null,
-    body.user_agent || null,
+    txt(body.started_at, 40) || new Date().toISOString(),
+    txt(body.device_type, 32),
+    txt(body.input_method, 32),
+    txt(body.referrer, 300),
+    txt(body.user_agent, 300),
     body.is_stoker ? 1 : 0,
     body.joined_via_url ? 1 : 0,
-    body.room_code || null,
-    body.google_uid || null,
-    body.platform || 'browser',
-    body.screen_width || null,
-    body.screen_height || null,
+    txt(body.room_code, 16),
+    null,   // google_uid: the account comes only from a verified token (below)
+    txt(body.platform, 16) || 'browser',
+    num(body.screen_width),
+    num(body.screen_height),
     clientIP || null,
   ];
   // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
@@ -1483,18 +1625,23 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   // Upsert: the session may already exist as a placeholder that its events
   // created (see ensureSessions) when this create was late or rate-limited.
-  // Fill it in; keep the earlier start time.
-  const fill = (cols) => cols.map((c) => `${c} = COALESCE(excluded.${c}, sessions.${c})`).join(', ');
-  const FILL = ['device_type', 'input_method', 'referrer', 'user_agent', 'room_code', 'google_uid',
+  // Fill it in; keep the earlier start time. Only a placeholder (no user agent yet) is
+  // filled: a create repeated for a session already described changes nothing on it,
+  // and the account column is never written here.
+  const blank = 'sessions.user_agent IS NULL';
+  const fill = (cols) => cols.map((c) => `${c} = CASE WHEN ${blank} THEN COALESCE(excluded.${c}, sessions.${c}) ELSE sessions.${c} END`).join(', ');
+  const FILL = ['device_type', 'input_method', 'referrer', 'user_agent', 'room_code',
     'platform', 'screen_width', 'screen_height', 'ip_address'];
+  const firsts = `started_at = CASE WHEN ${blank} THEN MIN(sessions.started_at, excluded.started_at) ELSE sessions.started_at END,
+       is_stoker = CASE WHEN ${blank} THEN MAX(sessions.is_stoker, excluded.is_stoker) ELSE sessions.is_stoker END,
+       joined_via_url = CASE WHEN ${blank} THEN MAX(sessions.joined_via_url, excluded.joined_via_url) ELSE sessions.joined_via_url END`;
   try {
     await env.DB.prepare(
       `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
        device_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
-       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ON CONFLICT(id) DO UPDATE SET ${firsts},
        ${fill([...FILL, 'device_id'])}`
     ).bind(...baseValues, deviceId).run();
   } catch (e) {
@@ -1506,14 +1653,24 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
       `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
-       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ON CONFLICT(id) DO UPDATE SET ${firsts},
        ${fill(FILL)}`
     ).bind(...baseValues).run();
   }
 
+  // Signed in when the session started: the account comes from the verified token.
+  await attachFromToken(env, body.id, body.account_token);
+
   writeMetric(env, 'analytics_session');
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+/** A session takes the account in a sign-in token, once the token is verified. */
+async function attachFromToken(env, sessionId, token) {
+  if (typeof token !== 'string' || !env.JWT_SECRET) return;
+  const who = await sessionFromToken(token, env);
+  const acct = parseInt((who && who.userId) ?? '', 10);
+  if (acct > 0) await attachSessionAccount(env, sessionId, acct, who.loginId);
 }
 
 async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId, clientIP) {
@@ -1528,22 +1685,19 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(txt(body[field], 80));
     }
   }
 
   // Player 1 signed in after the session started (the Steam build's ticket
   // sign-in finishes after launch): attach the account from the verified
   // token. Only to a guest session, so it can't move one between accounts.
-  if (typeof body.account_token === 'string' && env.JWT_SECRET) {
-    const who = await sessionFromToken(body.account_token, env);
-    const acct = parseInt((who && who.userId) ?? '', 10);
-    if (acct > 0) await attachSessionAccount(env, sessionId, acct, who.loginId);
-  }
+  await attachFromToken(env, sessionId, body.account_token);
 
-  // Always update IP address (captures it even for sessions created before migration)
+  // Keep the IP current. A described session with no device id has had its details
+  // cleared (a deleted account), or predates device ids: its IP is left as it is.
   if (clientIP) {
-    sets.push('ip_address = ?');
+    sets.push('ip_address = CASE WHEN user_agent IS NOT NULL AND device_id IS NULL THEN ip_address ELSE ? END');
     values.push(clientIP);
   }
 
@@ -1622,11 +1776,11 @@ async function handleAnalyticsEventBatch(request, env, corsOrigin) {
   const batch = events.map(e =>
     stmt.bind(
       e.session_id,
-      e.event_type,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString(),
-      e.page || null,
-      e.input_method || null
+      txt(e.event_type, 64) || 'unknown',
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString(),
+      txt(e.page, 64),
+      txt(e.input_method, 32)
     )
   );
   await env.DB.batch([...ensureSessions(env, events), ...batch]);
@@ -1652,16 +1806,16 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
   ).bind(
     body.id,
     body.session_id,
-    body.room_code || null,
-    body.level || 'unknown',
-    body.role || 'solo',
-    body.difficulty || 'normal',
-    body.input_method || 'unknown',
-    body.controller_name || null,
-    body.controller_connection || null,
-    body.bike_preset || null,
-    body.steering_feel ?? null,
-    body.started_at || new Date().toISOString()
+    txt(body.room_code, 16),
+    txt(body.level, 64) || 'unknown',
+    txt(body.role, 16) || 'solo',
+    txt(body.difficulty, 16) || 'normal',
+    txt(body.input_method, 32) || 'unknown',
+    txt(body.controller_name, 80),
+    txt(body.controller_connection, 24),
+    txt(body.bike_preset, 32),
+    scalar(body.steering_feel, 32),
+    txt(body.started_at, 40) || new Date().toISOString()
   ).run();
 
   await saveRideSeats(env, body.id, body.seats);
@@ -1731,7 +1885,7 @@ async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field]));
     }
   }
 
@@ -1754,10 +1908,11 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   }
 
   const body = await request.json();
-  const events = body.events;
-  if (!Array.isArray(events) || events.length === 0) {
+  if (!Array.isArray(body.events) || body.events.length === 0) {
     return jsonResponse({ error: 'No events' }, 400, corsOrigin);
   }
+  const events = body.events.filter((e) => e && typeof e === 'object').slice(0, 200);
+  if (events.length === 0) return jsonResponse({ success: true }, 200, corsOrigin);
 
   const stmt = env.DB.prepare(
     'INSERT INTO ride_events (ride_id, event_type, distance, event_data, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -1765,10 +1920,10 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   const batch = events.map(e =>
     stmt.bind(
       rideId,
-      e.event_type,
-      e.distance ?? null,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString()
+      txt(e.event_type, 64) || 'unknown',
+      num(e.distance),
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString()
     )
   );
   await env.DB.batch(batch);
@@ -1779,6 +1934,9 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
 
 async function handleAnalyticsRoomCreate(request, env, corsOrigin) {
   const body = await request.json();
+  body.code = txt(body.code, 16);
+  body.captain_session_id = txt(body.captain_session_id, 40);
+  body.created_at = txt(body.created_at, 40);
   if (!body.code || !body.captain_session_id) {
     return jsonResponse({ error: 'Missing code or captain_session_id' }, 400, corsOrigin);
   }
@@ -1803,7 +1961,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.disconnect_count_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET disconnect_count = disconnect_count + ? WHERE code = ?'
-    ).bind(body.disconnect_count_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.disconnect_count_increment) || 0))), roomCode).run();
     delete body.disconnect_count_increment;
   }
 
@@ -1811,7 +1969,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.rides_played_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET rides_played = rides_played + ? WHERE code = ?'
-    ).bind(body.rides_played_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.rides_played_increment) || 0))), roomCode).run();
     delete body.rides_played_increment;
   }
 
@@ -1828,7 +1986,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field], 80));
     }
   }
 
@@ -1844,6 +2002,8 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
 
 async function handleAnalyticsConversion(request, env, corsOrigin) {
   const body = await request.json();
+  body.action = txt(body.action, 64);
+  body.created_at = txt(body.created_at, 40);
   if (!isValidUUID(body.session_id) || !body.action) {
     return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
   }
@@ -1854,8 +2014,8 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
   ).bind(
     body.session_id,
     body.action,
-    body.context || null,
-    body.url || null,
+    txt(body.context, 200),
+    txt(body.url, 300),
     body.created_at || new Date().toISOString()
   ).run();
 
@@ -2810,12 +2970,14 @@ async function withAuth(request, env, corsOrigin, handler) {
  * POST /me/delete { confirm: 'DELETE' } — remove the House Tandem account and
  * every record on it, in one transaction: sign-ins, rides, achievements, daily
  * results, friends and pair records. A partner's own rides stay, with this
- * player taken off them. Anonymous analytics carry no account and stay.
+ * player taken off them. Their analytics sessions stay as anonymous counts: the account,
+ * login, IP and device id are cleared in the same batch.
  */
 async function handleDeleteAccount(request, env, corsOrigin, userId) {
   let body = {};
   try { body = await request.json(); } catch {}
   if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
+  if (!freshEnough(await claimsFromRequest(request, env))) return needFreshSignIn(identityDeps(), corsOrigin, 'deleting your account');
   const key = userId;
   const counts = {};
   for (const [name, sql, arg] of [
@@ -2845,11 +3007,27 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM game_playtime WHERE user_id = ?', userId),
     q('DELETE FROM discord_posts WHERE user_id = ?', userId),
     q('UPDATE ride_seats SET user_id = NULL, login_id = NULL WHERE user_id = ?', userId),
+    // Before the logins go (it finds rows by them). Some account numbers are stored as "26.0".
+    // The user agent stays non-NULL so a late write from an open tab can't fill the row in again.
+    q(`UPDATE sessions SET google_uid = NULL, login_id = NULL, ip_address = NULL, device_id = NULL,
+         user_agent = COALESCE(user_agent, '')
+       WHERE google_uid IN (?, ?) OR login_id IN (SELECT login_id FROM user_logins WHERE user_id = ?)`,
+      String(userId), `${userId}.0`, userId),
     q('DELETE FROM user_logins WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
   // #612 · its link / combine notices (migration 0020; absent before it is applied).
-  try { await q('DELETE FROM account_events WHERE user_id = ?', userId).run(); } catch (e) { if (!/no such table/i.test(String(e && e.message))) throw e; }
+  try {
+    await env.DB.batch([
+      q('DELETE FROM account_events WHERE user_id = ?', userId),
+      // Another account's notice that names this one (combined earlier, separated since).
+      q('UPDATE account_events SET from_user_id = NULL, from_name = NULL, moved_json = NULL WHERE from_user_id = ?', userId),
+    ]);
+  } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
+  // Its analytics consent answers (migration 0023; absent before it is applied).
+  try {
+    await env.DB.prepare('DELETE FROM consents WHERE user_id = ?').bind(userId).run();
+  } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
@@ -2875,7 +3053,10 @@ async function withDashboardAuth(request, env, corsOrigin, handler) {
   if (!payload.email || !DASHBOARD_EMAILS.includes(payload.email.toLowerCase())) {
     return jsonResponse({ error: 'Access denied — not authorized for dashboard' }, 403, corsOrigin);
   }
-  return handler(request, env, corsOrigin, payload.sub);
+  // A session ended from the account (sign out everywhere, undo, delete) ends here too.
+  const session = await resolveSession(env, payload);
+  if (!session) return jsonResponse({ error: 'Invalid or expired token' }, 401, corsOrigin);
+  return handler(request, env, corsOrigin, session.sub);
 }
 
 /**
