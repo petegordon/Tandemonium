@@ -33,8 +33,8 @@ dataset = "tandemonium_api"
 
 # Rate limiting (Pete 2026-11-09): the same two rules for every route,
 # applied in one place (limitRequest in leaderboard.js).
-# 1. Per player: 30 a minute for each kind of write, keyed by the account when
-#    signed in, else the session / device / ride id.
+# 1. Per player: 30 a minute for each kind of write, keyed by the signed-in account
+#    (or the IP without a valid token). Analytics writes are counted by rule 2 alone.
 [[unsafe.bindings]]
 name = "PLAYER_LIMITER"
 type = "ratelimit"
