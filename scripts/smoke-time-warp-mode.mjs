@@ -176,11 +176,13 @@ const board = await page.evaluate(async () => {
   const l = window._game.lobby;
   const a = l.auth;
   const key = l.selectedLevel.key;
+  // Rows name their rider by public id, as the worker sends them.
   a.user = a.user || { serverId: 1, name: 'Pete' };
+  a.user.pid = '1111111111111111';
   a.fetchDailyBoard = async () => ({ key, results: [
-    { user_id: 2, mode: 'solo', time_ms: 84000, dnf: 0, collectibles: 11, warp: 0, display_name: 'Sam Rivers' },
-    { user_id: 1, mode: 'solo', time_ms: 91000, dnf: 0, collectibles: 9, warp: 1, display_name: 'Pete Gordon' },
-    { user_id: 3, mode: 'pair', time_ms: 99000, dnf: 0, collectibles: 7, warp: 1, display_name: 'Jo Bloggs' },
+    { pid: '2222222222222222', mode: 'solo', time_ms: 84000, dnf: 0, collectibles: 11, warp: 0, display_name: 'Sam Rivers' },
+    { pid: '1111111111111111', mode: 'solo', time_ms: 91000, dnf: 0, collectibles: 9, warp: 1, display_name: 'Pete Gordon' },
+    { pid: '3333333333333333', mode: 'pair', time_ms: 99000, dnf: 0, collectibles: 7, warp: 1, display_name: 'Jo Bloggs' },
   ] });
   l._lbMainTab = 'solo';
   await l._openLeaderboard();
@@ -190,6 +192,8 @@ const board = await page.evaluate(async () => {
            warped: list.querySelectorAll('.lb-warp').length };
 });
 check(board.rows.length === 2 && board.warped === 1 && /⏳/.test(board.heading), 'TM-08 the Daily board marks the time-warp row ⏳', board);
+check(board.rows.filter((r) => /You/.test(r)).length === 1 && /Pete/.test(board.rows.find((r) => /You/.test(r)) || ''),
+  'TM-08 the row with the public id of the player is marked You', board);
 await shot(page, 'tw-board');
 await page.close();
 

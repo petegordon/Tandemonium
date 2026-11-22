@@ -23,9 +23,10 @@ import {
   handleHandoffCreate, handleHandoffRedeem, discordAvatarUrl, cleanDeviceId, claimGuestPairs,
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
   resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
-  handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
+  handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims, fetchSteamProfile,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
 import { pruneAnalytics } from './retention.js';
 import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
@@ -382,11 +383,21 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const jwt = await createJWT({ sub: userId, lid: loginId, name, picture, email, via: 'google:' + googleId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: picture, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: picture, identities } }, 200, corsOrigin);
 }
 
 /** A Steam web-API auth ticket as the game sends it: hex (a few hundred characters). */
 const STEAM_TICKET_RE = /^[0-9a-fA-F]{16,8192}$/;
+/** The identity the game asks Steam for its ticket with (electron/main.js): Steam checks the ticket was made for it. */
+export const STEAM_TICKET_IDENTITY = 'tandemonium';
+
+/** A name the game sent, as one line of at most 64 characters, or null. */
+export function cleanPlayerName(v) {
+  if (typeof v !== 'string') return null;
+  // eslint-disable-next-line no-control-regex
+  const t = v.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+  return t || null;
+}
 
 async function handleSteamAuth(request, env, corsOrigin) {
   if (!env.STEAM_WEB_API_KEY) {
@@ -409,7 +420,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   for (const appId of appIds) {
     try {
-      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}`;
+      const verifyUrl = `https://api.steampowered.com/ISteamUserAuth/AuthenticateUserTicket/v1/?key=${env.STEAM_WEB_API_KEY}&appid=${appId}&ticket=${encodeURIComponent(ticket)}&identity=${STEAM_TICKET_IDENTITY}`;
       const steamRes = await fetch(verifyUrl, { signal: AbortSignal.timeout(5000) });
       if (!steamRes.ok) {
         lastError = `Steam API returned ${steamRes.status} for appId ${appId}`;
@@ -440,21 +451,11 @@ async function handleSteamAuth(request, env, corsOrigin) {
 
   writeMetric(env, 'auth_steam');
 
-  const name = personaName || 'Steam Player';
-
-  // Fetch real avatar URL from Steam (avatars use content hashes, not Steam IDs)
-  let avatarUrl = 'https://avatars.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_medium.jpg'; // default
-  try {
-    const summaryUrl = `https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${env.STEAM_WEB_API_KEY}&steamids=${steamId}`;
-    const summaryRes = await fetch(summaryUrl, { signal: AbortSignal.timeout(5000) });
-    if (summaryRes.ok) {
-      const summaryData = await summaryRes.json();
-      const player = summaryData?.response?.players?.[0];
-      if (player?.avatarmedium) avatarUrl = player.avatarmedium;
-    }
-  } catch (e) {
-    // Non-fatal — proceed with default avatar
-  }
+  // The name and picture come from Steam's own profile for this id (the same request the
+  // picture always took). Only when Steam does not answer is the name the game sent used.
+  const steamProfile = await fetchSteamProfile(env, verifiedSteamId, fetch, cleanPlayerName(personaName) || 'Steam Player');
+  const name = cleanPlayerName(steamProfile.name) || 'Steam Player';
+  const avatarUrl = steamProfile.avatar;
 
   // #612: Steam is one sign-in on the account; a linked Discord rides along.
   const { userId, loginId } = await upsertIdentity(env, { provider: 'steam', providerId: steamId, name, avatar: avatarUrl }, null, identityDeps());
@@ -467,7 +468,7 @@ async function handleSteamAuth(request, env, corsOrigin) {
   const jwt = await createJWT({ sub: userId, lid: loginId, name, picture: avatarUrl, via: 'steam:' + steamId, ...(await realSignInClaims(env, loginId)) }, env.JWT_SECRET);
 
   const identities = await listIdentities(env, userId);
-  return jsonResponse({ token: jwt, user: { id: userId, name, avatar: avatarUrl, identities } }, 200, corsOrigin);
+  return jsonResponse({ token: jwt, user: { id: userId, pid: await ensurePublicId(env, userId), name, avatar: avatarUrl, identities } }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -514,6 +515,12 @@ async function submitScore(request, env, corsOrigin, userId, loginId) {
   // Numbers are numbers (the tables aren't STRICT: a string would be stored as text).
   if (typeof distance !== 'number' || !Number.isFinite(distance) || typeof timeMs !== 'number' || !Number.isFinite(timeMs)) {
     return jsonResponse({ error: 'Invalid numbers' }, 400, corsOrigin);
+  }
+
+  // A day key (a ride on the Daily road) is checked as POST /daily checks its own.
+  if (body.dailyKey != null) {
+    if (typeof body.dailyKey !== 'string' || !DAY_KEY_RE.test(body.dailyKey)) return jsonResponse({ error: 'Bad day key' }, 400, corsOrigin);
+    if (!dailyDayAllowed(body.dailyKey, dailyKeyUTC(), body.warp === true)) return jsonResponse({ error: 'Stale day key' }, 400, corsOrigin);
   }
 
   // Validate level ID
@@ -991,6 +998,9 @@ export function dailyUpsertSql(dnf) {
           OR excluded.time_ms < daily_results.time_ms`;
 }
 
+/** A day key: YYYY-MM-DD. */
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 /** #611 · how far ahead of the real date a time-warp ride may post. */
 export const WARP_MAX_DAYS = 7;
 
@@ -1040,12 +1050,20 @@ async function handleDailyBoard(request, env, corsOrigin, userId) {
   // #783 · an account with two logins can have two rows for a day and mode: its result is
   // the better one (the rows come best first).
   const seen = new Set();
-  const results = (rows.results || []).filter((r) => {
+  const best = (rows.results || []).filter((r) => {
     const k = r.user_id + ':' + r.mode;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
+  // Each rider is named by public id (pid). The caller's own rows keep their account
+  // number too: it is theirs, and game builds from before public ids find "you" by it.
+  const pids = await publicPlayerIds(env, best.map((r) => r.user_id));
+  const results = best.map(({ user_id, ...r }) => ({
+    ...(String(user_id) === String(userId) ? { user_id } : {}),
+    pid: pids.get(user_id) || null,
+    ...r,
+  }));
 
   return jsonResponse({
     key,
@@ -1076,13 +1094,15 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const asked = parseInt(url.searchParams.get('limit') || '20', 10);
   let limit = Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20;
 
-  // Cache public global leaderboard requests (30s TTL)
+  // Cache public global leaderboard requests (30s TTL). Only the body is kept: each caller
+  // gets the CORS headers for its own origin, whoever asked first.
   const isPublic = scope === 'global' && !userFilter;
+  const cacheKey = new Request(url.toString(), { method: 'GET' });
   if (isPublic) {
-    const cache = caches.default;
-    const cacheKey = new Request(url.toString(), request);
-    const cached = await cache.match(cacheKey);
-    if (cached) return cached;
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      return new Response(cached.body, { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders(corsOrigin || '*') } });
+    }
   }
 
   const conditions = ['s.level_id = ?'];
@@ -1171,25 +1191,26 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
     }
   }
 
-  // Assemble entries
-  const entries = rows.map(row => ({
+  // Assemble entries. A player is named by public id (pid): account numbers stay here.
+  const riders = Object.values(contribMap).flat().map(c => c.player_user_id);
+  const pids = await publicPlayerIds(env, [...userIds, ...riders]);
+  const entries = rows.map(({ user_id, ...row }) => ({
     ...row,
-    contributions: contribMap[row.id] || [],
-    achievements: (achMap[row.user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
+    pid: pids.get(user_id) || null,
+    contributions: (contribMap[row.id] || []).map(({ player_user_id, ...c }) => ({
+      ...c, player_pid: player_user_id == null ? null : pids.get(player_user_id) || null
+    })),
+    achievements: (achMap[user_id] || []).map(a => ({ achievement_id: a.achievement_id, score_id: a.score_id }))
   }));
 
-  const response = jsonResponse({ entries }, 200, corsOrigin);
-
-  // Store in cache for public requests
+  // Store in cache for public requests: the body, with no caller's headers on it.
   if (isPublic) {
-    const cache = caches.default;
-    const cacheKey = new Request(url.toString(), request);
-    const cachedResponse = new Response(response.clone().body, response);
-    cachedResponse.headers.set('Cache-Control', 'public, max-age=30');
-    await cache.put(cacheKey, cachedResponse);
+    await caches.default.put(cacheKey, new Response(JSON.stringify({ entries }), {
+      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=30' },
+    }));
   }
 
-  return response;
+  return jsonResponse({ entries }, 200, corsOrigin);
 }
 
 // ============================================================
@@ -1197,15 +1218,18 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
 // ============================================================
 
 async function handlePlayerProfile(request, env, url, corsOrigin) {
-  const parts = url.pathname.split('/');
-  const playerId = parseInt(parts[2]);
-  if (!playerId) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  // GET /player/<pid>: a player is asked for by public id, never by account number.
+  const pid = url.pathname.split('/')[2] || '';
+  if (!isPublicPlayerId(pid)) return jsonResponse({ error: 'Invalid player ID' }, 400, corsOrigin);
+  const playerId = await userIdForPublicId(env, pid);
+  if (playerId == null) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
 
   const levelFilter = url.searchParams.get('level');
 
-  const user = await env.DB.prepare('SELECT id, display_name, avatar_url, created_at FROM users WHERE id = ?')
+  const user = await env.DB.prepare('SELECT display_name, avatar_url, created_at FROM users WHERE id = ?')
     .bind(playerId).first();
   if (!user) return jsonResponse({ error: 'Player not found' }, 404, corsOrigin);
+  user.pid = pid;
 
   const achievements = await env.DB.prepare(ACCOUNT_BADGES).bind(playerId).all();
 
@@ -1270,6 +1294,8 @@ async function getMe(request, env, corsOrigin, userId) {
 
   // #612: every sign-in linked to the account (the TV's Profile pill shows Discord + Steam).
   if (user) user.identities = await listIdentities(env, userId);
+  // The player's own public id: what a board row's pid is compared with to find "you".
+  if (user) user.pid = await ensurePublicId(env, userId);
 
   return jsonResponse({
     user,
@@ -1473,11 +1499,20 @@ export async function limitRequest(request, env, path, clientIP, corsOrigin) {
   return bucket ? checkRateLimit(env.PLAYER_LIMITER, bucket, corsOrigin, env) : null;
 }
 
+/**
+ * The kind of limit a key counts, without whose it is: 'ip', 'signin', 'user', 'score:user',
+ * 'score:ip'... The address or account the key ends with is never part of it.
+ */
+export function limitKind(key) {
+  const m = /^(?:[a-z_-]+:)??(?:ip|user|signin)(?=:)/.exec(String(key));
+  return m ? m[0] : 'other';
+}
+
 async function checkRateLimit(limiter, key, corsOrigin, env) {
   if (!limiter) return null; // graceful fallback if binding not configured
   const { success } = await limiter.limit({ key });
   if (!success) {
-    if (env) writeMetric(env, 'rate_limit_hit', key);
+    if (env) writeMetric(env, 'rate_limit_hit', limitKind(key));
     return new Response(JSON.stringify({ error: 'Too many requests' }), {
       status: 429,
       headers: {

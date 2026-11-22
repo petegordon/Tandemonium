@@ -1936,3 +1936,158 @@ test('before migration 0022 sessions still work and sign out everywhere says it 
     assert.equal((await call(env, '/me', { token: web.token })).status, 200);
   } finally { restore(); }
 });
+
+// ── Combine, separate, link and their undo records are all-or-nothing ──
+
+/** Make the batch that contains a statement matching `re` fail at that statement. → restore() */
+function failBatchAt(env, db, re) {
+  const real = env.DB.batch;
+  env.DB.batch = async (stmts) => {
+    db.exec('BEGIN');
+    try {
+      for (const s of stmts) {
+        if (re.test(s._sql)) throw new Error('statement failed (test)');
+        db.prepare(s._sql).run(...s._args);
+      }
+      db.exec('COMMIT');
+    } catch (e) { db.exec('ROLLBACK'); throw e; }
+    return stmts.map(() => ({ success: true }));
+  };
+  return () => { env.DB.batch = real; };
+}
+/** Every row of every table (auth_requests aside: sign-in requests come and go). */
+function dump(db) {
+  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'auth_requests' ORDER BY name").all().map((r) => r.name);
+  return JSON.stringify(tables.map((t) => [t, db.prepare(`SELECT * FROM ${t} ORDER BY rowid`).all()]));
+}
+/** Two accounts with rows in several tables: Ann (10, login 1) and Bea (20, login 2). */
+function twoAccounts(db) {
+  const add = (sql, ...a) => db.prepare(sql).run(...a);
+  add("INSERT INTO users (id, provider, provider_id, display_name) VALUES (10, 'account', 'a', 'Ann'), (20, 'account', 'b', 'Bea')");
+  add("INSERT INTO user_logins (login_id, user_id, provider, provider_id) VALUES (1, 10, 'discord', 'a'), (2, 20, 'steam', 'b')");
+  add("INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode) VALUES (10, 1, 'grandma', 10, 1000, 'solo'), (20, 2, 'grandma', 20, 900, 'solo')");
+  add("INSERT INTO user_achievements (user_id, login_id, achievement_id) VALUES (10, 1, 'shared'), (20, 2, 'bea_only')");
+  add("INSERT INTO game_playtime (user_id, login_id, game, seconds, sessions) VALUES (10, 1, 'dice', 100, 1), (20, 2, 'coins', 50, 2)");
+  add("INSERT INTO sessions (id, started_at, google_uid, login_id) VALUES ('s-ann', '2026-11-01', '10', 1), ('s-bea', '2026-11-01', '20', 2)");
+}
+
+test('a combine that fails part-way changes nothing', async () => {
+  for (const at of [/UPDATE user_achievements SET user_id/, /UPDATE user_logins/, /DELETE FROM users/]) {
+    const db = freshDb();
+    const env = envFor(db);
+    twoAccounts(db);
+    const before = dump(db);
+    const restore = failBatchAt(env, db, at);
+    await assert.rejects(() => combineAccounts(env, 20, 10), /statement failed/);
+    restore();
+    assert.equal(dump(db), before, 'nothing moved when ' + at + ' failed');
+  }
+});
+
+test('a separate that fails part-way changes nothing; one that works puts everything back', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  twoAccounts(db);
+  const before = dump(db);
+  const moved = JSON.parse(JSON.stringify(await combineAccounts(env, 20, 10)));
+  const combined = dump(db);
+  assert.notEqual(combined, before);
+  for (const at of [/UPDATE user_logins/, /UPDATE game_playtime/, /UPDATE sessions/]) {
+    const restore = failBatchAt(env, db, at);
+    await assert.rejects(() => separateAccount(env, moved, 10), /statement failed/);
+    restore();
+    assert.equal(dump(db), combined, 'still combined when ' + at + ' failed');
+  }
+  assert.deepEqual(await separateAccount(env, moved, 10), { userId: 20, logins: [2] });
+  assert.equal(dump(db), before);
+});
+
+test('combine and separate leave out a table that is not there yet, and move the rest together', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  twoAccounts(db);
+  db.exec('DROP TABLE game_playtime');
+  const before = dump(db);
+  const moved = await combineAccounts(env, 20, 10);
+  assert.equal(db.prepare('SELECT COUNT(*) n FROM scores WHERE user_id = 10').get().n, 2);
+  assert.equal(db.prepare("SELECT google_uid FROM sessions WHERE id = 's-bea'").get().google_uid, '10');
+  await separateAccount(env, moved, 10);
+  assert.equal(dump(db), before);
+});
+
+test('a combine whose undo record cannot be written does not happen', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restoreFetch = mockFetch(DISCORD_PETE);
+  try {
+    const { web, steam, choose } = await linkToCombine(env, db);
+    const before = dump(db);
+    const restore = failBatchAt(env, db, /INSERT INTO account_events/);
+    assert.equal((await choose(true)).status, 500);
+    restore();
+    assert.equal(dump(db), before, 'both accounts are as they were');
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    assert.notEqual(web.user.id, steam.user.id);
+  } finally { restoreFetch(); }
+});
+
+test('a link whose undo record cannot be written does not happen', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restoreFetch = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    const { id, code, secret } = await discordLinkBegin(env, steam.token);
+    const restore = failBatchAt(env, db, /INSERT INTO account_events/);
+    assert.equal((await complete(env, steam.token, { id, code, secret })).status, 500);
+    restore();
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider = 'discord'").get().n, 0, 'no sign-in was added');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM account_events').get().n, 0);
+  } finally { restoreFetch(); }
+});
+
+test('undoing a combine is all-or-nothing, and clears the stored copy of what moved', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restoreFetch = mockFetch(DISCORD_PETE);
+  try {
+    const { web, choose } = await linkToCombine(env, db);
+    const done = await (await choose(true)).json();
+    const [n] = (await (await call(env, '/me/notices', { token: done.token })).json()).notices;
+    assert.ok(db.prepare('SELECT moved_json FROM account_events WHERE id = ?').get(n.id).moved_json, 'kept while it can be undone');
+    const combined = dump(db);
+
+    // Marking the event undone is in the same batch: when it fails, nothing separates.
+    const restore = failBatchAt(env, db, /UPDATE account_events SET undone_at/);
+    assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: done.token, body: { id: n.id } })).status, 409);
+    restore();
+    assert.equal(dump(db), combined);
+
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: done.token, body: { id: n.id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, web.user.id);
+    const ev = db.prepare('SELECT undone_at, moved_json FROM account_events WHERE id = ?').get(n.id);
+    assert.ok(ev.undone_at);
+    assert.equal(ev.moved_json, null);
+  } finally { restoreFetch(); }
+});
+
+test('undoing a link is all-or-nothing', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restoreFetch = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    const linked = await linkDiscord(env, steam.token);
+    const [n] = (await (await call(env, '/me/notices', { token: linked.token })).json()).notices;
+    const before = dump(db);
+    const restore = failBatchAt(env, db, /UPDATE account_events SET undone_at/);
+    assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: linked.token, body: { id: n.id } })).status, 500);
+    restore();
+    assert.equal(dump(db), before, 'the sign-in is still on the account, and no account was made for it');
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: linked.token, body: { id: n.id } })).json();
+    assert.equal(undo.undone, true);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 2);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM user_logins WHERE provider = 'discord' AND user_id = ?").get(steam.user.id).n, 0);
+  } finally { restoreFetch(); }
+});

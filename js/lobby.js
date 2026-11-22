@@ -65,6 +65,7 @@ import { getSeatLooks, getChooserGeese, isMobile, isTV, RELAY_URL, BIKE_MODEL_PA
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
+import { escapeHtml } from './escape-html.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
 import { cleanText, cleanPlace } from './remote-safe.js';
@@ -4658,7 +4659,8 @@ export class Lobby {
         const mode = this._lbMainTab === 'solo' ? 'solo' : 'together';
         const data = await this.auth.getLeaderboard(levelId, null, null, { mode });
         const entries = data.entries || [];
-        const myId = this.auth.user ? this.auth.user.serverId : null;
+        // A row names its rider by public id, so "you" is found by the player's own.
+        const myId = await this.auth.publicId();
 
         if (entries.length === 0) {
           list.innerHTML = '<div class="lb-no-data">No scores yet</div>';
@@ -4685,9 +4687,9 @@ export class Lobby {
     list.innerHTML = '<div class="lb-no-data">Loading...</div>';
     try {
       const data = await this.auth.fetchDailyBoard(key);
-      const myId = this.auth.user.serverId;
+      const myId = await this.auth.publicId();
       const rows = ((data && data.results) || []).filter(r =>
-        tab === 'you' ? String(r.user_id) === String(myId)
+        tab === 'you' ? this._isMyRow(r, myId)
           : tab === 'together' ? r.mode === 'pair' : r.mode === 'solo');
       if (rows.length === 0) {
         list.innerHTML = '<div class="lb-no-data">No rides on this road yet</div>';
@@ -4700,10 +4702,21 @@ export class Lobby {
     }
   }
 
+  /**
+   * Is this board row the signed-in player's? Rows name their rider by public id (`pid`).
+   * The Daily board also puts the account number on the player's own rows (only theirs).
+   */
+  _isMyRow(row, myPid) {
+    if (!row) return false;
+    if (myPid && row.pid === myPid) return true;
+    const mine = this.auth && this.auth.user ? this.auth.user.serverId : null;
+    return row.user_id != null && mine != null && String(row.user_id) === String(mine);
+  }
+
   /** Rows from worker /daily: rank, rider, Solo/Pair, ⏳ when ridden in time warp, time. */
   _renderDailyRows(rows, myId, { mine = false } = {}) {
     return rows.map((r, i) => {
-      const isYou = !mine && myId && String(r.user_id) === String(myId);
+      const isYou = !mine && this._isMyRow(r, myId);
       const avatarSrc = r.avatar_url ? (this._avatarCache.get(r.avatar_url) || r.avatar_url) : '';
       const avatar = avatarSrc
         ? '<img class="lb-avatar" src="' + this._escapeHtml(avatarSrc) + '" alt="" referrerpolicy="no-referrer">' : '';
@@ -4728,7 +4741,7 @@ export class Lobby {
     const collectibleEmoji = '\uD83C\uDF81';
 
     return entries.map((e, i) => {
-      const isYou = !mine && myId && e.user_id === myId;
+      const isYou = !mine && !!myId && e.pid === myId;
       const diffHtml = DIFF_LABEL[e.difficulty] ? '<span class="lb-diff">' + DIFF_LABEL[e.difficulty] + '</span>' : '';
       const youClass = isYou ? ' lb-you' : '';
       const youTag = isYou ? '<span class="lb-you-tag">You</span>' : '';
@@ -4998,10 +5011,9 @@ export class Lobby {
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
 
+  /** Text made safe for HTML, between tags or inside a quoted attribute (quotes are escaped too). */
   _escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeHtml(str);
   }
 
   /** Fetch an avatar URL once, convert to blob URL, and cache it. */
