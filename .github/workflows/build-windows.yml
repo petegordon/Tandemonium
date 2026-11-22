@@ -13,9 +13,9 @@ on:
         default: 'dev-private'
         type: choice
         options:
+          # Only dev-private. What players get (default) is set by hand in Steamworks,
+          # from a build already tried on dev-private; nothing here can set it.
           - dev-private
-          - beta
-          - default
       macos:
         description: 'Also build and upload the macOS depot (4510252)'
         required: true
@@ -190,11 +190,11 @@ jobs:
         env:
           STEAM_USERNAME: ${{ secrets.STEAM_USERNAME }}
           STEAM_CONFIG_VDF: ${{ secrets.STEAM_CONFIG_VDF }}
-          # Push-triggered builds go to dev-private, NOT default. `default` is
-          # the public branch real playtesters are on. Promoting a build to
-          # default stays a deliberate act: dispatch this workflow and pick it,
-          # or flip the live build in Steamworks.
-          STEAM_BRANCH: ${{ inputs.steam_branch || 'dev-private' }}
+          # Every upload goes to dev-private, whatever started the run. `default` is
+          # the public branch real playtesters are on: it is set by hand in
+          # Steamworks, from a build already tried on dev-private. This workflow
+          # has no way to set it.
+          STEAM_BRANCH: dev-private
           BUILD_DESC: 'Build ${{ github.sha }} from ${{ github.ref_name }}'
         run: |
           set -o pipefail
