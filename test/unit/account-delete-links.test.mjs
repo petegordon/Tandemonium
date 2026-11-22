@@ -84,7 +84,7 @@ test('after a delete, no registered account table points at the account or its l
     seed(db, t.table, { [t.user]: mine, [t.login]: 501 });
     seed(db, t.table, { [t.user]: t.text ? String(OTHER) : OTHER, [t.login]: 502 });
   }
-  const res = await call(db, await signToken({ sub: ME, lid: 501 }, SECRET, 3600));
+  const res = await call(db, await signToken({ sub: ME, lid: 501, auth_time: Math.floor(Date.now() / 1000) }, SECRET, 3600));
   assert.equal(res.status, 200, await res.clone().text());
 
   for (const t of tables) {
@@ -110,7 +110,7 @@ test('every column that names a user is empty of the account afterwards', async 
     if (table === 'user_logins') continue;
     seed(db, table, { [col]: ME });
   }
-  const res = await call(db, await signToken({ sub: ME, lid: 501 }, SECRET, 3600));
+  const res = await call(db, await signToken({ sub: ME, lid: 501, auth_time: Math.floor(Date.now() / 1000) }, SECRET, 3600));
   assert.equal(res.status, 200, await res.clone().text());
   for (const [table, col] of named) {
     assert.equal(db.prepare(`SELECT COUNT(*) n FROM ${table} WHERE ${col} = ?`).get(ME).n, 0, `${table}.${col}`);
@@ -124,7 +124,7 @@ test('analytics sessions lose the account, login, IP and device id, and stay as 
   put.run('s-float', '2026-11-01', ME + '.0', null, '1.1.1.2', 'device-aaaa', 'ua', 'steam');
   put.run('s-login', '2026-11-01', null, 501, '1.1.1.3', 'device-bbbb', null, 'browser');
   put.run('s-other', '2026-11-01', String(OTHER), 502, '2.2.2.2', 'device-cccc', 'ua', 'browser');
-  const res = await call(db, await signToken({ sub: ME, lid: 501 }, SECRET, 3600));
+  const res = await call(db, await signToken({ sub: ME, lid: 501, auth_time: Math.floor(Date.now() / 1000) }, SECRET, 3600));
   assert.equal(res.status, 200, await res.clone().text());
 
   for (const id of ['s-plain', 's-float', 's-login']) {
@@ -146,7 +146,7 @@ test('an open tab writing after the delete cannot put the details back', async (
   const SID = '11111111-2222-4333-8444-555555555555';
   db.prepare('INSERT INTO sessions (id, started_at, google_uid, login_id, ip_address, device_id) VALUES (?, ?, ?, ?, ?, ?)')
     .run(SID, '2026-11-01', String(ME), 501, '1.1.1.1', 'device-aaaa');
-  const token = await signToken({ sub: ME, lid: 501 }, SECRET, 3600);
+  const token = await signToken({ sub: ME, lid: 501, auth_time: Math.floor(Date.now() / 1000) }, SECRET, 3600);
   assert.equal((await call(db, token)).status, 200);
   db.exec('PRAGMA foreign_keys = ON;');
 
@@ -166,7 +166,7 @@ test('an open tab writing after the delete cannot put the details back', async (
 test("another account's notice stops naming a deleted account", async () => {
   const db = setup();
   seed(db, 'account_events', { user_id: OTHER, kind: 'combine', from_user_id: ME, from_name: 'Me', moved_json: '{"logins":[501]}', created_at: 1, undo_until: 2 });
-  const res = await call(db, await signToken({ sub: ME, lid: 501 }, SECRET, 3600));
+  const res = await call(db, await signToken({ sub: ME, lid: 501, auth_time: Math.floor(Date.now() / 1000) }, SECRET, 3600));
   assert.equal(res.status, 200, await res.clone().text());
   const e = db.prepare('SELECT * FROM account_events WHERE user_id = ?').get(OTHER);
   assert.equal(e.from_user_id, null);

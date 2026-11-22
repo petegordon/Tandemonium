@@ -2981,7 +2981,10 @@ async function withDashboardAuth(request, env, corsOrigin, handler) {
   if (!payload.email || !DASHBOARD_EMAILS.includes(payload.email.toLowerCase())) {
     return jsonResponse({ error: 'Access denied — not authorized for dashboard' }, 403, corsOrigin);
   }
-  return handler(request, env, corsOrigin, payload.sub);
+  // A session ended from the account (sign out everywhere, undo, delete) ends here too.
+  const session = await resolveSession(env, payload);
+  if (!session) return jsonResponse({ error: 'Invalid or expired token' }, 401, corsOrigin);
+  return handler(request, env, corsOrigin, session.sub);
 }
 
 /**
