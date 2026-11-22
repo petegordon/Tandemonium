@@ -128,6 +128,16 @@ export default {
       const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
       if (limited) return limited;
 
+      // Analytics writes take no sign-in: their size is checked before anything parses them.
+      if (isAnalyticsWrite(path, request.method)) {
+        const text = await readBodyLimited(request, analyticsBodyLimit(path));
+        if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
+        let parsed = null;
+        try { parsed = JSON.parse(text); } catch { /* answered below */ }
+        if (!parsed || typeof parsed !== 'object') return jsonResponse({ error: 'Invalid body' }, 400, corsOrigin);
+        request = new Request(request.url, { method: request.method, headers: request.headers, body: text });
+      }
+
       // Auth routes
       if (path === '/auth/google' && request.method === 'POST') {
         return handleGoogleAuth(request, env, corsOrigin);
@@ -1379,11 +1389,12 @@ async function verifyGoogleIdToken(token, expectedAud) {
 // ============================================================
 
 // ── Rate limits (Pete 2026-11-09): two rules, the same for every route ──
-//   1. Per player: 30 a minute for each kind of write, keyed by the account
-//      when signed in, else by the session / device / ride id.
+//   1. Per player: 30 a minute for each kind of write, keyed by the signed-in
+//      account (or the IP when a write has no valid token).
 //   2. Per IP: 300 a minute across every route. A venue puts every machine on
-//      one IP (one machine sends ~15-20 a minute while riding), and an id can
-//      be made up, so this ceiling is what stops a script.
+//      one IP (one machine sends ~15-20 a minute while riding). Analytics
+//      writes carry no sign-in and their ids are the sender's to choose, so
+//      this per-IP rule is the one that counts them.
 // Starting a sign-in has no player yet: 30 a minute per IP. Share uploads
 // keep their own tighter limit (they post publicly to Discord; worker/share.js).
 export const PLAYER_LIMIT = 30;
@@ -1399,17 +1410,9 @@ const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/au
 export async function playerBucket(request, env, path, clientIP) {
   const method = request.method;
   if (method !== 'POST' && method !== 'PUT') return null;
-  const json = async () => { try { return JSON.parse(await request.clone().text()); } catch { return {}; } };
-  const seg = path.split('/');
-  if (path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/')) {
-    const kind = seg[3];   // session | event | ride | room | conversion
-    if (seg.length >= 5 && seg[4] !== 'batch') return `${kind}${seg[5] ? '-' + seg[5] : ''}:${seg[4]}`;   // /session/:id, /ride/:id(/events), /room/:code
-    const b = await json();
-    if (kind === 'session') return 'session-create:' + (b.device_id || b.id || 'ip:' + clientIP);
-    if (kind === 'event') return 'event:' + ((Array.isArray(b.events) && b.events[0] && b.events[0].session_id) || 'ip:' + clientIP);
-    if (kind === 'room') return 'room:' + (b.code || 'ip:' + clientIP);
-    return kind + ':' + (b.session_id || 'ip:' + clientIP);
-  }
+  // Analytics: counted by the per-IP rule alone (see above). A key taken from the request
+  // would let one sender spend another player's allowance, or make up a new one each time.
+  if (isAnalyticsWrite(path, method)) return null;
   if (path === '/score' || path === '/daily' || path === '/achievements/sync' || /^\/games\/[^/]+\/sync$/.test(path)) {
     const auth = request.headers.get('Authorization') || '';
     const sub = auth.startsWith('Bearer ') && env.JWT_SECRET ? await userFromToken(auth.slice(7), env) : null;
@@ -1472,6 +1475,50 @@ const jsonText = (v, n = 8000) => {
   try { s = JSON.stringify(v); } catch { return null; }
   return typeof s === 'string' && s.length <= n ? s.replace(/[<>]/g, '') : '{"dropped":"too long"}';
 };
+
+/** The largest analytics body, in bytes. The game's own are far smaller (test/unit/analytics-limits). */
+export const ANALYTICS_BODY_MAX = 16 * 1024;
+/**
+ * A ride's events are sent in one batch when it ends, and installed builds can't be changed:
+ * a long ride may need more than the default. 64 KB is what a browser's keepalive fetch can send.
+ */
+export const ANALYTICS_RIDE_EVENTS_MAX = 64 * 1024;
+
+function isAnalyticsWrite(path, method) {
+  return (method === 'POST' || method === 'PUT')
+    && path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/');
+}
+
+export function analyticsBodyLimit(path) {
+  return /^\/api\/analytics\/ride\/[^/]+\/events$/.test(path) ? ANALYTICS_RIDE_EVENTS_MAX : ANALYTICS_BODY_MAX;
+}
+
+/**
+ * The body as text, or null when it is over `max` bytes. The declared length is checked first,
+ * and the bytes are counted as they arrive (a declared length can be missing or wrong).
+ */
+export async function readBodyLimited(request, max) {
+  const declared = Number(request.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > max) return null;
+  if (!request.body) return '';
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) { bytes.set(c, at); at += c.byteLength; }
+  return new TextDecoder().decode(bytes);
+}
 
 async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   const body = await request.json();
