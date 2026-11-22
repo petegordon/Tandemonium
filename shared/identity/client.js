@@ -53,7 +53,7 @@ function askInBrowser({ from, to }) {
   const next = to && to.name ? `"${to.name}"` : 'another account';
   return !!ask(from && from.name
     ? `You are signed in as "${from.name}". Switch this browser to ${next}?`
-    : `Sign in here as ${next}? Only continue if you started this sign-in yourself.`);
+    : `Continue as ${next}? Only say yes if you opened this yourself.`);
 }
 
 /**
@@ -613,8 +613,8 @@ export class IdentityClient {
    * The other end of handoff(): this page was opened with `?ht_code=…` (a link from a signed-in
    * page of another House Tandem site). The code comes off the address at once, and is swapped
    * for a session. A code that is refused or has expired leaves the session already here alone,
-   * and so does one for a different account unless the player says yes. For the same account
-   * the session here stays as it is.
+   * and nothing is signed in from a link without the player saying yes, unless that account
+   * is already signed in here (then the session here stays as it is).
    * @returns {Promise<{ signedIn: boolean, error?: string, declined?: boolean }|null>} null when there was no code
    */
   async redeemHandoff() {
@@ -633,7 +633,7 @@ export class IdentityClient {
     const c = decodeToken(r.data.token);
     if (!c || (typeof c.exp === 'number' && c.exp <= Math.floor(this._now() / 1000))) return { signedIn: false, error: 'This sign-in link has expired' };
     const to = { name: (r.data.user && r.data.user.name) || c.name };
-    if (!(await this._mayTake(c, to))) return { signedIn: false, declined: true };
+    if (!(await this._mayTake(c, to, true))) return { signedIn: false, declined: true };
     const cur = this.token ? this.claims() : null;
     if (cur && String(cur.sub) === String(c.sub) && !this.tokenExpired(0)) return { signedIn: true };
     const provider = typeof c.via === 'string' ? c.via.split(':')[0] : undefined;
