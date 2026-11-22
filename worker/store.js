@@ -43,6 +43,8 @@ export default {
       if (path === '/checkout/status' && request.method === 'GET') {
         const sessionId = url.searchParams.get('session_id');
         if (!sessionId) return jsonResponse({ error: 'Missing session_id' }, 400, corsOrigin);
+        // A Checkout Session's id, and nothing else, goes into the address asked of Stripe.
+        if (!/^cs_(test|live)_[A-Za-z0-9]{1,200}$/.test(sessionId)) return jsonResponse({ error: 'Invalid session_id' }, 400, corsOrigin);
         const session = await retrieveCheckoutSession(env, sessionId);
         return jsonResponse({
           status: session.payment_status,

@@ -83,6 +83,42 @@ test('the ride strip and the room write partner words as text', () => {
   assert.ok(block.includes('cleanPlace(profile.from)') && block.includes('cleanPlace(profile.to)') && block.includes('cleanText(profile.title'));
 });
 
+test('a guest key is not a device id', async () => {
+  const { cleanDeviceId } = await import('../../worker/accounts/identity.js');
+  const { guestKey, isGuestKey } = await import('../../worker/room-proof.js');
+  const key = await guestKey('secret', 'device-1234');
+  assert.ok(isGuestKey(key));
+  assert.equal(cleanDeviceId(key), null);
+  assert.equal(cleanDeviceId('device-1234'), 'device-1234');
+  assert.equal(cleanDeviceId('0b5c9c2e-7f4e-4f0a-9d53-1c2a3b4c5d6e'), '0b5c9c2e-7f4e-4f0a-9d53-1c2a3b4c5d6e');
+});
+
+test('the store asks Stripe only about a Checkout Session id', async () => {
+  const store = (await import('../../worker/store.js')).default;
+  const asked = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (u) => { asked.push(String(u)); return new Response(JSON.stringify({ payment_status: 'paid', metadata: { game_id: 'g' } }), { status: 200 }); };
+  try {
+    const get = (id) => store.fetch(new Request('https://store.test/checkout/status?session_id=' + encodeURIComponent(id)), { CORS_ORIGINS: 'https://tandemonium.housetandem.com', STRIPE_SECRET_KEY: 'k' });
+    for (const bad of ['../../customers/cus_1', 'cs_test_a/../../customers/cus_1', 'cs_test_a?expand[]=customer', 'cs_live_', 'cus_123', 'cs_test_a%2f..']) {
+      assert.equal((await get(bad)).status, 400, bad);
+    }
+    assert.equal(asked.length, 0, 'nothing was asked of Stripe');
+    assert.equal((await get('cs_test_a1B2c3')).status, 200);
+    assert.deepEqual(asked, ['https://api.stripe.com/v1/checkout/sessions/cs_test_a1B2c3']);
+  } finally { globalThis.fetch = real; }
+});
+
+test('the board gives at most 200 rows, and a sign-in carries only a confirmed address', () => {
+  const api = read('worker', 'leaderboard.js');
+  assert.ok(api.includes('Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20'));
+  assert.ok(!api.includes("Math.min(parseInt(url.searchParams.get('limit')"));
+  assert.ok(/payload\.email_verified === true[^\n]*\? payload\.email : null/.test(api));
+  for (const [asked, want] of [[-1, 1], [0, 1], [5, 5], [9999, 200], [NaN, 20]]) {
+    assert.equal(Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20, want);
+  }
+});
+
 test('the dashboard shows what the API returns as text', () => {
   const html = read('dashboard', 'index.html');
   const src = html.slice(html.indexOf('function plain('));
