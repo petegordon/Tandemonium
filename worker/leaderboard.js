@@ -9,9 +9,11 @@
 export function pickCorsOrigin(requestOrigin, corsSetting) {
   const allowed = (corsSetting || '*').split(',').map(s => s.trim()).filter(Boolean);
   if (allowed.includes('*')) return requestOrigin || '*';
-  if (allowed.includes(requestOrigin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(requestOrigin)) return requestOrigin;
+  if (originListed(requestOrigin, corsSetting)) return requestOrigin;
   return allowed[0];
 }
+
+import { originListed } from './accounts/origins.js';
 
 import { monthCost, GOOGLE_DAILY_CAPS } from '../js/tourist-costs.js';
 import {

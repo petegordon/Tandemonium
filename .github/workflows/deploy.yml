@@ -9,7 +9,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: read   # prune previews of closed PRs (see below)
 
 # Own queue, NOT the gh-pages-write group the PR previews use. A concurrency
 # group holds only one pending run, so sharing it let a burst of preview runs
@@ -78,95 +77,16 @@ jobs:
         run: |
           node -e 'require("fs").writeFileSync("_site/js/tourist-key.local.js", "window.__TOURIST_MAPS_KEY__ = " + JSON.stringify(process.env.TOURIST_MAPS_KEY || "") + ";\n")'
 
-      # Carry the existing PR previews into the publish tree so this deploy
-      # can't drop them. `keep_files: true` alone has proven unreliable at
-      # preserving the pr-preview/ subtree, so we restore it explicitly: the
-      # previews become part of _site and are therefore always re-published.
-      # (#319)
-      - name: Preserve existing PR previews
-        run: |
-          git fetch origin gh-pages --depth=1 || true
-          if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
-            # `if` consumes the pipeline status, so a failure here can't abort
-            # the deploy (bash -eo pipefail) — worst case previews aren't kept.
-            if git archive origin/gh-pages pr-preview | tar -x -C _site; then
-              echo "Preserved PR previews: $(ls _site/pr-preview 2>/dev/null | tr '\n' ' ')"
-            else
-              echo "WARNING: failed to preserve pr-preview; continuing deploy"
-            fi
-          else
-            echo "No existing PR previews to preserve"
-          fi
-
-      # Keep only previews of PRs that are still open. Merging a PR starts this
-      # deploy and the preview removal together; when this job copied gh-pages
-      # before the removal landed, it re-published the merged PR's ~340 MB
-      # preview at full size. 44 came back that way and gh-pages reached
-      # 14 GB, past the Pages 1 GB limit, so publishes failed Nov 8-12 2026.
-      - name: Drop previews of closed PRs
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: bash .github/scripts/prune-previews.sh _site/pr-preview
-
-      # A preview staged before #760 is a full copy of the game (no
-      # preview-sw.js at its root). Those are not carried forward: a few of
-      # them put the site over the Pages limit, and they only shrink when
-      # their PR is built again. The PR's next push or reopen publishes a
-      # small one. Previews staged the new way are always kept.
-      - name: Drop full-size previews staged the old way
-        run: bash .github/scripts/drop-full-previews.sh _site/pr-preview
-
-      # _site is now everything Pages will serve: the game plus the open PRs'
-      # previews. Past 1 GB Pages stops updating without failing anything, which
-      # is how publishing broke unnoticed (#760). So measure it, print each
-      # preview's size, and stop the deploy with a clear error over 900 MB.
+      # Past 1 GB Pages stops updating without failing anything (#760).
       - name: Check publish size (fails over 900 MB)
         run: bash .github/scripts/check-publish-size.sh _site 900
 
       - name: Deploy to gh-pages branch
-        id: deploy
-        # A preview push landing mid-deploy rejects this one (non-fast-forward).
-        # Don't fail yet — the retry below re-reads gh-pages and tries again.
-        continue-on-error: true
         uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./_site
           publish_branch: gh-pages
-          # No exclude_assets for pr-preview: we now restore it INTO _site (see
-          # the preserve step), so it must be published rather than excluded.
-          # keep_files: false · _site is the whole truth (the game + open PRs'
-          # previews), so gh-pages becomes exactly _site. With true, anything
-          # already on gh-pages stayed: a merged PR's preview whose removal run
-          # was cancelled (back-to-back merges) was never removed (Nov 12 2026).
-          keep_files: false
-          cname: tandemonium.housetandem.com
-
-      # Re-read the previews after the racing preview push so the retry
-      # republishes its new pr-preview/ content instead of reverting it.
-      - name: Refresh PR previews for retry
-        if: steps.deploy.outcome == 'failure'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          sleep 20
-          rm -rf _site/pr-preview
-          git fetch origin gh-pages --depth=1 || true
-          if git ls-tree -d origin/gh-pages pr-preview 2>/dev/null | grep -q pr-preview; then
-            git archive origin/gh-pages pr-preview | tar -x -C _site || echo "WARNING: failed to preserve pr-preview"
-          fi
-          bash .github/scripts/prune-previews.sh _site/pr-preview
-          bash .github/scripts/drop-full-previews.sh _site/pr-preview
-          # The previews were just re-read (one was pushed meanwhile), so the
-          # size is checked again before the second attempt.
-          bash .github/scripts/check-publish-size.sh _site 900
-
-      - name: Deploy to gh-pages branch (retry)
-        if: steps.deploy.outcome == 'failure'
-        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./_site
-          publish_branch: gh-pages
+          # _site is the whole truth: anything else on gh-pages goes.
           keep_files: false
           cname: tandemonium.housetandem.com

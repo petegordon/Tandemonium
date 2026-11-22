@@ -28,6 +28,7 @@
 // the tables and routes are shaped so they can move as they are.
 
 import { combineAccounts, separateAccount, splitLogin, absorbLogin } from './combine.js';
+import { originListed } from './origins.js';
 
 const REQUEST_TTL_S = 600;
 const DISCORD_API = 'https://discord.com/api';
@@ -417,9 +418,9 @@ export function allowedReturnTo(returnTo, corsSetting, pickCorsOrigin) {
   let u;
   try { u = new URL(returnTo); } catch { return null; }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  const allowed = (corsSetting || '').split(',').map((s) => s.trim()).filter(Boolean);
-  const local = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(u.origin);
-  if (!local && !allowed.includes(u.origin)) return null;
+  // Only a site on this API's own list (local addresses only where the list names them), and
+  // never the old domain: it can still call the API while players move, but receives no sign-in.
+  if (!originListed(u.origin, corsSetting) || u.hostname === 'tandemonium.jimandi.love') return null;
   u.hash = '';
   return u.toString();
 }
