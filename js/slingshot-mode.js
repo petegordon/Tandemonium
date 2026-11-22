@@ -17,7 +17,7 @@ import * as walletLib from './wallet.js';
 import * as records from './records.js';
 import { gateProgress } from './economy.js';
 import { getEditionRules } from './edition.js';
-import { playDayKey, warpDays } from './time-warp.js';   // #611 · the Daily Launch follows a time warp (Launch Week)
+import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, MAX_WARP_DAYS } from './time-warp.js';   // #611 · the Daily Launch follows a time warp (Launch Week)
 import { STORAGE_KEY as DAILY_STORAGE_KEY } from './daily-ride.js';
 import { RaceManager } from './race-manager.js';
 import { SlingshotRig } from './slingshot-rig.js';
@@ -130,7 +130,9 @@ class SlingshotMode {
       const buttons = slingUI.renderGarage(this._slingSave, this._wallet, {
         standalone,
         lock,
-        todays: this._dailyLaunchOn() ? { ...sling.dailyLaunchStatus(this._slingSave, playDayKey()), warp: warpDays() } : null,
+        todays: this._dailyLaunchOn() ? { ...sling.dailyLaunchStatus(this._slingSave, playDayKey()), warp: warpDays(),
+          warpOffered: !!(this.lobby && this.lobby._timeWarpUnlocked && this.lobby._timeWarpUnlocked()),   // #840
+          warpMore: canWarpForward(), warpMax: MAX_WARP_DAYS } : null,
         // m9: at the demo's end, LAUNCH replays its last stage; no Rebuild in the demo.
         replay: lock && lock.kind === 'demo' && !this._slingLock(this._slingPlayStage()) ? this._slingPlayStage() : null,
         rebuildOffered: !getEditionRules().isDemo,
@@ -158,11 +160,17 @@ class SlingshotMode {
         },
         onLaunch: () => this._startSlingRun(),
         onToday: () => this._startSlingRun({ daily: true }),
+        onWarp: (forward) => {   // #840 · the same warp as the Daily Ride card
+          if (forward) { if (!canWarpForward()) return; warpForward(); } else leaveWarp();
+          analytics.trackEvent('time_warp', { days: warpDays(), key: playDayKey(), from: 'daily_launch' });
+          render({ warp: 'forward' });
+        },
         onGoRide: (levelId) => this._goRideLevel(levelId),
         onWishlist: () => this._openStorePage('slingshot'),
         onLobby: () => { this._clearOverlayButtons(); this._returnToLobby(); },
       });
-      const idx = want && want.up ? buttons.findIndex(b => b.dataset && b.dataset.up === want.up) : want;
+      const idx = want && want.up ? buttons.findIndex(b => b.dataset && b.dataset.up === want.up)
+        : want && want.warp ? buttons.findIndex(b => b.dataset && b.dataset.warp === want.warp) : want;
       this._setOverlayButtons(buttons, Math.max(0, idx || 0));
       // #459 item 11: the Garage is on the modal shell — the pad's B closes the
       // sheet, and any close the player makes (B, Esc, the scrim, the header's

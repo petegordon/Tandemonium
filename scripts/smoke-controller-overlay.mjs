@@ -110,6 +110,72 @@ try {
     .catch(() => note(false, 're-enable: tiles did not come back'));
   note(true, 're-enable: tiles rebuilt');
 
+  // A paired phone shows the phone, not the idle controller still claimed on the seat
+  const phone = await page.evaluate(async () => {
+    window.__setScenario('solo');
+    await new Promise((r) => setTimeout(r, 600));
+    window.__wasInput = window.__ctx.input;
+    window.__ctx.input = { _remoteTilt: true, _remoteLeft: true, _remoteRight: false, getMotionLeanVisual: () => 0.5 };
+    await new Promise((r) => setTimeout(r, 400));
+    const t = window.__hud.tiles.get('P1');
+    const out = t && { kind: t.entry.kind, name: t.subEl.textContent, model: !!t.overlay,
+      canvas: getComputedStyle(t.canvas).display, shown: getComputedStyle(t.el.querySelector('.cohud-phone')).display,
+      turn: t.phoneEl.style.transform, left: t.phonePedals[0].classList.contains('on'), right: t.phonePedals[1].classList.contains('on') };
+    return out || {};
+  });
+  await page.screenshot({ path: path.join(OUT, 'phone-tile.png') });
+  phone.back = await page.evaluate(async () => {
+    window.__ctx.input = window.__wasInput;
+    await new Promise((r) => setTimeout(r, 400));
+    return window.__hud.tiles.get('P1')?.entry.kind;
+  });
+  note(phone.kind === 'phone' && phone.name === 'Phone' && !phone.model && phone.canvas === 'none' && phone.shown === 'flex'
+    && phone.turn === 'rotate(22.5deg)' && phone.left && !phone.right, `a phone seat draws the phone, its lean and its pedals ${JSON.stringify(phone)}`);
+  note(phone.back !== 'phone', `the seat goes back when the phone leaves (${phone.back})`);
+
+  // The exploded view: bumpers and triggers float clear of the body
+  const exploded = await page.evaluate(async () => {
+    window.__setScenario('steam-xinput');
+    const end = performance.now() + 20000;
+    let tiles = [];
+    while (performance.now() < end) {
+      tiles = [...window.__hud.tiles.values()].filter((t) => t.overlay && t.overlay.model);
+      if (tiles.length && tiles.every((t) => !t.overlay._floatWrappers.length || t.overlay._floatWrappers.every((w) => w.t > 0.95))) break;
+      await new Promise(requestAnimationFrame);
+    }
+    return tiles.map((t) => ({ profile: t.profile, on: t.overlay._floatActive, parts: t.overlay._floatWrappers.length, out: t.overlay._floatWrappers.every((w) => w.t > 0.95) }));
+  });
+  await page.screenshot({ path: path.join(OUT, 'exploded-view.png') });
+  note(exploded.length > 0 && exploded.every((t) => t.on), `every tile uses the exploded view ${JSON.stringify(exploded)}`);
+  note(exploded.some((t) => t.parts > 0 && t.out), 'bumpers and triggers float clear of the body');
+
+  // #821 · a controller that drops and returns draws again, on a canvas with a live context
+  const back = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return { ok: false };
+    const old = t.canvas;
+    t._destroyOverlay();
+    const end = performance.now() + 20000;
+    while (!t.overlay && performance.now() < end) await new Promise(requestAnimationFrame);
+    return { ok: !!t.overlay, fresh: t.canvas !== old, inTile: t.el.contains(t.canvas), oldGone: !t.el.contains(old),
+      live: !!t.overlay && !t.overlay.renderer.getContext().isContextLost() };
+  });
+  note(back.ok && back.fresh && back.inTile && back.oldGone && back.live, `#821: a returned controller redraws on a fresh canvas ${JSON.stringify(back)}`);
+
+  // #821 · a tile that cannot start retries with a back-off, not every frame
+  const retries = await page.evaluate(async () => {
+    const t = [...window.__hud.tiles.values()].find((x) => x.overlay);
+    if (!t) return -1;
+    const proto = t.hud._viz.ControllerOverlay.prototype, init = proto.init;
+    let calls = 0;
+    proto.init = async function () { calls++; throw new Error('smoke: no context'); };
+    t._destroyOverlay();
+    await new Promise((r) => setTimeout(r, 2500));
+    proto.init = init;
+    return calls;
+  });
+  note(retries >= 1 && retries <= 3, `#821: a failing tile backs off (${retries} tries in 2.5 s)`);
+
   const real = consoleErrors.filter((e) => !/favicon/i.test(e));
   note(real.length === 0, `console errors: ${real.length}${real.length ? '\n    ' + real.join('\n    ') : ''}`);
 } catch (e) {

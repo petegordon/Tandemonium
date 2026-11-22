@@ -54,4 +54,23 @@ function isSignInUrl(url) {
   } catch (e) { return false; }
 }
 
-module.exports = { GAME_ORIGIN, hostOf, isOurHost, isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl };
+/**
+ * The file under rootDir that a tandemonium://app path names, or null when the path is not
+ * one of the app's own files. The path is decoded once; anything still encoded after that,
+ * a drive, a backslash or a control character is refused, so no later decoding can change
+ * which file is meant.
+ */
+function appFilePath(rootDir, pathname) {
+  const path = require('path');
+  let p;
+  try { p = decodeURIComponent(String(pathname || '/')); } catch { return null; }
+  if (p === '' || p === '/') p = '/index.html';
+  if (!p.startsWith('/') || /[%\\:\u0000-\u001f]/.test(p)) return null;
+  const root = path.resolve(rootDir);
+  const full = path.resolve(root, '.' + p);
+  const rel = path.relative(root, full);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return full;
+}
+
+module.exports = { appFilePath, GAME_ORIGIN, hostOf, isOurHost, isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl };

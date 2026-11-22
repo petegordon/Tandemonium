@@ -64,6 +64,18 @@ const FUSION_CALIB_IDEAL_STDDEV = 150;
 const FUSION_CALIB_IDEAL_STDDEV_BT = 200; // BT packet jitter raises the floor
 const FUSION_CALIB_ABORT_STDDEV = 1500;
 const FUSION_CALIB_MAX_RETRIES = 5;
+// A bias already in use is replaced only by a window about as quiet as the one
+// that produced it (#822). Games recalibrate at each ride start with the
+// controller in hand, and those windows pass the IDEAL bar while their mean
+// holds the hand's motion. Real at-rest windows from one controller vary by up
+// to 1.33x, and an in-hand window from the owner's session was 1.6x.
+const BIAS_REPLACE_STDDEV_RATIO = 1.5;
+// A window this quiet was taken at rest (measured floors are 2-5 raw units on
+// Steam Controller, DualShock 4 and Switch Pro; in-hand windows are 66-75).
+const BIAS_AT_REST_STDDEV = 30;
+// How far in-motion refinement may move an at-rest bias. Stillness refinement
+// moves the bias and this center with it, so slow temperature drift is followed.
+const SENSOR_FUSION_MAX_BIAS_SHIFT_DPS = 0.5;
 
 // ── Gravity tracking ──
 const GRAVITY_STILL_SPEED = 1.0;
@@ -121,6 +133,9 @@ export class SensorFusion {
     this._calibSamples = [];
     this._calibRetries = 0;
     this._calibBest = null; // { meanX, meanY, meanZ, stddev }
+    // The bias in use and how quiet its source was: { x, y, z, stddev }, or
+    // null until the first calibration. Cleared by resetBias().
+    this._trustedBias = null;
 
     // Fusion state
     this.orientation = new THREE.Quaternion();
@@ -184,6 +199,8 @@ export class SensorFusion {
 
     // Timekeeping: set to performance.now() on first ingest().
     this._lastGyroTime = 0;
+    // The last device IMU timestamp, for drivers that report one (#822).
+    this._lastImuTicks = null;
 
     // Reusable scratch vectors — instance-scoped so two SensorFusion
     // instances can't clobber each other mid-frame.
@@ -309,6 +326,7 @@ export class SensorFusion {
     this._sfTimeSteady = 0;
     this._sfSkippedTime = 0;
     this._lastGyroTime = 0;
+    this._lastImuTicks = null;
     // Gravity starts again from straight down and converges on the real pose:
     // that jump is not the player, so it must not count as movement or as a
     // still window. The zero itself is kept (it is the grip, not fusion state).
@@ -335,6 +353,22 @@ export class SensorFusion {
     this.bias.x = 0;
     this.bias.y = 0;
     this.bias.z = 0;
+    this._trustedBias = null;
+  }
+
+  /** Record the current bias as trusted, from a source this quiet. */
+  _trustBias(stddev) {
+    this._trustedBias = { x: this.bias.x, y: this.bias.y, z: this.bias.z, stddev };
+  }
+
+  /**
+   * The bias a calibration settled on, in degrees per second. A window taken while the controller was moving
+   * commits a wrong bias, which turns into heading drift, so a diagnostic log has to be able to show it (#822).
+   * A warning, because the desktop build's diagnostic log keeps warnings and errors only.
+   */
+  _logCalibCommit(kind, stddev, gyroScale) {
+    const dps = (v) => (v * gyroScale).toFixed(2);
+    console.warn(`Fusion calib committed ${kind} (stddev ${stddev.toFixed(0)}): bias ${dps(this.bias.x)}, ${dps(this.bias.y)}, ${dps(this.bias.z)} deg/s`);
   }
 
   /**
@@ -354,8 +388,12 @@ export class SensorFusion {
    *                            gravity correction is unit-scale-invariant
    *                            so this can be approximate)
    * @param {number} nowMs performance.now() from the caller
+   * @param {number} [imuTicks] the device's own uint32 sample timestamp, if the
+   *   driver has one. Reports queued behind a busy main thread all arrive at
+   *   about the same nowMs, so the time between samples must come from here.
+   * @param {number} [imuTicksPerMs] that timestamp's clock rate
    */
-  ingest(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz, gyroScale, accelScale, nowMs) {
+  ingest(rawGx, rawGy, rawGz, rawAx, rawAy, rawAz, gyroScale, accelScale, nowMs, imuTicks, imuTicksPerMs) {
     // Initial one-shot bias capture with best-of-N retry selection.
     if (this._calibrating) {
       this._calibSamples.push({ x: rawGx, y: rawGy, z: rawGz });
@@ -382,11 +420,19 @@ export class SensorFusion {
           this._calibBest = { meanX, meanY, meanZ, stddev: maxStd };
         }
         const idealStddev = this._calibIdealStddev || FUSION_CALIB_IDEAL_STDDEV;
-        if (maxStd <= idealStddev) {
+        if (this._trustedBias && maxStd > this._trustedBias.stddev * BIAS_REPLACE_STDDEV_RATIO) {
+          // Noisier than the bias in use: keep that bias and hand control back.
+          console.warn(`Fusion calib kept bias (window stddev ${maxStd.toFixed(0)} vs ${this._trustedBias.stddev.toFixed(0)})`);
+          this._calibSamples = [];
+          this._calibrating = false;
+          this._calibBest = null;
+        } else if (maxStd <= idealStddev) {
           // Great sample — commit immediately.
           this.bias.x = meanX;
           this.bias.y = meanY;
           this.bias.z = meanZ;
+          this._trustBias(maxStd);
+          this._logCalibCommit('clean', maxStd, gyroScale);
           this._calibSamples = [];
           this._calibrating = false;
           this._calibBest = null;
@@ -405,7 +451,8 @@ export class SensorFusion {
             this.bias.x = best.meanX;
             this.bias.y = best.meanY;
             this.bias.z = best.meanZ;
-            console.warn(`Fusion calib committed best-of-${FUSION_CALIB_MAX_RETRIES + 1} (stddev ${best.stddev.toFixed(0)})`);
+            this._trustBias(best.stddev);
+            this._logCalibCommit(`best-of-${FUSION_CALIB_MAX_RETRIES + 1}`, best.stddev, gyroScale);
           } else {
             console.warn(`Fusion calib aborted — all ${FUSION_CALIB_MAX_RETRIES + 1} captures too noisy (best stddev ${best.stddev.toFixed(0)}); keeping previous bias, letting continuous calibration refine`);
           }
@@ -417,13 +464,25 @@ export class SensorFusion {
     }
 
     // First-frame dt init: skip integration, just remember the time.
+    const hasImuClock = Number.isFinite(imuTicks) && imuTicksPerMs > 0;
     if (this._lastGyroTime === 0) {
       this._lastGyroTime = nowMs;
+      this._lastImuTicks = hasImuClock ? imuTicks : null;
       return;
     }
 
-    const dt = (nowMs - this._lastGyroTime) / 1000.0;
+    let dt = (nowMs - this._lastGyroTime) / 1000.0;
     this._lastGyroTime = nowMs;
+    if (hasImuClock) {
+      if (this._lastImuTicks !== null) {
+        // >>> 0 keeps the difference right across the uint32 wrap. Zero means
+        // the report repeats the last IMU sample, so there is nothing to add.
+        dt = ((imuTicks - this._lastImuTicks) >>> 0) / imuTicksPerMs / 1000.0;
+      }
+      this._lastImuTicks = imuTicks;
+    } else {
+      this._lastImuTicks = null;
+    }
     if (dt <= 0 || dt >= 0.1) return;
 
     const hasAccel = rawAx != null && rawAy != null && rawAz != null;
@@ -610,6 +669,18 @@ export class SensorFusion {
         this.bias.x = this.bias.x * lerpFactor + meanGx * (1 - lerpFactor);
         this.bias.y = this.bias.y * lerpFactor + meanGy * (1 - lerpFactor);
         this.bias.z = this.bias.z * lerpFactor + meanGz * (1 - lerpFactor);
+        // Real rest: the bias center follows it, and a fully eased-in window
+        // vouches for the bias even if the last one-shot window was in hand.
+        const t = this._trustedBias;
+        if (t) { t.x = this.bias.x; t.y = this.bias.y; t.z = this.bias.z; }
+        if (sw.easeIn >= 1) {
+          let vx = 0, vy = 0, vz = 0;
+          for (const q of sw.samples) {
+            vx += (q.gx - meanGx) ** 2; vy += (q.gy - meanGy) ** 2; vz += (q.gz - meanGz) ** 2;
+          }
+          const windowStd = Math.sqrt(Math.max(vx, vy, vz) / sw.samples.length);
+          if (!t || windowStd < t.stddev) this._trustBias(windowStd);
+        }
       }
     } else {
       sw.stillSince = 0;
@@ -717,6 +788,15 @@ export class SensorFusion {
       this.bias.x = newBiasX / gyroScale;
       this.bias.y = newBiasY / gyroScale;
       this.bias.z = newBiasZ / gyroScale;
+
+      // Hand motion leaks into this estimate: keep it near a bias taken at rest.
+      const t = this._trustedBias;
+      if (t && t.stddev <= BIAS_AT_REST_STDDEV) {
+        const m = SENSOR_FUSION_MAX_BIAS_SHIFT_DPS / gyroScale;
+        this.bias.x = Math.max(t.x - m, Math.min(t.x + m, this.bias.x));
+        this.bias.y = Math.max(t.y - m, Math.min(t.y + m, this.bias.y));
+        this.bias.z = Math.max(t.z - m, Math.min(t.z + m, this.bias.z));
+      }
     }
 
     this._sfSmoothedPreviousAccel.set(smoothAx, smoothAy, smoothAz);

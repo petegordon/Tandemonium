@@ -13,6 +13,7 @@ export function pickCorsOrigin(requestOrigin, corsSetting) {
   return allowed[0];
 }
 
+import { monthCost, GOOGLE_DAILY_CAPS } from '../js/tourist-costs.js';
 import {
   upsertIdentity, listIdentities,
   handleDiscordBegin, handleDiscordGo, handleDiscordCallback, handleDiscordConfirm, handleAuthPoll,
@@ -319,7 +320,8 @@ async function handleGoogleAuth(request, env, corsOrigin) {
   const googleId = payload.sub;
   const name = payload.name || 'Player';
   const picture = payload.picture || null;
-  const email = payload.email || null;
+  // Only an address Google itself has confirmed is carried (the dashboard's check reads it).
+  const email = (payload.email_verified === true || payload.email_verified === 'true') && typeof payload.email === 'string' ? payload.email : null;
 
   // #612: Google is a legacy sign-in; its users keep their account.
   const { userId, loginId } = await upsertIdentity(env, { provider: 'google', providerId: googleId, name, avatar: picture }, null, identityDeps());
@@ -1019,7 +1021,8 @@ async function handleLeaderboard(request, env, url, corsOrigin) {
   const mode = url.searchParams.get('mode');       // 'solo' | 'together'
   const diffFilter = url.searchParams.get('difficulty'); // 'chill' | 'adventurous' | 'daredevil'
   const userFilter = url.searchParams.get('user_id'); // 'me'
-  let limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 200);
+  const asked = parseInt(url.searchParams.get('limit') || '20', 10);
+  let limit = Number.isFinite(asked) ? Math.max(1, Math.min(asked, 200)) : 20;
 
   // Cache public global leaderboard requests (30s TTL)
   const isPublic = scope === 'global' && !userFilter;
@@ -1455,6 +1458,19 @@ function isValidUUID(str) {
   return typeof str === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
+// Analytics comes from any browser, signed in or not, and is read on the dashboard:
+// text is plain and short, numbers are numbers, and nothing else is stored.
+export const analyticsText = (v, n = 64) => (typeof v === 'string' && v ? (v.replace(/[<>\u0000-\u001f\u007f]/g, '').slice(0, n) || null) : null);
+const txt = analyticsText;
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'boolean' ? (v ? 1 : 0) : null);
+const scalar = (v, n = 64) => (typeof v === 'string' ? txt(v, n) : num(v));
+const jsonText = (v, n = 8000) => {
+  if (!v) return null;
+  let s;
+  try { s = JSON.stringify(v); } catch { return null; }
+  return typeof s === 'string' && s.length <= n ? s.replace(/[<>]/g, '') : '{"dropped":"too long"}';
+};
+
 async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
   const body = await request.json();
   if (!body.id || !isValidUUID(body.id)) {
@@ -1463,18 +1479,18 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   const baseValues = [
     body.id,
-    body.started_at || new Date().toISOString(),
-    body.device_type || null,
-    body.input_method || null,
-    body.referrer || null,
-    body.user_agent || null,
+    txt(body.started_at, 40) || new Date().toISOString(),
+    txt(body.device_type, 32),
+    txt(body.input_method, 32),
+    txt(body.referrer, 300),
+    txt(body.user_agent, 300),
     body.is_stoker ? 1 : 0,
     body.joined_via_url ? 1 : 0,
-    body.room_code || null,
-    body.google_uid || null,
-    body.platform || 'browser',
-    body.screen_width || null,
-    body.screen_height || null,
+    txt(body.room_code, 16),
+    scalar(body.google_uid, 32),
+    txt(body.platform, 16) || 'browser',
+    num(body.screen_width),
+    num(body.screen_height),
     clientIP || null,
   ];
   // A-9: anonymous per-browser id. Old clients don't send it; that is fine.
@@ -1527,7 +1543,7 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(txt(body[field], 80));
     }
   }
 
@@ -1621,11 +1637,11 @@ async function handleAnalyticsEventBatch(request, env, corsOrigin) {
   const batch = events.map(e =>
     stmt.bind(
       e.session_id,
-      e.event_type,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString(),
-      e.page || null,
-      e.input_method || null
+      txt(e.event_type, 64) || 'unknown',
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString(),
+      txt(e.page, 64),
+      txt(e.input_method, 32)
     )
   );
   await env.DB.batch([...ensureSessions(env, events), ...batch]);
@@ -1651,16 +1667,16 @@ async function handleAnalyticsRideCreate(request, env, corsOrigin) {
   ).bind(
     body.id,
     body.session_id,
-    body.room_code || null,
-    body.level || 'unknown',
-    body.role || 'solo',
-    body.difficulty || 'normal',
-    body.input_method || 'unknown',
-    body.controller_name || null,
-    body.controller_connection || null,
-    body.bike_preset || null,
-    body.steering_feel ?? null,
-    body.started_at || new Date().toISOString()
+    txt(body.room_code, 16),
+    txt(body.level, 64) || 'unknown',
+    txt(body.role, 16) || 'solo',
+    txt(body.difficulty, 16) || 'normal',
+    txt(body.input_method, 32) || 'unknown',
+    txt(body.controller_name, 80),
+    txt(body.controller_connection, 24),
+    txt(body.bike_preset, 32),
+    scalar(body.steering_feel, 32),
+    txt(body.started_at, 40) || new Date().toISOString()
   ).run();
 
   await saveRideSeats(env, body.id, body.seats);
@@ -1730,7 +1746,7 @@ async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field]));
     }
   }
 
@@ -1753,10 +1769,11 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   }
 
   const body = await request.json();
-  const events = body.events;
-  if (!Array.isArray(events) || events.length === 0) {
+  if (!Array.isArray(body.events) || body.events.length === 0) {
     return jsonResponse({ error: 'No events' }, 400, corsOrigin);
   }
+  const events = body.events.filter((e) => e && typeof e === 'object').slice(0, 200);
+  if (events.length === 0) return jsonResponse({ success: true }, 200, corsOrigin);
 
   const stmt = env.DB.prepare(
     'INSERT INTO ride_events (ride_id, event_type, distance, event_data, created_at) VALUES (?, ?, ?, ?, ?)'
@@ -1764,10 +1781,10 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
   const batch = events.map(e =>
     stmt.bind(
       rideId,
-      e.event_type,
-      e.distance ?? null,
-      e.event_data ? JSON.stringify(e.event_data) : null,
-      e.created_at || new Date().toISOString()
+      txt(e.event_type, 64) || 'unknown',
+      num(e.distance),
+      jsonText(e.event_data),
+      txt(e.created_at, 40) || new Date().toISOString()
     )
   );
   await env.DB.batch(batch);
@@ -1778,6 +1795,9 @@ async function handleAnalyticsRideEvents(request, env, corsOrigin, rideId) {
 
 async function handleAnalyticsRoomCreate(request, env, corsOrigin) {
   const body = await request.json();
+  body.code = txt(body.code, 16);
+  body.captain_session_id = txt(body.captain_session_id, 40);
+  body.created_at = txt(body.created_at, 40);
   if (!body.code || !body.captain_session_id) {
     return jsonResponse({ error: 'Missing code or captain_session_id' }, 400, corsOrigin);
   }
@@ -1802,7 +1822,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.disconnect_count_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET disconnect_count = disconnect_count + ? WHERE code = ?'
-    ).bind(body.disconnect_count_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.disconnect_count_increment) || 0))), roomCode).run();
     delete body.disconnect_count_increment;
   }
 
@@ -1810,7 +1830,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   if (body.rides_played_increment) {
     await env.DB.prepare(
       'UPDATE rooms SET rides_played = rides_played + ? WHERE code = ?'
-    ).bind(body.rides_played_increment, roomCode).run();
+    ).bind(Math.max(0, Math.min(100, Math.floor(num(body.rides_played_increment) || 0))), roomCode).run();
     delete body.rides_played_increment;
   }
 
@@ -1827,7 +1847,7 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       sets.push(`${field} = ?`);
-      values.push(body[field]);
+      values.push(scalar(body[field], 80));
     }
   }
 
@@ -1843,6 +1863,8 @@ async function handleAnalyticsRoomUpdate(request, env, corsOrigin, roomCode) {
 
 async function handleAnalyticsConversion(request, env, corsOrigin) {
   const body = await request.json();
+  body.action = txt(body.action, 64);
+  body.created_at = txt(body.created_at, 40);
   if (!isValidUUID(body.session_id) || !body.action) {
     return jsonResponse({ error: 'Missing session_id or action' }, 400, corsOrigin);
   }
@@ -1853,8 +1875,8 @@ async function handleAnalyticsConversion(request, env, corsOrigin) {
   ).bind(
     body.session_id,
     body.action,
-    body.context || null,
-    body.url || null,
+    txt(body.context, 200),
+    txt(body.url, 300),
     body.created_at || new Date().toISOString()
   ).run();
 
@@ -1898,6 +1920,7 @@ async function handleDashboard(route, url, env, corsOrigin, viewer = {}) {
     dropoff: () => dashDropoff(env, since, ex),
     pairs: () => dashPairs(env, since, ex),
     players: () => dashPlayers(env, since, ex),
+    tourist_costs: () => dashTouristCosts(env, since),   // #824
   };
 
   // Auto-detect for the exclusion editor: this browser's IP, plus the IPs the
@@ -2231,6 +2254,63 @@ async function dashPairs(env, since, ex) {
 // never recorded a session's end. One session counts at most 2 hours, so a
 // window left open overnight doesn't read as a marathon.
 export const PLAYER_SESSION_CAP_MIN = 120;
+/**
+ * #824 · Tourist's Google use and our estimate of its cost. Counts every session (developers too), because the
+ * bill does. Google's billing report stays the source of truth.
+ */
+async function dashTouristCosts(env, since) {
+  const NAMES = ['tourist_tiles_session', 'tourist_session_reused', 'tourist_lookup', 'tourist_limit_hit', 'tourist_quota_refused'];
+  const marks = NAMES.map(() => '?').join(',');
+  const rows = (await env.DB.prepare(
+    `SELECT substr(e.created_at, 1, 10) AS day, e.event_type AS type, json_extract(e.event_data, '$.kind') AS kind,
+            json_extract(e.event_data, '$.ok') AS ok, COUNT(*) AS n
+     FROM events e WHERE e.created_at >= ? AND e.event_type IN (${marks}) GROUP BY day, type, kind, ok`
+  ).bind(since, ...NAMES).all()).results || [];
+  const players = (await env.DB.prepare(
+    `SELECT CASE WHEN s.google_uid IS NOT NULL THEN 'Account ' || CAST(s.google_uid AS INTEGER) ELSE 'Guest' END AS who,
+            CASE WHEN s.google_uid IS NOT NULL THEN 'a:' || CAST(s.google_uid AS INTEGER) ELSE 'g:' || COALESCE(s.device_id, s.ip_address, s.id) END AS id,
+            SUM(CASE WHEN e.event_type = 'tourist_tiles_session' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS sessions,
+            SUM(CASE WHEN e.event_type = 'tourist_lookup' AND json_extract(e.event_data, '$.ok') = 1 THEN 1 ELSE 0 END) AS lookups
+     FROM events e JOIN sessions s ON s.id = e.session_id
+     WHERE e.created_at >= ? AND e.event_type IN ('tourist_tiles_session', 'tourist_lookup')
+     GROUP BY id ORDER BY sessions DESC, lookups DESC LIMIT 200`
+  ).bind(since).all()).results || [];
+  const blank = () => ({ tiles: 0, geocode: 0, elevation: 0, reused: 0, failed: 0, limit_sessions: 0, limit_addresses: 0, refused: 0 });
+  const days = new Map();
+  for (const r of rows) {
+    if (!days.has(r.day)) days.set(r.day, blank());
+    const d = days.get(r.day);
+    const ok = r.ok === 1 || r.ok === true;
+    if (r.type === 'tourist_tiles_session') { if (ok) d.tiles += r.n; else d.failed += r.n; }
+    else if (r.type === 'tourist_session_reused') d.reused += r.n;
+    else if (r.type === 'tourist_lookup') { if (!ok) d.failed += r.n; else if (r.kind === 'geocode') d.geocode += r.n; else if (r.kind === 'elevation') d.elevation += r.n; }
+    else if (r.type === 'tourist_limit_hit') { if (r.kind === 'addresses') d.limit_addresses += r.n; else d.limit_sessions += r.n; }
+    else if (r.type === 'tourist_quota_refused') d.refused += r.n;
+  }
+  const byMonth = new Map();
+  for (const [day, d] of days) {
+    const m = day.slice(0, 7);
+    if (!byMonth.has(m)) byMonth.set(m, blank());
+    const t = byMonth.get(m);
+    for (const k of Object.keys(t)) t[k] += d[k];
+  }
+  const active = players.filter((p) => p.sessions > 0 || p.lookups > 0).length;
+  const months = [...byMonth].sort().map(([month, c]) => ({ month, ...c, cost: monthCost(month, c) }));
+  const total = months.reduce((a, m) => a + m.cost.total, 0);
+  const today = days.get(new Date().toISOString().slice(0, 10)) || blank();
+  return {
+    days: [...days].sort().reverse().map(([day, c]) => ({ day, ...c })),
+    months, total_usd: total, active_players: active, cost_per_player: active ? total / active : 0,
+    top_players: players.slice(0, 10).map(({ who, sessions, lookups }) => ({ who, sessions, lookups })),
+    today_of_cap: {
+      tiles: pct0(today.tiles, GOOGLE_DAILY_CAPS.tiles), geocode: pct0(today.geocode, GOOGLE_DAILY_CAPS.geocode),
+      elevation: pct0(today.elevation, GOOGLE_DAILY_CAPS.elevation),
+    },
+    caps: GOOGLE_DAILY_CAPS,
+  };
+}
+const pct0 = (n, of) => (of > 0 ? Math.round((n * 100) / of) : 0);
+
 async function dashPlayers(env, since, ex) {
   const sf = sessionFilter(ex, 's');
   const rows = await env.DB.prepare(

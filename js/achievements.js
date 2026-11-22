@@ -363,7 +363,9 @@ export class AchievementManager {
    * `quiet`: award without the per-badge toast (onEarned). After a sign-in
    * brings the account's stats, the caller shows one summary instead.
    */
-  _evaluate(state, { quiet = false } = {}) {
+  _evaluate(rawState, { quiet = false } = {}) {
+    // #819 · the medal achievements read what was earned BEFORE this check, so a run earns one
+    const state = rawState && rawState.finishedLevel ? { ...rawState, earnedIds: new Set(this._earned.keys()) } : rawState;
     const newlyEarned = [];
     const demo = this.demo;
     const guestPass = demo && this.guestPass;   // #666: once per check, not per achievement
@@ -478,6 +480,21 @@ export class AchievementManager {
     return this._evaluate(s);
   }
 
+  /** #824 · Tourist's counts as the account last had them. */
+  touristUsage() {
+    const s = this._stats.touristSessions, a = this._stats.touristAddresses;
+    return { day: s ? s[0] : '', sessions: s ? s[1] : 0, week: a ? a[0] : '', addresses: a ? a[1] : 0 };
+  }
+
+  /** #824 · keep Tourist's counts with the stats, so they reach the account at the next sync. */
+  noteTouristUsage(u) {
+    this._stats = { ...this._stats,
+      touristSessions: u.day ? [u.day, u.sessions] : this._stats.touristSessions,
+      touristAddresses: u.week ? [u.week, u.addresses] : this._stats.touristAddresses };
+    this._saveStats();
+    this._scheduleStatsSync();
+  }
+
   /** Versus, each frame: who led when the leader crossed halfway. */
   versusFrame(rigs, raceDistance) {
     if (!rigs || !rigs.length) return;
@@ -490,14 +507,21 @@ export class AchievementManager {
   }
 
   /** Versus: the race is won. */
-  versusFinish(winner, loser, raceDistance) {
+  versusFinish(winner, loser, raceDistance, { easy = false } = {}) {
     if (!winner || !loser) return [];
     const team = r => ({ id: r.id, members: r.members, distance: r.bike.distanceTraveled, speed: r.bike.speed, crashes: r.crashCount || 0 });
     const halfLeader = this._versus && this._versus.key === winner.raceManager ? this._versus.halfLeader
       : (this._versus && this._versus.key === loser.raceManager ? this._versus.halfLeader : null);
     const res = versusResult({ winner: team(winner), loser: team(loser), raceDistance, halfLeader });
     this._versus = null;
-    return this.record('versus', res);
+    return this.record('versus', { ...res, easy });
+  }
+
+  /** VERSUS BOTS: the back seat's bot rode a race with you. pair: its {rides, distance (m)} on this device. */
+  botPartner(partnerKey, pair, partnerLabel = null) {
+    this._stats = applyEvent(this._stats, 'botPartner', { partnerKey }, playDayKey());
+    this._saveStats();
+    return this._evaluate({ pairRides: pair.rides, pairDistanceKm: pair.distance / 1000, partnerLabel });
   }
 
   getEarned() {
@@ -507,6 +531,12 @@ export class AchievementManager {
       const def = defMap.get(e.id);
       return def ? { ...e, icon: def.icon } : e;
     });
+  }
+
+  /** How many of today's achievements are earned. Retired ones stay saved but are not counted. */
+  earnedCount() {
+    const current = new Set(ACHIEVEMENTS.map((a) => a.id));
+    return this.getEarnedIds().filter((id) => current.has(id)).length;
   }
 
   getEarnedIds() {
@@ -562,7 +592,7 @@ export class AchievementManager {
           demoLocked: demo && !a.demo,
           held: earned && demo && !a.demo,             // #666: earned with a friend, claimed by the full game
           medal: a.medal || null,
-          bestAt,                                      // { level, at }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
+          bestAt,                                      // { level, at, partner? }: where and when the best-so-far was set                      // { level, rank }: the detail card prints the live times
         };
       });
   }

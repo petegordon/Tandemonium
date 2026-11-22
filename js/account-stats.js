@@ -24,7 +24,7 @@
 // the baseline belongs to: null = counted signed out (the next sign-in claims
 // it), another account = the device's stats aren't this player's (reset).
 
-import { emptyStats, migrateStats, STATS_VERSION } from './achievement-defs.js';
+import { emptyStats, migrateStats, STATS_VERSION, TOURIST_PAIRS } from './achievement-defs.js';
 
 export const ACCOUNT_GAME = 'tandemonium';
 
@@ -34,14 +34,15 @@ export const ADD_KEYS = Object.freeze([
   'coinsEarned', 'coinsSpent', 'upgrades', 'slingLaunches', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
   'straightShots', 'medalKeys', 'dailyPractice', 'shares',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
-  'versus1v2Wins', 'versusClean', 'touristDistance',
+  'versus1v2Wins', 'versusClean', 'versusEasyWins', 'touristDistance',
+  'grandmaFinishes', 'grandmaDefaultFinishes', 'cleanRoadFinishes', 'adventurousFinishes',   // #819
 ]);
 /**
  * Highest wins. `days` is a max, not a counter: the same day ridden on two
  * devices is one day (each device starts from the account's count, and the
  * merged day list fills in the rest).
  */
-export const MAX_KEYS = Object.freeze(['days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'slingTopSpeed', 'dailyDayBest']);
+export const MAX_KEYS = Object.freeze(['boostStreakBest', 'days', 'rebuilds', 'bestRideCoins', 'slingBest', 'slingStage', 'slingTopSpeed', 'dailyDayBest']);
 export const OR_KEYS = Object.freeze(['pedalled', 'maxedAny', 'maxedAll']);
 export const UNION_KEYS = Object.freeze(['golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished']);
 export const RECENT_KEYS = Object.freeze(['dayList']);
@@ -72,10 +73,11 @@ function settledParts(L) {
   for (const k of RECENT_KEYS) if (Array.isArray(L[k]) && L[k].length) d.recent[k] = L[k];
   if (typeof L.lastDailyDay === 'string') d.latest.dailyRun = [L.lastDailyDay, num(L.dailyDayRun)];
   if (typeof L.lastDay === 'string') d.latest.lastDay = [L.lastDay, null];
+  for (const k of TOURIST_PAIRS) if (Array.isArray(L[k])) d.latest[k] = L[k];   // #824
   for (const [id, v] of Object.entries(L.bests || {})) {
     if (!num(v)) continue;
     const at = L.bestsAt && L.bestsAt[id];
-    d.maxmap.bests[id] = at ? [v, typeof at.level === 'string' ? at.level : null, fin(at.at) ? at.at : null] : [v];
+    d.maxmap.bests[id] = at ? [v, typeof at.level === 'string' ? at.level : null, fin(at.at) ? at.at : null, ...(typeof at.partner === 'string' && at.partner ? [at.partner] : [])] : [v];
   }
   for (const op of Object.keys(d)) if (op !== 'maxmap' && !Object.keys(d[op]).length) delete d[op];
   if (!Object.keys(d.maxmap.bests).length) delete d.maxmap;
@@ -112,11 +114,15 @@ export function fromAccount(T) {
     raw.dailyDayRun = num(t.dailyRun[1]);
   }
   if (Array.isArray(t.lastDay) && typeof t.lastDay[0] === 'string') raw.lastDay = t.lastDay[0];
+  for (const k of TOURIST_PAIRS) raw[k] = t[k];
   if (t.bests && typeof t.bests === 'object') {
     for (const [id, e] of Object.entries(t.bests)) {
       if (!Array.isArray(e) || !num(e[0])) continue;
       raw.bests[id] = e[0];
-      if (fin(e[2])) raw.bestsAt[id] = { level: typeof e[1] === 'string' ? e[1] : null, at: e[2] };
+      if (fin(e[2])) {
+        raw.bestsAt[id] = { level: typeof e[1] === 'string' ? e[1] : null, at: e[2] };
+        if (typeof e[3] === 'string' && e[3]) raw.bestsAt[id].partner = e[3];
+      }
     }
   }
   return migrateStats(raw);
@@ -152,6 +158,10 @@ export function mergeAfterSync(T, Lnow, sent) {
     R.dailyDayRun = mine.dailyDayRun;
   }
   if (mine.lastDay && (!R.lastDay || mine.lastDay > R.lastDay)) R.lastDay = mine.lastDay;
+  for (const k of TOURIST_PAIRS) {   // #824 · the newer period; in the same period, the higher count
+    const a = R[k], b = mine[k];
+    if (b && (!a || b[0] > a[0] || (b[0] === a[0] && b[1] > a[1]))) R[k] = b;
+  }
   for (const [id, v] of Object.entries(mine.bests)) {
     if (v > (R.bests[id] || 0)) {
       R.bests[id] = v;

@@ -55,7 +55,8 @@ import { warmUp, WarmQueue } from './gpu-warmup.js';
 import { makePedestal } from './bike-pedestal.js';
 import { BOTS, BOT_IDS, NO_BOT, loadBotChoice, saveBotChoice, botStokerLook } from './player-bots.js';
 import { resolveRider } from './goose-outfits.js';
-import { RACE_CHOICES, RACE_TIERS, ghostTeamFor, ghostTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
+import { withGrandmaFinished } from './achievement-defs.js';
+import { RACE_TIERS, botTeamFor, botTeamName, loadRaceChoice, saveRaceChoice, raceableLevel } from './bot-race.js';
 import { boneFilterFor, trackBone } from './goose-rider-clips.js';
 import { PARTNER_LEFT_REASON } from './network-manager.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -66,7 +67,12 @@ import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
-import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage } from './tourist-config.js';
+import { cleanText, cleanPlace } from './remote-safe.js';
+import { getMapsApiKey, geocodeAddress, resolveOriginAt, touristLookupMessage, setLookupReporter } from './tourist-config.js';
+import { setTilesSessionHooks, hasLiveTilesSession } from './tourist-tiles-session.js';
+import { TOURIST_USAGE_KEY, readUsage, mergeUsage, sessionGate, countSession, noteAddresses, storeWithUsage, sessionText } from './tourist-limits.js';
+/** Tourist's "experimental" note: '1' = don't show it again. */
+const TOURIST_NOTE_OFF_KEY = 'tandemonium_tourist_note_off';
 /** Map Tourist: the player's own places and the week's count of new ones (this device). */
 const TOURIST_STORE_KEY = 'tandemonium_tourist_places';
 import { SCENIC_PLACES, planForPlace, rideKind, emptyStore, readStore, newPlaceGate, countNewPlaces, limitText,
@@ -94,6 +100,7 @@ import { AchievementManager, showInfoToast } from './achievements.js';
 import * as analytics from './analytics.js';
 import { SteamJoin } from './steam-join.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
+import { GyroTip, gyroOptionAvailable } from './gyro-tip.js';
 import { isPresentableEntry } from '../shared/manager.js';
 import { identityOf, identifyGamepadId, identifyHidDevice, KEYBOARD_IDENTITY } from '../shared/device-identity.js';
 import { prettyGamepadName, prettyHidName, hidDeviceIdentity, slotIdentityHidFirst, fixRosterRow, versusJoinSeat, lowestFreePlayerNumber } from './lobby/controller-labels.js';
@@ -727,13 +734,13 @@ export class Lobby {
     this._currentStep = step;
     if (step === this.hostStep || step === this.modeStep) this._hostBotRide = false;   // a bot ride starts from the room's CHOOSE LEVEL
     if (step === this.modeStep) this._scheduleMenuBikeCheck();   // #736 · back on the main menu: any new bike
+    if (step === this.modeStep) this._gyroTip?.arm();   // #820
     if (this._inSeatRoom() && !this._bikeRideable(this._presetKeys[this._presetIndex])) {   // no locked bike in a room
       const i = this._presetKeys.indexOf(this.selectedPresetKey || 'default');
       this._presetIndex = i >= 0 ? i : 0;
       if (this._previewModel) this._applyPresetToPreview();
     }
     this._syncRoomBikeRows();
-    if (this._botPickerAsked !== undefined) this._showBotPicker(this._botPickerAsked);   // (only where it means something)
 
     // B-3: cards are built once at boot, but bests change every ride — refresh
     // the record lines whenever a level list comes back into view.
@@ -741,6 +748,7 @@ export class Lobby {
       this._refreshRecordLines();
     }
     if (step === this.levelStep) this._refreshTouristCard();
+    if (step === this.levelStep) this._paintWarpRow();   // #840 · the day may have been warped from the Slingshot
     if (step === this.levelStep && !this._inOnlineRoom() && this._pendingMode !== 'versus') {
       const want = this._pendingMode === 'versusBots' ? 'versusBots' : 'solo';
       if (this._levelCardsFor && this._levelCardsFor !== want) this._rebuildLevelCards();
@@ -1254,6 +1262,12 @@ export class Lobby {
         });
         this._hideLobby();
         this.onVersusReady({ teams: this._versusTeams() });
+      } else if (this._pendingMode === 'versusBots') {
+        // Pete, 2026-11-21: the real couch race, split screen, against a bot team
+        const teams = this._versusBotTeams();
+        analytics.trackEvent('versus_start', { team_a: teams[0].members.length, team_b: 2, bots: this.selectedRace });
+        this._hideLobby();
+        this.onVersusReady({ teams, botTier: this.rideRaceTier() });
       } else {
         // Solo: start game directly
         this._hideLobby();
@@ -1525,10 +1539,10 @@ export class Lobby {
     return this.roomRules().tourist && !!getMapsApiKey();   // M1: room needs a partner that can ride it
   }
 
-  /** #400: "Map Tourist" alone, "Map Tourists" when two ride it. */
+  /** #400: "Tourist" alone, "Tourists" when two ride it. */
   _touristLabel() {
     return this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
-      ? 'Map Tourists' : 'Map Tourist';
+      ? 'Tourists' : 'Tourist';
   }
 
   /** The SOLO list is shared with couch co-op, so name the card as it is shown. */
@@ -1566,13 +1580,46 @@ export class Lobby {
     try { localStorage.setItem(TOURIST_STORE_KEY, JSON.stringify(store)); } catch { /* private mode: this ride still works */ }
   }
 
+  /** Pressing the Tourist card: the "experimental" note first, until the player turns it off. */
+  _pressTourist() {
+    let off = false;
+    try { off = localStorage.getItem(TOURIST_NOTE_OFF_KEY) === '1'; } catch { /* storage off: show it */ }
+    const sheet = /** @type {any} */ (document.getElementById('tourist-note-sheet'));
+    if (off || !sheet) { this._openTouristStep(); return; }
+    if (!this._touristNoteWired) {
+      this._touristNoteWired = true;
+      const never = /** @type {any} */ (document.getElementById('tourist-note-never'));
+      const fun = document.getElementById('tourist-note-fun');
+      sheet.attachFocus(this._stepFocus);
+      document.getElementById('tourist-note-return')?.addEventListener('click', () => sheet.close());
+      fun?.addEventListener('click', () => { this._touristNoteGo = true; sheet.close(); });
+      // the sheet starts on its first body item, the option: A should mean Have Fun!, not opt out
+      // (the first time it opens, its controls can take a frame or two to lay out)
+      const land = (tries = 0) => {
+        if (!sheet.open) return;
+        const items = sheet.focusables();
+        if (items.includes(fun)) this._stepFocus.setSpatial(items, fun);
+        else if (tries < 20) requestAnimationFrame(() => land(tries + 1));
+      };
+      sheet.addEventListener('uf-sheet:open', () => requestAnimationFrame(() => land()));
+      // every way out keeps the choice; only Have Fun! goes on (the sheet hands the focus back first)
+      sheet.addEventListener('uf-sheet:close', () => {
+        if (never.checked) { try { localStorage.setItem(TOURIST_NOTE_OFF_KEY, '1'); } catch { /* this session only */ } }
+        const go = this._touristNoteGo;
+        this._touristNoteGo = false;
+        if (go) this._openTouristStep();
+      });
+    }
+    sheet.show();
+  }
+
   _openTouristStep() {
     // Who rides it: alone, two on this screen, or the room (captain plans).
     this._touristFor = this._pendingMode === 'local' || this._pendingMode === 'multiplayer'
       ? this._pendingMode : 'solo';
     const together = this._touristFor !== 'solo';
     const prompt = this.touristStep.querySelector('.lobby-prompt');
-    if (prompt) prompt.textContent = together ? 'Map Tourists · Where will you ride?' : 'Map Tourist · Where will you ride?';
+    if (prompt) prompt.textContent = together ? 'Tourists · Where will you ride?' : 'Tourist · Where will you ride?';
     const fromIn = document.getElementById('tourist-from');
     const toIn = document.getElementById('tourist-to');
     if (fromIn) fromIn.placeholder = 'Address or place';
@@ -1582,10 +1629,11 @@ export class Lobby {
       this.net.sendProfile(RoomProtocol.touristChoosing(true));
     }
     this._forceWizard = false;
-    this._touristStore = this._touristStoreLoad();
+    this._touristStore = storeWithUsage(this._touristStoreLoad(), this._touristUsage());
     this._showTouristForm(false);
     this._renderTouristPlaces();
     this._showStep(this.touristStep);
+    this._syncTouristUsage();   // #824
     this._refreshTouristFocus(true);
     // the step slides in and its fonts settle: the neighbours are worked out again from where things ended up
     for (const ms of [200, 600, 1400]) setTimeout(() => this._refreshTouristFocus(false), ms);
@@ -1596,6 +1644,7 @@ export class Lobby {
     // the two lookups a typed place needs (a seam: the smoke stands a table in for Google)
     this._touristLookups = { geocode: geocodeAddress, origin: resolveOriginAt };
     if (!this._touristAvailable()) return;     // no card is built either
+    this._initTouristCosts();
 
     const back = document.getElementById('btn-back-tourist');
     if (back) back.addEventListener('click', () => {
@@ -1734,15 +1783,65 @@ export class Lobby {
     this._renderTouristQuota();
   }
 
-  /** "New places this week: 4 of 6 left", on the places and on the form. */
+  // ── #824 · what a player may use of Google, and what it cost ─────────────
+
+  /** Counts only: never a typed address or a ridden place. */
+  _initTouristCosts() {
+    const track = (name, data) => { try { analytics.trackEvent(name, data); } catch { /* offline */ } };
+    const platform = window.steam ? 'steam' : navigator.userAgent.includes('Electron') ? 'desktop' : 'web';
+    const edition = this._achievements.demo ? 'demo' : 'full';
+    setLookupReporter((r) => track('tourist_lookup', r));
+    setTilesSessionHooks({
+      onRoot: ({ ok, status }) => {
+        track('tourist_tiles_session', { ok, status, platform, edition });
+        if (ok) this._saveTouristUsage(countSession(this._touristUsage()));
+      },
+      onReused: () => track('tourist_session_reused', { platform, edition }),
+      onRefused: (status) => { if (this.onTouristRefused) this.onTouristRefused(status); },
+    });
+  }
+
+  /** This player's counts: the device's and the account's, the higher of each. */
+  _touristUsage() {
+    let device = null;
+    try { device = readUsage(localStorage.getItem(TOURIST_USAGE_KEY)); } catch { /* storage off */ }
+    let u = mergeUsage(device, this._achievements.touristUsage());
+    const store = this._touristStore;
+    if (store && store.week) u = noteAddresses(u, store.week, store.used || 0);
+    return u;
+  }
+
+  _saveTouristUsage(u) {
+    try { localStorage.setItem(TOURIST_USAGE_KEY, JSON.stringify(u)); } catch { /* this session only */ }
+    this._achievements.noteTouristUsage(u);
+    if (this._currentStep === this.touristStep) this._renderTouristQuota();
+  }
+
+  /** May a ride start now? (A live session always may.) */
+  touristSessionGate() {
+    return sessionGate(this._touristUsage(), Date.now(), hasLiveTilesSession());
+  }
+
+  /** Signed in: bring the account's counts here before the player picks. Offline: the device's count stands. */
+  async _syncTouristUsage() {
+    this._saveTouristUsage(this._touristUsage());
+    try { await this._achievements.syncStats(); } catch { return; }
+    const u = this._touristUsage();
+    this._touristStoreSave(storeWithUsage(this._touristStore, u));
+    this._saveTouristUsage(u);
+  }
+
+  /** "Map sessions today: 4 of 5 left" and "New places this week: 3 of 5 left", on the places and on the form. */
   _renderTouristQuota() {
     const gate = newPlaceGate(this._touristStore);
-    const text = limitText(gate);
+    const limit = limitText(gate);
+    const sessions = this.touristSessionGate();
+    const text = { headline: sessionText(sessions), detail: `${limit.headline}. ${limit.detail}` };
     for (const id of ['tourist-quota', 'tourist-quota-form']) {
       const el = document.getElementById(id);
       if (!el) continue;
       el.innerHTML = '<b>' + this._escape(text.headline) + '</b><span>' + this._escape(text.detail) + '</span>';
-      el.classList.toggle('out', !gate.allowed);
+      el.classList.toggle('out', !gate.allowed || !sessions.allowed);
     }
     const fresh = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-tourist-new'));
     if (fresh) {
@@ -1915,12 +2014,21 @@ export class Lobby {
       this._refreshTouristFocus(false);
     };
 
+    // #824 · no paid address lookup for a ride that could not start
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      fail(sessionText(sessions));
+      return;
+    }
+
     // which of them need looking up, and is there room in the week for that many
     const texts = two ? [fromText, toText] : [fromText];
     const known = texts.map((t) => knownPoint(this._touristStore, t));
     const need = known.filter((k) => !k).length;
     const gate = newPlaceGate(this._touristStore);
     if (need > gate.left) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'addresses' });
       const t = limitText(gate);
       fail(gate.left === 0 ? `${t.headline}. ${t.detail}`
         : `That is ${need} new places and you have ${gate.left} left this week. Try one address, or a place you have ridden.`);
@@ -1938,7 +2046,10 @@ export class Lobby {
         return { ...p, typed: String(t).trim() };
       }));
       // the lookups happened: they count, whatever comes next
-      if (need) this._touristStoreSave(countNewPlaces(this._touristStore, need));
+      if (need) {
+        this._touristStoreSave(countNewPlaces(this._touristStore, need));
+        this._saveTouristUsage(this._touristUsage());
+      }
       const [from, to] = points;
       const plan = two ? planRoute(from, to) : planExplore(from);
       plan.kind = 'yours';
@@ -1990,6 +2101,15 @@ export class Lobby {
 
   async _startTouristRide(plan) {
     const forMode = this._touristFor || 'solo';
+    // #824 · checked before a ride would open a new paid session; a live session always rides
+    const sessions = this.touristSessionGate();
+    if (!sessions.allowed) {
+      analytics.trackEvent('tourist_limit_hit', { kind: 'sessions' });
+      const err = document.getElementById('tourist-error');
+      if (err) err.textContent = sessionText(sessions) + ' Grandma’s, the Daily Ride and Slingshot are still open.';
+      this._renderTouristQuota();
+      return;
+    }
     if (forMode === 'multiplayer') {
       // Online co-op: the captain's plan travels as its two end points, then
       // the ordinary start message (flagged), and both sides enter the game.
@@ -2160,6 +2280,7 @@ export class Lobby {
       const raw = localStorage.getItem('tandemonium_achievements');
       if (raw) earned = JSON.parse(raw).map(a => a.id);
     } catch { /* empty */ }
+    earned = withGrandmaFinished(earned, this._achievements.getStats());   // #819
     return dailyRideGate(this.roomRules(), ridesStarted(browserStore(), playDayKey()), earned);   // #611: per warped day
   }
 
@@ -2378,7 +2499,8 @@ export class Lobby {
       card.innerHTML =
         '<div class="level-card-top">' +
           '<span class="level-card-icon">&#128205;</span>' +
-          '<span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-name-wrap"><span class="level-card-name">' + this._touristLabel() + '</span>' +
+          '<span class="level-card-experimental">⚠️ Experimental</span></span>' +
         '</div>' +
         '<div class="level-card-desc">Two places on the map become a ride through real streets.</div>';
       if (stokerView) {
@@ -2386,7 +2508,7 @@ export class Lobby {
         card.style.pointerEvents = 'none';
         container.appendChild(card);
       } else {
-        card.addEventListener('click', () => this._openTouristStep());
+        card.addEventListener('click', () => this._pressTourist());
         container.appendChild(card);
         buttons.push(card);
       }
@@ -3484,7 +3606,39 @@ export class Lobby {
         if (!requestAppQuit(window) && btn) btn.removeAttribute('disabled');
       });
     }
+    this._initGyroTip();
     this._syncSystemBar();
+  }
+
+  /** #820 · the Steam build's "best with motion control" popup. */
+  _initGyroTip() {
+    const $ = (id) => /** @type {any} */ (document.getElementById(id));
+    const sheet = $('gyro-tip-sheet');
+    if (!sheet || !window.steam) return;
+    sheet.attachFocus(this._stepFocus);
+    this._gyroTip = new GyroTip({
+      sheet, toggle: $('gyro-tip-never'), ok: $('gyro-tip-ok'), focus: this._stepFocus,
+      canShow: () => this._isSteam && !this._tapOverlay && !this._activeModal
+        && document.visibilityState === 'visible'
+        && this.lobbyEl?.style.display !== 'none' && this._flow.current === this.modeStep.id
+        // (result sheets stay [open] inside their hidden screens: only a visible one counts)
+        && ![...document.querySelectorAll('uf-sheet[open], #options-overlay.visible, .phone-qr-panel.open')].some((el) => el.getClientRects().length),
+      hasGyro: () => this._gyroOptionHere(),
+    });
+    this._gyroTip.arm();
+  }
+
+  /** Is a gyro controller or a paired phone here? */
+  async _gyroOptionHere() {
+    const devices = navigator.hid ? await navigator.hid.getDevices().catch(() => []) : [];
+    const pads = Array.from(navigator.getGamepads?.() || []).filter(Boolean);
+    return gyroOptionAvailable({
+      active: !!(this.motionActive || this.input?.gyroConnected || this.input?._remoteTilt),
+      phones: this.phonePool?.joinedEntries().length || 0,
+      hidGyro: devices.some((d) => ControllerRegistry.getEntry(d.vendorId, d.productId)?.capabilities?.gyro),
+      padGyro: pads.some((p) => ControllerRegistry.identifyFromGamepadId(p.id)?.hasGyro),
+      steamTypes: (window.steam?.input?.getXInputMap?.() || []).map((e) => e.type),
+    });
   }
 
   _openQuitSheet() {
@@ -3599,7 +3753,7 @@ export class Lobby {
     if (count && this._achievements) {
       if (!this._achTotal) this._achTotal = this._achievements.getAllDefinitions().length;
       const earned = this._achievements.getEarnedIds();
-      const text = `${earned.length} of ${this._achTotal}`;
+      const text = `${this._achievements.earnedCount()} of ${this._achTotal}`;
       if (count.textContent !== text) count.textContent = text;
       if (this._achGoalFor !== text) {
         this._achGoalFor = text;
@@ -4701,10 +4855,10 @@ export class Lobby {
     if (!card) return;
     let bestLine = '';
     // Pete 2026-11-07: the ride and the date + time the best was set ("Best: Daily Ride · November 7, 2026, 3:12 PM")
-    if (!d.earned && !d.secret && !d.demoLocked && d.progress && d.progress[0] > 0 && d.bestAt && d.bestAt.at) {
+    if (!d.secret && !d.demoLocked && d.bestAt && d.bestAt.at && (d.bestAt.partner || (!d.earned && d.progress && d.progress[0] > 0))) {
       const lv = d.bestAt.level && LEVELS.find(l => l.id === d.bestAt.level);
       const when = this._longDate(d.bestAt.at) + ', ' + new Date(d.bestAt.at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-      bestLine = 'Best: ' + (lv ? lv.name + ' · ' : '') + when;
+      bestLine = (d.bestAt.partner ? 'Best with ' + d.bestAt.partner + ': ' : 'Best: ') + (lv ? lv.name + ' · ' : '') + when;
     }
     card.achievement = this._achItem(d);
     card.number = d.n;
@@ -5703,14 +5857,15 @@ export class Lobby {
     const pool = this.phonePool;
     if (this.padRoom) this.padRoom.allowPlay = on;
     // Only the offer this step made is withdrawn (versus has its own panel).
-    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true); }
+    // #848 · co-op is two riders: one phone seat for Player 2 (Player 1's phone pairs from the main menu)
+    if (pool && on && !this._hostOffering) { this._hostOffering = true; pool.setOffering(true, { last: 2 }); }
     else if (pool && !on && this._hostOffering) { this._hostOffering = false; pool.setOffering(false); }
     const qr = /** @type {any} */ (document.getElementById('host-join-qr'));
     if (qr) {
       const link = on && pool ? (pool.joinLink({ play: true }) || '') : '';
       if (qr.value !== link) qr.value = link;
       const caption = !on ? ''
-        : !link ? (pool && pool.joinedEntries().length >= 3 ? 'Every phone seat is taken' : 'Opening…')
+        : !link ? (pool && pool.joinedEntries().length && !pool.pending ? 'The partner seat has a phone: press OK on it' : 'Opening…')
         : this._hostRoomCode ? 'Scan with your phone, or type this code on another device:' : 'Scan with your phone';
       if (qr.caption !== caption) qr.caption = caption;
     }
@@ -5922,6 +6077,11 @@ export class Lobby {
       // select; this re-syncs it (and moves an older build off its room step).
       this._showRoomLevelsStep();
     } else if (profile.type === ROOM_MSG.TOURIST_PLAN) {
+      // The plan is the captain's to send: a captain takes none from its stoker.
+      if (this._roomRole === 'captain') return;
+      // Its words come from the partner's copy of the game: plain, short text only (js/remote-safe.js).
+      profile = { ...profile, from: cleanPlace(profile.from), to: cleanPlace(profile.to),
+        title: typeof profile.title === 'string' ? cleanText(profile.title, 80) : undefined };
       // #400 · Stoker: the captain planned a Tourist route. Rebuild the same
       // plan from the two end points (pure, deterministic); held until the
       // flagged START_RIDE that follows.
@@ -7028,6 +7188,7 @@ export class Lobby {
   _versusP1Descriptor() {
     const inp = this.input;
     if (!inp) return { type: 'keyboard', name: 'KEYBOARD' };
+    if (this.padRoom && this.padRoom.connected) return { type: 'gamepad', name: 'Phone 1' };   // #848
     if (inp.gamepadConnected) {
       const slot = inp._slot;
       if (slot?.hidDevice) return { type: 'gamepad', name: prettyHidName(slot.hidDevice, inp._gpName || slot.controllerLabel) };
@@ -8545,7 +8706,7 @@ export class Lobby {
     // controllers that connect async without a 'gamepadconnected' event (e.g.
     // a WebHID DualSense), which otherwise left the mode screen un-navigable
     // until the first _showStep.
-    if (this._stepFocus.items.length === 0) this._applyStepSpatialFocus(this._currentStep);
+    if (this._stepFocus.items.length === 0 && !this._sheetHoldsFocus()) this._applyStepSpatialFocus(this._currentStep);
     // Re-prime edges when returning from a modal (ranLast captured at the top
     // of this poll) so a held button across the transition isn't read as a
     // fresh press.
@@ -8662,6 +8823,11 @@ export class Lobby {
    * (matching the old _applyFocusHighlight gate). Called from _showStep and on
    * gamepad hot-connect. (#318)
    */
+  /** A kit sheet is up (result sheets stay [open] inside hidden screens): its focus is not the step's to take back. */
+  _sheetHoldsFocus() {
+    return [...document.querySelectorAll('uf-sheet[open]')].some((el) => el.getClientRects().length > 0);
+  }
+
   _applyStepSpatialFocus(step) {
     if (!step) return;
     if (this.input && this.input.gamepadConnected) {
@@ -9164,7 +9330,6 @@ export class Lobby {
     // a click or tap on the preview itself is the player taking the chooser too
     document.getElementById('bike-preview-wrap').addEventListener('pointerdown', () => this._stopChooserAttract());
     this._startChooserAttract();
-    this._buildBotPicker();
     prevBtn.addEventListener('click', this._bikePrev);
     nextBtn.addEventListener('click', this._bikeNext);
     prevBtn.addEventListener('touchend', (e) => { e.preventDefault(); this._bikePrev(); });
@@ -9703,7 +9868,6 @@ export class Lobby {
     this.selectedPreset = null;
     hintEl.dataset.special = key;
     hintEl.classList.add('bike-hint-low');   // (Pete, 2026-11-10: every bike's line at the bottom, below the bike and its geese)
-    this._showBotPicker(false);
     if (locked) {
       this.selectedPresetKey = 'default';
       nameEl.style.color = '';                       // the logo-coloured name (index.html #bike-name), parchment while locked
@@ -9733,69 +9897,7 @@ export class Lobby {
     hintEl.style.display = 'none';
     hintEl.title = '';
     delete hintEl.dataset.special;
-    this._showBotPicker(key === SOLO_FLIGHT_BIKE_KEY);
     if (!this._attractTurning) analytics.trackEvent('bike_color_change', { preset_key: key });   // not the chooser's own show
-  }
-
-  /**
-   * #644 · Solo Flight's bot picker: a row of the three player bots (Bolt, Rivet, Sprocket) under the bike. Mouse,
-   * touch or a pad (the buttons join the lobby's spatial focus, next to the chooser's ‹ ›) picks who rides the back
-   * seat on a solo ride. Each is its own partner for the partner achievements (js/player-bots.js).
-   */
-  _buildBotPicker() {
-    const el = document.getElementById('bot-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Seat';   // (the back seat: short, so the row fits between LB and RB on a TV)
-    el.appendChild(label);
-    // #644 step 2 · "Nobody" leaves the back seat empty: ride alone (and race a two-bot team alone: Underdog)
-    this._botButtons = [...BOT_IDS, NO_BOT].map((id) => {
-      const b = document.createElement('button');
-      b.className = 'bot-pick';
-      b.type = 'button';
-      b.dataset.bot = id;
-      b.setAttribute('role', 'radio');
-      const bot = BOTS[id];
-      b.style.setProperty('--bot-color', bot ? bot.color : 'rgba(255,255,255,0.6)');
-      b.innerHTML = `<span class="bot-dot"></span>${bot ? bot.name : 'Nobody'}`;
-      b.title = bot ? `${bot.name} rides the back seat (a robot goose; counts as a partner)` : 'Ride alone: the back seat stays empty';
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickBot(id); });
-      el.appendChild(b);
-      return b;
-    });
-    this._buildRacePicker();
-    if (this._modeColumns && this._modeColumns[0]) this._modeColumns[0].push(...this._botButtons);
-    // a pad already driving the mode step picks them up now, not on the next step change
-    if (this._stepFocus && this._stepFocus.items && this._stepFocus.items.length && this._currentStep === this.modeStep) {
-      this._stepFocus.refreshSpatial(this._stepNavItems());
-    }
-    this._syncBotPicker();
-  }
-
-  /**
-   * #644 step 2 · the Race row: race a bot ghost team (the two bots not on your back seat) on Easy, Medium or Hard,
-   * or not at all. Medium and Hard count as versus races (js/bot-race.js).
-   */
-  _buildRacePicker() {
-    const el = document.getElementById('race-picker');
-    if (!el || el.childElementCount) return;
-    const label = document.createElement('span');
-    label.className = 'bot-label';
-    label.textContent = 'Race';
-    el.appendChild(label);
-    this._raceButtons = RACE_CHOICES.map((id) => {
-      const b = document.createElement('button');
-      b.className = 'bot-pick race-pick';
-      b.type = 'button';
-      b.dataset.race = id;
-      b.setAttribute('role', 'radio');
-      const tier = RACE_TIERS[id];
-      b.innerHTML = `<span class="bot-dot"></span>${tier ? tier.name : 'Off'}`;
-      b.addEventListener('click', (e) => { e.stopPropagation(); this.pickRace(id); });
-      el.appendChild(b);
-      return b;
-    });
   }
 
   // ── VERSUS BOTS (Pete, 2026-11-18) ───────────────────────────
@@ -9907,7 +10009,7 @@ export class Lobby {
     const line = document.getElementById('vb-race-line');
     const tier = RACE_TIERS[this.selectedRace];
     if (line) line.textContent = tier
-      ? `Racing ${ghostTeamName(ghostTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (tier.counts ? '' : ' (a warm-up: no versus achievements)')
+      ? `Racing ${botTeamName(botTeamFor(this.selectedBot))}: they finish on ${tier.medal} time` + (this.selectedRace === 'easy' ? ' (earns versus achievements, except House Champion)' : '')
       : '';
   }
 
@@ -9948,31 +10050,33 @@ export class Lobby {
     return this._pendingMode === 'versusBots' && RACE_TIERS[this.selectedRace] ? this.selectedRace : 'off';
   }
 
-  /** Pick the bot race tier for Solo Flight, or 'off' (saved on this device). */
+  /** VERSUS BOTS' two teams: you (with the back seat's bot, if any) against the other two bots, all on the Solo Flight. */
+  _versusBotTeams() {
+    this._vbInputs = this._vbInputs || {};
+    const bot = (id) => {
+      this._vbInputs[id] = this._vbInputs[id] || new InputManager({ enableKeyboard: false, enableMotion: false, enableTouch: false });
+      return { n: null, botId: id, input: this._vbInputs[id], type: 'bot', slotId: null, name: BOTS[id].name, label: BOTS[id].name, isP1: false };
+    };
+    const p1 = this._versusP1Descriptor();
+    const you = [{ n: 1, input: this.input, type: p1.type, slotId: 'P1', name: p1.name, label: null, isP1: true }];
+    if (BOTS[this.selectedBot]) you.push(bot(this.selectedBot));
+    return [
+      { id: 'A', bike: SOLO_FLIGHT_BIKE_KEY, members: you },
+      { id: 'B', bike: SOLO_FLIGHT_BIKE_KEY, members: botTeamFor(this.selectedBot).map(bot) },
+    ];
+  }
+
+  /** Pick the bot race tier for VERSUS BOTS (saved on this device). */
   pickRace(id) {
     this.selectedRace = saveRaceChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
     try { analytics.trackEvent('bot_race_pick', { race: this.selectedRace }); } catch { /* offline */ }
   }
 
-  /** Pick the player bot for Solo Flight (saved on this device). */
+  /** Pick the bot for the VERSUS BOTS back seat (saved on this device). */
   pickBot(id) {
     this.selectedBot = saveBotChoice(typeof localStorage !== 'undefined' ? localStorage : null, id);
-    this._syncBotPicker();
-    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
-  }
-
-  _syncBotPicker() {
     this._prefetchBot(this.selectedBot);
-    for (const b of this._botButtons || []) b.setAttribute('aria-checked', String(b.dataset.bot === this.selectedBot));
-    // the race buttons name who you'd race (the two bots not on your back seat)
-    const team = ghostTeamName(ghostTeamFor(this.selectedBot));
-    for (const b of this._raceButtons || []) {
-      const id = b.dataset.race, tier = RACE_TIERS[id];
-      b.setAttribute('aria-checked', String(id === this.selectedRace));
-      b.title = tier ? `Race ${team}'s ghost tandem: they finish on ${tier.medal} medal time`
-        + (tier.counts ? ' (a versus race)' : ' (a warm-up: no versus achievements)') : 'No race';
-    }
+    try { analytics.trackEvent('player_bot_pick', { bot: this.selectedBot }); } catch { /* offline */ }
   }
 
   /**
@@ -9991,27 +10095,6 @@ export class Lobby {
     } catch (e) { this._botFetched.delete(id); }
   }
 
-  _showBotPicker(on) {
-    this._botPickerAsked = !!on;
-    on = on && this._botPickerHere();
-    const el = document.getElementById('bot-picker');
-    if (el) el.style.display = on ? '' : 'none';
-    const race = document.getElementById('race-picker');
-    if (race) race.style.display = 'none';   // (Pete, 2026-11-18: a bot race is a versus race: VERSUS BOTS has it)
-    if (on) this._syncBotPicker();
-  }
-
-  /**
-   * Solo Flight's Seat and Race rows only mean something on the way to a SOLO ride: the main menu and the SOLO
-   * level list. On RIDE TOGETHER's screens they did nothing (Pete, 2026-11-18, on a phone: CHOOSE LEVEL stayed
-   * off with Sprocket picked); a room's bot is its Back seat row.
-   */
-  _botPickerHere() {
-    const s = this._currentStep;
-    if (!s || s === this.modeStep) return true;
-    return s === this.levelStep && (this._pendingMode === 'solo' || this._pendingMode === 'tourist') && !this._hostBotRide;
-  }
-
   _applyPresetToPreview() {
     try { this._applyPresetToPreviewInner(); } finally { this._syncRoomBikeRows(); }
   }
@@ -10021,7 +10104,6 @@ export class Lobby {
     const nameEl = document.getElementById('bike-name');
     // #611: the reward bikes (their own models) lock by their own achievement counts, demo or not
     if (isSpecialBike(key)) { this._applySpecialToPreview(key, nameEl); return; }
-    this._showBotPicker(false);
     if (this._previewModel) this._previewModel.visible = true;
     this._hideSpecialPreviews();
     { const h = document.getElementById('bike-hint'); if (h) delete h.dataset.special; }

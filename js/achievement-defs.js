@@ -139,6 +139,29 @@ function streakProgress(goal) {
 
 const grandmaBike = key => s => s.finishedLevel === 'grandma' && s.bikeKey === key;
 
+const MEDAL_ORDER = Object.freeze([['gold', 'grandma_gold'], ['silver', 'grandma_silver'], ['bronze', 'grandma_bronze']]);
+
+/**
+ * #819 · one Grandma's medal achievement per run: the best one not yet earned, at or below this run's medal.
+ * A gold run earns Grandma's Favourite, the next gold Tea and Biscuits, the next silver-or-better Cookie.
+ * @param {string|null} medal this run's medal @param {Iterable<string>} [earnedIds] @returns {string|null} id
+ */
+export function grandmaMedalGrant(medal, earnedIds = []) {
+  const have = earnedIds instanceof Set ? earnedIds : new Set(earnedIds);
+  for (const [m, id] of MEDAL_ORDER) if (rank(m) <= rank(medal) && !have.has(id)) return id;
+  return null;
+}
+
+/**
+ * #819 · Home Sweet Home now takes 3 finishes, but one Grandma's finish still opens the demo's Daily Ride
+ * (js/edition.js dailyNeeds), so the road does not close behind the new pacing.
+ */
+export function withGrandmaFinished(earnedIds, stats) {
+  const ids = [...(earnedIds || [])];
+  if (n(stats && stats.grandmaFinishes) > 0 && !ids.includes('home_sweet')) ids.push('home_sweet');
+  return ids;
+}
+
 /** #608 · Rainbow Gold: the 7 bike colours (the lobby's preset keys). */
 export const COLOUR_BIKES = Object.freeze(['default', 'bike_orange', 'bike_magenta', 'bike_red', 'bike_blue', 'bike_green', 'bike_yellow']);
 
@@ -163,10 +186,10 @@ export const ACHIEVEMENTS = [
   { id: 'first_pedal',    section: 'first', name: 'Kick Off',            icon: '🦶', desc: 'Pedal for the first time',                         condition: (s, L) => !!L.pedalled },
   { id: 'tutorial_done',  section: 'first', name: "Learner's Permit",    icon: '🎓', desc: 'Finish the Tutorial',                              condition: (s, L) => n(L.tutorialDone) >= 1 },
   { id: 'tutorial_clean', section: 'first', name: 'Natural',             icon: '🌱', desc: 'Finish the Tutorial without a single retry',       condition: (s, L) => n(L.tutorialClean) >= 1 },
-  { id: 'first_finish',   section: 'first', name: 'Made It',             icon: '🏁', desc: 'Finish any level',                                 condition: (s, L) => n(L.finishes) >= 1 },
+  { id: 'first_finish',   section: 'first', name: 'Made It',             icon: '🏁', desc: 'Finish 2 rides',                                   ...count('finishes', 2) },
   { id: 'first_crash',    section: 'first', name: 'Goose Down',          icon: '🪶', desc: 'Crash for the first time',                         condition: (s, L) => n(L.crashes) >= 1 },
   { id: 'first_remount',  section: 'first', name: 'Back in the Saddle',  icon: '🩹', desc: 'Crash, get back on, and finish that same ride',     condition: s => fin(s) && n(s.crashes) >= 1 },
-  { id: 'first_boost',    section: 'first', name: 'Turbo Goose',         icon: '🚀', desc: 'Trigger a boost by grabbing a present or gem',     condition: (s, L) => n(L.boosts) >= 1 },
+  { id: 'first_boost',    section: 'first', name: 'Turbo Goose',         icon: '🚀', desc: 'Trigger 3 boosts in a row without missing a present', ...count('boostStreakBest', 3) },
 
   // ── 2. Distance (all rides combined) ─────────────────────
   { id: 'first_500m',     section: 'distance', name: 'First 500m',       icon: '👟', desc: 'Ride 500 m in total',       ...km(500) },
@@ -183,24 +206,24 @@ export const ACHIEVEMENTS = [
   { id: 'days_30',        section: 'back', name: 'Lifer',                icon: '🪺', desc: 'Go on 100 rides of any kind',         ...count('rides', 100) },   // #608: was 30 days; id kept for saves + Steam
 
   // ── 4. Levels and medals ─────────────────────────────────
-  { id: 'home_sweet',     section: 'medals', name: 'Home Sweet Home',    icon: '🏠', desc: "Finish Grandma's",          condition: s => s.finishedLevel === 'grandma' },
+  { id: 'home_sweet',     section: 'medals', name: 'Home Sweet Home',    icon: '🏠', desc: "Finish Grandma's 3 times",  ...count('grandmaFinishes', 3) },
   { id: 'perfect_1k',     section: 'medals', name: 'Flawless',           icon: '💮', desc: "Finish Grandma's with no crashes or restarts", condition: s => s.finishedLevel === 'grandma' && s.crashes === 0 && s.restarts === 0 },
   // Medals are times: a share of the road's clock (race-config.js MEDAL_FRACTION), so each
   // difficulty has its own. `medal` lets the detail card print the live times (lobby.js).
-  { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'bronze' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 1 },
-  { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'silver' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 2 },
-  { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own", medal: { level: 'grandma', rank: 'gold' }, condition: s => s.finishedLevel === 'grandma' && rank(s.medal) >= 3 },
+  { id: 'grandma_bronze', section: 'medals', name: 'Cookie',             icon: '🍪', desc: "Reach Grandma's inside the bronze time — the slowest of the three medal times; each difficulty has its own. One medal per run", medal: { level: 'grandma', rank: 'bronze' }, condition: s => s.finishedLevel === 'grandma' && grandmaMedalGrant(s.medal, s.earnedIds) === 'grandma_bronze' },
+  { id: 'grandma_silver', section: 'medals', name: 'Tea and Biscuits',   icon: '🫖', desc: "Reach Grandma's inside the silver time — the middle of the three medal times; each difficulty has its own. One medal per run", medal: { level: 'grandma', rank: 'silver' }, condition: s => s.finishedLevel === 'grandma' && grandmaMedalGrant(s.medal, s.earnedIds) === 'grandma_silver' },
+  { id: 'grandma_gold',   section: 'medals', name: "Grandma's Favourite", icon: '🥇', desc: "Reach Grandma's inside the gold time — the fastest of the three medal times; each difficulty has its own. One medal per run", medal: { level: 'grandma', rank: 'gold' }, condition: s => s.finishedLevel === 'grandma' && grandmaMedalGrant(s.medal, s.earnedIds) === 'grandma_gold' },
   { id: 'daily_gold',     section: 'medals', name: 'Road Scholar',       icon: '📜', desc: "Finish the Daily Ride inside its gold time, on any day; each difficulty has its own", medal: { level: 'daily', rank: 'gold' }, condition: s => s.finishedLevel === 'daily' && s.medal === 'gold' },
   { id: 'all_gold',       section: 'medals', name: 'Gilded Goose',       icon: '👑', desc: "Win gold on both timed roads: Grandma's and the Daily Ride",
     condition: (s, L) => MEDAL_LEVELS.every(id => (L.golds || []).includes(id)),
     progress: L => [MEDAL_LEVELS.filter(id => (L.golds || []).includes(id)).length, MEDAL_LEVELS.length] },
-  { id: 'adventurer',     section: 'medals', name: 'Adventurer',         icon: '🧭', desc: 'Finish any level on Adventurous',     condition: s => fin(s) && s.difficulty === 'adventurous' },
+  { id: 'adventurer',     section: 'medals', name: 'Adventurer',         icon: '🧭', desc: 'Finish 3 rides on Adventurous',       ...count('adventurousFinishes', 3) },
   { id: 'daredevil',      section: 'medals', name: 'Daredevil',          icon: '😈', desc: 'Finish any level on Daredevil',       condition: s => fin(s) && s.difficulty === 'daredevil' },
 
   // ── 5. Clean riding ──────────────────────────────────────
   { id: 'steady_hands',   section: 'clean', name: 'Steady Hands',        icon: '🧘', desc: 'Ride 60 s without the bike shaking from leaning too far', condition: s => n(s.steadyBest) >= 60, ...best(60, 's', s => n(s.steadyBest)) },
   { id: 'centerline',     section: 'clean', name: 'On the Line',         icon: '🎯', desc: "Stay on the road's centre strip for 30 s straight",       condition: s => n(s.stripBest) >= 30, ...best(30, 's', s => n(s.stripBest)) },
-  { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish a level without going off-road',                 condition: s => fin(s) && s.offroadT === 0 },
+  { id: 'no_offroad',     section: 'clean', name: 'Stayed on the Road',  icon: '🛤️', desc: 'Finish 3 rides without going off-road',                 ...count('cleanRoadFinishes', 3) },
   { id: 'no_trees_daily', section: 'clean', name: 'No Trees Were Harmed', icon: '🌳', desc: "Finish the Daily Ride without hitting a tree",           condition: s => s.finishedLevel === 'daily' && s.treeHits === 0 },
   { id: 'new_best',       section: 'clean', name: 'Personal Best',       icon: '⭐', desc: 'Set a new personal best',                              condition: (s, L) => s.newBest === true || n(L.personalBests) >= 1 },
   { id: 'assist_free',    section: 'clean', name: 'Did It Myself',       icon: '💪', desc: 'Crash three times at one checkpoint, then finish without the helping hand or the Royal Shortcut', condition: s => fin(s) && s.didItMyself === true },
@@ -241,7 +264,7 @@ export const ACHIEVEMENTS = [
   { id: 'coin_first',     section: 'coins', name: 'Pocket Change',       icon: '🪙', desc: 'Collect your first Tandem Token',          ...count('coinsEarned', 1) },
   { id: 'coins_1000',     section: 'coins', name: 'Token Purse',         icon: '👛', desc: 'Earn 1,000 Tandem Tokens in total',     ...count('coinsEarned', 1000) },
   { id: 'coins_10000',    section: 'coins', name: 'Goose Egg Nest',      icon: '🥚', desc: 'Earn 10,000 Tandem Tokens in total',    ...count('coinsEarned', 10000) },
-  { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 200 Tandem Tokens from one regular (non-Slingshot) ride', ...count('bestRideCoins', 200) },
+  { id: 'payday',         section: 'coins', name: 'Payday',              icon: '💰', desc: 'Earn 300 Tandem Tokens from one regular (non-Slingshot) ride', ...count('bestRideCoins', 300) },
   { id: 'first_upgrade',  section: 'coins', name: 'Tinkerer',            icon: '🔧', desc: 'Buy your first garage upgrade',       ...count('upgrades', 1) },
   { id: 'max_upgrade',    section: 'coins', name: 'Fully Tuned',         icon: '🔩', desc: 'Max out any one upgrade',             condition: (s, L) => !!L.maxedAny, progress: (L, live) => upgradeProgressAny(live), unit: 'levels' },
   { id: 'garage_royalty', section: 'coins', name: 'Garage Royalty',      icon: '🏰', desc: 'Max out every upgrade',               condition: (s, L) => !!L.maxedAll, progress: (L, live) => upgradeProgressAll(live), unit: 'upgrades maxed' },
@@ -274,7 +297,10 @@ export const ACHIEVEMENTS = [
   { id: 'versus_win',     section: 'versus', name: 'Crown the Goose',    icon: '🏆', desc: 'Win a versus race',                   ...count('versusWins', 1) },
   { id: 'versus_2v2',     section: 'versus', name: 'Royal Court',        icon: '🤴', desc: 'Win a 2v2 versus race',               ...count('versus2v2Wins', 1) },
   { id: 'versus_comeback', section: 'versus', name: 'Comeback Geese',    icon: '↩️', desc: 'Win a versus race after trailing at halfway', ...count('versusComebacks', 1) },
-  { id: 'versus_10',      section: 'versus', name: 'House Champion',     icon: '🏅', desc: 'Win 10 versus races',                 ...count('versusWins', 10) },
+  { id: 'versus_10',      section: 'versus', name: 'House Champion',     icon: '🏅', desc: 'Win 10 versus races',
+    // Pete, 2026-11-21: an Easy bot race earns the other versus achievements, but not these ten wins
+    condition: (s, L) => n(L.versusWins) - n(L.versusEasyWins) >= 10,
+    progress: L => [Math.min(10, Math.max(0, Math.floor(n(L.versusWins) - n(L.versusEasyWins)))), 10] },
   { id: 'versus_underdog', section: 'versus', name: 'Underdog',          icon: '🐣', desc: 'Win a versus race riding alone against a two-goose tandem', ...count('versus1v2Wins', 1) },   // #608
   { id: 'versus_clean',   section: 'versus', name: 'Clean Sweep',        icon: '🧹', desc: 'Win a versus race without crashing',  ...count('versusClean', 1) },   // #608
 
@@ -297,7 +323,7 @@ export const ACHIEVEMENTS = [
   // ── 15. Grandma's in every colour ────────────────────────
   // F-1 hid these (riding the same 250 m seven times); restored 2026-10-20
   // so all 100 show: a short, gentle goal and a ready-made reel series.
-  { id: 'grandma_default', section: 'colours', name: "Grandma's Classic",   icon: '🚲', desc: "Finish Grandma's on the default bike", condition: grandmaBike('default') },
+  { id: 'grandma_default', section: 'colours', name: "Grandma's Classic",   icon: '🚲', desc: "Finish Grandma's 5 times on the default bike", ...count('grandmaDefaultFinishes', 5) },
   { id: 'grandma_orange',  section: 'colours', name: 'Marmalade Delivery',  icon: '🍊', desc: "Finish Grandma's on the orange bike",  condition: grandmaBike('bike_orange') },
   { id: 'grandma_magenta', section: 'colours', name: 'Berry Special Visit', icon: '🫐', desc: "Finish Grandma's on the magenta bike", condition: grandmaBike('bike_magenta') },
   { id: 'grandma_red',     section: 'colours', name: 'Cherry on Top',       icon: '🍒', desc: "Finish Grandma's on the red bike",     condition: grandmaBike('bike_red') },
@@ -381,12 +407,16 @@ const NUMERIC = [
   'slingLaunches', 'slingBest', 'slingStage', 'slingTopSpeed', 'bigAirs', 'jackpots', 'doubleDowns', 'fullTrails',
   'straightShots', 'medalKeys', 'dailyPractice', 'shares', 'dailyDayRun', 'dailyDayBest',
   'coopFinishes', 'versusRaces', 'versusWins', 'versus2v2Wins', 'versusClose', 'versusComebacks',
-  'versus1v2Wins', 'versusClean',
+  'versus1v2Wins', 'versusClean', 'versusEasyWins',
+  'grandmaFinishes', 'grandmaDefaultFinishes', 'cleanRoadFinishes', 'adventurousFinishes', 'boostStreakBest',   // #819
   'touristDistance',
 ];
 const LISTS = ['dayList', 'golds', 'launchDays', 'partners', 'grandmaGoldBikes', 'modesFinished'];
 const FLAGS = ['pedalled', 'maxedAny', 'maxedAll'];
 const STRINGS = ['lastDay', 'lastDailyDay'];
+/** #824 · [period 'YYYY-MM-DD', count]: Tourist's daily sessions and weekly addresses, on the account too. */
+export const TOURIST_PAIRS = Object.freeze(['touristSessions', 'touristAddresses']);
+const isPair = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === 'string' && Number.isFinite(v[1]) && v[1] >= 0;
 
 export function emptyStats() {
   const L = { v: STATS_VERSION, bests: {}, bestsAt: {} };
@@ -394,6 +424,7 @@ export function emptyStats() {
   for (const k of LISTS) L[k] = [];
   for (const k of FLAGS) L[k] = false;
   for (const k of STRINGS) L[k] = null;
+  for (const k of TOURIST_PAIRS) L[k] = null;
   return L;
 }
 
@@ -414,6 +445,10 @@ export function foldBests(L, state, earned = new Set(), now = Date.now()) {
     out.bests[a.id] = Math.round(Math.min(v, a.goal * 10) * 10) / 10;
     // Pete 2026-11-07: "record top speed, what ride and date time" — where and when each best was set
     out.bestsAt[a.id] = { level, at: now };
+    // Pete, 2026-11-21: who a together best was ridden with
+    if (a.section === 'together' && state && typeof state.partnerLabel === 'string' && state.partnerLabel) {
+      out.bestsAt[a.id].partner = state.partnerLabel.slice(0, 40);
+    }
   }
   return out || L;
 }
@@ -433,12 +468,16 @@ export function migrateStats(raw) {
   }
   for (const k of FLAGS) L[k] = raw[k] === true;
   for (const k of STRINGS) L[k] = typeof raw[k] === 'string' ? raw[k] : null;
+  for (const k of TOURIST_PAIRS) L[k] = isPair(raw[k]) ? [raw[k][0], raw[k][1]] : null;
   if (raw.bests && typeof raw.bests === 'object') {
     for (const [k, v] of Object.entries(raw.bests)) if (Number.isFinite(v) && v > 0) L.bests[k] = v;
   }
   if (raw.bestsAt && typeof raw.bestsAt === 'object') {
     for (const [k, v] of Object.entries(raw.bestsAt)) {
-      if (v && Number.isFinite(v.at) && L.bests[k]) L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+      if (v && Number.isFinite(v.at) && L.bests[k]) {
+        L.bestsAt[k] = { level: typeof v.level === 'string' ? v.level : null, at: v.at };
+        if (typeof v.partner === 'string' && v.partner) L.bestsAt[k].partner = v.partner;
+      }
     }
   }
   L.days = Math.max(L.days, L.dayList.length);
@@ -494,14 +533,15 @@ export function seedStats(prev, saves = {}) {
 
   // Personal bests and medals: one record = at least one finish and one new best.
   const records = obj(saves.records);
-  let recordCount = 0;
+  let recordCount = 0, grandmaRecords = 0;
   if (records) {
     const per = { coop: 0, versus: 0 };
     let tutorial = false, medalKey = false;
     for (const [k, rec] of Object.entries(records)) {
       if (!rec || typeof rec.timeMs !== 'number' || !(rec.timeMs > 0)) continue;
-      recordCount += 1;
       const [rawLevel, difficulty, mode] = k.split('|');
+      if (rawLevel !== 'tutorial') recordCount += 1;   // #819 · the Tutorial is not a finish
+      if (rawLevel === 'grandma') grandmaRecords += 1;
       const levelId = String(rawLevel).startsWith('daily:') ? 'daily' : rawLevel;
       if (mode in per) per[mode] += 1;
       if (levelId === 'tutorial') tutorial = true;
@@ -517,6 +557,7 @@ export function seedStats(prev, saves = {}) {
     up('versusRaces', per.versus);
     if (per.coop > 0) L.modesFinished = addUnique(L.modesFinished, 'coop');
     if (per.versus > 0) L.modesFinished = addUnique(L.modesFinished, 'versus');
+    up('grandmaFinishes', grandmaRecords);
     if (tutorial) up('tutorialDone', 1);
     if (medalKey) up('medalKeys', 1);
   }
@@ -616,17 +657,23 @@ export function applyEvent(prev, type, d = {}, today = null) {
     case 'boost':
       L.boosts += 1;
       L.pickups += Math.max(1, Math.floor(d.count || 1));
+      L.boostStreakBest = Math.max(n(L.boostStreakBest), Math.floor(n(d.streak)));   // #819 · Turbo Goose
       break;
     case 'gust': L.gusts += 1; break;
     case 'weathered': L.weathered += 1; break;
     case 'share': L.shares += 1; break;
     case 'tutorial':
-      L.tutorialDone += 1;
-      L.finishes += 1;
+      L.tutorialDone += 1;   // #819 · not a finish or a ride: Learner's Permit and Natural read this
       if (d.clean) L.tutorialClean += 1;
       break;
     case 'finish': {
       L.finishes += 1;
+      if (d.finishedLevel === 'grandma') {   // #819
+        L.grandmaFinishes += 1;
+        if (d.bikeKey === 'default') L.grandmaDefaultFinishes += 1;
+      }
+      if (d.offroadT === 0) L.cleanRoadFinishes += 1;
+      if (d.difficulty === 'adventurous') L.adventurousFinishes += 1;
       if (d.newBest) L.personalBests += 1;
       if (d.medal === 'gold' && d.finishedLevel) L.golds = addUnique(L.golds, d.finishedLevel);
       if (d.medal === 'gold' && d.finishedLevel === 'grandma' && COLOUR_BIKES.includes(d.bikeKey)) {
@@ -652,7 +699,7 @@ export function applyEvent(prev, type, d = {}, today = null) {
     // ── from _payoutRide: one per payout of a regular ride
     case 'ride': {
       if (d.newRide) {
-        L.rides += 1;
+        if (d.mode !== 'tutorial') L.rides += 1;   // #819
         L.rideCoins = 0;
         noteDay(L, today);
       }
@@ -705,12 +752,19 @@ export function applyEvent(prev, type, d = {}, today = null) {
       L.modesFinished = addUnique(L.modesFinished || [], 'versus');
       if (d.win) {
         L.versusWins += 1;
+        if (d.easy) L.versusEasyWins += 1;
         if (d.twoVtwo) L.versus2v2Wins += 1;
         if (d.close) L.versusClose += 1;
         if (d.comeback) L.versusComebacks += 1;
         if (d.oneVtwo) L.versus1v2Wins += 1;
         if (d.clean) L.versusClean += 1;
       }
+      break;
+    // ── VERSUS BOTS: a bot on your back seat is a co-op partner
+    case 'botPartner':
+      L.coopFinishes += 1;
+      L.modesFinished = addUnique(L.modesFinished || [], 'coop');
+      if (d.partnerKey) L.partners = addUnique(L.partners, d.partnerKey);
       break;
     default: break;
   }

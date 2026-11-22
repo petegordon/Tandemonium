@@ -409,7 +409,7 @@ export class CollectibleManager {
 
       // FCFS collection — first team within radius takes it
       const radius = this._tutorialRadius || COLLECT_RADIUS;
-      let taken = false;
+      let got = false;
       for (let a = 0; a < anchors.length; a++) {
         const dx = anchors[a].position.x - worldX;
         const dz = anchors[a].position.z - worldZ;
@@ -423,11 +423,11 @@ export class CollectibleManager {
             this._pool[item.poolIdx].itemIdx = -1;
             item.poolIdx = -1;
           }
-          taken = true;
+          got = true;
           break;
         }
       }
-      if (taken) continue;
+      if (got) continue;
 
       // Assign pool mesh if not already assigned
       if (item.poolIdx < 0) {
@@ -479,6 +479,16 @@ export class CollectibleManager {
     }
     this.collected -= restored;
     if (this.collected < 0) this.collected = 0;
+  }
+
+  /** #819 · Turbo Goose: the longest run of presents taken one after another, none ridden past. */
+  collectedRun() {
+    let best = 0, run = 0;
+    for (const item of this._items) {
+      run = item.collected ? run + 1 : 0;
+      if (run > best) best = run;
+    }
+    return best;
   }
 
   getTotalItems() {

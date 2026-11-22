@@ -47,7 +47,7 @@
 import {
   DEFAULT_PAD_RELAY, padSocketUrl, makePadCode, makePadSecret, sha256hex,
   buildPadLink, decodeFrame, counterDelta, isNewerSeq, NAV, MENU_NAV_MASK, PAD_CUES,
-  relayOverrideAllowed, PAD_PROTOCOL, peerVersion, JOIN_SEATS,
+  relayOverrideAllowed, PAD_PROTOCOL, peerVersion, JOIN_SEATS, seatColor,
 } from './pad-protocol.js';
 
 /** No frame for this long (while the game is running freely) = the phone is gone. */
@@ -263,6 +263,7 @@ export class PadSeat {
    */
   _claim() {
     this._offered = false;
+    if (this.seat === 1) this.joinSeat = false;   // #848 · Player 1's phone: its own seat from here on
     const next = this._claimNext;
     this._claimNext = null;
     if (!next || this.room.relayVersion < 2) return;
@@ -271,6 +272,19 @@ export class PadSeat {
     this._phoneHash = null;
     this._buildLink();
     this._sendPairing();
+  }
+
+  /**
+   * #848 · the phone on this join seat is gone: the seat goes back on the shared QR, and the
+   * phone's old key stops working. The room stays open.
+   */
+  async reoffer() {
+    this.handedOff = false;
+    this._dropped = false;
+    this.phoneVersion = 1;
+    if (!(await this._freshSecrets())) return;
+    this._sendPairing();
+    this._setStatus('waiting');
   }
 
   /**
@@ -445,7 +459,8 @@ export class PadSeat {
 
   /** Tell the phone its seat. */
   _greet() {
-    const msg = { type: 'seat', seat: this.seat, label: this.label || ('Player ' + this.seat) };
+    const label = this.label || ('Player ' + this.seat);
+    const msg = { type: 'seat', seat: this.seat, label, color: seatColor(label) };   // #848
     if (this.note) /** @type {any} */ (msg).note = this.note;
     this.sendToPad(msg);
   }
@@ -524,6 +539,8 @@ export class PhonePadHost extends PadSeat {
     this.allowPlay = false;
     /** #563: open (or reuse) the RIDE TOGETHER room. @type {null | ((seat: number) => Promise<{code: string, url?: string}|null>)} */
     this.onOpenRoom = null;
+    /** #848: the shared QR's seat list starts at seat 1. */
+    this._joinHasOne = false;
   }
 
   /**
@@ -547,8 +564,49 @@ export class PhonePadHost extends PadSeat {
   joinLink({ play = false } = {}) {
     if (this._closed || !this.code || !this._join) return null;
     const override = this.relay !== DEFAULT_PAD_RELAY ? this.relay : null;
-    return buildPadLink(this.siteBase, this.code, JOIN_SEATS[0], this._join.secret, { relay: override, seats: JOIN_SEATS, play });
+    const seats = this._joinHasOne ? [1, ...JOIN_SEATS] : JOIN_SEATS;   // #848
+    return buildPadLink(this.siteBase, this.code, seats[0], this._join.secret, { relay: override, seats: seats, play });
   }
+
+  /**
+   * #848 · Versus with nobody on Player 1 yet: the shared QR opens seat 1 as well, so the first phone to scan it is
+   * Player 1 and four phones can fill the screen. Turned off when the QR goes away.
+   * @param {boolean} on
+   */
+  async setSeatOneOffer(on) {
+    if (on) {
+      if (this._phoneHere) return;
+      this._joinHasOne = true;
+      this.joinSeat = true;
+      this._retired = false;
+      if (!(await this._ensureRoom()) || !this.joinSeat) return;
+      if (!(await this._freshSecrets()) || !this.joinSeat) return;
+      this._active = true;
+      this._lastCheckAt = performance.now();
+      this._sendPairing();
+      this._setStatus(this._ws && this._ws.readyState === 1 ? 'waiting' : 'connecting');
+      return;
+    }
+    this._joinHasOne = false;
+    if (!this.joinSeat) return;
+    this.joinSeat = false;
+    if (!this._offered) return;
+    // Nobody took it: nothing may open it, and the next open() makes Player 1 a fresh link.
+    this._offered = false;
+    this._active = false;
+    this._claimNext = null;
+    this._hash = deadHash();
+    this._phoneHash = null;
+    this._sendPairing();
+    this._hash = null;
+    this._secret = null;
+    this.link = null;
+    this._setStatus('idle');
+    this._seatClosed(this);
+  }
+
+  /** Is seat 1 open to the shared QR right now? */
+  get seatOneOpen() { return !!(this._joinHasOne && this.joinSeat && this._offered); }
 
   /** The join secret, made once per room (until rotateJoin). */
   _ensureJoin() {

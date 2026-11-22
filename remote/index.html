@@ -131,6 +131,9 @@
     border-color: var(--uf-color-accent, #44ff66); color: var(--uf-color-fg, #fff);
   }
   .pedal.down img { transform: scale(.94); }
+  #seat-badge { font-size: 13px; font-weight: 800; letter-spacing: .5px; padding: 2px 10px; border-radius: 999px;
+    color: var(--seat-color, #fff); border: 2px solid var(--seat-color, #fff); white-space: nowrap; }
+  #seat-badge[hidden] { display: none; }
   #motion-note { color: var(--uf-color-warn, #ffd23f); font-size: 13px; padding: 0 14px 6px; }
   #motion-note:empty { display: none; }
 
@@ -181,6 +184,7 @@
         <button class="arm" data-nav="down" type="button" aria-label="Down"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M5 1.5 9 8.5H1z"/></svg></button>
       </div>
       <div class="side middle">
+        <span id="seat-badge" hidden></span>
         <span id="status">Connecting…</span>
         <div class="row">
           <button class="nav-btn" id="btn-pause" data-nav="pause" type="button" aria-label="Pause">&#10074;&#10074;</button>

@@ -186,6 +186,15 @@ export function seatOfRole(role) {
  */
 export const JOIN_SEATS = Object.freeze([2, 3, 4]);
 
+/** #848 · each player's colour, on the controller overlay and on their phone. */
+export const PLAYER_COLORS = Object.freeze({ P1: '#44ff66', P2: '#ff4560', P3: '#6ea8ff', P4: '#c79dff' });
+
+/** The colour for a seat's label ("Player 3"), or null while it has no player number ("Phone 3"). */
+export function seatColor(label) {
+  const m = /^Player ([1-4])$/.exec(String(label || ''));
+  return m ? PLAYER_COLORS['P' + m[1]] : null;
+}
+
 /**
  * The link a phone opens. `base` is the game's folder URL (ending in "/").
  * `relay` is only set for local testing (a non-default relay URL).

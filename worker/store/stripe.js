@@ -80,7 +80,7 @@ export async function verifyWebhookSignature(rawBody, sigHeader, webhookSecret) 
  * Retrieve a Checkout Session from Stripe (for success page verification).
  */
 export async function retrieveCheckoutSession(env, sessionId) {
-  const res = await fetch(`${STRIPE_API}/checkout/sessions/${sessionId}`, {
+  const res = await fetch(`${STRIPE_API}/checkout/sessions/${encodeURIComponent(sessionId)}`, {
     headers: { 'Authorization': `Bearer ${env.STRIPE_SECRET_KEY}` },
   });
   if (!res.ok) throw new Error(`Stripe retrieve error: ${res.status}`);

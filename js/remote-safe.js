@@ -45,3 +45,28 @@ export function cleanRemote(value, depth = 0) {
   }
   return out;
 }
+
+const TEXT_UNSAFE = /[<>"`\u0000-\u001f\u007f]/g;
+
+/**
+ * Words a partner sent that are shown as they are (a place name, a ride's title): the
+ * characters that can open markup or close an attribute go, apostrophes and accents stay.
+ */
+export function cleanText(s, max = 120) {
+  return String(s == null ? '' : s).replace(TEXT_UNSAFE, '').slice(0, max);
+}
+
+/** A map point a partner sent: its numbers as they are, every word through cleanText. */
+export function cleanPlace(p) {
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return p == null ? null : false;
+  const out = {};
+  let n = 0;
+  for (const key of Object.keys(p)) {
+    if (n++ >= 20) break;
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    const v = p[key];
+    if (typeof v === 'string') out[key] = cleanText(v);
+    else if (typeof v === 'number' || typeof v === 'boolean') out[key] = v;
+  }
+  return out;
+}

@@ -223,6 +223,13 @@ bounds how much *one ride* can request; only a budget alert bounds how much
 
 ## What it costs, and what limits it (2026-11-17)
 
+**Limits (#824, Pete 2026-11-21):** 5 new typed addresses a week and 5 tile sessions a day, per player, in
+`js/tourist-limits.js`. Only a real answered root request counts, a live session always rides, and a ride in
+progress is never stopped. Signed in, the counts follow the account; the higher of device and account wins.
+Google Cloud quotas are the only hard stop, because the Maps key ships in the client. A refused request (403/429)
+ends the ride with "Tourist is resting". The dashboard's Tourist costs section estimates the bill from counts and
+`js/tourist-costs.js`; Google's billing report stays the source of truth.
+
 Google's prices as checked on 2026-10-16 (check them again before relying on a figure here):
 
 | What | When the game asks for it | Free each month | Then |

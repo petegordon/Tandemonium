@@ -166,7 +166,7 @@ function lookupFrame() {
   if (_lookupFailedAt && Date.now() - _lookupFailedAt < 60000) return Promise.reject(new Error('lookup page did not load'));
   _lookupFrame = new Promise((resolve, reject) => {
     const frame = document.createElement('iframe');
-    frame.title = 'Map Tourist lookups';
+    frame.title = 'Tourist lookups';
     frame.setAttribute('aria-hidden', 'true');
     frame.tabIndex = -1;
     frame.style.cssText = 'position:fixed;width:1px;height:1px;left:-10px;top:-10px;border:0;opacity:0;pointer-events:none';
@@ -248,6 +248,19 @@ function loadMapsJs(apiKey) {
  * @throws  when the address cannot be found, so the caller can say so inline
  */
 export async function geocodeAddress(address, apiKey = getMapsApiKey()) {
+  return reported('geocode', () => geocodeLookup(address, apiKey));
+}
+
+/** #824 · who hears about each paid lookup: its kind, whether it worked, and which page made it. Never what was looked up. */
+let _lookupReporter = null;
+export function setLookupReporter(fn) { _lookupReporter = fn; }
+
+async function reported(kind, run) {
+  const tell = (ok) => { try { if (_lookupReporter) _lookupReporter({ kind, ok, source: needsLookupPage() ? 'desktop' : 'web' }); } catch { /* cost tracking never stops a ride */ } };
+  try { const out = await run(); tell(true); return out; } catch (err) { tell(false); throw err; }
+}
+
+async function geocodeLookup(address, apiKey) {
   const query = String(address || '').trim();
   if (!query) throw new Error('empty address');
   if (!apiKey) throw new Error('no Maps API key available');
@@ -418,7 +431,7 @@ export async function lookupElevation(lat, lon) {
   let source = null;
   try {
     elevation = await withTimeout(
-      mapsCall(elevationFromGoogle(lat, lon, getMapsApiKey())), 'Google ElevationService');
+      mapsCall(reported('elevation', () => elevationFromGoogle(lat, lon, getMapsApiKey()))), 'Google ElevationService');
     source = 'Google ElevationService';
   } catch (err) {
     console.warn(`[Tourist] Google ElevationService unavailable (${err.message}). ` +

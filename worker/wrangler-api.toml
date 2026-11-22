@@ -73,11 +73,12 @@ simple = { limit = 6, period = 60 }
 #   npx wrangler d1 execute tandemonium-leaderboard-staging --remote --file migrations/<file>.sql
 # It has its own secrets (wrangler secret put <NAME> --config wrangler-api.toml --env staging):
 # JWT_SECRET and RELAY_SECRET are different from production's, so a staging session is
-# never a production one. No Discord / Steam secrets are set: sign-in there is by test token.
+# never a production one. Discord is its own app (House Tandem Staging), with no bot: staging
+# cannot message players or touch the real server.
 [env.staging]
 name = "tandemonium-api-staging"
 workers_dev = true
-routes = []
+routes = [{ pattern = "api-staging.housetandem.com", custom_domain = true }]
 
 [[env.staging.d1_databases]]
 binding = "DB"
@@ -85,8 +86,8 @@ database_name = "tandemonium-leaderboard-staging"
 database_id = "932bee20-d2c6-4161-b98b-950baf609bf0"
 
 [env.staging.vars]
-CORS_ORIGIN = "https://tandemonium.housetandem.com,http://localhost:8080,http://127.0.0.1:8080"
-DISCORD_CLIENT_ID = ""
+CORS_ORIGIN = "https://staging.housetandem.com,https://tandemonium-staging.housetandem.com,http://localhost:8080,http://127.0.0.1:8080"
+DISCORD_CLIENT_ID = "1573899793137406122"
 DISCORD_GUILD_ID = ""
 DISCORD_INVITE_URL = "https://housetandem.com/discord"
 DISCORD_HELLO_CHANNEL_IDS = ""
@@ -94,3 +95,28 @@ DISCORD_HELLO_CHANNEL_IDS = ""
 [[env.staging.analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "tandemonium_api_staging"
+
+# Staging's own rate limits (limits are not inherited by an environment).
+[[env.staging.unsafe.bindings]]
+name = "PLAYER_LIMITER"
+type = "ratelimit"
+namespace_id = "4009"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "IP_LIMITER"
+type = "ratelimit"
+namespace_id = "4010"
+simple = { limit = 300, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "SIGNIN_LIMITER"
+type = "ratelimit"
+namespace_id = "4011"
+simple = { limit = 30, period = 60 }
+
+[[env.staging.unsafe.bindings]]
+name = "SHARE_LIMITER"
+type = "ratelimit"
+namespace_id = "4008"
+simple = { limit = 6, period = 60 }

@@ -74,10 +74,11 @@ const CSS = `
  * @param {any} deps.p1Input  Player 1's InputManager (its B / Start close the panel)
  * @param {(entry: import('./phone-entry.js').PhoneEntry) => void} [deps.onPause]
  * @param {(pool: PhonePool) => void} [deps.onChange]
+ * @param {() => boolean} [deps.p1Free]  #848 · nobody is on Player 1 yet, so the QR may seat a phone there
  * @param {string[]} [buttonIds]
  * @returns {{ pool: PhonePool, open: (entry?: any) => void, close: () => void, readonly panelOpen: boolean }}
  */
-export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange }, buttonIds = ['btn-versus-join-phone']) {
+export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange, p1Free }, buttonIds = ['btn-versus-join-phone']) {
   const style = document.createElement('style');
   style.textContent = CSS;
   document.head.appendChild(style);
@@ -106,6 +107,7 @@ export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange
     makeSeat: (n, opts) => room.addSeat(n, opts),
     joinLink: (opts) => room.joinLink(opts),
     rotateJoin: () => room.rotateJoin(),
+    seatOneOpen: () => room.seatOneOpen,
     onChange: (p) => { render(); onChange?.(p); },
     onDrop: (e) => { dropped = e; open(); },
     onReturn: (e) => { if (dropped === e) { dropped = null; close(); } },
@@ -135,13 +137,14 @@ export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange
     $('ppool-caption').textContent = PHONE_JOIN_COPY.caption;
     // The shared join QR (controller only, #563), or a dropped phone's own seat QR.
     drawLink(dropped ? dropped.link : pool.joinLink());
-    $('ppool-phones').innerHTML = pool.joinedEntries()
+    const firstPhone = room.connected ? [{ present: true, identity: { name: 'Phone 1' } }] : [];   // #848
+    $('ppool-phones').innerHTML = [...firstPhone, ...pool.joinedEntries()]
       .map((e) => `<span class="ppp-phone${e.present ? ' here' : ''}">${e.identity.name}${e.present ? ' ✓' : ''}</span>`).join('');
     let status;
     if (dropped) status = 'Open the controller page on that phone again (it reconnects by itself), or scan the code.';
-    else if (!pool.pending) status = pool.joinedEntries().length ? 'Every phone seat is taken.' : '';
-    else if (pool.pending.status === 'error') status = 'Can’t reach the phone relay. Retrying…';
-    else if (pool.pending.status === 'connecting' || !pool.joinLink()) status = 'Opening a connection…';
+    else if (!pool.joinLink() && !pool.pending) status = pool.joinedEntries().length ? 'All 4 player seats are taken.' : '';
+    else if (pool.pending && pool.pending.status === 'error') status = 'Can’t reach the phone relay. Retrying…';
+    else if ((pool.pending && pool.pending.status === 'connecting') || !pool.joinLink()) status = 'Opening a connection…';
     else status = 'Scan with each phone’s camera to join (several phones can scan this code). Then press OK on the phone to take a seat.';
     $('ppool-status').textContent = status;
   };
@@ -167,14 +170,18 @@ export function installPhonePoolUI({ room, makeInput, p1Input, onPause, onChange
   let offered = false;
   const open = () => {
     panel.classList.add('open');
-    if (!dropped && !pool.offering) { offered = true; pool.setOffering(true); }
+    if (!dropped && !pool.offering) {
+      offered = true;
+      if (p1Free && p1Free()) room.setSeatOneOffer(true);   // #848 · the first phone is Player 1
+      pool.setOffering(true);
+    }
     render();
     watchPadClose();
   };
   const close = () => {
     panel.classList.remove('open');
     dropped = null;
-    if (offered) { offered = false; pool.setOffering(false); }
+    if (offered) { offered = false; pool.setOffering(false); room.setSeatOneOffer(false); }
   };
 
   wireJoinEntry(buttonIds, () => { dropped = null; open(); });

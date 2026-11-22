@@ -124,7 +124,7 @@ export const RoomProtocol = {
   touristChoosing: (open) => ({ type: ROOM_MSG.TOURIST_CHOOSING, open: !!open }),
 
   /** #400 · in-ride ready barrier for co-op Tourist. */
-  touristReady: (ok) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok }),
+  touristReady: (ok, reason) => ({ type: ROOM_MSG.TOURIST_READY, ok: !!ok, ...(reason ? { reason } : {}) }),   // #824 · reason 'limit'
 
   /**
    * #672 · this player's Wardrobe opened (true) or closed (false). The partner's room screen tags
