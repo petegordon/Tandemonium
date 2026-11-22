@@ -19,15 +19,27 @@
 // A relay token that is present must be genuine and for this room and seat.
 // With both seats taken the room hands both riders a pair proof (room-proof.js) for their
 // score posts, and a P2P key so only they can find each other's peer ids.
-// TURN credentials go only to a connection that holds a seat.
+// TURN credentials go only to a seat holder (its device) while both seats are here: the
+// direct connection they are for needs two riders. They last an hour.
+//
+// Each socket has a frame size limit and a message budget. Only the relay itself speaks in
+// text control frames ('partner-ready', 'waiting', 'disconnect'), so a rider's text frame is
+// forwarded only in the one form riders ever used: {type:'relay', data:[bytes]}.
 
 import { guestKey, readToken, signPairProof, SEAT_HOLD_MS } from './room-proof.js';
 
 const ROOM_TTL_MS = 30 * 60 * 1000; // 30 minutes
 /** A relay token's signature is what matters; one that expired during a long ride still names its account. */
 const TOKEN_GRACE_S = 24 * 3600;
-/** TURN credentials last a long ride (a refresh needs them still valid). */
-const TURN_TTL_S = 3 * 3600;
+/** How long TURN credentials last. A client asks for new ones when it next connects. */
+const TURN_TTL_S = 3600;
+/** The largest frame forwarded. A game's largest (a profile) is a few KB. */
+const MAX_FRAME_BYTES = 64 * 1024;
+/** Per socket, per second. A ride sends about 60 (state and lean at 30 Hz each) plus pedals. */
+const MSG_RATE = 240;
+const MSG_BURST = 480;
+/** The room's expiry is pushed back at most this often: it is a storage write. */
+const ALARM_REFRESH_MS = 60 * 1000;
 /** Close code + reason for "both seats are taken". */
 // (Not exported: a Worker's main module may export only handlers and classes.)
 const ROOM_FULL_CODE = 4009;
@@ -65,6 +77,23 @@ export function isRoomCode(v, pattern) {
     try { return new RegExp(pattern).test(v); } catch (e) { return false; }
 }
 
+/**
+ * What to forward for a rider's frame, or null to drop it. Binary frames pass as they are, up
+ * to the size limit. A text frame passes only as {type:'relay', data:[bytes]}, rebuilt here,
+ * so nothing a rider sends can read as one of the relay's own control frames.
+ */
+export function relayFrame(message) {
+    if (typeof message === 'string') {
+        if (message.length > MAX_FRAME_BYTES) return null;
+        let m;
+        try { m = JSON.parse(message); } catch (e) { return null; }
+        if (!m || m.type !== 'relay' || !Array.isArray(m.data)) return null;
+        return JSON.stringify({ type: 'relay', data: m.data });
+    }
+    const size = message ? message.byteLength : 0;
+    return size > 0 && size <= MAX_FRAME_BYTES ? message : null;
+}
+
 function randomKey() {
     const b = crypto.getRandomValues(new Uint8Array(12));
     return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
@@ -87,6 +116,21 @@ export class Room {
         this.state = state;
         this.env = env;
         this._meta = undefined;      // #694 · { createdAt, lastUsedAt, seen: { captain?: {at, name}, stoker?: {at, name} } } | null
+        /** @type {WeakMap<object, {t: number, at: number}>} */
+        this._buckets = new WeakMap();
+        this._alarmAt = 0;
+    }
+
+    /** A token bucket per socket: a flood is dropped, not forwarded. */
+    _withinRate(ws) {
+        const now = Date.now();
+        let b = this._buckets.get(ws);
+        if (!b) { b = { t: MSG_BURST, at: now }; this._buckets.set(ws, b); }
+        b.t = Math.min(MSG_BURST, b.t + ((now - b.at) * MSG_RATE) / 1000);
+        b.at = now;
+        if (b.t < 1) return false;
+        b.t -= 1;
+        return true;
     }
 
     /** #694 · the room's record (cached; null for a room never used). Storage trouble = no record. */
@@ -123,13 +167,14 @@ export class Room {
         return this.state.getWebSockets(role).some((s) => s !== except && s.readyState === 1);
     }
 
-    /** GET /turn on the room: TURN credentials for a connection that holds a seat. */
+    /** GET /turn on the room: TURN credentials for a seat holder whose partner is here too. */
     async _turn(url) {
         const role = url.searchParams.get('role');
         const device = cleanDevice(url.searchParams.get('device'));
         const seats = await this._readSeats();
         const seat = (role === 'captain' || role === 'stoker') ? seats[role] : null;
-        if (!seat || !device || seat.device !== device || !this._seatOpen(role)) {
+        const partner = role === 'captain' ? 'stoker' : 'captain';
+        if (!seat || !device || seat.device !== device || !this._seatOpen(role) || !this._seatOpen(partner)) {
             return new Response(JSON.stringify({ error: 'Not in this room' }), { status: 403, headers: { 'Content-Type': 'application/json' } });
         }
         const resp = await fetch(
@@ -215,7 +260,8 @@ export class Room {
         await this._touch(role, myName);
 
         // Reset room TTL on new connection
-        await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+        this._alarmAt = Date.now();
+        await this.state.storage.setAlarm(this._alarmAt + ROOM_TTL_MS);
 
         // Notify both sides when partner is already connected
         const partnerRole = role === 'captain' ? 'stoker' : 'captain';
@@ -264,8 +310,9 @@ export class Room {
     }
 
     async webSocketMessage(ws, message) {
-        // Reset TTL on activity
-        await this.state.storage.setAlarm(Date.now() + ROOM_TTL_MS);
+        if (!this._withinRate(ws)) return;
+        const frame = relayFrame(message);
+        if (frame === null) return;
 
         // Relay to the other player
         const tags = this.state.getTags(ws);
@@ -273,7 +320,14 @@ export class Room {
         const targetRole = senderRole === 'captain' ? 'stoker' : 'captain';
 
         for (const sock of this.state.getWebSockets(targetRole)) {
-            try { sock.send(message); } catch (e) { /* closed */ }
+            try { sock.send(frame); } catch (e) { /* closed */ }
+        }
+
+        // Reset TTL on activity, at most once a minute
+        const now = Date.now();
+        if (now - this._alarmAt >= ALARM_REFRESH_MS) {
+            this._alarmAt = now;
+            await this.state.storage.setAlarm(now + ROOM_TTL_MS);
         }
     }
 
