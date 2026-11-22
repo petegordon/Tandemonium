@@ -1328,7 +1328,7 @@ test('#783 · combine then separate: every row goes back to the login that recor
   add("INSERT INTO user_logins (login_id, user_id, provider, provider_id) VALUES (1, 10, 'discord', 'a'), (2, 20, 'steam', 'b'), (3, 30, 'discord', 'c')");
   add("INSERT INTO scores (user_id, login_id, level_id, distance, time_ms, mode) VALUES (10, 1, 'grandma', 10, 1000, 'solo'), (20, 2, 'grandma', 20, 900, 'solo')");
   add("INSERT INTO score_contributions (score_id, role, player_user_id, player_login_id) VALUES (1, 'solo', 10, 1), (2, 'solo', 20, 2)");
-  add("INSERT INTO user_achievements (user_id, login_id, achievement_id, earned_at) VALUES (10, 1, 'shared', '2026-11-02'), (20, 2, 'shared', '2026-11-01'), (20, 2, 'bea_only', '2026-11-03')");
+  add("INSERT INTO user_achievements (user_id, login_id, achievement_id, earned_at) VALUES (10, 1, 'first_pedal', '2026-11-02'), (20, 2, 'first_pedal', '2026-11-01'), (20, 2, 'bea_only', '2026-11-03')");
   add("INSERT INTO daily_results (user_id, login_id, day_key, mode, time_ms) VALUES (10, 1, '2026-11-10', 'solo', 100000), (20, 2, '2026-11-10', 'solo', 90000), (20, 2, '2026-11-11', 'solo', 80000)");
   add("INSERT INTO daily_results (user_id, login_id, day_key, mode, time_ms, partner_user_id, partner_login_id) VALUES (30, 3, '2026-11-12', 'pair', 70000, 20, 2)");
   add('INSERT INTO friends (user_id, login_id, friend_user_id, friend_login_id) VALUES (20, 2, 30, 3), (10, 1, 30, 3)');
@@ -1369,7 +1369,7 @@ test('#783 · combine then separate: every row goes back to the login that recor
   assert.equal(dice.playtime.seconds, 150);
   const annToken = await makeToken({ sub: 10, lid: 1 });
   const me = await (await call(env, '/me', { token: annToken })).json();
-  assert.deepEqual(me.achievements.map((a) => [a.achievement_id, a.earned_at]).sort(), [['bea_only', '2026-11-03'], ['shared', '2026-11-01']]);
+  assert.deepEqual(me.achievements.map((a) => [a.achievement_id, a.earned_at]).sort(), [['bea_only', '2026-11-03'], ['first_pedal', '2026-11-01']]);
   const board = await (await call(env, '/daily?key=2026-11-10', { token: annToken })).json();
   assert.deepEqual(board.results.map((r) => [r.user_id, r.time_ms]), [[10, 90000]], 'the better of the two logins\u2019 times');
   assert.equal((await (await call(env, '/pair?with=30', { token: annToken })).json()).rides, 7);
@@ -1379,19 +1379,20 @@ test('#783 · combine then separate: every row goes back to the login that recor
   const beaToken = await makeToken({ sub: 20, lid: 2 });
   assert.equal((await (await call(env, '/me', { token: beaToken })).json()).user.id, 10, 'the session follows its login');
   freshScoreClock(db);
-  const posted = await call(env, '/score', { method: 'POST', token: beaToken, body: { levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'solo', newAchievements: ['after_combine', 'shared'] } });
+  const posted = await call(env, '/score', { method: 'POST', token: beaToken, body: { levelId: 'grandma', distance: 1200, timeMs: 200000, mode: 'solo', newAchievements: ['first_finish', 'first_pedal', 'made_up_badge', 'x'.repeat(40)] } });
   assert.equal(posted.status, 200, await posted.clone().text());
   assert.deepEqual({ ...db.prepare('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1').get() }, { user_id: 10, login_id: 2 });
-  assert.equal(db.prepare("SELECT COUNT(*) n FROM user_achievements WHERE achievement_id = 'shared'").get().n, 2, 'a badge the account already has is not recorded again');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM user_achievements WHERE achievement_id = 'first_pedal'").get().n, 2, 'a badge the account already has is not recorded again');
+  assert.equal(db.prepare("SELECT COUNT(*) n FROM user_achievements WHERE achievement_id NOT IN ('first_finish', 'first_pedal', 'bea_only')").get().n, 0, 'an id that is not one of the achievements is not recorded');
 
   // Separate: Bea is account 20 again, with everything her login recorded, before and after.
   const back = await separateAccount(env, moved, 10);
   assert.deepEqual(back, { userId: 20, logins: [2] });
   assert.deepEqual({ ...db.prepare('SELECT user_id, login_id FROM scores ORDER BY id DESC LIMIT 1').get() }, { user_id: 20, login_id: 2 }, 'the ride made in between goes with the login that made it');
-  assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'after_combine'").get().user_id, 20);
+  assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_finish'").get().user_id, 20);
   assert.equal((await (await call(env, '/me', { token: beaToken })).json()).user.id, 20);
   db.prepare('DELETE FROM score_contributions WHERE score_id = (SELECT MAX(id) FROM scores)').run();
-  db.prepare("DELETE FROM user_achievements WHERE achievement_id = 'after_combine'").run();
+  db.prepare("DELETE FROM user_achievements WHERE achievement_id = 'first_finish'").run();
   db.prepare('DELETE FROM scores WHERE id = (SELECT MAX(id) FROM scores)').run();
   assert.equal(snap(), before, 'everything else is back exactly where it was');
   assert.equal(await separateAccount(env, moved, 10), null, 'only once');
