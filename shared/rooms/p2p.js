@@ -34,6 +34,9 @@ const FAST_CHANNEL_MAX_BUFFERED = 16 * 1024; // bytes queued before we fall back
  * @template {new (...args: any[]) => import('./room-transport.js').RoomTransport} T
  * @param {T} Base
  */
+/** TURN credentials are reused for this long (they last an hour at the relay). */
+const ICE_SERVERS_REUSE_MS = 50 * 60 * 1000;
+
 export const withP2P = (Base) => class P2PRoomTransport extends Base {
   constructor(...args) {
     super(...args);
@@ -61,7 +64,9 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
   }
 
   async _fetchIceServers() {
-    if (this._iceServers) return this._iceServers;
+    // TURN credentials expire (the relay gives them an hour): a later connection asks again.
+    if (this._iceServers && Date.now() < (this._iceServersUntil || 0)) return this._iceServers;
+    this._iceServers = null;
     try {
       // Only a connection holding a seat in this room gets TURN credentials (the relay checks).
       const q = '?room=' + encodeURIComponent(this.roomCode || '') + '&role=' + encodeURIComponent(this.role || '') + this._deviceParam();
@@ -78,11 +83,13 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
       } else if (Array.isArray(data.iceServers)) {
         this._iceServers = [...this._defaultIceServers(), ...data.iceServers];
       } else {
-        this._iceServers = this._defaultIceServers();
+        // Refused or empty (the partner may have just left): STUN for now, ask again next time.
+        return this._defaultIceServers();
       }
+      this._iceServersUntil = Date.now() + ICE_SERVERS_REUSE_MS;
     } catch (e) {
       console.warn('NET: Failed to fetch TURN credentials, using STUN only', e);
-      this._iceServers = this._defaultIceServers();
+      return this._defaultIceServers();
     }
     return this._iceServers;
   }
@@ -105,7 +112,7 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
     });
 
     conn.on('data', (data) => {
-      this._handleMessage(data);
+      this._handleMessage(data, true);
     });
 
     conn.on('close', () => {
@@ -163,7 +170,7 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
       }
       const bytes = new Uint8Array(e.data);
       if (bytes.length && bytes[0] === this._hb) return; // hello only
-      this._handleMessage(bytes);
+      this._handleMessage(bytes, true);
     };
     ch.onclose = () => {
       if (ch === this._fastChannel) this._fastPeerSeen = false;
@@ -325,7 +332,7 @@ export const withP2P = (Base) => class P2PRoomTransport extends Base {
     });
 
     conn.on('data', (data) => {
-      this._handleMessage(data);
+      this._handleMessage(data, true);
     });
 
     conn.on('close', () => {

@@ -131,6 +131,29 @@ async function deviceSignIn(env, token = null, extra = {}) {
   return (await call(env, '/auth/poll', { method: 'POST', body: { id: begin.id, secret: begin.secret } })).json();
 }
 
+const nonceHash = async (n) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(n))).toString('base64url');
+const RETURN = 'https://tandemonium.housetandem.com/account';
+
+/** Begin a browser sign-in and come back from Discord. → { id, code, nonce } (nothing exchanged yet). */
+async function webBegin(env, extra = {}, nonce = 'n'.repeat(43)) {
+  const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body: { mode: 'redirect', return_to: RETURN, nonce_hash: await nonceHash(nonce), ...extra } })).json();
+  const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+  const loc = cb.headers.get('Location') || '';
+  const m = loc.match(/#ht_result=([^&]+)$/);
+  assert.ok(m, 'back with a code and nothing else: ' + loc);
+  const [id, code] = decodeURIComponent(m[1]).split('.');
+  return { id, code, nonce };
+}
+const exchange = (env, body) => call(env, '/auth/exchange', { method: 'POST', body });
+/** A real browser sign-in with Discord, to the end. → { token, user } */
+async function webSignIn(env, extra = {}) {
+  const { id, code, nonce } = await webBegin(env, extra);
+  const res = await exchange(env, { id, code, nonce });
+  assert.equal(res.status, 200);
+  return res.json();
+}
+const claimsOf = (token) => JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+
 test('device sign-in with Discord creates an account; the poll needs the secret and is read once', async () => {
   const db = freshDb();
   const env = envFor(db);
@@ -518,7 +541,7 @@ test('#612 · linking Steam on the website: back with a code, finished only by t
     ride(db, game.user.id);
     putPair(db, game.user.id, 'guest:abc', { rides: 3, distance: 30 });
     // Pete signs in with Discord on the website and links Steam.
-    const web = await deviceSignIn(env);
+    const web = await webSignIn(env);
     putPair(db, web.user.id, 'guest:abc', { rides: 2, distance: 20 });
     const withGuest = async (token) => (await (await call(env, '/pair?with=guest%3Aabc', { token })).json()).rides;
     const cb = await steamWebSignIn(env, { token: web.token });
@@ -570,11 +593,11 @@ test('#612 · linking Steam on the website: back with a code, finished only by t
     assert.equal(db.prepare("SELECT COUNT(DISTINCT user_id) n FROM user_logins WHERE provider != 'device'").get().n, 2);
     assert.equal(db.prepare("SELECT user_id FROM user_achievements WHERE achievement_id = 'first_ride'").get().user_id, game.user.id);
     assert.equal(db.prepare('SELECT user_id FROM scores').get().user_id, game.user.id);
-    assert.equal(await withGuest(web.token), 2, 'each account has its own record with the guest again');
+    assert.equal(await withGuest((await webSignIn(env)).token), 2, 'each account has its own record with the guest again');
     assert.equal(await withGuest((await steamTicket(env)).token), 3);
     assert.equal((await steamTicket(env)).user.id, game.user.id, 'Steam signs in to its own account again');
-    assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: web.token, body: { id: notices[0].id } })).status, 410, 'once');
-    assert.equal((await (await call(env, '/me/notices', { token: web.token })).json()).notices.length, 0);
+    assert.equal((await call(env, '/me/notices/undo', { method: 'POST', token: (await webSignIn(env)).token, body: { id: notices[0].id } })).status, 410, 'once');
+    assert.equal((await (await call(env, '/me/notices', { token: (await webSignIn(env)).token })).json()).notices.length, 0);
   } finally { restore(); }
 });
 
@@ -587,7 +610,7 @@ test('#612 · a link is finished only by the browser that began it, with that ac
     const sam = await steamTicket(env);
     badge(db, sam.user.id, 'first_ride');
     // Another account begins a link; Sam finishes the Steam step in Sam's browser.
-    const other = await deviceSignIn(env);
+    const other = await webSignIn(env);
     const cb = await steamWebSignIn(env, { token: other.token });
     const { id, code } = heldLink(cb);
     // Sam's browser has the code but Sam's own session and no secret.
@@ -605,10 +628,10 @@ test('#612 · linking needs a sign-in from the last 10 minutes', async () => {
   const env = envFor(db);
   const { restore } = mockSteamOpenId(true);
   try {
-    const web = await deviceSignIn(env);
+    const web = await webSignIn(env);
     // The same session, signed 11 minutes ago.
     const claims = JSON.parse(Buffer.from(web.token.split('.')[1], 'base64url').toString());
-    const old = await makeToken({ ...claims, iat: claims.iat - 660 });
+    const old = await makeToken({ ...claims, auth_time: claims.auth_time - 660 });
     for (const [p, body] of [['/auth/steam/begin', { return_to: 'https://tandemonium.housetandem.com/account' }],
                              ['/auth/discord/begin', { mode: 'redirect', return_to: 'https://tandemonium.housetandem.com/account' }],
                              ['/auth/discord/begin', { mode: 'device' }]]) {
@@ -647,7 +670,7 @@ test('Steam sign-in on the web finds the account the Steam game made; linking fr
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
 
     // Someone signed in with Discord on the web links Steam: the game account combines in once they say yes.
-    const discord = await deviceSignIn(env);
+    const discord = await webSignIn(env);
     assert.notEqual(discord.user.id, game.user.id);
     const link = await steamWebSignIn(env, { token: discord.token });
     assert.equal(link.status, 302);
@@ -967,7 +990,7 @@ test('a dice player from Discord gets an account; achievements and stats land on
     assert.ok(a.userId);
     assert.match(a.avatar, /^https:\/\/cdn\.discordapp\.com\//, 'only Discord CDN pictures');
     // Signing in with Discord later lands on the same account.
-    const web = await deviceSignIn(env);
+    const web = await webSignIn(env);
     assert.equal(web.user.id, a.userId);
     assert.equal((await houseTandemGames.resolveDiscord(env, { discordId: DISCORD_PETE.id, name: 'Pete' })).userId, a.userId);
     await assert.rejects(houseTandemGames.resolveDiscord(env, { discordId: 'nope' }));
@@ -1004,14 +1027,14 @@ test('handoff: a signed-in link opens another site signed in, once, within a min
   const env = envFor(db);
   const restore = mockFetch(DISCORD_PETE);
   try {
-    const web = await deviceSignIn(env);
+    const web = await webSignIn(env);
     assert.equal((await call(env, '/auth/handoff', { method: 'POST' })).status, 401);
     const { code, expires_in } = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
     assert.equal(expires_in, 60);
     const bad = await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: code.split('.')[0] + '.wrong' } });
     assert.equal(bad.status, 410);
-    // A wrong guess burns the code.
-    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code } })).status, 410);
+    // A wrong guess is refused and leaves the code for its owner.
+    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code } })).status, 200);
 
     const fresh = await (await call(env, '/auth/handoff', { method: 'POST', token: web.token })).json();
     const ok = await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code: fresh.code } });
@@ -1332,7 +1355,7 @@ test('undo a link: the sign-in leaves the account; the session that came in thro
   try {
     const steam = await steamTicket(env);
     await deviceSignIn(env, steam.token);
-    const discordSession = await deviceSignIn(env);   // signed in through the Discord that was linked
+    const discordSession = await webSignIn(env);   // signed in through the Discord that was linked
     assert.equal(discordSession.user.id, steam.user.id);
     const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
     // Seen: off the game's banner, still undoable on the account page.
@@ -1342,7 +1365,7 @@ test('undo a link: the sign-in leaves the account; the session that came in thro
     const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: discordSession.token, body: { id: n.id } })).json();
     assert.equal(undo.undone, true);
     assert.equal(undo.signed_out, true);
-    assert.deepEqual(Object.keys((await (await call(env, '/me', { token: steam.token })).json()).user.identities), ['steam']);
+    assert.deepEqual(Object.keys((await (await call(env, '/me', { token: (await steamTicket(env)).token })).json()).user.identities), ['steam']);
     // That Discord now signs in to an account of its own.
     assert.notEqual((await deviceSignIn(env)).user.id, steam.user.id);
   } finally { restore(); }
@@ -1355,9 +1378,10 @@ test('undo a link never removes the last sign-in on an account', async () => {
   try {
     const steam = await steamTicket(env);
     await deviceSignIn(env, steam.token);
+    const discord = await webSignIn(env);
     const [n] = (await (await call(env, '/me/notices', { token: steam.token })).json()).notices;
     db.prepare("DELETE FROM user_logins WHERE provider = 'steam'").run();   // only Discord is left
-    const res = await call(env, '/me/notices/undo', { method: 'POST', token: steam.token, body: { id: n.id } });
+    const res = await call(env, '/me/notices/undo', { method: 'POST', token: discord.token, body: { id: n.id } });
     assert.equal(res.status, 409);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM user_logins').get().n, 1);
   } finally { restore(); }
@@ -1369,7 +1393,7 @@ test('the combine screen\'s No: nothing changes, the request is gone', async () 
   const { restore } = mockSteamOpenId(true);
   try {
     await steamTicket(env);
-    const web = await deviceSignIn(env);
+    const web = await webSignIn(env);
     const cb = await steamWebSignIn(env, { token: web.token });
     const { id, code } = heldLink(cb);
     assert.equal((await (await complete(env, web.token, { id, code, secret: cb.begin.secret })).json()).status, 'combine');
@@ -1571,4 +1595,265 @@ test('a Steam ticket is hex: anything else is refused before Steam is asked', as
     assert.equal(ok.status, 200);
     assert.ok(asked.some((u) => u.includes('ticket=A1B2C3D4E5F60718')));
   } finally { globalThis.fetch = real; }
+});
+
+// ── a sign-in result belongs to the browser that began it ──
+
+test('browser sign-in: the code needs the value the browser kept, and a mismatch is refused', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const held = await webBegin(env);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0, 'no account is touched before the exchange');
+    const wrong = await exchange(env, { id: held.id, code: held.code, nonce: 'another-browser' });
+    assert.equal(wrong.status, 403);
+    assert.equal((await wrong.json()).code, 'signin_mismatch');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0);
+    assert.equal((await exchange(env, held)).status, 410, 'a refused code is used up');
+  } finally { restore(); }
+});
+
+test('browser sign-in: the code works once and only for two minutes', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const held = await webBegin(env);
+    assert.equal((await exchange(env, { ...held, code: 'guess' })).status, 410);
+    const ok = await exchange(env, held);
+    assert.equal(ok.status, 200);
+    const body = await ok.json();
+    assert.equal(body.user.name, 'Pete');
+    assert.ok(Number.isInteger(claimsOf(body.token).auth_time));
+    assert.equal((await exchange(env, held)).status, 410, 'single use');
+
+    const late = await webBegin(env);
+    const row = db.prepare('SELECT profile_json FROM auth_requests WHERE id = ?').get(late.id);
+    const aged = { ...JSON.parse(row.profile_json), at: Math.floor(Date.now() / 1000) - 121 };
+    db.prepare('UPDATE auth_requests SET profile_json = ? WHERE id = ?').run(JSON.stringify(aged), late.id);
+    assert.equal((await exchange(env, late)).status, 410, 'expired');
+  } finally { restore(); }
+});
+
+test('browser sign-in: what the callback found comes from the exchange, not the address', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), DISCORD_BOT_TOKEN: 'bot', DISCORD_GUILD_ID: '123' };
+  const real = mockFetch(DISCORD_PETE);
+  const inner = globalThis.fetch;
+  globalThis.fetch = async (input, init) => (String(input.url || input).includes('/guilds/123/members/')
+    ? new Response(null, { status: 201 }) : inner(input, init));
+  try {
+    const held = await webBegin(env, { join_server: true });
+    const out = await (await exchange(env, held)).json();
+    assert.equal(out.server, 'added');
+  } finally { globalThis.fetch = inner; real(); }
+});
+
+test('an older page without the value still gets the old answer, until that is turned off', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const body = { mode: 'redirect', return_to: RETURN };
+    const begin = await (await call(env, '/auth/discord/begin', { method: 'POST', body })).json();
+    const cb = await call(env, `/auth/discord/callback?code=c&state=${begin.id}`);
+    assert.match(cb.headers.get('Location'), /#ht_auth=/);
+
+    const strict = { ...env, AUTH_LEGACY_TOKEN_REDIRECT: 'off' };
+    const refused = await call(strict, '/auth/discord/begin', { method: 'POST', body });
+    assert.equal(refused.status, 400);
+    assert.equal((await refused.json()).code, 'update_required');
+    assert.equal((await call(strict, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN } })).status, 400);
+    assert.equal((await call(strict, '/auth/discord/begin', { method: 'POST', body: { mode: 'device' } })).status, 200, 'TV sign-in is not affected');
+    await webBegin(strict);
+  } finally { restore(); }
+});
+
+// ── how long a session lasts, and ending it ──
+
+test('auth_time and the end date carry through a hand-off; a passed-on session never lasts longer', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const web = await webSignIn(env);
+    const start = claimsOf(web.token);
+    const earlier = await makeToken({ ...start, auth_time: start.auth_time - 1800, exp: start.exp - 1800 });
+    const { code } = await (await call(env, '/auth/handoff', { method: 'POST', token: earlier })).json();
+    const out = await (await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code } })).json();
+    const next = claimsOf(out.token);
+    assert.equal(next.auth_time, start.auth_time - 1800);
+    assert.ok(next.exp <= start.exp - 1800, 'not renewed');
+  } finally { restore(); }
+});
+
+test('a token from before auth_time keeps working but is not fresh', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const web = await webSignIn(env);
+    const { auth_time, ...older } = claimsOf(web.token);
+    const old = await makeToken({ ...older, iat: Math.floor(Date.now() / 1000) - 5 });
+    assert.equal((await call(env, '/me', { token: old })).status, 200);
+    for (const [p, body] of [['/me/delete', { confirm: 'DELETE' }], ['/auth/handoff', {}], ['/me/notices/undo', { id: 1 }],
+                             ['/auth/steam/begin', { return_to: RETURN }]]) {
+      const res = await call(env, p, { method: 'POST', token: old, body });
+      assert.equal(res.status, 401, p);
+      assert.equal((await res.json()).code, 'fresh_signin', p);
+    }
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+  } finally { restore(); }
+});
+
+test('sign out everywhere ends every session, older tokens and hand-off codes too; a new sign-in works', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const a = await webSignIn(env);
+    const b = await webSignIn(env);
+    const { auth_time, ...older } = claimsOf(a.token);
+    const old = await makeToken(older);
+    const { code } = await (await call(env, '/auth/handoff', { method: 'POST', token: a.token })).json();
+    assert.equal((await call(env, '/me/signout-all', { method: 'POST', token: a.token, body: {} })).status, 200);
+    for (const t of [a.token, b.token, old]) {
+      const res = await call(env, '/me', { token: t });
+      assert.equal(res.status, 401);
+      assert.equal((await res.json()).code, 'account_gone');
+    }
+    assert.equal(await houseTandemGames.verifySession(env, b.token), null);
+    assert.equal((await call(env, '/auth/handoff/redeem', { method: 'POST', body: { code } })).status, 410);
+    assert.equal((await call(env, '/me', { token: (await webSignIn(env)).token })).status, 200);
+  } finally { restore(); }
+});
+
+test('undo ends the other sessions; the one that asked carries on with a new token', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    await deviceSignIn(env, steam.token);
+    const other = await steamTicket(env);
+    const [n] = (await (await call(env, '/me/notices', { token: other.token })).json()).notices;
+    const undo = await (await call(env, '/me/notices/undo', { method: 'POST', token: other.token, body: { id: n.id } })).json();
+    assert.equal(undo.signed_out, false);
+    assert.equal((await call(env, '/me', { token: undo.token })).status, 200);
+    assert.equal((await call(env, '/me', { token: steam.token })).status, 401);
+    assert.equal(claimsOf(undo.token).auth_time, claimsOf(other.token).auth_time);
+  } finally { restore(); }
+});
+
+test('a token for a deleted account does not come back when the same sign-in returns', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const web = await webSignIn(env);
+    const c = claimsOf(web.token);
+    const { lid, ...beforeLids } = c;
+    const noLid = await makeToken({ ...beforeLids, iat: c.iat + 5 });
+    assert.equal((await call(env, '/me', { token: noLid })).status, 200, 'a token from before login ids still works');
+    assert.equal((await call(env, '/me/delete', { method: 'POST', token: web.token, body: { confirm: 'DELETE' } })).status, 200);
+    const again = await webSignIn(env);
+    assert.notEqual(again.user.id, web.user.id);
+    db.prepare("UPDATE user_logins SET linked_at = datetime('now', '+1 hour') WHERE user_id = ?").run(again.user.id);
+    assert.equal((await call(env, '/me', { token: web.token })).status, 401);
+    assert.equal((await call(env, '/me', { token: noLid })).status, 401);
+  } finally { restore(); }
+});
+
+// ── device sign-in ──
+
+test('a device-code session is limited: no delete, link or hand-off until a real sign-in', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const tv = await deviceSignIn(env);
+    assert.equal(claimsOf(tv.token).dev, 1);
+    assert.equal((await call(env, '/me', { token: tv.token })).status, 200);
+    for (const [p, body] of [['/me/delete', { confirm: 'DELETE' }], ['/auth/handoff', {}], ['/me/notices/undo', { id: 1 }],
+                             ['/auth/steam/begin', { return_to: RETURN }], ['/auth/discord/begin', { mode: 'device' }]]) {
+      const res = await call(env, p, { method: 'POST', token: tv.token, body });
+      assert.equal(res.status, 401, p);
+      assert.equal((await res.json()).code, 'fresh_signin', p);
+    }
+    assert.equal((await call(env, '/me/delete', { method: 'POST', token: (await webSignIn(env)).token, body: { confirm: 'DELETE' } })).status, 200);
+  } finally { restore(); }
+});
+
+test('adding a login by device code can be turned off; a plain device sign-in cannot be', async () => {
+  const db = freshDb();
+  const env = { ...envFor(db), AUTH_DEVICE_LINK: 'off' };
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const steam = await steamTicket(env);
+    const res = await call(env, '/auth/discord/begin', { method: 'POST', token: steam.token, body: { mode: 'device' } });
+    assert.equal(res.status, 403);
+    assert.equal((await res.json()).code, 'link_needs_browser');
+    assert.equal((await deviceSignIn(env)).status, 'done');
+  } finally { restore(); }
+});
+
+test('the approval page names the requesting device and warns who gets the session', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const req = new Request('https://api.test/auth/discord/begin', {
+      method: 'POST',
+      headers: { 'CF-Connecting-IP': '1.2.3.4', Origin: 'https://tandemonium.housetandem.com', 'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0) <b>x</b>' },
+      body: JSON.stringify({ mode: 'device' }),
+    });
+    const begin = await (await worker.fetch(req, env, { waitUntil() {} })).json();
+    const html = await (await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).text();
+    assert.match(html, /a Windows computer/);
+    assert.match(html, /will be signed in as you/);
+    assert.ok(!html.includes('<b>x</b>'), 'the header itself is never shown');
+  } finally { restore(); }
+});
+
+// ── Discord ──
+
+test('an explicit empty permission list removes the stored email', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch({ ...DISCORD_PETE, email: 'player@example.com', verified: true });
+  try {
+    await webSignIn(env, { scopes: ['email'] });
+    assert.equal(db.prepare("SELECT email FROM user_logins WHERE provider = 'discord'").get().email, 'player@example.com');
+    await webSignIn(env, {});
+    assert.equal(db.prepare("SELECT email FROM user_logins WHERE provider = 'discord'").get().email, 'player@example.com', 'no list: no decision');
+    await webSignIn(env, { scopes: [] });
+    assert.equal(db.prepare("SELECT email FROM user_logins WHERE provider = 'discord'").get().email, null);
+  } finally { restore(); }
+});
+
+test('Discord endpoints act only on Discord requests', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const begin = await (await call(env, '/auth/steam/begin', { method: 'POST', body: { return_to: RETURN } })).json();
+    assert.equal((await call(env, '/auth/discord/go?r=' + begin.id)).status, 410);
+    assert.equal((await call(env, `/auth/discord/callback?code=c&state=${begin.id}`)).status, 410);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users').get().n, 0);
+  } finally { restore(); }
+});
+
+test('before migration 0022 sessions still work and sign out everywhere says it is unavailable', async () => {
+  const db = freshDb();
+  db.exec('ALTER TABLE user_logins DROP COLUMN token_version');
+  const env = envFor(db);
+  const restore = mockFetch(DISCORD_PETE);
+  try {
+    const web = await webSignIn(env);
+    assert.equal((await call(env, '/me', { token: web.token })).status, 200);
+    assert.equal((await call(env, '/me/signout-all', { method: 'POST', token: web.token, body: {} })).status, 503);
+    assert.equal((await call(env, '/me', { token: web.token })).status, 200);
+  } finally { restore(); }
 });

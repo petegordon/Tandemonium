@@ -138,16 +138,22 @@ test('TURN credentials: only for a connection holding a seat; bad room codes are
   const R = room();
   const realFetch = globalThis.fetch;
   let minted = 0;
-  globalThis.fetch = async () => { minted++; return { ok: true, text: async () => '{"iceServers":{"urls":["turn:x"]}}' }; };
+  let sentBody = null;
+  globalThis.fetch = async (_u, init) => { minted++; sentBody = init.body; return { ok: true, text: async () => '{"iceServers":{"urls":["turn:x"]}}' }; };
   try {
     await R.dial('captain', { device: 'device-captain' });
     const turn = (q) => R.r.fetch({ url: 'https://relay/turn-credentials?' + new URLSearchParams({ room: 'TNDM-ABCD', ...q }) });
     assert.equal((await turn({ role: 'captain', device: 'device-stranger' })).status, 403);
     assert.equal((await turn({ role: 'stoker', device: 'device-captain' })).status, 403);
+    assert.equal((await turn({ role: 'captain', device: 'device-captain' })).status, 403, 'no partner yet: nothing to connect to');
+    assert.equal(minted, 0);
+    await R.dial('stoker', { device: 'device-stoker' });
+    assert.equal((await turn({ role: 'captain', device: 'device-stranger' })).status, 403);
     assert.equal(minted, 0);
     const ok = await turn({ role: 'captain', device: 'device-captain' });
     assert.equal(ok.status, 200);
     assert.equal(minted, 1);
+    assert.equal(JSON.parse(sentBody).ttl, 3600, 'credentials last an hour');
   } finally { globalThis.fetch = realFetch; }
   assert.ok(isRoomCode('TNDM-AB2C'));
   assert.ok(!isRoomCode('anything') && !isRoomCode('TNDM-ABCDE') && !isRoomCode(null));

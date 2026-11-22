@@ -8,7 +8,7 @@
 //                never shown to players; it is the only way to tell "the same
 //                person came back tomorrow" from "a new player arrived", which
 //                is what makes D1/D7 retention measurable for signed-out users.
-//   google_uid — only for signed-in players.
+//   account    — only from a verified sign-in token (account_token), never a claimed id.
 //
 // Helper vocabulary used by the current work (add here, don't invent names at
 // the call site):
@@ -90,6 +90,8 @@ export function initSession(opts) {
   sessionId = uuid();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
+  // Already signed in at launch: the server reads the account from this token.
+  if (opts.account_token) accountToken = opts.account_token;
 
   sessionStartTime = performance.now();
 

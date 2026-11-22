@@ -43,6 +43,9 @@
 /** 2026-11-17 · the relay closes a connection with this reason when both seats are taken. */
 const ROOM_FULL_REASON = 'room-full';
 
+/** The most bytes a {type:'relay'} text frame may carry (the relay's own frame limit). */
+const MAX_RELAY_DATA = 64 * 1024;
+
 /** The relay replaced our socket: re-dial once after this long… */
 const REPLACED_REDIAL_MS = 3000;
 /** …and a second replace within this window means the seat is taken. */
@@ -129,17 +132,24 @@ export class RoomTransport {
     this._enterRoomCallback = callback;
   }
 
-  _handleMessage(data) {
+  /**
+   * One inbound frame. `fromPeer`: it came over the direct connection, so it is the partner's
+   * and only game bytes count. Control messages are the relay's alone.
+   */
+  _handleMessage(data, fromPeer = false) {
     if (this._destroyed) return;
     let bytes;
     if (data instanceof ArrayBuffer) {
       bytes = new Uint8Array(data);
     } else if (data instanceof Uint8Array) {
       bytes = data;
+    } else if (fromPeer) {
+      return;
     } else {
       try {
         const parsed = typeof data === 'string' ? JSON.parse(data) : data;
         if (parsed.type === 'relay') {
+          if (!Array.isArray(parsed.data) || parsed.data.length > MAX_RELAY_DATA) return;
           bytes = new Uint8Array(parsed.data);
         } else if (parsed.type === 'partner-ready') {
           // Relay: partner has connected — now safe to start heartbeat

@@ -9,6 +9,7 @@ import { grantLicense, checkLicense, getUserLicenses, revokeLicense } from './st
 import { createPayment, completePayment, refundPayment } from './store/payments.js';
 import { getProduct, getGameProducts, getAllProducts } from './store/products.js';
 import { redeemPromoCode, RedeemError } from './store/promo.js';
+import { checkoutRedirect } from './store/redirects.js';
 
 export default {
   async fetch(request, env) {
@@ -74,13 +75,19 @@ export default {
       }
 
       if (path === '/redeem' && request.method === 'POST') {
+        // Guessing codes has to be slow: per account and per IP.
+        const limited = await checkRateLimit(env.CHECKOUT_LIMITER, 'redeem:user:' + userId, corsOrigin)
+          || await checkRateLimit(env.CHECKOUT_LIMITER, 'redeem:ip:' + clientIP, corsOrigin);
+        if (limited) return limited;
         return handleRedeem(request, env, corsOrigin, userId);
       }
 
       return jsonResponse({ error: 'Not found' }, 404, corsOrigin);
     } catch (e) {
-      writeMetric(env, 'error', e.message);
-      return jsonResponse({ error: e.message }, 500, corsOrigin);
+      // The detail stays in the log; a caller gets a plain message.
+      console.error('store request failed', request.method, url.pathname, e);
+      writeMetric(env, 'error', e && e.message);
+      return jsonResponse({ error: 'Something went wrong' }, 500, corsOrigin);
     }
   }
 };
@@ -90,8 +97,10 @@ export default {
 // ============================================================
 
 async function handleCheckout(request, env, corsOrigin, userId) {
-  const { productId, successUrl, cancelUrl } = await request.json();
-  if (!productId) return jsonResponse({ error: 'Missing productId' }, 400, corsOrigin);
+  const body = await readJson(request);
+  if (!body) return jsonResponse({ error: 'Invalid request' }, 400, corsOrigin);
+  const { productId, successUrl, cancelUrl } = body;
+  if (!productId || typeof productId !== 'string') return jsonResponse({ error: 'Missing productId' }, 400, corsOrigin);
 
   const product = await getProduct(env.DB, productId);
   if (!product) return jsonResponse({ error: 'Product not found or inactive' }, 404, corsOrigin);
@@ -107,8 +116,8 @@ async function handleCheckout(request, env, corsOrigin, userId) {
   const defaultCancel = `${env.STORE_URL || 'https://games.usersfirst.com'}/store.html`;
 
   const session = await createCheckoutSession(env, userId, product,
-    successUrl || defaultSuccess,
-    cancelUrl || defaultCancel
+    checkoutRedirect(successUrl, env, defaultSuccess),
+    checkoutRedirect(cancelUrl, env, defaultCancel)
   );
 
   // Record the pending payment
@@ -171,7 +180,11 @@ async function handleWebhook(request, env, corsOrigin) {
   if (event.type === 'charge.refunded') {
     const charge = event.data.object;
     const paymentIntentId = charge.payment_intent;
-    if (paymentIntentId) {
+    // This event also fires for a partial refund. `refunded` is true only once the whole
+    // charge has been returned; until then the buyer keeps what they paid for.
+    if (charge.refunded !== true) {
+      writeMetric(env, 'partial_refund', paymentIntentId || charge.id);
+    } else if (paymentIntentId) {
       await refundPayment(env.DB, paymentIntentId);
 
       // Find and revoke the associated license
@@ -183,7 +196,7 @@ async function handleWebhook(request, env, corsOrigin) {
       `).bind(paymentIntentId).first();
 
       if (refundedPayment) {
-        await revokeLicense(env.DB, refundedPayment.user_id, refundedPayment.game_id, refundedPayment.platform);
+        await revokeLicense(env.DB, refundedPayment.user_id, refundedPayment.game_id, refundedPayment.platform, refundedPayment.product_id);
         writeMetric(env, 'license_revoked_refund', `${refundedPayment.game_id}:${refundedPayment.user_id}`);
       }
     }
@@ -220,7 +233,9 @@ async function handleLicenseCheck(request, env, url, corsOrigin, userId) {
 }
 
 async function handleRedeem(request, env, corsOrigin, userId) {
-  const { code } = await request.json();
+  const body = await readJson(request);
+  if (!body) return jsonResponse({ error: 'Invalid request' }, 400, corsOrigin);
+  const { code } = body;
   if (!code) return jsonResponse({ error: 'Missing code' }, 400, corsOrigin);
 
   try {
@@ -238,6 +253,16 @@ async function handleRedeem(request, env, corsOrigin, userId) {
 // ============================================================
 // HELPERS
 // ============================================================
+
+/** The request's JSON object, or null. */
+async function readJson(request) {
+  try {
+    const body = await request.json();
+    return body && typeof body === 'object' ? body : null;
+  } catch {
+    return null;
+  }
+}
 
 async function checkRateLimit(limiter, key, corsOrigin) {
   if (!limiter) return null;

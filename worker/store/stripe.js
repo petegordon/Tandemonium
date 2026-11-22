@@ -43,16 +43,18 @@ export async function createCheckoutSession(env, userId, product, successUrl, ca
 export async function verifyWebhookSignature(rawBody, sigHeader, webhookSecret) {
   if (!sigHeader) throw new Error('Missing Stripe-Signature header');
 
-  const elements = Object.fromEntries(
-    sigHeader.split(',').map(part => {
-      const [key, val] = part.split('=');
-      return [key, val];
-    })
-  );
-
-  const timestamp = elements.t;
-  const expectedSig = elements.v1;
-  if (!timestamp || !expectedSig) throw new Error('Invalid signature format');
+  // Stripe sends one v1 per active signing secret (two while a secret is being rolled).
+  let timestamp = null;
+  const signatures = [];
+  for (const part of sigHeader.split(',')) {
+    const at = part.indexOf('=');
+    if (at < 0) continue;
+    const name = part.slice(0, at).trim();
+    const val = part.slice(at + 1).trim();
+    if (name === 't') timestamp = val;
+    else if (name === 'v1') signatures.push(val);
+  }
+  if (!timestamp || !/^\d{1,12}$/.test(timestamp) || !signatures.length) throw new Error('Invalid signature format');
 
   // Reject timestamps older than 5 minutes
   const age = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
@@ -64,14 +66,18 @@ export async function verifyWebhookSignature(rawBody, sigHeader, webhookSecret) 
     new TextEncoder().encode(webhookSecret),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
-    ['sign']
+    ['verify']
   );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signedPayload));
-  const computed = Array.from(new Uint8Array(sig))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-
-  if (computed !== expectedSig) throw new Error('Invalid webhook signature');
+  // crypto.subtle.verify compares in constant time. Every value is checked.
+  const data = new TextEncoder().encode(signedPayload);
+  let valid = false;
+  for (const candidate of signatures.slice(0, 8)) {
+    if (!/^[0-9a-fA-F]{64}$/.test(candidate)) continue;
+    const bytes = Uint8Array.from(candidate.match(/../g), (h) => parseInt(h, 16));
+    const match = await crypto.subtle.verify('HMAC', key, bytes, data);
+    valid = match || valid;
+  }
+  if (!valid) throw new Error('Invalid webhook signature');
 
   return JSON.parse(rawBody);
 }
