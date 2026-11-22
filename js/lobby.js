@@ -65,6 +65,7 @@ import { getSeatLooks, getChooserGeese, isMobile, isTV, RELAY_URL, BIKE_MODEL_PA
 import { getCurrentTier } from './quality.js';
 import { LEVELS, getMedals } from './race-config.js';
 import { makePlacementSalt, dailyKey, dailySeed, seedFromKey } from './daily-seed.js';
+import { escapeHtml } from './escape-html.js';
 import { playDayKey, warpDays, warpForward, leaveWarp, canWarpForward, warpLine, MAX_WARP_DAYS, WARP_RULES_LINE } from './time-warp.js';
 import { planRoute, planExplore, skipLabel, isValidPoint, interpolate, formatDistance, CAP_HALF_M, shortPlace } from './tourist-route.js';
 import { cleanText, cleanPlace } from './remote-safe.js';
@@ -5010,10 +5011,9 @@ export class Lobby {
     setTimeout(finish, 700);   // a dropped animation never leaves the badge in limbo
   }
 
+  /** Text made safe for HTML, between tags or inside a quoted attribute (quotes are escaped too). */
   _escapeHtml(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+    return escapeHtml(str);
   }
 
   /** Fetch an avatar URL once, convert to blob URL, and cache it. */

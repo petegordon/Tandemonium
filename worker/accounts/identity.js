@@ -1301,8 +1301,12 @@ export async function verifySteamAssertion(url, rowId, fetchImpl = fetch) {
   return m[1];
 }
 
-async function fetchSteamProfile(env, steamId, fetchImpl = fetch) {
-  let name = 'Steam Player';
+/**
+ * A Steam account's name and picture, from Steam (one request, 5 s at most). When Steam
+ * does not answer: `fallbackName` and Steam's default picture.
+ */
+export async function fetchSteamProfile(env, steamId, fetchImpl = fetch, fallbackName = 'Steam Player') {
+  let name = fallbackName || 'Steam Player';
   let avatar = STEAM_DEFAULT_AVATAR;
   try {
     const r = await fetchImpl(`https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=${env.STEAM_WEB_API_KEY}&steamids=${steamId}`,
