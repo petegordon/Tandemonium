@@ -1,14 +1,18 @@
 {
-  // The web game's static files on Cloudflare. Only staging is deployed for now;
-  // production stays on GitHub Pages until the move. Build: npm run build:staging.
+  // The web game on Cloudflare. Build: node scripts/build-site.mjs --env staging|production.
+  // worker/site-worker.js runs only for media files (real partial answers for iPhones).
   "name": "tandemonium-site",
   "account_id": "87260c174f34fc18e96f2f47344e8d26",
+  "main": "worker/site-worker.js",
   "compatibility_date": "2026-11-01",
   "workers_dev": false,
   "preview_urls": false,
+  "routes": [{ "pattern": "tandemonium.housetandem.com", "custom_domain": true }],
   "assets": {
     "directory": "./public",
-    "html_handling": "auto-trailing-slash"
+    "binding": "ASSETS",
+    "html_handling": "auto-trailing-slash",
+    "run_worker_first": ["/*.mp4", "/*.webm", "/*.mov", "/*.m4v", "/*.mp3", "/*.m4a", "/*.ogg", "/*.wav"]
   },
   "env": {
     "staging": {
@@ -18,7 +22,9 @@
       "preview_urls": true,
       "assets": {
         "directory": "./public",
-        "html_handling": "auto-trailing-slash"
+        "binding": "ASSETS",
+        "html_handling": "auto-trailing-slash",
+        "run_worker_first": ["/*.mp4", "/*.webm", "/*.mov", "/*.m4v", "/*.mp3", "/*.m4a", "/*.ogg", "/*.wav"]
       }
     }
   }

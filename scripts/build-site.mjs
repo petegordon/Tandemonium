@@ -1,7 +1,8 @@
 // Builds what the web game publishes into public/: only tracked pages and game assets.
 // It copies files and rewrites addresses; it never runs anything from the tree it reads, so
 // the PR preview workflow can use main's copy of this script on a branch's files.
-//   node scripts/build-site.mjs --env staging [--root <checkout>] [--out <dir>] [--sha <commit>]
+//   node scripts/build-site.mjs --env staging|production [--root <checkout>] [--out <dir>] [--sha <commit>]
+// Production reads the public Maps key from TOURIST_MAPS_KEY.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -27,12 +28,21 @@ export const STAGING_HOSTS = [
   ['tandemonium.housetandem.com', 'tandemonium-staging.housetandem.com'],
 ];
 
-const STAGING_HEADERS = `/*
-  X-Content-Type-Options: nosniff
-  X-Frame-Options: SAMEORIGIN
-  Referrer-Policy: strict-origin-when-cross-origin
-  X-Robots-Tag: noindex, nofollow
-`;
+// Any site may read these public files, as on GitHub Pages (the website's account page does).
+// The Tourist lookup page is embedded by the desktop game (tandemonium://app), so it alone may be framed.
+export function headersFile(env) {
+  return [
+    '/*',
+    '  Access-Control-Allow-Origin: *',
+    '  X-Content-Type-Options: nosniff',
+    '  X-Frame-Options: SAMEORIGIN',
+    '  Referrer-Policy: strict-origin-when-cross-origin',
+    ...(env === 'production' ? ['  Strict-Transport-Security: max-age=31536000'] : ['  X-Robots-Tag: noindex, nofollow']),
+    '/tourist-lookup*',
+    '  ! X-Frame-Options',
+    '',
+  ].join('\n');
+}
 
 export function isPublished(file) {
   if (NEVER.test(file)) return false;
@@ -48,7 +58,7 @@ export function toStaging(text) {
 }
 
 export function buildSite({ root = REPO, out = path.join(REPO, 'public'), env = 'staging', sha = '' } = {}) {
-  if (env !== 'staging') throw new Error('Only the staging build exists until the game moves to Cloudflare.');
+  if (env !== 'staging' && env !== 'production') throw new Error(`Unknown environment: ${env}`);
   if (sha && !/^[0-9a-f]{7,40}$/i.test(sha)) throw new Error('bad --sha');
   const tracked = execFileSync('git', ['-C', root, 'ls-files', '-z'], { encoding: 'utf8', maxBuffer: 1 << 26 })
     .split('\0').filter(Boolean).filter(isPublished);
@@ -62,17 +72,20 @@ export function buildSite({ root = REPO, out = path.join(REPO, 'public'), env = 
     if (stat.size > MAX_FILE) throw new Error(`${file} is over Cloudflare's 25 MiB file limit`);
     const to = path.join(out, file);
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    if (TEXT.test(file)) fs.writeFileSync(to, toStaging(fs.readFileSync(from, 'utf8')));
+    if (env === 'staging' && TEXT.test(file)) fs.writeFileSync(to, toStaging(fs.readFileSync(from, 'utf8')));
     else fs.copyFileSync(from, to);
     bytes += stat.size;
   }
 
   // No production Maps key on staging: Tourist Mode says it is unavailable.
-  fs.writeFileSync(path.join(out, 'js', 'tourist-key.local.js'), 'window.__TOURIST_MAPS_KEY__ = "";\n');
-  fs.writeFileSync(path.join(out, '_headers'), STAGING_HEADERS);
+  const mapsKey = env === 'production' ? (process.env.TOURIST_MAPS_KEY || '') : '';
+  fs.writeFileSync(path.join(out, 'js', 'tourist-key.local.js'), `window.__TOURIST_MAPS_KEY__ = ${JSON.stringify(mapsKey)};\n`);
+  fs.writeFileSync(path.join(out, '_headers'), headersFile(env));
 
   const index = path.join(out, 'index.html');
-  const stamp = `v.${(sha || 'local').slice(0, 7)} | staging`;
+  const when = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hourCycle: 'h23', month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    .format(new Date()).replace(',', '').replace(/\//g, '-');
+  const stamp = `v.${(sha || 'local').slice(0, 7)} | ${env === 'production' ? when : 'staging'}`;
   fs.writeFileSync(index, fs.readFileSync(index, 'utf8').replace(/id="lobby-version">[^<]*/, `id="lobby-version">${stamp}`));
   return { out, files: tracked.length, mb: bytes / 1048576 };
 }

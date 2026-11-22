@@ -1,7 +1,8 @@
 name: Deploy staging
 # Third-party actions are pinned to a commit (the tag is in the comment).
-# Every merge to main: tests, then the staging Workers and game at
-# tandemonium-staging.housetandem.com. Production has its own workflows.
+# Every merge to main: tests, the staging Workers and game at
+# tandemonium-staging.housetandem.com, a check, then the production game site.
+# The production Workers deploy from deploy-workers.yml.
 on:
   push:
     branches: [main]
@@ -49,3 +50,40 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ''
         run: node scripts/check-staging.mjs --wait 180
+
+  production:
+    needs: staging
+    # Off until the game moves from GitHub Pages (repository variable).
+    if: vars.CF_PRODUCTION_LIVE == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+      - name: Build the production game
+        env:
+          TOURIST_MAPS_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: node scripts/build-site.mjs --env production --sha "$GITHUB_SHA"
+      # Until the address is moved (CF_GAME_DOMAIN_LIVE), this readies the new version
+      # without touching tandemonium.housetandem.com.
+      - name: Deploy the production game
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DOMAIN_LIVE: ${{ vars.CF_GAME_DOMAIN_LIVE }}
+        run: |
+          if [ "$DOMAIN_LIVE" = "true" ]; then
+            npx --yes wrangler@4.166.0 deploy --config wrangler-site.jsonc
+          else
+            out=$(npx --yes wrangler@4.166.0 versions upload --config wrangler-site.jsonc)
+            echo "$out"
+            id=$(printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE 'Worker Version ID: [0-9a-f-]{36}' | grep -oE '[0-9a-f-]{36}$')
+            [ -n "$id" ] || { echo "::error::No version id"; exit 1; }
+            npx --yes wrangler@4.166.0 versions deploy "$id@100" --config wrangler-site.jsonc --yes
+          fi
+      - name: Check production
+        if: vars.CF_GAME_DOMAIN_LIVE == 'true'
+        run: node scripts/check-staging.mjs --production --wait 420
