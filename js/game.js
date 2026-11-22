@@ -1087,8 +1087,7 @@ class Game {
       is_stoker: !!roomParam,
       joined_via_url: !!roomParam,
       room_code: roomParam ? (roomParam.startsWith('TNDM-') ? roomParam : 'TNDM-' + roomParam) : null,
-      google_uid: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.getUser())
-        ? this.lobby.auth.getUser().serverId || null : null,
+      account_token: (this.lobby.auth && this.lobby.auth.isLoggedIn() && this.lobby.auth.token) || null,
       platform: window.steam ? 'steam' : (navigator.userAgent.includes('Electron') ? 'electron' : 'browser'),
       screen_width: window.screen.width,
       screen_height: window.screen.height,

@@ -90,6 +90,8 @@ export function initSession(opts) {
   sessionId = uuid();
   sessionStorage.setItem('tandemonium_session_id', sessionId);
   currentInputMethod = opts.input_method || null;
+  // Already signed in at launch: the server reads the account from this token.
+  if (opts.account_token) accountToken = opts.account_token;
 
   sessionStartTime = performance.now();
 

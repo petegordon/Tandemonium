@@ -1536,7 +1536,7 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     body.is_stoker ? 1 : 0,
     body.joined_via_url ? 1 : 0,
     txt(body.room_code, 16),
-    scalar(body.google_uid, 32),
+    null,   // google_uid: the account comes only from a verified token (below)
     txt(body.platform, 16) || 'browser',
     num(body.screen_width),
     num(body.screen_height),
@@ -1547,18 +1547,23 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
 
   // Upsert: the session may already exist as a placeholder that its events
   // created (see ensureSessions) when this create was late or rate-limited.
-  // Fill it in; keep the earlier start time.
-  const fill = (cols) => cols.map((c) => `${c} = COALESCE(excluded.${c}, sessions.${c})`).join(', ');
-  const FILL = ['device_type', 'input_method', 'referrer', 'user_agent', 'room_code', 'google_uid',
+  // Fill it in; keep the earlier start time. Only a placeholder (no user agent yet) is
+  // filled: a create repeated for a session already described changes nothing on it,
+  // and the account column is never written here.
+  const blank = 'sessions.user_agent IS NULL';
+  const fill = (cols) => cols.map((c) => `${c} = CASE WHEN ${blank} THEN COALESCE(excluded.${c}, sessions.${c}) ELSE sessions.${c} END`).join(', ');
+  const FILL = ['device_type', 'input_method', 'referrer', 'user_agent', 'room_code',
     'platform', 'screen_width', 'screen_height', 'ip_address'];
+  const firsts = `started_at = CASE WHEN ${blank} THEN MIN(sessions.started_at, excluded.started_at) ELSE sessions.started_at END,
+       is_stoker = CASE WHEN ${blank} THEN MAX(sessions.is_stoker, excluded.is_stoker) ELSE sessions.is_stoker END,
+       joined_via_url = CASE WHEN ${blank} THEN MAX(sessions.joined_via_url, excluded.joined_via_url) ELSE sessions.joined_via_url END`;
   try {
     await env.DB.prepare(
       `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address,
        device_id)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
-       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ON CONFLICT(id) DO UPDATE SET ${firsts},
        ${fill([...FILL, 'device_id'])}`
     ).bind(...baseValues, deviceId).run();
   } catch (e) {
@@ -1570,14 +1575,24 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
       `INSERT INTO sessions (id, started_at, device_type, input_method, referrer, user_agent,
        is_stoker, joined_via_url, room_code, google_uid, platform, screen_width, screen_height, ip_address)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET started_at = MIN(sessions.started_at, excluded.started_at),
-       is_stoker = MAX(sessions.is_stoker, excluded.is_stoker), joined_via_url = MAX(sessions.joined_via_url, excluded.joined_via_url),
+       ON CONFLICT(id) DO UPDATE SET ${firsts},
        ${fill(FILL)}`
     ).bind(...baseValues).run();
   }
 
+  // Signed in when the session started: the account comes from the verified token.
+  await attachFromToken(env, body.id, body.account_token);
+
   writeMetric(env, 'analytics_session');
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+/** A session takes the account in a sign-in token, once the token is verified. */
+async function attachFromToken(env, sessionId, token) {
+  if (typeof token !== 'string' || !env.JWT_SECRET) return;
+  const who = await sessionFromToken(token, env);
+  const acct = parseInt((who && who.userId) ?? '', 10);
+  if (acct > 0) await attachSessionAccount(env, sessionId, acct, who.loginId);
 }
 
 async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId, clientIP) {
@@ -1599,15 +1614,12 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   // Player 1 signed in after the session started (the Steam build's ticket
   // sign-in finishes after launch): attach the account from the verified
   // token. Only to a guest session, so it can't move one between accounts.
-  if (typeof body.account_token === 'string' && env.JWT_SECRET) {
-    const who = await sessionFromToken(body.account_token, env);
-    const acct = parseInt((who && who.userId) ?? '', 10);
-    if (acct > 0) await attachSessionAccount(env, sessionId, acct, who.loginId);
-  }
+  await attachFromToken(env, sessionId, body.account_token);
 
-  // Always update IP address (captures it even for sessions created before migration)
+  // Keep the IP current. A described session with no device id has had its details
+  // cleared (a deleted account), or predates device ids: its IP is left as it is.
   if (clientIP) {
-    sets.push('ip_address = ?');
+    sets.push('ip_address = CASE WHEN user_agent IS NOT NULL AND device_id IS NULL THEN ip_address ELSE ? END');
     values.push(clientIP);
   }
 
