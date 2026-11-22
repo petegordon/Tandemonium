@@ -8283,7 +8283,7 @@ class Game {
   /** So Close: where this ride's last checkpoint sits (0 = none; the tracker falls back to the last 10 m). */
   _lastCheckpointM() {
     const rm = this.mode === 'versus' ? null : this.raceManager;
-    if (rm && Array.isArray(rm.checkpoints)) return rm.checkpoints.length ? rm.checkpoints[rm.checkpoints.length - 1] : 0;
+    if (rm && Array.isArray(rm.checkpoints)) return rm.checkpoints.length ? lastCheckpointM(rm.raceDistance, rm.checkpointInterval) : 0;
     const lvl = this.lobby && this.lobby.selectedLevel;
     return lvl ? lastCheckpointM(lvl.distance, lvl.checkpointInterval) : 0;
   }
