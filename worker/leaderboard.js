@@ -2892,7 +2892,8 @@ async function withAuth(request, env, corsOrigin, handler) {
  * POST /me/delete { confirm: 'DELETE' } — remove the House Tandem account and
  * every record on it, in one transaction: sign-ins, rides, achievements, daily
  * results, friends and pair records. A partner's own rides stay, with this
- * player taken off them. Anonymous analytics carry no account and stay.
+ * player taken off them. Their analytics sessions stay as anonymous counts: the account,
+ * login, IP and device id are cleared in the same batch.
  */
 async function handleDeleteAccount(request, env, corsOrigin, userId) {
   let body = {};
@@ -2927,11 +2928,23 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
     q('DELETE FROM game_playtime WHERE user_id = ?', userId),
     q('DELETE FROM discord_posts WHERE user_id = ?', userId),
     q('UPDATE ride_seats SET user_id = NULL, login_id = NULL WHERE user_id = ?', userId),
+    // Before the logins go (it finds rows by them). Some account numbers are stored as "26.0".
+    // The user agent stays non-NULL so a late write from an open tab can't fill the row in again.
+    q(`UPDATE sessions SET google_uid = NULL, login_id = NULL, ip_address = NULL, device_id = NULL,
+         user_agent = COALESCE(user_agent, '')
+       WHERE google_uid IN (?, ?) OR login_id IN (SELECT login_id FROM user_logins WHERE user_id = ?)`,
+      String(userId), `${userId}.0`, userId),
     q('DELETE FROM user_logins WHERE user_id = ?', userId),
     q('DELETE FROM users WHERE id = ?', userId),
   ]);
   // #612 · its link / combine notices (migration 0020; absent before it is applied).
-  try { await q('DELETE FROM account_events WHERE user_id = ?', userId).run(); } catch (e) { if (!/no such table/i.test(String(e && e.message))) throw e; }
+  try {
+    await env.DB.batch([
+      q('DELETE FROM account_events WHERE user_id = ?', userId),
+      // Another account's notice that names this one (combined earlier, separated since).
+      q('UPDATE account_events SET from_user_id = NULL, from_name = NULL, moved_json = NULL WHERE from_user_id = ?', userId),
+    ]);
+  } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
 }
