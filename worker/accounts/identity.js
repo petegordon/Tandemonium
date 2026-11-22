@@ -413,19 +413,21 @@ export async function notifyAccountDiscord(env, userId, content, deps = {}) {
   return sent;
 }
 
-async function recordEvent(env, ev, deps) {
-  const at = nowS();
+/**
+ * The statement that records a link or combine (its notice, and what an undo needs). It
+ * goes in the same batch as the change itself, so one is never written without the other.
+ */
+function eventInsert(env, ev, at = nowS()) {
+  return env.DB.prepare(
+    `INSERT INTO account_events (user_id, kind, provider, provider_id, login_name, from_user_id, from_name, moved_json, created_at, undo_until)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(ev.userId, ev.kind, ev.provider || null, ev.providerId ? String(ev.providerId) : null, ev.loginName || null,
+         ev.fromUserId || null, ev.fromName || null, ev.moved ? JSON.stringify(ev.moved) : null, at, at + UNDO_DAYS * 86400);
+}
+
+/** Tell the account's Discord about a link or combine that was just recorded. */
+async function announceEvent(env, ev, deps, at = nowS()) {
   const until = at + UNDO_DAYS * 86400;
-  try {
-    await env.DB.prepare(
-      `INSERT INTO account_events (user_id, kind, provider, provider_id, login_name, from_user_id, from_name, moved_json, created_at, undo_until)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(ev.userId, ev.kind, ev.provider || null, ev.providerId ? String(ev.providerId) : null, ev.loginName || null,
-           ev.fromUserId || null, ev.fromName || null, ev.moved ? JSON.stringify(ev.moved) : null, at, until).run();
-  } catch (e) {
-    // Never fails the link: it still happens, without the notice.
-    console.error('account event not recorded', e);
-  }
   const account = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(ev.userId).first();
   const accountName = (account && account.display_name) || 'your account';
   const what = PROVIDER_NAMES[ev.provider] || 'A sign-in';
@@ -444,18 +446,26 @@ export async function addLogin(env, userId, profile, deps = {}) {
   const providerId = String(profile.providerId);
   const owner = await identityOwner(env, provider, providerId, name, avatar);
   if (owner && owner !== userId) return { status: 'combine', otherId: owner };
-  if (!owner) {
-    await env.DB.prepare(
-      'INSERT INTO user_logins (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)'
-    ).bind(userId, provider, providerId, name, avatar).run();
-  }
-  await env.DB.prepare(
+  const ev = { userId, kind: 'link', provider, providerId, loginName: name };
+  const at = nowS();
+  const seen = env.DB.prepare(
     "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
-  ).bind(name, avatar, provider, providerId).run();
+  ).bind(name, avatar, provider, providerId);
+  if (owner) {
+    await seen.run();
+  } else {
+    // The new sign-in and its undo record are written together or not at all.
+    await env.DB.batch([
+      env.DB.prepare('INSERT INTO user_logins (user_id, provider, provider_id, display_name, avatar_url) VALUES (?, ?, ?, ?, ?)')
+        .bind(userId, provider, providerId, name, avatar),
+      seen,
+      eventInsert(env, ev, at),
+    ]);
+  }
   const login = await loginRow(env, provider, providerId);
   const loginId = login ? login.login_id : null;
   if (owner) return { status: 'already', loginId };
-  await recordEvent(env, { userId, kind: 'link', provider, providerId, loginName: name }, deps);
+  await announceEvent(env, ev, deps, at);
   deps.writeMetric && deps.writeMetric(env, 'link_' + provider);
   return { status: 'linked', loginId };
 }
@@ -465,14 +475,22 @@ async function combineInto(env, userId, profile, deps) {
   const otherId = await identityOwner(env, profile.provider, profile.providerId);
   if (!otherId || otherId === userId) return addLogin(env, userId, profile, deps);
   const other = await env.DB.prepare('SELECT display_name FROM users WHERE id = ?').bind(otherId).first();
-  const moved = await combineAccounts(env, otherId, userId);
-  await env.DB.prepare(
-    "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
-  ).bind(profile.name, profile.avatar, profile.provider, String(profile.providerId)).run();
-  await recordEvent(env, {
+  const ev = {
     userId, kind: 'combine', provider: profile.provider, providerId: profile.providerId, loginName: profile.name,
-    fromUserId: otherId, fromName: other && other.display_name, moved,
-  }, deps);
+    fromUserId: otherId, fromName: other && other.display_name,
+  };
+  const at = nowS();
+  // With the combine, in its batch: the sign-in's latest name and the undo record. A combine
+  // whose undo record cannot be written does not happen.
+  const withIt = (moved) => [
+    env.DB.prepare(
+      "UPDATE user_logins SET display_name = ?, avatar_url = ?, last_login_at = datetime('now') WHERE provider = ? AND provider_id = ?"
+    ).bind(profile.name, profile.avatar, profile.provider, String(profile.providerId)),
+    eventInsert(env, { ...ev, moved }, at),
+  ];
+  const moved = await combineAccounts(env, otherId, userId, withIt);
+  if (!moved) await env.DB.batch(withIt(null));   // the other account's row is gone: nothing to move
+  await announceEvent(env, ev, deps, at);
   deps.writeMetric && deps.writeMetric(env, 'combine_' + profile.provider);
   return { status: 'combined' };
 }
@@ -1113,6 +1131,9 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
   // in through a leaving login is that login's own account from here on (signed_out tells
   // the game and the website to sign in again and show it).
   let leaving = [];
+  // In the same batch as the change: the event is marked undone, and the copy of what was
+  // moved is cleared (nothing reads it again).
+  const undone = () => [env.DB.prepare('UPDATE account_events SET undone_at = ?, moved_json = NULL WHERE id = ?').bind(nowS(), ev.id)];
   if (ev.kind === 'link') {
     const login = await loginRow(env, ev.provider, ev.provider_id);
     if (!login || login.user_id !== userId) return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
@@ -1122,14 +1143,14 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
       return deps.jsonResponse({ error: "That is the only sign-in on this account, so it can't be removed. Delete the account instead." }, 409, corsOrigin);
     }
     // The sign-in gets an account of its own again, with whatever was recorded under it.
-    await splitLogin(env, login.login_id, { name: ev.login_name });
+    await splitLogin(env, login.login_id, { name: ev.login_name }, undone);
     leaving = [login.login_id];
   } else if (ev.kind === 'combine') {
     let moved = null;
     try { moved = JSON.parse(ev.moved_json); } catch {}
     let back = null;
     try {
-      back = moved ? await separateAccount(env, moved, userId) : null;
+      back = moved ? await separateAccount(env, moved, userId, undone) : null;
     } catch (e) {
       console.error('separate failed', e);
       return deps.jsonResponse({ error: 'The accounts could not be separated. Nothing more was changed.' }, 409, corsOrigin);
@@ -1139,7 +1160,6 @@ export async function handleNoticeUndo(request, env, corsOrigin, userId, deps) {
   } else {
     return deps.jsonResponse({ error: 'This can no longer be undone.' }, 410, corsOrigin);
   }
-  await env.DB.prepare('UPDATE account_events SET undone_at = ? WHERE id = ?').bind(nowS(), ev.id).run();
   deps.writeMetric && deps.writeMetric(env, 'undo_' + ev.kind);
   // Whatever came in through this change stops working, on every device. The session that
   // asked carries on with a new token, unless its own login is the one that left.
