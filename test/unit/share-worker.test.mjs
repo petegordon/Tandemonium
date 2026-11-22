@@ -51,7 +51,7 @@ const HOOK = 'https://discord.com/api/webhooks/123/abc';
 function envFor(db, extra = {}) {
   return {
     DB: d1(db), CORS_ORIGIN: 'https://tandemonium.housetandem.com', JWT_SECRET: 'test-secret',
-    AUTH_LIMITER: allow, READ_LIMITER: allow, SHARE_LIMITER: allow, DISCORD_SHARE_WEBHOOK: HOOK, ...extra,
+    AUTH_LIMITER: allow, READ_LIMITER: allow, SHARE_LIMITER: allow, DISCORD_SHARE_WEBHOOK: HOOK, ...CLIP_ENV, ...extra,
   };
 }
 
@@ -86,12 +86,13 @@ function addUser(db, { name = 'Pete', discord = true } = {}) {
   return id;
 }
 
-/** Answer the webhook from a fixture; records what was posted. */
+/** Answer the webhook from a fixture; records what was posted. Every Discord is in the server. */
 function fakeWebhook(status = 200) {
   const real = globalThis.fetch;
   const posts = [];
   globalThis.fetch = async (input, init = {}) => {
     const u = String(input && input.url ? input.url : input);
+    if (/\/guilds\/42\/members\/\d+$/.test(u)) return new Response('{}', { status: 200 });
     if (!u.startsWith(HOOK)) throw new Error('unexpected fetch ' + u);
     const form = init.body;
     posts.push({ url: u, payload: JSON.parse(form.get('payload_json')), file: form.get('files[0]') });
@@ -251,6 +252,30 @@ test('POST /share/discord: guests, no Discord, not the Daily Ride, an old day, a
     assert.equal((await r.json()).code, 'discord_off');
     assert.equal(hook.posts.length, 0);
   } finally { hook.restore(); }
+});
+
+test('POST /share/discord is for members of the House Tandem server, checked the same way as a clip', async () => {
+  const db = freshDb();
+  const env = envFor(db);
+  const member = addUser(db);
+  const outsider = addUser(db);
+  const { id } = await (await upload(env)).json();
+  const dc = fakeDiscord(new Set(['8035' + member]));
+  try {
+    let r = await call(env, '/share/discord', { method: 'POST', token: jwt(outsider), body: { id } });
+    assert.equal(r.status, 403);
+    assert.deepEqual(await r.json(), { error: 'Join the House Tandem Discord to post', code: 'not_member', invite: 'https://housetandem.com/discord' });
+    // Membership can't be checked (no bot set up): refused, as a clip is.
+    r = await call(envFor(db, { DISCORD_BOT_TOKEN: undefined }), '/share/discord', { method: 'POST', token: jwt(outsider), body: { id } });
+    assert.equal(r.status, 503);
+    assert.equal((await r.json()).code, 'member_unknown');
+    assert.equal(dc.posts.length, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM discord_posts').get().n, 0, 'a refused post does not use up the day');
+
+    r = await call(env, '/share/discord', { method: 'POST', token: jwt(member), body: { id } });
+    assert.equal(r.status, 200, await r.clone().text());
+    assert.equal(dc.posts.length, 1);
+  } finally { dc.restore(); }
 });
 
 test('POST /share/discord: when Discord refuses, the day is not used up', async () => {
