@@ -4468,6 +4468,33 @@ export class Lobby {
     return dev;
   }
 
+  /**
+   * Ask the analytics question (index.html #consent-prompt). → 'accept' | 'decline'.
+   * With no prompt on the page the answer is 'decline': nothing is collected on a guess.
+   */
+  askAnalyticsConsent() {
+    const el = document.getElementById('consent-prompt');
+    const yes = document.getElementById('consent-accept');
+    const no = document.getElementById('consent-decline');
+    if (!el || !yes || !no) return Promise.resolve('decline');
+    return new Promise((resolve) => {
+      const keys = (e) => e.stopPropagation();   // the lobby behind does not hear the keyboard
+      const pick = (choice) => {
+        el.classList.remove('visible');
+        el.removeEventListener('keydown', keys);
+        yes.onclick = null;
+        no.onclick = null;
+        if (this._activeModal === 'consent') { this._modalFocus.clear(); this._activeModal = null; this._modalBack = null; }
+        resolve(choice);
+      };
+      yes.onclick = () => pick('accept');
+      no.onclick = () => pick('decline');
+      el.addEventListener('keydown', keys);
+      el.classList.add('visible');
+      try { yes.focus({ preventScroll: true }); } catch (e) { /* no focus here */ }
+    });
+  }
+
   /** Hide (or bring back) the Discord buttons while the QR stands in for them. */
   _setDiscordTriggersHidden(hide) {
     for (const el of [this._profileButton('signin', 'discord'), this._profileButton('link', 'discord')]) {
@@ -8556,6 +8583,20 @@ export class Lobby {
       return;
     }
     this._gpPrevY = y;
+
+    // The analytics question (js/consent.js): the pad moves between its two answers and A
+    // picks one. B does nothing: it is answered, not dismissed.
+    const ask = document.getElementById('consent-prompt');
+    if (ask && ask.classList.contains('visible')) {
+      if (this._activeModal !== 'consent') {
+        this._activeModal = 'consent';
+        this._modalBack = () => {};
+        const btns = [document.getElementById('consent-decline'), document.getElementById('consent-accept')].filter(Boolean);
+        this._modalFocus.setSpatial(btns, btns[btns.length - 1]);
+      }
+      this._modalFocus.poll();
+      return;
+    }
 
     // LB/RB bumpers (buttons 4/5) — cycle bike color; over the Achievements
     // sheet they jump a section instead (and leave the bike alone).

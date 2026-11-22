@@ -106,6 +106,7 @@ import { AudioEngine, MOTIF } from './audio-engine.js';
 import { hapticCrash, hapticTreeHit, hapticCheckpoint, hapticFinish, hapticOffRoad, hapticBump, hapticPedal, hapticCobbles, setHapticSources } from './haptics.js';
 import { DDAManager } from './dda-manager.js';
 import * as analytics from './analytics.js';
+import { resolveConsent, saveConsent, storedConsent, syncConsent } from './consent.js';
 import { couchPair, guestCaptainSubmit, pairStatsForFinish } from './couch-pair.js';   // #609
 import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
@@ -1093,6 +1094,7 @@ class Game {
       screen_height: window.screen.height,
     });
     analytics.setPage('landing');
+    this._initAnalyticsConsent();
 
     // Start loop
     this.lastTime = performance.now();
@@ -7479,6 +7481,59 @@ class Game {
       if (w) b.textContent = w.label;
       b.classList.toggle('active', !!w && w.key === cur);
     }
+  }
+
+  /**
+   * Analytics consent (js/consent.js). Players in the EEA, the UK and Switzerland are asked
+   * once, before anything is sent; everyone else is counted as before. Until the answer is
+   * in, analytics hold what they have and send nothing.
+   */
+  _initAnalyticsConsent() {
+    if (analytics.analyticsDisabled()) return;
+    const auth = this.lobby && this.lobby.auth;
+    const getToken = () => (auth && auth.isLoggedIn() && auth.token) || null;
+    const force = new URLSearchParams(window.location.search).has('ask-consent');
+    // Settings shows the answer and changes it, once there is one (or one is owed).
+    let wired = false;
+    const showSwitch = () => {
+      for (const id of ['opt-analytics-label', 'opt-analytics-row', 'opt-analytics-note']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = '';
+      }
+      this._updateOptionsAnalyticsUI();
+      if (wired) return;
+      wired = true;
+      const set = (on) => {
+        const now = storedConsent();
+        if (now && (now.choice === 'accept') === on) return;
+        const answer = saveConsent(on ? 'accept' : 'decline', { token: getToken() });
+        analytics.setAnalyticsAllowed(on, on ? answer.version : null);
+        this._updateOptionsAnalyticsUI();
+      };
+      document.getElementById('opt-analytics-on')?.addEventListener('click', () => set(true));
+      document.getElementById('opt-analytics-off')?.addEventListener('click', () => set(false));
+    };
+    const apply = (r) => {
+      analytics.setAnalyticsAllowed(r.allowed, r.mark);
+      if (r.required || r.answered) showSwitch();
+    };
+    resolveConsent({ ask: () => this.lobby.askAnalyticsConsent(), getToken, force }).then(apply)
+      .catch(() => analytics.setAnalyticsAllowed(false));
+    // The answer is the account's: after a sign-in, the account's answer is the one that counts
+    // (given in any House Tandem game), and one given here before signing in joins the account.
+    if (auth && auth.identity && auth.identity.onChange) {
+      auth.identity.onChange((user, reason) => {
+        if (!user || reason !== 'signin') return;
+        syncConsent({ getToken }).then((r) => { if (r) apply(r); }).catch(() => {});
+      });
+    }
+  }
+
+  _updateOptionsAnalyticsUI() {
+    const a = storedConsent();
+    const on = !!(a && a.choice === 'accept');
+    document.getElementById('opt-analytics-on')?.classList.toggle('active', on);
+    document.getElementById('opt-analytics-off')?.classList.toggle('active', !on);
   }
 
   _updateOptionsShowSoloUI() {

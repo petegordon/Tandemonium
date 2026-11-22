@@ -26,6 +26,8 @@ import {
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims,
 } from './accounts/identity.js';
 import { registerAccountTables } from './accounts/combine.js';
+import { pruneAnalytics } from './retention.js';
+import { handleConsentRegion, handleConsentRecord, handleAccountConsent, consentMissing, CONSENT_ACCOUNT_TABLES } from './accounts/consent.js';
 import { gameProfile, recordGame, handleMeGames, handleGameSync, recordPlay, GAME_ACCOUNT_TABLES } from './games.js';
 import { handleShareRoute } from './share.js';   // #657
 import { partnerFromProof, guestKey, isGuestKey } from './room-proof.js';   // 2026-11-17 · who rode together
@@ -95,6 +97,7 @@ registerAccountTables([
   { table: 'discord_posts', user: 'user_id', login: 'login_id' },
   { table: 'sessions', user: 'google_uid', login: 'login_id', text: true },
   ...GAME_ACCOUNT_TABLES,
+  ...CONSENT_ACCOUNT_TABLES,
 ]);
 
 /** What the identity module needs from this worker. */
@@ -110,6 +113,17 @@ async function deviceKeys(env, deviceId) {
 }
 
 export default {
+  /** Once a day (wrangler-api.toml): gameplay analytics older than 24 months are deleted. */
+  async scheduled(_event, env, ctx) {
+    const work = pruneAnalytics(env).then((out) => {
+      const total = Object.values(out.removed).reduce((a, b) => a + b, 0);
+      if (total || out.errors.length) console.log('analytics retention', JSON.stringify(out));
+      if (out.errors.length) console.error('analytics retention failed', out.errors.join(' | '));
+    }).catch((e) => console.error('analytics retention failed', (e && e.message) || e));
+    if (ctx && ctx.waitUntil) ctx.waitUntil(work);
+    return work;
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url);
     const requestOrigin = request.headers.get('Origin') || '';
@@ -129,8 +143,23 @@ export default {
       const limited = await limitRequest(request, env, path, clientIP, corsOrigin);
       if (limited) return limited;
 
+      // Analytics consent (EEA, UK, Switzerland): is this player to be asked, and their answer.
+      if (path === '/consent/region' && request.method === 'GET') {
+        return handleConsentRegion(request, corsOrigin, { jsonResponse });
+      }
+      if (path === '/me/consent' && request.method === 'GET') {
+        return withAuth(request, env, corsOrigin, (req, e, c, uid) => handleAccountConsent(req, e, c, uid, { jsonResponse }));
+      }
+      if (path === '/consent' && request.method === 'POST') {
+        const text = await readBodyLimited(request, 4096);
+        if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
+        return handleConsentRecord(request, env, corsOrigin, text, clientIP, { jsonResponse, sessionFromToken });
+      }
+
       // Analytics writes take no sign-in: their size is checked before anything parses them.
       if (isAnalyticsWrite(path, request.method)) {
+        // From a country where the player is asked first, nothing is kept without their yes.
+        if (consentMissing(request, url)) return new Response(null, { status: 204, headers: corsHeaders(corsOrigin) });
         const text = await readBodyLimited(request, analyticsBodyLimit(path));
         if (text === null) return jsonResponse({ error: 'Too large' }, 413, corsOrigin);
         let parsed = null;
@@ -2958,6 +2987,10 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
       // Another account's notice that names this one (combined earlier, separated since).
       q('UPDATE account_events SET from_user_id = NULL, from_name = NULL, moved_json = NULL WHERE from_user_id = ?', userId),
     ]);
+  } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
+  // Its analytics consent answers (migration 0023; absent before it is applied).
+  try {
+    await env.DB.prepare('DELETE FROM consents WHERE user_id = ?').bind(userId).run();
   } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
   writeMetric(env, 'account_deleted');
   return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
