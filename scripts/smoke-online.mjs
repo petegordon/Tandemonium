@@ -313,6 +313,9 @@ try {
     await waitFor(sto, () => window._game.state === 'victory', null, 60000);
     const roomBtn = await cap.evaluate(() => { const b = document.getElementById('btn-victory-room'); return !!b && b.offsetParent !== null; });
     check(won && roomBtn, 'OC-11 the captain finishes; BACK TO ROOM is offered', { won, roomBtn });
+    const pedalH = (p) => p.evaluate(() => document.getElementById('pedal-bar').getBoundingClientRect().height);
+    const pedals = { captain: await pedalH(cap), stoker: await pedalH(sto) };
+    check(pedals.captain === 0 && pedals.stoker === 0, '#878 no pedals behind either rider\'s victory card', pedals);
     const netBefore = await cap.evaluate(() => { window.__netObj = window._game.net; return window._game.net.roomCode; });
     // The stoker must not echo the captain's (reliable) RETURN_ROOM back: the echo could pull a
     // quickly restarted ride back to the room.

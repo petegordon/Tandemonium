@@ -2310,6 +2310,8 @@
   @media (hover: hover) and (pointer: fine) {
     #pedal-bar { display: flex !important; }
   }
+  /* Fly-around and victory card: no more pedaling (#878). */
+  body.ride-finished #bottom-hud { display: none !important; }
 
   /* ── Tap to Start overlay ── */
   #tap-to-start {
