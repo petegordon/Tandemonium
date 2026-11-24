@@ -16,6 +16,8 @@
 //   finish    team red is moved past the finish line (a real ride to the line
 //             takes minutes under software WebGL); red wins, the results card
 //             names it (VS-06)
+//   overlays  rider cameras and pedal bars leave for the fly-around and results
+//             and return on rematch, with no pedal stuck down (#878)
 //   drop      unplugging a pad mid-race freezes BOTH teams with versus's own
 //             notice — not the co-op 20 s take-over — and replugging resumes
 //             (VS-07)
@@ -31,8 +33,8 @@ const { check } = h;
 const STORAGE = { tandemonium_tutorial_done: 'smoke', tandemonium_show_riders: 'on' };
 
 /** Open the game and go TOGETHER → VERSUS. `atBoot` pads exist before load. */
-async function openVersus(atBoot) {
-  const page = await h.gamePage({ viewport: { width: 1600, height: 900 }, storage: STORAGE, before: (p) => installFakeGamepads(p, { atBoot }) });
+async function openVersus(atBoot, viewport = { width: 1600, height: 900 }) {
+  const page = await h.gamePage({ viewport, storage: STORAGE, before: (p) => installFakeGamepads(p, { atBoot }) });
   await sleep(1500);
   await clickId(page, 'btn-together');
   await sleep(800);
@@ -261,6 +263,57 @@ console.log('race 1v1 + finish');
   await clickId(page, 'vr-lobby');
   await sleep(1200);
   check(await page.evaluate(() => window._game.state === 'lobby' && !window._game.versusRigs), 'LOBBY returns to the lobby and drops the rigs');
+  await page.close();
+}
+
+// ── #878: rider cameras and pedal bars leave at the finish, return on rematch ──
+for (const [label, viewport] of [['desktop', { width: 1600, height: 900 }], ['phone portrait', { width: 390, height: 844 }]]) {
+  console.log(`finish overlays: ${label}`);
+  const { page, pads } = await openVersus(['xbox'], viewport);
+  await join(pads, 'dualsense');
+  await startRace(page);
+  const overlays = () => page.evaluate(() => {
+    const shown = (sel) => [...document.querySelectorAll(sel)].filter((e) => getComputedStyle(e).display !== 'none').length;
+    return { frames: shown('.front-view-frame'), bars: shown('.versus-pedals') };
+  });
+  const racing = await overlays();
+  check(racing.frames === 2 && racing.bars === 2, `${label}: both rider cameras and pedal bars show while racing`, racing);
+  // Sample every animation frame, so a single frame's flash back on is caught.
+  await page.evaluate(() => {
+    const seen = window.__finishSeen = { versusCinematic: { n: 0, frames: 0, bars: 0 }, versusResults: { n: 0, frames: 0, bars: 0 } };
+    const shown = (sel) => [...document.querySelectorAll(sel)].filter((e) => getComputedStyle(e).display !== 'none').length;
+    const tick = () => {
+      const row = seen[window._game.state];
+      if (row) { row.n++; row.frames += shown('.front-view-frame'); row.bars += shown('.versus-pedals'); }
+      if (!window.__finishSeenStop) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  // Hold a pedal over the line: the bar hides under the pointer, and must not stay pressed.
+  const btn = await page.evaluate(() => { const r = document.querySelector('#versus-pedals-b .vp-left').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+  await page.mouse.move(btn.x, btn.y);
+  await page.mouse.down();
+  await page.evaluate(() => { const rig = window._game.versusRigs[1]; rig.bike.distanceTraveled = rig.raceManager.raceDistance + 2; });
+  await page.waitForFunction(() => window._game.state === 'versusCinematic', { timeout: 120000, polling: 50 });
+  await sleep(300);
+  await page.mouse.up();
+  await page.waitForFunction(() => window._game.state === 'versusResults', { timeout: 120000, polling: 50 });
+  await sleep(600);
+  const seen = await page.evaluate(() => { window.__finishSeenStop = true; return window.__finishSeen; });
+  for (const [state, name] of [['versusCinematic', 'fly-around'], ['versusResults', 'results']]) {
+    check(seen[state].n > 0 && seen[state].frames === 0, `${label}: no rider-camera frame on the ${name}`, seen[state]);
+    check(seen[state].n > 0 && seen[state].bars === 0, `${label}: no pedal bars on the ${name}`, seen[state]);
+  }
+  await clickId(page, 'vr-rematch');
+  await page.waitForFunction(() => window._game.state === 'playing', { timeout: 90000, polling: 100 });
+  await sleep(1000);
+  const back = await overlays();
+  check(back.frames === 2 && back.bars === 2, `${label}: rematch brings the rider cameras and pedal bars back`, back);
+  const held = await page.evaluate(() => {
+    const input = window._game.versusRigs[1].members[0].input;
+    return { left: input.isPressed('ArrowLeft'), lit: document.querySelector('#versus-pedals-b .vp-left').classList.contains('pressed') };
+  });
+  check(!held.left && !held.lit, `${label}: a pedal held over the line is not stuck in the rematch`, held);
   await page.close();
 }
 
