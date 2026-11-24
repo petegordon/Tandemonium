@@ -3100,7 +3100,9 @@
   body.mode-versus #versus-pedals-b { display: flex; left: 50%; width: 50%; }
   /* Purple pedal-rhythm arrows, same as multiplayer — shown per half in versus. */
   body.mode-versus .versus-pedals .pedal-indicator { display: flex; }
-  body.mode-versus.versus-fullframe .versus-pedals { display: none; }
+  /* Names the IDs: the class alone loses to the two rules above (#878). */
+  body.mode-versus.versus-fullframe #versus-pedals-a,
+  body.mode-versus.versus-fullframe #versus-pedals-b { display: none; }
   .versus-pedals .pedal-touch {
     pointer-events: auto;
     width: 40%;

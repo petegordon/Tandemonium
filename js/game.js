@@ -9797,9 +9797,10 @@ class Game {
     // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
     // half. Done after the split loop — each renderInHalf owns its own scissor.
     // Skipped once the race is decided (renderInHalf re-shows the DOM frame
-    // every call, which would undo the cinematic's hide during results); the
-    // rematch countdown brings them back.
-    if (this.versusFrontViews && this.state !== 'versusResults') {
+    // every call, which would undo the finish's hide: the finish happens inside
+    // _updateVersus, which renders here in that same frame, #878); the rematch
+    // countdown brings them back.
+    if (this.versusFrontViews && this.state !== 'versusCinematic' && this.state !== 'versusResults') {
       for (let i = 0; i < rigs.length; i++) {
         const fx = i === 0 ? 0 : w - halfW;
         this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);
