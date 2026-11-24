@@ -5789,6 +5789,7 @@ class Game {
    */
   _startFinishCinematic(fromRemote = false) {
     this.state = 'finishCinematic';
+    this._syncRideFinished();   // now: this frame is still to be drawn
     this._finishFromRemote = fromRemote;
     this.hud.hideTimer();
     // Briefly damp the chase cam's residual shake so the cinematic
@@ -6058,6 +6059,17 @@ class Game {
       if (this._startArrivalOrbit()) return;   // #802: Map Tourist goes up for a look at the place first
       this._showVictory(this._finishFromRemote);
     }
+  }
+
+  /**
+   * #878 · the ride is over: pedals leave for the fly-around and the victory
+   * card, in every mode that reaches them. Write-on-change (#390).
+   */
+  _syncRideFinished() {
+    const finished = this.state === 'finishCinematic' || this.state === 'victory';
+    if (finished === this._rideFinishedShown) return;
+    this._rideFinishedShown = finished;
+    document.body.classList.toggle('ride-finished', finished);
   }
 
   _showVictory(fromRemote = false) {
@@ -8558,6 +8570,7 @@ class Game {
     // Each ride starts the Auto watcher's grace period afresh (closing
     // Options or the input choice does too, see _closeOptions).
     if (this.state !== 'playing') this._autoWatching = false;
+    this._syncRideFinished();
 
     // A tier change that moves the riders default waits for the lobby (it
     // loads a different bike). Options may be open over the lobby, so here.
@@ -9797,9 +9810,10 @@ class Game {
     // Per-bike front-facing PiP (Show Riders): one in the lower-right of each
     // half. Done after the split loop — each renderInHalf owns its own scissor.
     // Skipped once the race is decided (renderInHalf re-shows the DOM frame
-    // every call, which would undo the cinematic's hide during results); the
-    // rematch countdown brings them back.
-    if (this.versusFrontViews && this.state !== 'versusResults') {
+    // every call, which would undo the finish's hide: the finish happens inside
+    // _updateVersus, which renders here in that same frame, #878); the rematch
+    // countdown brings them back.
+    if (this.versusFrontViews && this.state !== 'versusCinematic' && this.state !== 'versusResults') {
       for (let i = 0; i < rigs.length; i++) {
         const fx = i === 0 ? 0 : w - halfW;
         this.versusFrontViews[i].renderInHalf(this.renderer, this.scene, rigs[i].bike, 1 / 60, fx, halfW);

@@ -408,7 +408,22 @@ console.log('victory buttons');
 {
   await startGrandma();
   const first = await levelId();
+  // #878: every animation frame of the finish, so a flash of the pedals is caught.
+  const pedalsUp = () => page.evaluate(() => document.getElementById('pedal-bar').getBoundingClientRect().height > 0);
+  check(await pedalsUp(), '#878 pedals show while riding');
+  await page.evaluate(() => {
+    const seen = window.__pedalSeen = { finishCinematic: { n: 0, up: 0 }, victory: { n: 0, up: 0 } };
+    const tick = () => {
+      const row = seen[window._game.state];
+      if (row) { row.n++; if (document.getElementById('pedal-bar').getBoundingClientRect().height > 0) row.up++; }
+      if (!window.__pedalSeenStop) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   await finish();
+  const pedalSeen = await page.evaluate(() => { window.__pedalSeenStop = true; return window.__pedalSeen; });
+  check(pedalSeen.finishCinematic.n > 0 && pedalSeen.finishCinematic.up === 0, '#878 no pedals on the fly-around', pedalSeen.finishCinematic);
+  check(pedalSeen.victory.n > 0 && pedalSeen.victory.up === 0, '#878 no pedals behind the victory card', pedalSeen.victory);
   check(await shown('btn-play-again') && await shown('btn-victory-lobby'), 'SR-10 PLAY AGAIN and END RIDE shown');
   const hasNext = await shown('btn-next-level');
   check(hasNext, 'SR-10 NEXT LEVEL shown after Grandma\'s');
@@ -427,6 +442,8 @@ console.log('victory buttons');
   await clickId(page, 'btn-play-again');
   await waitState('playing', 120000).catch(() => {});
   check(await page.evaluate(() => window._game.state) === 'playing' && await levelId() === first, 'SR-10 PLAY AGAIN rides the same level', await levelId());
+  await sleep(200);
+  check(await pedalsUp(), '#878 PLAY AGAIN brings the pedals back');
   await finish();
   check(!(await shown('btn-victory-garage')), 'SR-10 no GARAGE on a regular ride (garage is Slingshot-only)');
   await clickId(page, 'btn-victory-lobby');
