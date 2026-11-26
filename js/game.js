@@ -8431,37 +8431,65 @@ class Game {
     if (level && level.treeCollision === false) {
       // Still check pylon collision
       const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
-      if (pylon) {
-        this._recordCrash('obstacle', bike);
-        this._knockPylon(pylon, bike);
-        bike._fall();
-        chaseCam.shakeAmount = 0.25;
-        this._playCrash(1.0);
-        hapticTreeHit(hapticTargets);
-      }
+      if (pylon) this._collide('obstacle', bike, chaseCam, hapticTargets, pylon);
       return;
     }
     const result = this.world.checkTreeCollision(
       bike.position, bike.roadD, bike.heading
     );
     if (result.hit) {
-      this._recordCrash('tree', bike);
-      bike._fall();
-      chaseCam.shakeAmount = 0.2;
-      this._playCrash(0.85);
-      hapticTreeHit(hapticTargets);
+      this._collide('tree', bike, chaseCam, hapticTargets);
       return;
     }
     // Pylon obstacle collision
     const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
-    if (pylon) {
-      this._recordCrash('obstacle', bike);
-      this._knockPylon(pylon, bike);
-      bike._fall();
-      chaseCam.shakeAmount = 0.25;
-      this._playCrash(1.0);
+    if (pylon) this._collide('obstacle', bike, chaseCam, hapticTargets, pylon);
+  }
+
+  /**
+   * The tutorial's big banner (#tutorial-crash) for a bump (#883): "Bump!" and a hint,
+   * then gone. The ride goes on.
+   */
+  _showTutorialBump(hint) {
+    const el = document.getElementById('tutorial-crash');
+    const textEl = document.getElementById('tutorial-crash-text');
+    const hintEl = document.getElementById('tutorial-crash-hint');
+    if (!el || !textEl || !hintEl) return;
+    textEl.textContent = 'Bump!';
+    hintEl.textContent = hint;
+    el.classList.add('visible');
+    clearTimeout(this._tutBumpTimer);
+    this._tutBumpTimer = setTimeout(() => {
+      el.classList.remove('visible');
+      textEl.textContent = 'Oops! Try again';   // the crash banner's own words, for a real tutorial crash
+    }, 1500);
+  }
+
+  /**
+   * A tree or a pylon hit: the geese fall off. In the tutorial they can't (#883): the
+   * preset already keeps the balance from tipping over (safetyDefault), and a collision
+   * there is a bump instead (Pete, 2026-11-26): a big "Bump!" banner with a hint and the
+   * controller's haptic, the pylon still knocked flat and a small camera shake, but no
+   * fall, no restart, no crash on the record and no crash sound. The tutorial's own
+   * coaching ("Weave to the other side of the pylon!") still answers a wrong-side pass.
+   */
+  _collide(cause, bike, chaseCam, hapticTargets, pylon = null) {
+    if (this._tutorialActive) {
+      const now = performance.now();
+      if (pylon) this._knockPylon(pylon, bike);
+      else if (now - (this._tutBumpAt || 0) < 600) return;   // a tree stays touching for a while
+      this._tutBumpAt = now;
+      chaseCam.shakeAmount = 0.12;
       hapticTreeHit(hapticTargets);
+      this._showTutorialBump(pylon ? 'Steer around the pylons!' : 'Stay on the road!');
+      return;
     }
+    this._recordCrash(cause, bike);
+    if (pylon) this._knockPylon(pylon, bike);
+    bike._fall();
+    chaseCam.shakeAmount = cause === 'tree' ? 0.2 : 0.25;
+    this._playCrash(cause === 'tree' ? 0.85 : 1.0);
+    hapticTreeHit(hapticTargets);
   }
 
   _hapticOffRoadCheck() {
