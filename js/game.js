@@ -11,7 +11,7 @@ import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './spec
 import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { botTargetMs } from './bot-race.js';
 import { withGrandmaFinished } from './achievement-defs.js';
-import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
+import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isDesktopApp, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -112,7 +112,7 @@ import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
 import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer, renderPixelRatio } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig, TEAM_COLORS } from './versus/team-rig.js';
@@ -1077,6 +1077,13 @@ class Game {
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
+    // #885 · a DPR change without a size change (OS scaling changed, window dragged to a screen
+    // with another scale) re-runs the same sizing, so the render buffer follows the screen.
+    const watchDpr = () => {
+      const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mq.addEventListener('change', () => { this._onResize(); watchDpr(); }, { once: true });
+    };
+    watchDpr();
 
     // ---- Analytics session init ----
     const params = new URLSearchParams(window.location.search);
@@ -7619,14 +7626,10 @@ class Game {
     this._setTier(level, { auto: false });
   }
 
-  /** Render resolution per tier. Low aims for a 360-line image: sharper than a flat half on a small, high-DPI screen like a TV. */
+  /** Render resolution per tier: fixed physical lines in the desktop app (#885), DPR-based on the web (js/quality.js). */
   _pixelRatio() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    // Display testing: N lines at any tier (never above the screen's own).
-    if (this._linesOverride) return Math.min(dpr, this._linesOverride / Math.max(1, window.innerHeight));
-    if (this._quality === 'high') return dpr;
-    if (this._quality === 'medium') return 0.5;
-    return Math.max(0.35, Math.min(dpr, 1, 360 / Math.max(1, window.innerHeight)));
+    return renderPixelRatio({ tier: this._quality, dpr: window.devicePixelRatio || 1, innerHeight: window.innerHeight,
+      desktopApp: isDesktopApp, linesOverride: this._linesOverride });
   }
 
   /** Low draws less far: closer fog and far plane (trees stop at the fog). Tourist Mode owns these while it runs. */

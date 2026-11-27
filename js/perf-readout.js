@@ -40,7 +40,11 @@ export class PerfReadout {
     // The browser's frozen user agent hides the model; ask for it where supported.
     /** @type {any} */ (navigator).userAgentData?.getHighEntropyValues?.(['model'])
       .then((/** @type {any} */ v) => { if (v && v.model) this._model = v.model; }).catch(() => {});
-    w.electronApp?.display?.().then((/** @type {any} */ d) => { this._display = d; }).catch(() => {});
+    // The screen the window is on, again after a resize: dragged to another display, or the OS scale changed (#885).
+    const askDisplay = () => w.electronApp?.display?.().then((/** @type {any} */ d) => { this._display = d; }).catch(() => {});
+    askDisplay();
+    this._onResize = () => { clearTimeout(this._askT); this._askT = setTimeout(askDisplay, 250); };
+    window.addEventListener('resize', this._onResize);
     const el = document.createElement('div');
     el.id = 'perf-readout';
     el.style.cssText = [
@@ -72,18 +76,30 @@ export class PerfReadout {
     }
   }
 
-  /** e.g. "display TV browser · BRAVIA 4K VH2 · screen 960×540 @2x", or in the app the monitor's name and Hz. */
+  /**
+   * The screen in physical pixels, then how the OS scales it, e.g.
+   * "display desktop app · Beyond TV 3840×2160 (OS 1280×720 @3x) 60Hz · 2 displays", or
+   * "display TV browser · BRAVIA 4K VH2 · screen 960×540 @2x".
+   */
   _displayLine() {
     const parts = [this._kind];
     if (this._model) parts.push(this._model);
     const d = this._display;
     if (d) {
-      parts.push(`${d.label || (d.internal ? 'built-in screen' : 'external screen')} ${d.width}×${d.height} @${d.scale}x${d.hz ? ' ' + Math.round(d.hz) + 'Hz' : ''}`);
+      const pw = Math.round(d.width * d.scale), ph = Math.round(d.height * d.scale);
+      parts.push(`${d.label || (d.internal ? 'built-in screen' : 'external screen')} ${pw}×${ph} (OS ${d.width}×${d.height} @${+(+d.scale).toFixed(2)}x)${d.hz ? ' ' + Math.round(d.hz) + 'Hz' : ''}`);
       if (d.count > 1) parts.push(`${d.count} displays`);
     } else {
       parts.push(`screen ${screen.width}×${screen.height} @${+(devicePixelRatio || 1).toFixed(2)}x`);
     }
     return `display ${parts.join(' · ')}`;
+  }
+
+  /** The CSS viewport, its DPR and the physical pixels they make; in the app also the reference zoom (electron/ui-zoom.js). */
+  _viewportLine() {
+    const dpr = window.devicePixelRatio || 1;
+    const z = this._display && this._display.zoom;
+    return `viewport ${innerWidth}×${innerHeight} CSS @${+dpr.toFixed(2)}x = ${Math.round(innerWidth * dpr)}×${Math.round(innerHeight * dpr)} px${z ? '   UI zoom ' + (+z).toFixed(3).replace(/.?0+$/, '') : ''}`;
   }
 
   _update() {
@@ -94,7 +110,8 @@ export class PerfReadout {
     const tier = g._quality + (g._qualityAuto ? ' (auto)' : '');
     const lines = [
       `FPS ${this._fps}   tier ${tier}   ${g.state}`,
-      `render ${c.width}×${c.height} (${r.getPixelRatio().toFixed(2)}× of ${innerWidth}×${innerHeight})`,
+      `render ${c.width}×${c.height} buffer (${r.getPixelRatio().toFixed(2)}× of the viewport)`,
+      this._viewportLine(),
       `edge smoothing ${this._aa ? 'on' : 'off'}   shadows ${r.shadowMap.enabled ? 'on' : 'off'}   riders ${g._showRiders ? 'on' : 'off'}`,
       `draws ${this._calls}   tris ${Math.round(this._tris / 1000)}k   geo ${info.memory.geometries}   tex ${info.memory.textures}`,
       `GPU ${this._gpu}`,

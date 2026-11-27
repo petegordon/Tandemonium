@@ -19,8 +19,11 @@ uf-system-bar#lobby-bar { display: none; }
 @media (min-width: 1024px) {
   uf-system-bar#lobby-bar { display: flex; }
   #lobby-mode .uf-button__sub { display: block; }
-  /* The art panel's width, for the stage and for kit sheets / the system bar. */
-  :root:has(#lobby:not([style*="none"])) { --uf-stage-inset: 535px; }
+  /* The art panel's width, for the stage and for kit sheets / the system bar: the painting at
+     its natural shape (535 wide at 1080 tall), so on a shorter screen (a 720p laptop browser,
+     #885) it narrows with the height instead of taking 535px from a 1280px-wide menu area, and
+     never takes more than 28% of the width (4:3 at 1024, where the menus need the room). */
+  :root:has(#lobby:not([style*="none"])) { --uf-stage-inset: min(535px, 49.54vh, 28vw); }
 
   /* ── Frame ── */
   #lobby {
@@ -41,9 +44,11 @@ uf-system-bar#lobby-bar { display: none; }
   /* tandemonium_title.png at 0.435× (wordmark ≈ 470px wide), centred on the
      wordmark; the dirt splash and pedals fade into the sky through the mask. */
   #lobby #lobby-wordmark {
-    display: block; position: fixed; z-index: 3; top: 10px; right: 0; width: var(--uf-stage-inset); height: 200px; pointer-events: none;
+    /* Sized from the panel so it scales with it: at the full 535px panel it is the original
+       668px art, 200px tall, 10px down and 70px up (each value below is that ÷ 535). */
+    display: block; position: fixed; z-index: 3; top: calc(var(--uf-stage-inset) * 0.01869); right: 0; width: var(--uf-stage-inset); height: calc(var(--uf-stage-inset) * 0.37383); pointer-events: none;
     background: url(../images/tandemonium_title.png) no-repeat;
-    background-size: 668px auto; background-position: calc(var(--uf-stage-inset) / 2 - 334px) -70px;
+    background-size: calc(var(--uf-stage-inset) * 1.24860) auto; background-position: calc(var(--uf-stage-inset) * -0.12430) calc(var(--uf-stage-inset) * -0.13084);
     -webkit-mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
             mask-image: radial-gradient(ellipse 64% 46% at 50% 46%, #000 72%, transparent 100%);
     filter: drop-shadow(0 6px 14px rgba(0, 0, 0, .45));
@@ -73,6 +78,10 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby .room-bike-nav { height: calc(var(--uf-size-xl) * 1.9); min-width: calc(var(--uf-size-xl) * 1.9); justify-content: center; font-size: var(--uf-size-xl); }
   #lobby .room-bike-note { font-size: var(--uf-size-sm); }
   #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) var(--uf-stage-inset) !important; }
+  /* #885 · under 1280 wide the one-line mode buttons need a wider column than a third */
+  @media (max-width: 1279px) {
+    #lobby:has(#lobby-mode[active]) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr) var(--uf-stage-inset) !important; }
+  }
   #lobby:not(:has(#lobby-mode[active])) #bike-carousel { display: none !important; }
 
   #lobby .lobby-card {
@@ -102,8 +111,9 @@ uf-system-bar#lobby-bar { display: none; }
   #lobby-mode .lobby-mode-buttons > uf-button:not([size]) {
     display: block; text-align: left; min-height: 0; padding: var(--uf-space-4) var(--uf-space-5) !important;
     font-size: var(--uf-size-lg); border-radius: var(--uf-radius-lg);
+    white-space: nowrap;   /* #885 · title and sub line each stay one line (they wrapped at 1280 wide) */
   }
-  #lobby-mode #btn-mode-phone, #lobby-mode #btn-mode-connect-hid { align-self: flex-start; font-size: var(--uf-size-sm); }
+  #lobby-mode #btn-mode-phone, #lobby-mode #btn-mode-connect-hid { align-self: flex-start; font-size: var(--uf-size-sm); white-space: nowrap; }
 
   /* ── Level select: every card in one row, START RIDE on screen (#428 finding 1) ── */
   #lobby #level-cards {
