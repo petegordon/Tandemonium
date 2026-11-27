@@ -51,6 +51,7 @@ ipcRenderer.on('steam:input:xinput', (_event, map) => {
 contextBridge.exposeInMainWorld('steam', {
   isAvailable: () => ipcRenderer.invoke('steam:isAvailable'),
   getPlayerName: () => ipcRenderer.invoke('steam:getPlayerName'),
+  // SteamID64 string or null. Sign-in proves it with getAuthTicket; analytics (#889) only records it.
   getSteamId: () => ipcRenderer.invoke('steam:getSteamId'),
   isSubscribed: () => ipcRenderer.invoke('steam:isSubscribed'),
   activateAchievement: (apiName) => ipcRenderer.invoke('steam:activateAchievement', apiName),

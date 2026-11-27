@@ -286,10 +286,15 @@ ipcMain.handle('steam:getPlayerName', () => {
   try { return steam.friends.getPersonaName(); }
   catch (e) { return null; }
 });
+// The running Steam user's SteamID64 as a string, or null. Used by Steam account sign-in
+// (js/auth.js, which proves it with a ticket) and, #889, sent with the analytics session
+// (js/analytics.js). The SDK says '0' when Steam has no user: that is null here.
 ipcMain.handle('steam:getSteamId', () => {
   if (!steam) return null;
-  try { return steam.getStatus().steamId; }
-  catch (e) { return null; }
+  try {
+    const id = String(steam.getStatus().steamId || '');
+    return /^\d{17}$/.test(id) ? id : null;
+  } catch (e) { return null; }
 });
 ipcMain.handle('steam:isSubscribed', () => {
   if (!steam) return false;

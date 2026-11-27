@@ -9,6 +9,8 @@
 //                person came back tomorrow" from "a new player arrived", which
 //                is what makes D1/D7 retention measurable for signed-out users.
 //   account    — only from a verified sign-in token (account_token), never a claimed id.
+//   steam_id   — the Steam build only (#889): the SteamID64, signed in or not. Analytics
+//                only; the server never trusts it for who someone is (setSteamId below).
 //
 // Helper vocabulary used by the current work (add here, don't invent names at
 // the call site):
@@ -143,6 +145,8 @@ export function initSession(opts) {
     device_id: getDeviceId(),
     user_agent: navigator.userAgent,
   };
+  if (steamId) data.steam_id = steamId;
+  requestSteamId();
   // Not known yet whether this player may be counted: the row waits (setAnalyticsAllowed).
   if (allowed !== true) { pendingSession = data; return sessionId; }
   createSession(data);
@@ -177,6 +181,38 @@ export function attachAccount(token) {
 /** Later session updates carry it too, in case the first one beat the create. */
 function withAccount(data) {
   return accountToken ? { ...data, account_token: accountToken } : data;
+}
+
+// #889 · the Steam build records the player's SteamID64 with the session, signed in or not
+// (Pete 2026-11-27: to improve the game and follow Steam achievements). Only the id: no name,
+// avatar or friends. window.steam is the Electron preload's, so no other build sends one. The
+// server keeps it for analytics only and never trusts it for sign-in.
+const STEAM_ID64 = /^7656119\d{10}$/;
+let steamId = null;
+function requestSteamId() {
+  const s = typeof window !== 'undefined' ? window.steam : null;
+  if (steamId || !s || typeof s.getSteamId !== 'function') return;
+  Promise.resolve().then(() => s.getSteamId()).then(setSteamId, () => {});
+}
+/**
+ * The Steam ID is known. It goes with the session row when that hasn't gone out yet (or is
+ * held for consent), else on a session update. Set once per launch; anything else is ignored.
+ */
+export function setSteamId(id) {
+  if (DISABLED || steamId || typeof id !== 'string' || !STEAM_ID64.test(id)) return;
+  steamId = id;
+  if (pendingSession) { pendingSession.steam_id = id; return; }
+  const sid = sessionId;
+  if (!sid || allowed !== true) return;   // no session yet: initSession takes it
+  const send = (attempt) => {
+    if (allowed !== true) return;
+    fetch(marked(`${API_BASE}/session/${sid}`), {
+      method: 'PUT', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ steam_id: id }), keepalive: true, credentials: 'omit',
+    }).then((r) => { if (!r.ok) throw new Error(String(r.status)); })
+      .catch(() => { if (attempt < ATTACH_RETRY_MS.length) setTimeout(() => send(attempt + 1), ATTACH_RETRY_MS[attempt]); });
+  };
+  send(0);
 }
 
 export function getSessionId() {
