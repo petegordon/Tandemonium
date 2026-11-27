@@ -616,13 +616,7 @@ class Game {
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
       if (this._touristEndOnLeave()) return;   // #802: an open Map Tourist ride gets its end screen
-      if (analytics.getCurrentRideId()) {
-        analytics.endRide({
-          completed: false,
-          abandon_reason: 'lobby_button',
-          distance: this.bike ? this.bike.distanceTraveled : 0,
-        });
-      }
+      this._closeRideAnalytics('lobby_button');
       if (this.net) {
         this._returnToRoom();
       } else {
@@ -772,13 +766,7 @@ class Game {
     // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
-      if (analytics.getCurrentRideId()) {
-        analytics.endRide({
-          completed: false,
-          abandon_reason: 'end_ride',
-          distance: this.bike ? this.bike.distanceTraveled : 0,
-        });
-      }
+      this._closeRideAnalytics('end_ride');
       this._returnToLobby();
     });
 
@@ -2314,6 +2302,9 @@ class Game {
     // #400 D4 / M2: a ride left for a new one still pays its distance. First,
     // before the bike or world is reset (m14). Idempotent through the ledger.
     this._payoutAbandon();
+    // #887: and a NEW ride (not a retry of the same one, M2 below) gets a new analytics row.
+    // A row still open here belongs to an earlier ride; close it while its numbers are still here.
+    if (!this._sameRideNext || !this._rideRef) this._closeRideAnalytics('new_ride');
 
     // #641 · the demo's three Daily Rides a day: a NEW ride (not a retry of
     // segment 1) on the road can't start once they are used. Every way in —
@@ -5642,6 +5633,41 @@ class Game {
   }
 
   /**
+   * #887 · end the open analytics ride row, if there is one, with what the ride
+   * knows so far (distance, checkpoints, crashes, this seat's pedalling). Every
+   * way out of a ride other than the finish screen comes through here.
+   * reason: the abandon_reason, or null for a finished ride (the tutorial's end).
+   * extra: fields that win over the ones read here (duration_ms, ...).
+   */
+  _closeRideAnalytics(reason, extra = {}) {
+    if (!analytics.getCurrentRideId()) return;
+    const distance = this.bike ? this.bike.distanceTraveled || 0 : 0;
+    const row = reason ? { completed: false, abandon_reason: reason } : { completed: true };
+    row.distance = distance;
+    try {
+      const rm = this.raceManager;
+      if (rm && typeof rm.getSummary === 'function') {
+        const s = rm.getSummary(distance);
+        Object.assign(row, {
+          checkpoints_passed: s.checkpointsPassed, checkpoints_total: s.checkpointsTotal,
+          collectibles: s.collectibles, collectibles_total: s.collectiblesTotal || 0,
+          crash_count: s.crashes, timeout_count: s.timeoutCount || 0, restarts: s.restarts,
+        });
+      }
+      const ct = this.contributionTracker;
+      const c = ct && typeof ct.getSummary === 'function' ? ct.getSummary() : null;
+      const mine = c ? (c.mode === 'solo' ? c.solo : c[this.mode] || c.captain) : null;
+      if (mine) {
+        Object.assign(row, {
+          pedal_taps: mine.totalTaps, pedal_correct: mine.correctTaps, pedal_wrong: mine.wrongTaps,
+          max_speed: c.maxSpeed, avg_speed: c.avgSpeed,
+        });
+      }
+    } catch { /* the row still closes with its distance */ }
+    analytics.endRide({ ...row, ...extra });
+  }
+
+  /**
    * Everyone on this ride, for analytics (Pete 2026-11-09): seat, role or team,
    * controller, and the seat's own sign-in token (the server reads the account
    * from it). Player 1 is the game's account; seats 2–4 their own sign-ins.
@@ -6705,6 +6731,7 @@ class Game {
       this._overlayFocus.input = this.input;
     }
     this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
+    this._closeRideAnalytics('lobby');   // #887: (a no-op when a button already ended it)
     this._helpEndRide();    // #403
     if (this._coachVisible) this._dismissCoachCard();
     this._hideTouristGoal();   // E-7
@@ -6857,6 +6884,9 @@ class Game {
     this._waitingForCaptain = false;
     this._closePause();      // #459
     this._payoutAbandon();   // #400 D4
+    // #887: back in the room the ride is over (GAME OVER's ROOM, the partner's return, the
+    // tutorial's Continue). Left open, the next ride from the room reused its id and its level.
+    this._closeRideAnalytics(fromPartner ? 'partner_room' : 'room');
     this._helpEndRide();    // #403
     // A short ride can end before the first-ride coach card does; don't carry
     // it over the room (_returnToLobby does the same).
@@ -7991,9 +8021,7 @@ class Game {
     this._steamJoinRetry = null;
     this._syncSteamJoinButton();
     if (!req) return;
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({ completed: false, abandon_reason: 'steam_join', distance: this.bike ? this.bike.distanceTraveled : 0 });
-    }
+    this._closeRideAnalytics('steam_join');
     if (this._pause) this._closePause('steamjoin');
     if (this.state !== 'lobby') this._returnToLobby();
     this.lobby.joinFromSteam(req);
@@ -10505,13 +10533,7 @@ class Game {
     analytics.trackEvent('tutorial_skip', {
       phase: this._tutTargetPhase, duration_sec: Math.round(durationSec)
     });
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({
-        completed: false,
-        abandon_reason: 'tutorial_skip',
-        distance: this.bike ? this.bike.distanceTraveled : 0,
-      });
-    }
+    this._closeRideAnalytics('tutorial_skip');
     if (this.net) { this._endTutorialRide(); return; }   // co-op: back to the room
     // The level list should offer the first real ride, not the tutorial again.
     this.lobby.selectedLevel = LEVELS.find(l => !l.isTutorial) || this.lobby.selectedLevel;
@@ -11195,13 +11217,7 @@ class Game {
       duration_sec: Math.round(durationSec),
       total_attempts: this._tutorialAttempts,
     });
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({
-        completed: true,
-        duration_ms: Math.round(durationSec * 1000),
-        distance: this.bike ? this.bike.distanceTraveled : 0,
-      });
-    }
+    this._closeRideAnalytics(null, { duration_ms: Math.round(durationSec * 1000) });
 
     // Compute tuning parameters from measurements
     const isGyro = this.input.gyroConnected;
@@ -11309,6 +11325,9 @@ class Game {
   _showStokerTutorialComplete() {
     this._tutorialActive = false;
     this.achievements.record('tutorial', { clean: false });   // #401 (the stoker's retries aren't counted here)
+    // #887: the stoker's tutorial row ends here too, finished, like the captain's (_tutorialComplete).
+    const durationSec = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
+    this._closeRideAnalytics(null, { duration_ms: Math.round(durationSec * 1000) });
     this.state = 'gameover'; // pause updates
 
     // Reuse tutorial-complete overlay with stoker-appropriate content
