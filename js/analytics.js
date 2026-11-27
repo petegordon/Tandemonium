@@ -65,6 +65,7 @@ let sessionId = null;
 let currentInputMethod = null;
 let currentPage = null;
 let currentRideId = null;
+let currentRideStartedAt = 0;   // performance.now() at startRide: an end without its own duration uses it
 let currentControllerName = null;
 let currentControllerConnection = null;
 let sessionStartTime = null;
@@ -267,6 +268,7 @@ export function setController(name, connection) {
 
 export function startRide(opts) {
   currentRideId = uuid();
+  currentRideStartedAt = performance.now();
 
   beacon(`${API_BASE}/ride`, {
     id: currentRideId,
@@ -311,11 +313,16 @@ export function endRide(opts) {
   // Flush any remaining ride events first
   flushRideEvents();
 
+  // #887: an abandoned ride has no race clock to report; how long it was open is its duration.
+  const duration = opts && opts.duration_ms != null ? {}
+    : { duration_ms: Math.max(0, Math.round(performance.now() - currentRideStartedAt)) };
   beacon(`${API_BASE}/ride/${currentRideId}`, {
+    ...duration,
     ...opts,
     ended_at: new Date().toISOString(),
   }, 'PUT');
   currentRideId = null;
+  currentRideStartedAt = 0;
 }
 
 export function getCurrentRideId() {
