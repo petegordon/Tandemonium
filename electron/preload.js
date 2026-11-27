@@ -15,6 +15,16 @@ window.addEventListener('unhandledrejection', (ev) => {
   } catch (e) {}
 });
 
+// #890 · main asks before the window closes; every hook runs, then main hears back (always,
+// even with no hooks or a hook that throws, so the close never waits for nothing).
+const _flushBeforeQuit = [];
+ipcRenderer.on('app:flushBeforeQuit', async (_event, reason) => {
+  try {
+    await Promise.allSettled(_flushBeforeQuit.map((cb) => { try { return cb(String(reason || '')); } catch (e) { return null; } }));
+  } catch (e) {}
+  ipcRenderer.send('app:flushedBeforeQuit');
+});
+
 contextBridge.exposeInMainWorld('electronApp', {
   toggleDevTools: () => ipcRenderer.invoke('app:toggleDevTools'),
   // Devices the renderer already holds, from ControllerManager.heldHidDescriptors().
@@ -28,6 +38,9 @@ contextBridge.exposeInMainWorld('electronApp', {
   // #172: the lobby's QUIT pill (desktop only). main.js calls app.quit(), so
   // the will-quit hooks run as on a window close.
   quit: () => ipcRenderer.send('app:quit'),
+  // #890: cb(reason) runs before the window closes (any quit or close); main waits for its
+  // promise, 1.2 s at most. js/analytics.js saves the open ride and the session's end here.
+  onFlushBeforeQuit: (cb) => { if (typeof cb === 'function') _flushBeforeQuit.push(cb); },
   // Perf readout: { label, width, height, scale, hz, internal, count } of the window's display.
   display: () => ipcRenderer.invoke('app:display'),
   // #612: open a Discord sign-in page (our API's /auth/… only) in the system browser.

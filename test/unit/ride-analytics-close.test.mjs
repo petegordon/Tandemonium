@@ -53,7 +53,11 @@ test('_closeRideAnalytics ends the open row with what the ride knows, once', () 
   let open = 'ride-1';
   const analytics = { getCurrentRideId: () => open, endRide: (o) => { ended.push(o); open = null; } };
   const close = new Function('analytics', `return function (reason, extra = {}) {${body}\n}`)(analytics);
+  // #890: the row itself is built by _rideAnalyticsRow (the exit flush reads it too).
+  const rowBody = method('_rideAnalyticsRow').replace(/^\n  _rideAnalyticsRow\(reason\) \{/, '').replace(/\n  \}\n?$/, '');
+  const _rideAnalyticsRow = new Function(`return function (reason) {${rowBody}\n}`)();
   const game = {
+    _rideAnalyticsRow,
     mode: 'stoker',
     bike: { distanceTraveled: 80.4 },
     raceManager: { getSummary: (d) => ({ checkpointsPassed: 1, checkpointsTotal: 3, collectibles: 2, collectiblesTotal: 9, crashes: 4, timeoutCount: 0, restarts: 3, distance: d }) },
@@ -70,7 +74,7 @@ test('_closeRideAnalytics ends the open row with what the ride knows, once', () 
   });
 
   open = 'ride-2';
-  close.call({ mode: 'captain', bike: null, raceManager: null, contributionTracker: null }, null, { duration_ms: 5 });
+  close.call({ _rideAnalyticsRow, mode: 'captain', bike: null, raceManager: null, contributionTracker: null }, null, { duration_ms: 5 });
   assert.deepEqual(ended[1], { completed: true, distance: 0, duration_ms: 5 });
 });
 

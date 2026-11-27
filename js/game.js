@@ -941,6 +941,8 @@ class Game {
     const flushStats = () => { try { this.achievements.flushStatsBeacon(); } catch (e) {} };
     window.addEventListener('pagehide', flushStats);
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushStats(); });
+    // #890 · a ride open when the window closes (or the page is hidden) is saved with what it knows.
+    analytics.setRideSnapshot((reason) => this._rideAnalyticsRow(reason));
 
     // Background music
     // #567: an <audio> element that falls back to the AudioContext when the
@@ -5641,6 +5643,16 @@ class Game {
    */
   _closeRideAnalytics(reason, extra = {}) {
     if (!analytics.getCurrentRideId()) return;
+    analytics.endRide({ ...this._rideAnalyticsRow(reason), ...extra });
+  }
+
+  /**
+   * The open ride's analytics row as it stands: completed or abandoned with
+   * `reason`, distance, checkpoints, collectibles, crashes, and this seat's
+   * pedalling. #890: analytics.flushOnExit reads it too, when the window
+   * closes or the page is hidden mid-ride.
+   */
+  _rideAnalyticsRow(reason) {
     const distance = this.bike ? this.bike.distanceTraveled || 0 : 0;
     const row = reason ? { completed: false, abandon_reason: reason } : { completed: true };
     row.distance = distance;
@@ -5664,7 +5676,7 @@ class Game {
         });
       }
     } catch { /* the row still closes with its distance */ }
-    analytics.endRide({ ...row, ...extra });
+    return row;
   }
 
   /**
