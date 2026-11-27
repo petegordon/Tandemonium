@@ -845,8 +845,18 @@ export async function handleDiscordCallback(request, env, url, deps) {
   if (url.searchParams.get('error')) {
     await env.DB.prepare("UPDATE auth_requests SET status = 'error', result_json = ? WHERE id = ?")
       .bind(JSON.stringify({ error: 'cancelled' }), row.id).run();
-    if (row.mode === 'redirect' && row.return_to) return Response.redirect(row.return_to, 302);
+    if ((row.mode === 'redirect' || row.mode === 'erase') && row.return_to) return Response.redirect(row.return_to, 302);
     return page('Sign-in cancelled', '<p>Nothing was changed. You can close this tab.</p>');
+  }
+  if (row.mode === 'erase') {
+    // A delete confirmation: who this is, and nothing more (no account made, no server join).
+    try {
+      const { profile: who } = await fetchDiscordUser(env, url, url.searchParams.get('code'), []);
+      return Response.redirect(await holdErase(env, row, who), 302);
+    } catch (e) {
+      console.error('discord delete confirmation failed', (e && e.message) || e);
+      return page('Discord sign-in failed', '<p>Discord did not confirm this sign-in. Nothing was deleted.</p><p>Go back and try again.</p>', 502);
+    }
   }
   let profile, accessToken, extras;
   try {
@@ -1269,9 +1279,65 @@ export async function handleSteamWebCallback(request, env, url, deps) {
     return page('Steam sign-in failed', '<p>Steam did not confirm this sign-in.</p><p>Go back and try again.</p>', 401);
   }
   const profile = await fetchSteamProfile(env, steamId, fetchImpl);
+  if (row.mode === 'erase') return Response.redirect(await holdErase(env, row, profile), 302);
   if (row.link_user_id) return Response.redirect(await holdLink(env, row, profile, null), 302);
   if (!beginInfo(row).nonceHash) { await drop(); return page('This sign-in link has expired', '<p>Go back and choose <b>Sign in with Steam</b> again.</p>', 410); }
   return Response.redirect(await holdSignIn(env, row, profile), 302);
+}
+
+// ------------------------------------------------------------
+// Delete confirmations (housetandem.com/account-delete, worker/accounts/data-delete.js)
+// ------------------------------------------------------------
+//
+// A sign-in that only proves who someone is: Steam or Discord confirms the account, and the
+// answer goes back to the delete page that asked. It never makes, links or signs in to an
+// account. The answer is a one-time code in the address of the browser that signed in, and
+// only the delete page that began it (it holds the delete's secret) can use it. So a sign-in
+// link someone else sends you can't attach your Steam or Discord to their delete.
+
+/** Begin a delete confirmation for `flowId` with `provider` → the address that signs in. */
+export async function beginEraseSignIn(env, url, flowId, provider, returnTo) {
+  const id = randomId(12);
+  await env.DB.prepare('DELETE FROM auth_requests WHERE created_at < ?').bind(nowS() - 3600).run();
+  await env.DB.prepare(
+    `INSERT INTO auth_requests (id, secret_hash, provider, mode, user_code, link_user_id, return_to, status, profile_json, created_at)
+     VALUES (?, ?, ?, 'erase', NULL, NULL, ?, 'pending', ?, ?)`
+  ).bind(id, await sha256(randomId(24)), provider, returnTo, JSON.stringify({ flow: flowId }), nowS()).run();
+  if (provider === 'discord') {
+    // identify only: whatever the website's sign-in switches say, a delete asks for nothing else.
+    return discordAuthorizeUrl(env, url, { id, profile_json: '{}' });
+  }
+  return `${url.origin}/auth/steam/go?r=${encodeURIComponent(id)}`;
+}
+
+/** Hold the confirmed account on the request and send the browser back with a one-time code. */
+async function holdErase(env, row, profile) {
+  const code = randomId(18);
+  const held = {
+    flow: beginInfo(row).flow,
+    profile: { provider: profile.provider, providerId: String(profile.providerId), name: profile.name, avatar: profile.avatar },
+    codeHash: await sha256(code),
+  };
+  await env.DB.prepare("UPDATE auth_requests SET status = 'verified', profile_json = ? WHERE id = ?")
+    .bind(JSON.stringify(held), row.id).run();
+  return `${row.return_to}#ht_erase=${encodeURIComponent(row.id + '.' + code)}`;
+}
+
+/**
+ * Use a delete confirmation's code (once): → the confirmed { provider, providerId, name, avatar },
+ * or null when it is unknown, used, too old, or belongs to another delete.
+ */
+export async function takeEraseSignIn(env, flowId, ticket) {
+  const [id, code] = String(ticket || '').split('.');
+  if (!id || !code || id.length > 64 || code.length > 64) return null;
+  const taken = await env.DB.prepare("DELETE FROM auth_requests WHERE id = ? AND mode = 'erase' AND status = 'verified' RETURNING *")
+    .bind(id).all();
+  const row = taken.results && taken.results[0];
+  if (!row || row.created_at < nowS() - REQUEST_TTL_S) return null;
+  let held = null;
+  try { held = JSON.parse(row.profile_json); } catch {}
+  if (!held || held.flow !== flowId || held.codeHash !== (await sha256(code))) return null;
+  return held.profile;
 }
 
 // ------------------------------------------------------------

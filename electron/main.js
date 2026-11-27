@@ -1,5 +1,6 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net, nativeImage } = require('electron');
 const path = require('path');
+const { keepReferenceZoom } = require('./ui-zoom');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
 const { isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl, appFilePath } = require('./trust');
@@ -227,7 +228,8 @@ ipcMain.handle('app:display', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender);
   const d = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
   return { label: d.label || '', width: d.size.width, height: d.size.height, scale: d.scaleFactor,
-    hz: d.displayFrequency || 0, internal: !!d.internal, count: screen.getAllDisplays().length };
+    hz: d.displayFrequency || 0, internal: !!d.internal, count: screen.getAllDisplays().length,
+    zoom: e.sender.getZoomFactor() };   // #885 · the reference-viewport zoom (electron/ui-zoom.js)
 });
 ipcMain.handle('steam:isAvailable', () => !!steam);
 ipcMain.handle('steam:input:isAvailable', () => steamInputReady);
@@ -284,10 +286,15 @@ ipcMain.handle('steam:getPlayerName', () => {
   try { return steam.friends.getPersonaName(); }
   catch (e) { return null; }
 });
+// The running Steam user's SteamID64 as a string, or null. Used by Steam account sign-in
+// (js/auth.js, which proves it with a ticket) and, #889, sent with the analytics session
+// (js/analytics.js). The SDK says '0' when Steam has no user: that is null here.
 ipcMain.handle('steam:getSteamId', () => {
   if (!steam) return null;
-  try { return steam.getStatus().steamId; }
-  catch (e) { return null; }
+  try {
+    const id = String(steam.getStatus().steamId || '');
+    return /^\d{17}$/.test(id) ? id : null;
+  } catch (e) { return null; }
 });
 ipcMain.handle('steam:isSubscribed', () => {
   if (!steam) return false;
@@ -615,6 +622,8 @@ function createWindow() {
   const _query = _params.toString() ? '?' + _params.toString() : '';
   mainWindow.loadURL('tandemonium://app/index.html' + _query);
   _watchWindow(mainWindow);
+  // #885 · lay out at a 1920×1080 reference viewport whatever the OS scaling (4K TV @ 300%).
+  keepReferenceZoom(mainWindow, { screen: require('electron').screen, log: _diagLog });
 
   // A link that opens a new window (credits, the Steam page, Discord) is a plain web page:
   // its window has no preload, so none of the game's bridge (Steam, devices, files), and is

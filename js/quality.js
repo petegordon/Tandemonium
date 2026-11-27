@@ -283,3 +283,32 @@ export function clearDisplayTest(store = globalThis.localStorage) {
 
 /** @param {DisplayTest} t */
 export const displayTestActive = (t) => !!(t.lines || t.aa !== 'tier' || t.perf);
+
+/**
+ * #885 · Desktop app: each tier renders a fixed number of physical lines, never
+ * more than the screen has, so a 4K TV renders the same buffer at 100 %, 200 %
+ * or 300 % Windows scaling (the page's DPR follows the OS scale and the
+ * reference-viewport zoom in electron/ui-zoom.js, the screen doesn't).
+ */
+export const DESKTOP_TIER_LINES = Object.freeze({ high: 1440, medium: 1080, low: 720 });
+
+/**
+ * Renderer pixel ratio for a tier.
+ * @param {{ tier: string, dpr?: number, innerHeight: number, desktopApp?: boolean, linesOverride?: number }} o
+ */
+export function renderPixelRatio({ tier, dpr = 1, innerHeight, desktopApp = false, linesOverride = 0 }) {
+  const h = Math.max(1, innerHeight);
+  if (desktopApp) {
+    // The screen's own lines are the ceiling: innerHeight × DPR is the physical height.
+    const target = linesOverride || DESKTOP_TIER_LINES[tier] || DESKTOP_TIER_LINES.high;
+    return Math.min(dpr || 1, target / h);
+  }
+  // Web (phone, TV browser, desktop browser): unchanged from before #885.
+  const cap = Math.min(dpr || 1, 2);
+  // Display testing: N lines at any tier (never above the screen's own).
+  if (linesOverride) return Math.min(cap, linesOverride / h);
+  if (tier === 'high') return cap;
+  if (tier === 'medium') return 0.5;
+  // Low aims for a 360-line image: sharper than a flat half on a small, high-DPI screen like a TV.
+  return Math.max(0.35, Math.min(cap, 1, 360 / h));
+}

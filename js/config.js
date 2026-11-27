@@ -8,6 +8,8 @@ import { playerLooks, seatLooks } from './player-look.js';
 import { getCurrentTier } from './quality.js';
 
 const _isElectron = navigator.userAgent.includes('Electron');
+/** The Steam / desktop (Electron) app, not a browser. */
+export const isDesktopApp = _isElectron;
 /** A TV's built-in browser, as marked by the inline script at the top of index.html. Remote or pad, no touch. */
 export const isTV = !_isElectron && !!globalThis.__tandemoniumTV;
 export const isMobile = !_isElectron && !isTV && (

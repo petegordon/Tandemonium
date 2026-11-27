@@ -24,7 +24,12 @@ import {
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
   resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims, fetchSteamProfile,
+  allowedReturnTo,
 } from './accounts/identity.js';
+import {
+  handleEraseStart, handleEraseSignIn, handleEraseAttach, handleEraseStatus, handleEraseConfirm, handleEraseCancel,
+  signInsToConfirm,
+} from './accounts/data-delete.js';
 import { registerAccountTables } from './accounts/combine.js';
 import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
 import { pruneAnalytics } from './retention.js';
@@ -107,6 +112,7 @@ const identityDeps = () => ({
   jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, deviceKeys,
   userFromToken, claimsFromRequest, sessionFromRequest, sessionFromToken,
 });
+const eraseDeps = () => ({ jsonResponse, pickCorsOrigin, allowedReturnTo, writeMetric, deviceKeys, deleteAccountRecords });
 
 /** A device id's guest login keys: the guest key, and the raw id (records from before the keys). */
 async function deviceKeys(env, deviceId) {
@@ -248,6 +254,17 @@ export default {
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
         return withAuth(request, env, corsOrigin, handleDeleteAccount);
+      }
+      // Confirmed delete (housetandem.com/account-delete): Steam and Discord confirm who it is,
+      // every sign-in on the account is confirmed, then everything goes (worker/accounts/data-delete.js).
+      if (path.startsWith('/erase/') && request.method === 'POST') {
+        const deps = eraseDeps();
+        if (path === '/erase/start') return handleEraseStart(request, env, corsOrigin, deps);
+        if (path === '/erase/signin') return handleEraseSignIn(request, env, url, corsOrigin, deps);
+        if (path === '/erase/attach') return handleEraseAttach(request, env, corsOrigin, deps);
+        if (path === '/erase/status') return handleEraseStatus(request, env, corsOrigin, deps);
+        if (path === '/erase/confirm') return handleEraseConfirm(request, env, corsOrigin, deps);
+        if (path === '/erase/cancel') return handleEraseCancel(request, env, corsOrigin, deps);
       }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       // housetandem-web #37 · time in game (every game) and Tandemonium's lifetime stats, as deltas.
@@ -1468,7 +1485,8 @@ export const PLAYER_LIMIT = 30;
 export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
-  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all']);
+  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all',
+  '/erase/start', '/erase/signin', '/erase/attach', '/erase/confirm']);
 // The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
 const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
   '/auth/steam/go', '/auth/steam/callback']);
@@ -1658,11 +1676,51 @@ async function handleAnalyticsSession(request, env, corsOrigin, clientIP) {
     ).bind(...baseValues).run();
   }
 
+  // #889 · the Steam build's SteamID64, signed in or not (analytics only, see recordSessionSteamId).
+  await recordSessionSteamId(env, body.id, body.steam_id);
+
   // Signed in when the session started: the account comes from the verified token.
   await attachFromToken(env, body.id, body.account_token);
 
   writeMetric(env, 'analytics_session');
   return jsonResponse({ success: true }, 200, corsOrigin);
+}
+
+// #889 · a SteamID64: 17 digits, the individual-account range 7656119…
+const STEAM_ID64_RE = /^7656119\d{10}$/;
+
+/**
+ * The Steam ID a session create or update claims, or null. Only a string in SteamID64 form is
+ * kept (a JS number can't hold 17 digits exactly). ANALYTICS ONLY: the client says it and
+ * nothing checks it, so it must never be trusted for sign-in, accounts, boards or achievements.
+ * Steam account sign-in verifies a Steam ticket instead (/auth/steam).
+ */
+export function analyticsSteamId(v) {
+  const s = typeof v === 'string' ? v.trim() : '';
+  return STEAM_ID64_RE.test(s) ? s : null;
+}
+
+/**
+ * #889 · store the session's Steam ID, once (an existing one never changes). A described session
+ * with no device id has had its details cleared (a deleted account), so it is left alone, as the
+ * IP update does. An update that beats its create makes the placeholder row first (the create
+ * fills it in later and keeps the Steam ID). Until migration 0025 adds the column the write
+ * fails and is skipped. Never fails the caller: analytics must not lose a session over it.
+ */
+async function recordSessionSteamId(env, sessionId, value) {
+  const steamId = analyticsSteamId(value);
+  if (!steamId || !isValidUUID(sessionId)) return;
+  try {
+    await env.DB.batch([
+      ...ensureSessions(env, [{ session_id: sessionId, created_at: new Date().toISOString() }]),
+      env.DB.prepare(
+        `UPDATE sessions SET steam_id = COALESCE(steam_id, ?)
+         WHERE id = ? AND NOT (user_agent IS NOT NULL AND device_id IS NULL)`
+      ).bind(steamId, sessionId),
+    ]);
+  } catch (e) {
+    if (!/no such column/i.test(String(e && e.message))) console.error('session steam id failed', e);
+  }
 }
 
 /** A session takes the account in a sign-in token, once the token is verified. */
@@ -1693,6 +1751,9 @@ async function handleAnalyticsSessionUpdate(request, env, corsOrigin, sessionId,
   // sign-in finishes after launch): attach the account from the verified
   // token. Only to a guest session, so it can't move one between accounts.
   await attachFromToken(env, sessionId, body.account_token);
+
+  // #889 · the Steam ID, when Steam answered after the create had gone out.
+  await recordSessionSteamId(env, sessionId, body.steam_id);
 
   // Keep the IP current. A described session with no device id has had its details
   // cleared (a deleted account), or predates device ids: its IP is left as it is.
@@ -2578,6 +2639,17 @@ async function dashOverview(env, since, ex) {
      FROM rooms WHERE created_at >= ?`
   ).bind(since).first();
 
+  // #889 · Steam players, signed in or not: distinct Steam IDs (null until migration 0025).
+  try {
+    const steam = await env.DB.prepare(
+      `SELECT COUNT(DISTINCT steam_id) AS players FROM sessions s WHERE started_at >= ? AND steam_id IS NOT NULL${sf.clause}`
+    ).bind(since, ...sf.binds).first();
+    sessions.steam_players = (steam && steam.players) || 0;
+  } catch (e) {
+    if (!/no such column/i.test(String(e && e.message))) throw e;
+    sessions.steam_players = null;
+  }
+
   return { sessions, rides, conversions, rooms };
 }
 
@@ -2971,13 +3043,30 @@ async function withAuth(request, env, corsOrigin, handler) {
  * every record on it, in one transaction: sign-ins, rides, achievements, daily
  * results, friends and pair records. A partner's own rides stay, with this
  * player taken off them. Their analytics sessions stay as anonymous counts: the account,
- * login, IP and device id are cleared in the same batch.
+ * login, IP and device id are cleared in the same batch, and the Steam ID just before it (#889).
  */
 async function handleDeleteAccount(request, env, corsOrigin, userId) {
   let body = {};
   try { body = await request.json(); } catch {}
   if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
   if (!freshEnough(await claimsFromRequest(request, env))) return needFreshSignIn(identityDeps(), corsOrigin, 'deleting your account');
+  // A session proves one sign-in. An account with Steam and Discord confirms both first.
+  if ((await signInsToConfirm(env, userId)) > 1) {
+    return jsonResponse({
+      error: 'This account has more than one sign-in. Confirm each of them to delete it.',
+      code: 'confirm_all_signins', url: 'https://housetandem.com/account-delete',
+    }, 403, corsOrigin);
+  }
+  const counts = await deleteAccountRecords(env, userId);
+  writeMetric(env, 'account_deleted');
+  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
+}
+
+/**
+ * Remove a House Tandem account and every record on it (see handleDeleteAccount) → what it had:
+ * { rides, achievements, pairs }. Also used by the confirmed delete (worker/accounts/data-delete.js).
+ */
+async function deleteAccountRecords(env, userId) {
   const key = userId;
   const counts = {};
   for (const [name, sql, arg] of [
@@ -2991,6 +3080,16 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   }
   const mine = 'SELECT id FROM scores WHERE user_id = ?';
   const q = (sql, ...args) => env.DB.prepare(sql).bind(...args);
+  // #889 · the Steam ID on its sessions, and on every session (signed in or not) with the Steam ID
+  // of a Steam login on this account. Before the batch below: it finds rows by the account and
+  // its logins. Migration 0025; absent before it is applied.
+  try {
+    await q(`UPDATE sessions SET steam_id = NULL
+       WHERE steam_id IS NOT NULL AND (google_uid IN (?, ?)
+         OR login_id IN (SELECT login_id FROM user_logins WHERE user_id = ?)
+         OR steam_id IN (SELECT provider_id FROM user_logins WHERE user_id = ? AND provider = 'steam'))`,
+      String(userId), `${userId}.0`, userId, userId).run();
+  } catch (e) { if (!/no such column/i.test(String(e && e.message))) throw e; }
   await env.DB.batch([
     q(`UPDATE user_achievements SET score_id = NULL WHERE score_id IN (${mine})`, userId),
     q(`DELETE FROM score_contributions WHERE score_id IN (${mine})`, userId),
@@ -3028,8 +3127,7 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   try {
     await env.DB.prepare('DELETE FROM consents WHERE user_id = ?').bind(userId).run();
   } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
-  writeMetric(env, 'account_deleted');
-  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
+  return counts;
 }
 
 // Dashboard auth: verify JWT + check email against allow-list

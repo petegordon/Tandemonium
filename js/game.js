@@ -11,7 +11,7 @@ import { bikeModelPathFor, isRigTwin, isSpecialBike, ridesWithBot } from './spec
 import { BotSync, botPartnerKey, recordBotRide, NO_BOT, BOTS } from './player-bots.js';
 import { botTargetMs } from './bot-race.js';
 import { withGrandmaFinished } from './achievement-defs.js';
-import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
+import { getChooserGeese, setChooserGeese, isMobile, isTV, isLowPower, isDesktopApp, isAndroid, isIOS, EVT_COUNTDOWN, EVT_START, EVT_RESET, EVT_RESET_QUICK, EVT_PAUSE, EVT_RESUME, EVT_GAMEOVER, EVT_CHECKPOINT, EVT_FINISH, EVT_RETURN_ROOM, MSG_PROFILE, TUNE, BALANCE_DEFAULTS, GUEST_NAME, BIKE_MODEL_PATH, CHOOSER_MODEL_PATH, getShowRiders, getRidersLight, getShowSolo, getGooseOutfit, getGooseColourway, setGooseColourway, getSeatLooks, getP1Look, getShowFps, getPhysicsFx, DAILY_BOARD_ENABLED, applyDifficulty, applySteeringFeel, snapshotTuningBase, SITE_URL } from './config.js';
 import { TUNING_BASE, setTuningBase, migrateSavedTuning, TUNING_SAVE_BASE_FLAG, tuningBaseFromSave, loadSteeringFeelPref, saveSteeringFeelPref, GYRO_MIN_SENSITIVITY, observedFullLeanDegrees } from './config.js';   // B2: un-feeled calibration base
 import { RaceManager, FIRST_SEGMENT_BONUS_S } from './race-manager.js';
 import { decideAfterCrash, countCrash } from './crash-policy.js';
@@ -112,7 +112,7 @@ import { perfProbe } from './perf-probe.js';
 import { detectHardware, getCachedProfile, clearHardwareCache } from './hardware-detect.js';
 import { PerfReadout } from './perf-readout.js';
 import { getDisplayTest, setDisplayTest, clearDisplayTest, resolveDisplayTest, reloadForDisplayTest, displayTestActive } from './quality.js';
-import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer } from './quality.js';
+import { migrateQualityPref, getQualityPref, setQualityPref, getLearnedAuto, saveLearnedAutoTier, resolveQualityTier, setCurrentTier, tierBelow, autoFloorTier, tierRank, autoStepUpTarget, AutoTierWatcher, clipsOffAtBoot, keepDrawingBuffer, renderPixelRatio } from './quality.js';
 import { ControllerRegistry } from '../shared/drivers/controller-registry.js';
 import { ControllerManager } from '../shared/manager.js';
 import { TeamRig, TEAM_COLORS } from './versus/team-rig.js';
@@ -616,13 +616,7 @@ class Game {
     this._lobbyBtn = document.getElementById('lobby-btn');
     this._lobbyBtn.addEventListener('click', () => {
       if (this._touristEndOnLeave()) return;   // #802: an open Map Tourist ride gets its end screen
-      if (analytics.getCurrentRideId()) {
-        analytics.endRide({
-          completed: false,
-          abandon_reason: 'lobby_button',
-          distance: this.bike ? this.bike.distanceTraveled : 0,
-        });
-      }
+      this._closeRideAnalytics('lobby_button');
       if (this.net) {
         this._returnToRoom();
       } else {
@@ -772,13 +766,7 @@ class Game {
     // Game Over: quit (full disconnect)
     this._onTap('btn-gameover-lobby', () => {
       this._hideGameOver();
-      if (analytics.getCurrentRideId()) {
-        analytics.endRide({
-          completed: false,
-          abandon_reason: 'end_ride',
-          distance: this.bike ? this.bike.distanceTraveled : 0,
-        });
-      }
+      this._closeRideAnalytics('end_ride');
       this._returnToLobby();
     });
 
@@ -1077,6 +1065,13 @@ class Game {
 
     // Resize
     window.addEventListener('resize', () => this._onResize());
+    // #885 · a DPR change without a size change (OS scaling changed, window dragged to a screen
+    // with another scale) re-runs the same sizing, so the render buffer follows the screen.
+    const watchDpr = () => {
+      const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mq.addEventListener('change', () => { this._onResize(); watchDpr(); }, { once: true });
+    };
+    watchDpr();
 
     // ---- Analytics session init ----
     const params = new URLSearchParams(window.location.search);
@@ -2307,6 +2302,9 @@ class Game {
     // #400 D4 / M2: a ride left for a new one still pays its distance. First,
     // before the bike or world is reset (m14). Idempotent through the ledger.
     this._payoutAbandon();
+    // #887: and a NEW ride (not a retry of the same one, M2 below) gets a new analytics row.
+    // A row still open here belongs to an earlier ride; close it while its numbers are still here.
+    if (!this._sameRideNext || !this._rideRef) this._closeRideAnalytics('new_ride');
 
     // #641 · the demo's three Daily Rides a day: a NEW ride (not a retry of
     // segment 1) on the road can't start once they are used. Every way in —
@@ -5635,6 +5633,41 @@ class Game {
   }
 
   /**
+   * #887 · end the open analytics ride row, if there is one, with what the ride
+   * knows so far (distance, checkpoints, crashes, this seat's pedalling). Every
+   * way out of a ride other than the finish screen comes through here.
+   * reason: the abandon_reason, or null for a finished ride (the tutorial's end).
+   * extra: fields that win over the ones read here (duration_ms, ...).
+   */
+  _closeRideAnalytics(reason, extra = {}) {
+    if (!analytics.getCurrentRideId()) return;
+    const distance = this.bike ? this.bike.distanceTraveled || 0 : 0;
+    const row = reason ? { completed: false, abandon_reason: reason } : { completed: true };
+    row.distance = distance;
+    try {
+      const rm = this.raceManager;
+      if (rm && typeof rm.getSummary === 'function') {
+        const s = rm.getSummary(distance);
+        Object.assign(row, {
+          checkpoints_passed: s.checkpointsPassed, checkpoints_total: s.checkpointsTotal,
+          collectibles: s.collectibles, collectibles_total: s.collectiblesTotal || 0,
+          crash_count: s.crashes, timeout_count: s.timeoutCount || 0, restarts: s.restarts,
+        });
+      }
+      const ct = this.contributionTracker;
+      const c = ct && typeof ct.getSummary === 'function' ? ct.getSummary() : null;
+      const mine = c ? (c.mode === 'solo' ? c.solo : c[this.mode] || c.captain) : null;
+      if (mine) {
+        Object.assign(row, {
+          pedal_taps: mine.totalTaps, pedal_correct: mine.correctTaps, pedal_wrong: mine.wrongTaps,
+          max_speed: c.maxSpeed, avg_speed: c.avgSpeed,
+        });
+      }
+    } catch { /* the row still closes with its distance */ }
+    analytics.endRide({ ...row, ...extra });
+  }
+
+  /**
    * Everyone on this ride, for analytics (Pete 2026-11-09): seat, role or team,
    * controller, and the seat's own sign-in token (the server reads the account
    * from it). Player 1 is the game's account; seats 2–4 their own sign-ins.
@@ -6698,6 +6731,7 @@ class Game {
       this._overlayFocus.input = this.input;
     }
     this._payoutAbandon();   // #400 D4: an abandoned ride still pays its distance
+    this._closeRideAnalytics('lobby');   // #887: (a no-op when a button already ended it)
     this._helpEndRide();    // #403
     if (this._coachVisible) this._dismissCoachCard();
     this._hideTouristGoal();   // E-7
@@ -6850,6 +6884,9 @@ class Game {
     this._waitingForCaptain = false;
     this._closePause();      // #459
     this._payoutAbandon();   // #400 D4
+    // #887: back in the room the ride is over (GAME OVER's ROOM, the partner's return, the
+    // tutorial's Continue). Left open, the next ride from the room reused its id and its level.
+    this._closeRideAnalytics(fromPartner ? 'partner_room' : 'room');
     this._helpEndRide();    // #403
     // A short ride can end before the first-ride coach card does; don't carry
     // it over the room (_returnToLobby does the same).
@@ -7619,14 +7656,10 @@ class Game {
     this._setTier(level, { auto: false });
   }
 
-  /** Render resolution per tier. Low aims for a 360-line image: sharper than a flat half on a small, high-DPI screen like a TV. */
+  /** Render resolution per tier: fixed physical lines in the desktop app (#885), DPR-based on the web (js/quality.js). */
   _pixelRatio() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    // Display testing: N lines at any tier (never above the screen's own).
-    if (this._linesOverride) return Math.min(dpr, this._linesOverride / Math.max(1, window.innerHeight));
-    if (this._quality === 'high') return dpr;
-    if (this._quality === 'medium') return 0.5;
-    return Math.max(0.35, Math.min(dpr, 1, 360 / Math.max(1, window.innerHeight)));
+    return renderPixelRatio({ tier: this._quality, dpr: window.devicePixelRatio || 1, innerHeight: window.innerHeight,
+      desktopApp: isDesktopApp, linesOverride: this._linesOverride });
   }
 
   /** Low draws less far: closer fog and far plane (trees stop at the fog). Tourist Mode owns these while it runs. */
@@ -7988,9 +8021,7 @@ class Game {
     this._steamJoinRetry = null;
     this._syncSteamJoinButton();
     if (!req) return;
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({ completed: false, abandon_reason: 'steam_join', distance: this.bike ? this.bike.distanceTraveled : 0 });
-    }
+    this._closeRideAnalytics('steam_join');
     if (this._pause) this._closePause('steamjoin');
     if (this.state !== 'lobby') this._returnToLobby();
     this.lobby.joinFromSteam(req);
@@ -8431,37 +8462,65 @@ class Game {
     if (level && level.treeCollision === false) {
       // Still check pylon collision
       const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
-      if (pylon) {
-        this._recordCrash('obstacle', bike);
-        this._knockPylon(pylon, bike);
-        bike._fall();
-        chaseCam.shakeAmount = 0.25;
-        this._playCrash(1.0);
-        hapticTreeHit(hapticTargets);
-      }
+      if (pylon) this._collide('obstacle', bike, chaseCam, hapticTargets, pylon);
       return;
     }
     const result = this.world.checkTreeCollision(
       bike.position, bike.roadD, bike.heading
     );
     if (result.hit) {
-      this._recordCrash('tree', bike);
-      bike._fall();
-      chaseCam.shakeAmount = 0.2;
-      this._playCrash(0.85);
-      hapticTreeHit(hapticTargets);
+      this._collide('tree', bike, chaseCam, hapticTargets);
       return;
     }
     // Pylon obstacle collision
     const pylon = this.obstacleManager && this.obstacleManager.checkCollision(bike.position);
-    if (pylon) {
-      this._recordCrash('obstacle', bike);
-      this._knockPylon(pylon, bike);
-      bike._fall();
-      chaseCam.shakeAmount = 0.25;
-      this._playCrash(1.0);
+    if (pylon) this._collide('obstacle', bike, chaseCam, hapticTargets, pylon);
+  }
+
+  /**
+   * The tutorial's big banner (#tutorial-crash) for a bump (#883): "Bump!" and a hint,
+   * then gone. The ride goes on.
+   */
+  _showTutorialBump(hint) {
+    const el = document.getElementById('tutorial-crash');
+    const textEl = document.getElementById('tutorial-crash-text');
+    const hintEl = document.getElementById('tutorial-crash-hint');
+    if (!el || !textEl || !hintEl) return;
+    textEl.textContent = 'Bump!';
+    hintEl.textContent = hint;
+    el.classList.add('visible');
+    clearTimeout(this._tutBumpTimer);
+    this._tutBumpTimer = setTimeout(() => {
+      el.classList.remove('visible');
+      textEl.textContent = 'Oops! Try again';   // the crash banner's own words, for a real tutorial crash
+    }, 1500);
+  }
+
+  /**
+   * A tree or a pylon hit: the geese fall off. In the tutorial they can't (#883): the
+   * preset already keeps the balance from tipping over (safetyDefault), and a collision
+   * there is a bump instead (Pete, 2026-11-26): a big "Bump!" banner with a hint and the
+   * controller's haptic, the pylon still knocked flat and a small camera shake, but no
+   * fall, no restart, no crash on the record and no crash sound. The tutorial's own
+   * coaching ("Weave to the other side of the pylon!") still answers a wrong-side pass.
+   */
+  _collide(cause, bike, chaseCam, hapticTargets, pylon = null) {
+    if (this._tutorialActive) {
+      const now = performance.now();
+      if (pylon) this._knockPylon(pylon, bike);
+      else if (now - (this._tutBumpAt || 0) < 600) return;   // a tree stays touching for a while
+      this._tutBumpAt = now;
+      chaseCam.shakeAmount = 0.12;
       hapticTreeHit(hapticTargets);
+      this._showTutorialBump(pylon ? 'Steer around the pylons!' : 'Stay on the road!');
+      return;
     }
+    this._recordCrash(cause, bike);
+    if (pylon) this._knockPylon(pylon, bike);
+    bike._fall();
+    chaseCam.shakeAmount = cause === 'tree' ? 0.2 : 0.25;
+    this._playCrash(cause === 'tree' ? 0.85 : 1.0);
+    hapticTreeHit(hapticTargets);
   }
 
   _hapticOffRoadCheck() {
@@ -10502,13 +10561,7 @@ class Game {
     analytics.trackEvent('tutorial_skip', {
       phase: this._tutTargetPhase, duration_sec: Math.round(durationSec)
     });
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({
-        completed: false,
-        abandon_reason: 'tutorial_skip',
-        distance: this.bike ? this.bike.distanceTraveled : 0,
-      });
-    }
+    this._closeRideAnalytics('tutorial_skip');
     if (this.net) { this._endTutorialRide(); return; }   // co-op: back to the room
     // The level list should offer the first real ride, not the tutorial again.
     this.lobby.selectedLevel = LEVELS.find(l => !l.isTutorial) || this.lobby.selectedLevel;
@@ -11192,13 +11245,7 @@ class Game {
       duration_sec: Math.round(durationSec),
       total_attempts: this._tutorialAttempts,
     });
-    if (analytics.getCurrentRideId()) {
-      analytics.endRide({
-        completed: true,
-        duration_ms: Math.round(durationSec * 1000),
-        distance: this.bike ? this.bike.distanceTraveled : 0,
-      });
-    }
+    this._closeRideAnalytics(null, { duration_ms: Math.round(durationSec * 1000) });
 
     // Compute tuning parameters from measurements
     const isGyro = this.input.gyroConnected;
@@ -11306,6 +11353,9 @@ class Game {
   _showStokerTutorialComplete() {
     this._tutorialActive = false;
     this.achievements.record('tutorial', { clean: false });   // #401 (the stoker's retries aren't counted here)
+    // #887: the stoker's tutorial row ends here too, finished, like the captain's (_tutorialComplete).
+    const durationSec = this._tutorialStartTime ? (performance.now() - this._tutorialStartTime) / 1000 : 0;
+    this._closeRideAnalytics(null, { duration_ms: Math.round(durationSec * 1000) });
     this.state = 'gameover'; // pause updates
 
     // Reuse tutorial-complete overlay with stoker-appropriate content
