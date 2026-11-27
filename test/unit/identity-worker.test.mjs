@@ -840,6 +840,14 @@ test('deleting an account removes every record on it; the partner keeps their ow
     assert.equal((await call(env, '/me/delete', { method: 'POST', body: { confirm: 'delete' } , token: p1.token })).status, 400);
     assert.equal((await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' } })).status, 401);
     assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(p1.user.id).n, 1);
+    // A session proves one sign-in: with Steam and Discord on the account, both are confirmed on
+    // housetandem.com/account-delete instead (test/unit/verified-delete.test.mjs).
+    const both = await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' }, token: p1.token });
+    assert.equal(both.status, 403);
+    assert.equal((await both.json()).code, 'confirm_all_signins');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE id = ?').get(p1.user.id).n, 1);
+    // The rest of this test is the records: as if Discord had never been linked.
+    db.prepare("DELETE FROM user_logins WHERE user_id = ? AND provider = 'discord'").run(p1.user.id);
 
     const res = await call(env, '/me/delete', { method: 'POST', body: { confirm: 'DELETE' }, token: p1.token });
     assert.equal(res.status, 200, await res.clone().text());

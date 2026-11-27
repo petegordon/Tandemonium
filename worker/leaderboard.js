@@ -24,7 +24,12 @@ import {
   handleLinkComplete, handleLinkCombine, handleNotices, handleNoticeSeen, handleNoticeUndo,
   resolveSession, firstLogin, ensureDeviceLogin, signInErrorPage,
   handleAuthExchange, handleSignOutEverywhere, freshEnough, needFreshSignIn, realSignInClaims, fetchSteamProfile,
+  allowedReturnTo,
 } from './accounts/identity.js';
+import {
+  handleEraseStart, handleEraseSignIn, handleEraseAttach, handleEraseStatus, handleEraseConfirm, handleEraseCancel,
+  signInsToConfirm,
+} from './accounts/data-delete.js';
 import { registerAccountTables } from './accounts/combine.js';
 import { publicPlayerIds, ensurePublicId, userIdForPublicId, isPublicPlayerId } from './accounts/public-id.js';
 import { pruneAnalytics } from './retention.js';
@@ -107,6 +112,7 @@ const identityDeps = () => ({
   jsonResponse, createJWT, getUserFromRequest, pickCorsOrigin, writeMetric, deviceKeys,
   userFromToken, claimsFromRequest, sessionFromRequest, sessionFromToken,
 });
+const eraseDeps = () => ({ jsonResponse, pickCorsOrigin, allowedReturnTo, writeMetric, deviceKeys, deleteAccountRecords });
 
 /** A device id's guest login keys: the guest key, and the raw id (records from before the keys). */
 async function deviceKeys(env, deviceId) {
@@ -248,6 +254,17 @@ export default {
       // #612 · delete the House Tandem account and everything on it (account page, typed confirmation).
       if (path === '/me/delete' && request.method === 'POST') {
         return withAuth(request, env, corsOrigin, handleDeleteAccount);
+      }
+      // Confirmed delete (housetandem.com/account-delete): Steam and Discord confirm who it is,
+      // every sign-in on the account is confirmed, then everything goes (worker/accounts/data-delete.js).
+      if (path.startsWith('/erase/') && request.method === 'POST') {
+        const deps = eraseDeps();
+        if (path === '/erase/start') return handleEraseStart(request, env, corsOrigin, deps);
+        if (path === '/erase/signin') return handleEraseSignIn(request, env, url, corsOrigin, deps);
+        if (path === '/erase/attach') return handleEraseAttach(request, env, corsOrigin, deps);
+        if (path === '/erase/status') return handleEraseStatus(request, env, corsOrigin, deps);
+        if (path === '/erase/confirm') return handleEraseConfirm(request, env, corsOrigin, deps);
+        if (path === '/erase/cancel') return handleEraseCancel(request, env, corsOrigin, deps);
       }
       if (path === '/achievements/sync' && request.method === 'POST') return withAuth(request, env, corsOrigin, syncAchievements);
       // housetandem-web #37 · time in game (every game) and Tandemonium's lifetime stats, as deltas.
@@ -1468,7 +1485,8 @@ export const PLAYER_LIMIT = 30;
 export const IP_LIMIT = 300;
 const SIGNIN_PATHS = new Set(['/auth/google', '/auth/steam', '/auth/discord/begin', '/auth/discord/callback',
   '/auth/discord/confirm', '/auth/steam/begin', '/auth/steam/callback', '/auth/handoff', '/auth/handoff/redeem', '/me/delete',
-  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all']);
+  '/auth/link/complete', '/auth/link/combine', '/me/notices/undo', '/auth/exchange', '/me/signout-all',
+  '/erase/start', '/erase/signin', '/erase/attach', '/erase/confirm']);
 // The sign-in routes a browser is sent to (not called by a script): a failure shows a page.
 const SIGNIN_PAGES = new Set(['/auth/discord/go', '/auth/discord/callback', '/auth/discord/confirm',
   '/auth/steam/go', '/auth/steam/callback']);
@@ -3032,6 +3050,23 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   try { body = await request.json(); } catch {}
   if (body.confirm !== 'DELETE') return jsonResponse({ error: 'Type DELETE to confirm' }, 400, corsOrigin);
   if (!freshEnough(await claimsFromRequest(request, env))) return needFreshSignIn(identityDeps(), corsOrigin, 'deleting your account');
+  // A session proves one sign-in. An account with Steam and Discord confirms both first.
+  if ((await signInsToConfirm(env, userId)) > 1) {
+    return jsonResponse({
+      error: 'This account has more than one sign-in. Confirm each of them to delete it.',
+      code: 'confirm_all_signins', url: 'https://housetandem.com/account-delete',
+    }, 403, corsOrigin);
+  }
+  const counts = await deleteAccountRecords(env, userId);
+  writeMetric(env, 'account_deleted');
+  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
+}
+
+/**
+ * Remove a House Tandem account and every record on it (see handleDeleteAccount) → what it had:
+ * { rides, achievements, pairs }. Also used by the confirmed delete (worker/accounts/data-delete.js).
+ */
+async function deleteAccountRecords(env, userId) {
   const key = userId;
   const counts = {};
   for (const [name, sql, arg] of [
@@ -3092,8 +3127,7 @@ async function handleDeleteAccount(request, env, corsOrigin, userId) {
   try {
     await env.DB.prepare('DELETE FROM consents WHERE user_id = ?').bind(userId).run();
   } catch (e) { if (!/no such (table|column)/i.test(String(e && e.message))) throw e; }
-  writeMetric(env, 'account_deleted');
-  return jsonResponse({ deleted: true, ...counts }, 200, corsOrigin);
+  return counts;
 }
 
 // Dashboard auth: verify JWT + check email against allow-list
