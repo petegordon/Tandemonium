@@ -195,7 +195,7 @@ function renderDashboard(overview, daily, funnel, rides, crashes, conversions, n
     <!-- KPIs -->
     <div class="kpis">
       <div class="kpi"><div class="value">${fmt(totalSessions)}</div><div class="label">Sessions</div>
-        <div class="sub">${fmt(o.sessions?.stokers || 0)} stokers</div></div>
+        <div class="sub">${fmt(o.sessions?.stokers || 0)} stokers${o.sessions?.steam_players != null ? ` · ${fmt(o.sessions.steam_players)} Steam players` : ''}</div></div>
       <div class="kpi"><div class="value">${fmt(totalRides)}</div><div class="label">Rides</div>
         <div class="sub">${fmt(completedRides)} completed (${pct(completedRides, totalRides)}%)</div></div>
       <div class="kpi"><div class="value">${fmt(steamClicks)}</div><div class="label">Steam Clicks</div>
