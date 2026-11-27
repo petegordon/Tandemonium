@@ -167,7 +167,7 @@ export default {
         let parsed = null;
         try { parsed = JSON.parse(text); } catch { /* answered below */ }
         if (!parsed || typeof parsed !== 'object') return jsonResponse({ error: 'Invalid body' }, 400, corsOrigin);
-        request = new Request(request.url, { method: request.method, headers: request.headers, body: text });
+        request = new Request(request.url, { method: analyticsWriteMethod(path, request.method), headers: request.headers, body: text });
       }
 
       // Auth routes
@@ -1566,6 +1566,15 @@ function isAnalyticsWrite(path, method) {
     && path.startsWith('/api/analytics/') && !path.startsWith('/api/analytics/dashboard/');
 }
 
+/**
+ * #890 · navigator.sendBeacon can only POST, and the game sends its last writes with it as
+ * the page closes. A POST to a session or ride address is that session's or ride's update
+ * (PUT): same handler, same fields. PUT still works for everything already installed.
+ */
+export function analyticsWriteMethod(path, method) {
+  return method === 'POST' && /^\/api\/analytics\/(session|ride)\/[^/]+$/.test(path) ? 'PUT' : method;
+}
+
 export function analyticsBodyLimit(path) {
   return path === '/api/analytics/event/batch' || /^\/api\/analytics\/ride\/[^/]+\/events$/.test(path)
     ? ANALYTICS_RIDE_EVENTS_MAX : ANALYTICS_BODY_MAX;
@@ -1898,7 +1907,8 @@ async function handleAnalyticsRideUpdate(request, env, corsOrigin, rideId) {
     `UPDATE rides SET ${sets.join(', ')} WHERE id = ?`
   ).bind(...values).run();
 
-  writeMetric(env, 'analytics_ride_end', body.completed ? 'complete' : 'abandon');
+  // #890: a provisional save (the page was hidden mid-ride) is not a ride end yet.
+  if (!body.provisional) writeMetric(env, 'analytics_ride_end', body.completed ? 'complete' : 'abandon');
   return jsonResponse({ success: true }, 200, corsOrigin);
 }
 

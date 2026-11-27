@@ -1,6 +1,7 @@
 const { app, BrowserWindow, globalShortcut, ipcMain, session, protocol, net, nativeImage } = require('electron');
 const path = require('path');
 const { keepReferenceZoom } = require('./ui-zoom');
+const { createExitFlush } = require('./exit-flush');
 const fs = require('fs');
 const { localizeThree, installedThreeVersion } = require('./local-vendors');
 const { isApiUrl, isTilesUrl, isGameUrl, isWebOrigin, isWebLink, isSignInUrl, appFilePath } = require('./trust');
@@ -265,7 +266,17 @@ ipcMain.on('steam:input:vibrate', (_e, m) => {
 ipcMain.on('app:isDemo', (e) => { e.returnValue = _resolveIsDemo(); });
 // #172: the lobby's QUIT pill (js/app-quit.js via preload's electronApp.quit).
 // app.quit() closes the window and runs will-quit like the window's close box.
-ipcMain.on('app:quit', () => { _diagLog('[app] quit requested from the lobby'); app.quit(); });
+ipcMain.on('app:quit', () => { _diagLog('[app] quit requested from the lobby'); _exitReason = 'app_quit'; app.quit(); });
+
+// #890 · before the game's window closes (lobby QUIT, Cmd+Q, the close box, Alt+F4, Steam's
+// Stop when it closes the window first), the page saves the open analytics ride and the
+// session's end, and the close waits for it (1.2 s at most; see electron/exit-flush.js).
+// Otherwise a page closing as the app exits loses its keepalive requests.
+let _exitReason = null;   // app_quit | window_close | os_shutdown
+let _exitFlush = null;    // the main window's, made in createWindow
+const EXIT_FLUSH_MS = 1200;
+ipcMain.on('app:flushedBeforeQuit', () => { if (_exitFlush) _exitFlush.answered(); });
+app.on('before-quit', () => { if (!_exitReason) _exitReason = 'app_quit'; });
 
 // Diagnostic: what Steam Input reports right now — the captured controllers
 // (normally none in emulation mode) and the XInput-slot map.
@@ -639,6 +650,25 @@ function createWindow() {
     if (!isGameUrl(url)) { event.preventDefault(); _diagLog('[app] blocked navigation away from the game'); }
   });
   mainWindow.webContents.on('will-attach-webview', (event) => event.preventDefault());
+
+  // #890 · hold the close once while the page saves its analytics (see _exitFlush above).
+  const win = mainWindow;
+  const exitFlush = _exitFlush = createExitFlush({
+    ask: (reason) => {
+      const wc = win.webContents;
+      if (!wc || wc.isDestroyed() || wc.isCrashed()) return false;
+      wc.send('app:flushBeforeQuit', reason);
+      return true;
+    },
+    finish: () => { if (!win.isDestroyed()) win.close(); },
+    timeoutMs: EXIT_FLUSH_MS,
+    log: _diagLog,
+  });
+  win.on('close', (event) => {
+    if (!exitFlush.begin(_exitReason || 'window_close')) event.preventDefault();
+  });
+  // Windows shutdown, restart or sign-out: Windows doesn't wait for us, so this is a best try.
+  win.on('session-end', () => { _exitReason = 'os_shutdown'; exitFlush.begin('os_shutdown'); });
 
   mainWindow.on('closed', () => {
     mainWindow = null;

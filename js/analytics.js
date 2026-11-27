@@ -301,28 +301,28 @@ export function trackRideEvent(eventType, distance, eventData = null) {
   });
 }
 
-export function flushRideEvents() {
+export function flushRideEvents(transport) {
   if (!currentRideId || rideEventBuffer.length === 0) return;
   const batch = rideEventBuffer.splice(0);
-  beacon(`${API_BASE}/ride/${currentRideId}/events`, { events: batch });
+  return beacon(`${API_BASE}/ride/${currentRideId}/events`, { events: batch }, 'POST', transport);
 }
 
-export function endRide(opts) {
+/** #887: an abandoned ride has no race clock to report; how long it was open is its duration. */
+function rideEndRow(opts) {
+  const duration = opts && opts.duration_ms != null ? {}
+    : { duration_ms: Math.max(0, Math.round(performance.now() - currentRideStartedAt)) };
+  return { ...duration, ...opts, ended_at: new Date().toISOString() };
+}
+
+export function endRide(opts, transport) {
   if (!currentRideId) return;
 
   // Flush any remaining ride events first
-  flushRideEvents();
-
-  // #887: an abandoned ride has no race clock to report; how long it was open is its duration.
-  const duration = opts && opts.duration_ms != null ? {}
-    : { duration_ms: Math.max(0, Math.round(performance.now() - currentRideStartedAt)) };
-  beacon(`${API_BASE}/ride/${currentRideId}`, {
-    ...duration,
-    ...opts,
-    ended_at: new Date().toISOString(),
-  }, 'PUT');
+  const sent = [flushRideEvents(transport)];
+  sent.push(beacon(`${API_BASE}/ride/${currentRideId}`, rideEndRow(opts), 'PUT', transport));
   currentRideId = null;
   currentRideStartedAt = 0;
+  return Promise.allSettled(sent);
 }
 
 export function getCurrentRideId() {
@@ -394,7 +394,7 @@ function createSession(data, attempt = 0) {
   }).catch(e => console.warn('Analytics session failed:', e));
 }
 
-function flushUIEvents() {
+function flushUIEvents(transport) {
   if (allowed !== true) {
     // Waiting for the answer: keep the latest few. A no: keep none.
     if (allowed === false) eventBuffer = [];
@@ -406,19 +406,29 @@ function flushUIEvents() {
   // Events tracked before initSession() have no session yet; give them this one.
   const sid = getSessionId();
   if (sid) for (const e of batch) if (!e.session_id) e.session_id = sid;
-  beacon(`${API_BASE}/event/batch`, { events: batch });
+  return beacon(`${API_BASE}/event/batch`, { events: batch }, 'POST', transport);
 }
 
-function beacon(url, data, method = 'POST') {
+/**
+ * Send one analytics write. Returns a promise that settles when it is done (or
+ * handed to the browser), never rejects; undefined when nothing was sent.
+ *
+ * transport 'fetch' (the default): fetch + keepalive with no credentials, so no
+ * CORS preflight. 'beacon' (#890, only while the page is going away):
+ * navigator.sendBeacon, which the browser delivers after the page is gone.
+ * Its text/plain body makes it a no-cors request (no preflight, the reply is
+ * never read). sendBeacon can only POST: the API takes a POST to a session or
+ * ride address as the update (PUT). Falls back to fetch when the browser
+ * refuses the beacon (too large, or no sendBeacon).
+ */
+function beacon(url, data, method = 'POST', transport = 'fetch') {
   if (DISABLED || allowed !== true) return;
   try {
     const body = JSON.stringify(data);
-
-    // Always use fetch with explicit no-credentials to avoid CORS preflight issues.
-    // sendBeacon inherits cookies which forces credentials mode and requires
-    // Access-Control-Allow-Credentials, complicating CORS. fetch + keepalive
-    // is equally reliable for fire-and-forget.
-    fetch(marked(url), {
+    if (transport === 'beacon' && typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+      try { if (navigator.sendBeacon(marked(url), body)) return Promise.resolve(); } catch { /* fetch below */ }
+    }
+    return fetch(marked(url), {
       method,
       headers: { 'Content-Type': 'text/plain' },
       body,
@@ -430,26 +440,87 @@ function beacon(url, data, method = 'POST') {
   }
 }
 
+// ---- Leaving the game (#890) ----
+
+// The game's view of the open ride (Game._rideAnalyticsRow): distance,
+// checkpoints, crashes, this seat's pedalling. Without it a ride closed on the
+// way out says only that it was abandoned.
+let rideSnapshot = null;
+/** fn(reason) → the ride row for an abandon with that reason. */
+export function setRideSnapshot(fn) { rideSnapshot = typeof fn === 'function' ? fn : null; }
+function snapshotRow(reason) {
+  try {
+    const row = rideSnapshot && rideSnapshot(reason);
+    if (row && typeof row === 'object') return { ...row, completed: false, abandon_reason: reason };
+  } catch { /* the bare row below */ }
+  return { completed: false, abandon_reason: reason };
+}
+
+let exitDone = null;         // the final flush's promise, once one has run
+const EXIT_WAIT_MS = 1000;   // the Electron quit waits for this at most (main allows 1.2 s)
+
+/**
+ * Save what would otherwise be lost when the game goes away: the open ride row
+ * and the session's end. Returns a promise that settles when the writes are
+ * done, or after EXIT_WAIT_MS, whichever comes first. Never rejects.
+ *
+ * final (the default): the game is closing. The ride row closes with `reason`
+ *   and the session ends. Runs once: later calls (the Electron quit, then the
+ *   window's pagehide) return the first one's promise.
+ * final: false (the page was hidden): the game keeps the ride open, but the
+ *   row is saved as if it ended now, with `reason`, and the session gets an
+ *   end. A tab the phone discards in the background then has a closed row; a
+ *   player who comes back carries on, and the ride's real end overwrites it.
+ */
+export function flushOnExit(reason, { final = true, transport = 'fetch' } = {}) {
+  if (exitDone) return exitDone;
+  if (DISABLED || allowed !== true) return Promise.resolve();
+  const sent = [flushUIEvents(transport)];
+  if (currentRideId) {
+    const row = snapshotRow(reason);
+    if (final) {
+      sent.push(endRide(row, transport));
+    } else {
+      sent.push(flushRideEvents(transport));
+      // provisional: not counted as a ride end by the API's metrics
+      sent.push(beacon(`${API_BASE}/ride/${currentRideId}`, { ...rideEndRow(row), provisional: true }, 'PUT', transport));
+    }
+  }
+  if (sessionId) {
+    sent.push(beacon(`${API_BASE}/session/${sessionId}`, withAccount({ ended_at: new Date().toISOString() }), 'PUT', transport));
+  }
+  let timer = null;
+  const done = Promise.race([
+    Promise.allSettled(sent),
+    new Promise((resolve) => { timer = setTimeout(resolve, EXIT_WAIT_MS); }),
+  ]).then(() => { clearTimeout(timer); });
+  if (final) exitDone = done;
+  return done;
+}
+
 // Flush on page unload
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', () => {
-    if (currentRideId) {
-      endRide({ completed: false, abandon_reason: 'page_close' });
-    }
-    flushUIEvents();
-    // End session for duration tracking
-    if (sessionId) {
-      beacon(`${API_BASE}/session/${sessionId}`, withAccount({
-        ended_at: new Date().toISOString(),
-      }), 'PUT');
-    }
-  });
+  // A browser delivers a beacon after the page is gone. The desktop app keeps
+  // fetch: its quit waits for the replies (below), and a reload keeps the app.
+  const EXIT_TRANSPORT = IS_ELECTRON ? 'fetch' : 'beacon';
+  // pagehide, not beforeunload: phones often skip beforeunload, and it keeps a
+  // page out of the back/forward cache.
+  window.addEventListener('pagehide', () => { flushOnExit('page_close', { transport: EXIT_TRANSPORT }); });
+  // Back from the back/forward cache: the page lives again, so may close again.
+  window.addEventListener('pageshow', (e) => { if (e && e.persisted) exitDone = null; });
   window.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
-      flushUIEvents();
-      flushRideEvents();
+      flushOnExit('page_hidden', { final: false, transport: EXIT_TRANSPORT });
     }
   });
+  // The desktop app's quit (electron/main.js) asks first and waits up to 1.2 s:
+  // the keepalive requests of a page closing as the app exits are dropped.
+  try {
+    const app = window.electronApp;
+    if (app && typeof app.onFlushBeforeQuit === 'function') {
+      app.onFlushBeforeQuit((reason) => flushOnExit(reason || 'app_quit', { transport: 'fetch' }));
+    }
+  } catch { /* an older preload: pagehide is all there is */ }
 
   // ---- Error/Exception Tracking ----
   let errorCount = 0;
